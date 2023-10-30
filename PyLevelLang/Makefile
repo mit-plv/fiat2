@@ -4,22 +4,22 @@ default_target: all
 
 # absolute paths so that emacs compile mode knows where to find error
 # use cygpath -m because Coq on Windows cannot handle cygwin paths
-SRCDIR := $(shell cygpath -m "$$(pwd)" 2>/dev/null || pwd)/src
+SRCDIR:=$(shell cygpath -m "$$(pwd)" 2>/dev/null || pwd)/src
 
 VFILES:=$(shell find $(SRCDIR) -type f -name '*.v')
 
-DEPS_DIR ?= ../deps
+DEPS_DIR?=../bedrock2/deps
 
 # Note: make does not interpret "\n", and this is intended
-DEPFLAGS_COQUTIL_NL=-Q $(DEPS_DIR)/coqutil/src/coqutil coqutil\n
-DEPFLAGS_NL=
-CURFLAGS_NL=-Q ../bedrock2/src/bedrock2 bedrock2\n-Q src/PyLevelLang PyLevelLang\n
+DEPFLAGS_COQUTIL_NL:=-Q $(DEPS_DIR)/coqutil/src/coqutil coqutil\n
+DEPFLAGS_NL:=
+CURFLAGS_NL:=-Q ../bedrock2/bedrock2/src/bedrock2 bedrock2\n-Q src/PyLevelLang PyLevelLang\n
 
 EXTERNAL_DEPENDENCIES?=
 EXTERNAL_COQUTIL?=
 
 ifneq ($(EXTERNAL_COQUTIL),1)
-DEPFLAGS_NL+=$(DEPFLAGS_COQUTIL_NL)
+DEPFLAGS_NL:=$(DEPFLAGS_NL)$(DEPFLAGS_COQUTIL_NL)
 endif
 
 # If we get our dependencies externally, then we should not bind the local versions of things
@@ -28,8 +28,6 @@ ALLDEPFLAGS_NL=$(CURFLAGS_NL)$(DEPFLAGS_NL)
 else
 ALLDEPFLAGS_NL=$(CURFLAGS_NL)
 endif
-
-ALLDEPFLAGS=$(subst \n, ,$(ALLDEPFLAGS_NL))
 
 _CoqProject:
 	printf -- '$(ALLDEPFLAGS_NL)' > _CoqProject
