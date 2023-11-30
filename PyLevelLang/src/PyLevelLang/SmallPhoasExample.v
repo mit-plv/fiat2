@@ -1,3 +1,4 @@
+(* A simple example to demonstrate the phoasify-dephoasify pipeline *)
 Require Import String List PeanoNat.
 
 Inductive type : Type :=
@@ -130,6 +131,9 @@ Fixpoint interp_phoas_expr {t : type} (e : phoas_expr interp_type t) : interp_ty
   | PhELet _ e1 fn_e2 => interp_phoas_expr (fn_e2 (interp_phoas_expr e1))
   end.
 
+Definition Interp_Phoas_Expr {t : type} (e : Phoas_expr t) : interp_type t :=
+  interp_phoas_expr (e interp_type).
+
 Inductive wf : tenv -> forall {t : type}, expr t -> Prop :=
 | wf_EVar G t (x : string) :
   get_tenv G x = Some t -> wf G (EVar t x)
@@ -145,31 +149,8 @@ Definition Flat_wf {t : type} (e : expr t) := wf nil e.
 
 Definition const_string : type -> Type := fun _ => string.
 
-(* ???
-Inductive str_phoas_wf : tenv -> forall {t : type}, phoas_expr const_string t -> Prop :=
-| wf_PhEVar G t x :
-  get_tenv G x = Some t -> str_phoas_wf G (PhEVar t x)
-| wf_PhEAtom G {t} (a : atom t) :
-  str_phoas_wf G (PhEAtom a)
-| wf_PhEBinop  G {t1 t2 t3} (o : binop t1 t2 t3) e1 e2 :
-  str_phoas_wf G e1 ->
-  str_phoas_wf G e2 ->
-  str_phoas_wf G (PhEBinop o e1 e2)
-| wf_PhELet G {t1 t2} x e1 (fn_e2 : const_string t1 -> phoas_expr const_string t2) :
-  str_phoas_wf G e1 ->
-  (forall v, str_phoas_wf G (fn_e2 v)) ->
-  str_phoas_wf G (PhELet x e1 fn_e2).
-
-May not be necessary - consider using phoas_equiv instead
- Also may not need G and store to be consistent in Interpret2; try using the fact that the engineering design is the same for flat and phoas when var is not found in locals / store *)
-
 Definition Phoas_wf {t} (e : Phoas_expr t) :=
   forall V V', phoas_expr_equiv nil (e V) (e V').
-
-(*
-flat phoasify V equiv const_string
-            V equiv const_string dephoasify flat
-*)
 
 (* Default value of type (phoas_expr V t) *)
 Definition default_phoas_expr {V}(t : type) : phoas_expr V t :=
@@ -318,26 +299,6 @@ Fixpoint dephoasify (used : list string) {t : type} (e : phoas_expr const_string
 Definition Dephoasify {t} (e : Phoas_expr t) : expr t :=
   dephoasify nil (e const_string).
 
-Definition ex1 := ELet "x" (EBinop OPlus (EAtom (ANat 2)) (EAtom (ANat 2))) (EBinop OPlus (EVar _ "x") (EAtom (ANat 1))).
-Compute (phoasify nil ex1).
-Compute (Phoasify ex1).
-Compute (Phoasify ex1 const_string).
-
-Definition ex1_ph := Eval compute in (Phoasify ex1 const_string).
-
-Lemma ex1_ph_wf : phoas_expr_equiv nil ex1_ph ex1_ph.
-Proof.
-  unfold ex1_ph. repeat constructor.
-Qed.
-
-Definition ex1_opt_ph := id ex1_ph.
-Compute (dephoasify nil ex1_opt_ph).
-Definition ex1_opt := Eval compute in (dephoasify nil ex1_opt_ph).
-Lemma ex1_opt_wf : wf nil ex1_opt.
-Proof.
-  unfold ex1. repeat constructor.
-Qed.
-
 Lemma eq_dec_refl : forall  {t : Type} (eq_dec : forall (v1 v2 : t), {v1 = v2} + {v1 <> v2}),
   forall (x : t), eq_dec x x = left eq_refl.
 Proof.
@@ -378,25 +339,25 @@ Lemma phoasify_sound' : forall t (e : expr t) (G : tenv),
       phoasify_envs_consistent G l l' ->
       interp_expr l e = interp_phoas_expr (phoasify l' e).
 Proof.
-  induction e; intros G H_wf l l' H_consistent; inversion H_wf; subst.
-  - simpl. pose proof (H_consistent x) as H_consistent. rewrite H2 in H_consistent.
+  intros t e G H_wf. induction H_wf; intros l l' H_consistent.
+  - simpl. pose proof (H_consistent x) as H_consistent. rewrite H in H_consistent.
     unfold get_venv. destruct (get_env l x) eqn:E; try (exfalso; assumption).
     + unfold get_phoas_env. destruct H_consistent as [_ HR]. rewrite HR.
       unfold proj_expected. unfold phoas_proj_expected.
       destruct (type_eq_dec (projT1 s) t); destruct t; reflexivity.
   - reflexivity.
-  - simpl. repeat eq_projT2_eq. rewrite (IHe1 _ H3 l l'); auto.
-    rewrite (IHe2 _ H7 l l'); auto.
-  - simpl. repeat eq_projT2_eq. rewrite (IHe1 _ H3 l l'); auto.
+  - simpl. rewrite (IHH_wf1 l l'); auto.
+    rewrite (IHH_wf2 l l'); auto.
+  - simpl. rewrite (IHH_wf1 l l'); auto.
     remember (interp_phoas_expr (phoasify l' e1)) as v.
-    rewrite (IHe2 _ H6 ((x, existT _ _ v) :: l) ((x, existT _ _ v) :: l')).
+    rewrite (IHH_wf2 ((x, existT _ _ v) :: l) ((x, existT _ _ v) :: l')).
     + reflexivity.
     + apply phoasify_envs_consistent_step. auto.
 Qed.
 
 Theorem phoasify_sound : forall t (e : expr t),
     Flat_wf e ->
-    interp_expr nil e = interp_phoas_expr (Phoasify e interp_type).
+    interp_expr nil e = Interp_Phoas_Expr (Phoasify e).
 Proof.
   unfold Phoasify. intros t e H_wf. apply phoasify_sound' with (G := nil); auto.
   unfold phoasify_envs_consistent. unfold get_tenv. unfold get_env. auto.
@@ -432,28 +393,27 @@ Lemma dephoasify_sound' : forall t (e : phoas_expr const_string t) (C : ctxt) (e
       dephoasify_envs_consistent C used l ->
       interp_phoas_expr e0 = interp_expr l (dephoasify used e).
 Proof.
-  intro t. induction e; intros C e0 H_equiv used l H_consistent;
-    inversion H_equiv; repeat eq_projT2_eq.
-  - unfold dephoasify_envs_consistent in H_consistent.
-    apply H_consistent in H3 as [_ HR]; simpl in *.
+  intros t e C e0 H_equiv. induction H_equiv; intros used l H_consistent.
+  - apply H_consistent in H. destruct H as [_ HR]. simpl in *.
     unfold get_venv. destruct (get_env l v).
     + unfold proj_expected. destruct s. apply projT1_eq in HR as HR1.
       simpl in HR1; subst. simpl. rewrite eq_dec_refl.
       apply Eqdep_dec.inj_pair2_eq_dec in HR; auto.
       apply type_eq_dec.
     + exfalso; assumption.
-  - simpl. rewrite (IHe1 _ _ H3 _ _ H_consistent).
-    rewrite (IHe2 _ _ H8 _ _ H_consistent). reflexivity.
-  - simpl. remember (fresh used x) as v. remember (interp_expr l (dephoasify used e)) as v'.
-    rewrite H with (v := v) (C := (vars t1 (v, v') :: C)) (used := (v :: used)) (l := (v, existT _ _ v') :: l).
+  - rewrite H. reflexivity.
+  - simpl. rewrite (IHH_equiv1 _ _ H_consistent).
+    rewrite (IHH_equiv2 _ _ H_consistent). reflexivity.
+  - simpl. remember (fresh used x) as v. remember (interp_expr l (dephoasify used e1)) as v'.
+    rewrite H0 with (v := v) (used := (v :: used)) (l := (v, existT _ _ v') :: l).
     + reflexivity.
-    + rewrite (IHe C _ H4 used l H_consistent). rewrite <- Heqv'. apply H8.
-    + rewrite Heqv. apply dephoasify_envs_consistent_step. assumption.
+    + rewrite (IHH_equiv _ _ H_consistent). rewrite Heqv.
+      rewrite <- Heqv'. apply dephoasify_envs_consistent_step. assumption.
 Qed.
 
 Theorem dephoasify_sound : forall t (e : Phoas_expr t),
     Phoas_wf e ->
-    interp_phoas_expr (e interp_type) = interp_expr nil (Dephoasify e).
+    Interp_Phoas_Expr e = interp_expr nil (Dephoasify e).
 Proof.
   intros t e H.
   apply dephoasify_sound' with (C := nil); auto.
@@ -498,18 +458,17 @@ Lemma phoasify_wf' : forall (t : type) (e : expr t) (G : tenv),
       phoasify_tenvs_consistent G env env' C ->
       phoas_expr_equiv C (phoasify env e) (phoasify env' e).
 Proof.
-  intro t. induction e; intros G H_wf V env V' env' C H_consistent;
-    inversion H_wf; subst.
+  intros t e G H_wf. induction H_wf; intros V env V' env' C H_consistent.
   - simpl. unfold phoasify_tenvs_consistent in H_consistent.
-    pose proof (H_consistent x) as Hx. rewrite H2 in Hx.
+    pose proof (H_consistent x) as Hx. rewrite H in Hx.
     destruct Hx as [p [Hp1 [Hp2 [Hp3 Hp4]]]]. unfold get_phoas_env. rewrite Hp3. rewrite Hp4.
     destruct p as [t' [l r]].
     simpl in Hp2; subst. unfold projT1_fst_projT2. unfold projT1_snd_projT2. simpl.
     unfold phoas_proj_expected. simpl. rewrite eq_dec_refl. constructor. apply Hp1.
   - constructor. reflexivity.
-  - simpl. constructor; repeat eq_projT2_eq.
-  - simpl. constructor; repeat eq_projT2_eq. intros v v'. apply IHe2 with (G := ((x, t1) :: G)).
-    auto. apply phoasify_tenvs_consistent_step. auto.
+  - simpl. constructor. apply IHH_wf1. assumption. apply IHH_wf2. assumption.
+  - simpl. constructor. apply IHH_wf1. assumption.
+    intros v v'. apply IHH_wf2. apply phoasify_tenvs_consistent_step. assumption.
 Qed.
 
 Theorem phoasify_wf : forall (t : type) (e : expr t),
@@ -524,13 +483,13 @@ Qed.
 Definition dephoasify_tenvs_consistent (C : @ctxt const_string const_string) (used : list string) (G : tenv) :=
   forall p, In p C -> In (fst (projT2 p)) used /\ get_tenv G (fst (projT2 p)) = Some (projT1 p).
 
-Lemma dephoasify_tenvs_consistent_step : forall C used G,
+Lemma dephoasify_tenvs_consistent_step : forall (C : @ctxt const_string const_string) used G,
     dephoasify_tenvs_consistent C used G ->
-    forall x t,
+    forall x t y,
       let x' := fresh used x in
-      dephoasify_tenvs_consistent (vars t (x', x') :: C) (x' :: used) ((x', t) :: G).
+      dephoasify_tenvs_consistent (vars t (x', y) :: C) (x' :: used) ((x', t) :: G).
 Proof.
-  unfold dephoasify_tenvs_consistent. intros C used G H x t p [HL | HR].
+  unfold dephoasify_tenvs_consistent. intros C used G H x t y p [HL | HR].
   - rewrite <- HL. simpl. split.
     + auto.
     + unfold get_tenv. unfold get_env. rewrite eqb_refl. reflexivity.
@@ -543,34 +502,68 @@ Proof.
       * assumption.
 Qed.
 
-Theorem dephoasify_wf' : forall (t : type) (e : phoas_expr const_string t) C,
-    phoas_expr_equiv C e e ->
+Theorem dephoasify_wf' : forall (t : type) (e e' : phoas_expr const_string t) C,
+    phoas_expr_equiv C e e' ->
     forall used G,
       dephoasify_tenvs_consistent C used G ->
       wf G (dephoasify used e).
 Proof.
-  intro t. induction e; intros C H_equiv used G H_consistent;
-    inversion H_equiv; subst; repeat eq_projT2_eq.
+  intros t e e' C H_equiv. induction H_equiv; intros used G H_consistent.
   - unfold dephoasify_tenvs_consistent in H_consistent.
-    apply H_consistent in H3 as [H_in HG]. simpl in *.
+    apply H_consistent in H; destruct H as [H_in HG]. simpl in *.
     constructor. auto.
   - constructor.
   - simpl. constructor.
-    + apply IHe1 with (C := C); auto.
-    + apply IHe2 with (C := C); auto.
+    + apply IHH_equiv1. auto.
+    + apply IHH_equiv2. auto.
   - simpl. constructor.
-    + apply IHe with (C := C); auto.
-    + remember (fresh used x) as x'. apply H with (C := (vars t1 (x', x') :: C)).
-      apply H10. rewrite Heqx'. apply dephoasify_tenvs_consistent_step.
+    + apply IHH_equiv; auto.
+    + remember (fresh used x) as x''. apply H0 with (v' := x'').
+      rewrite Heqx''. apply dephoasify_tenvs_consistent_step.
       assumption.
 Qed.
 
 Theorem dephoasify_wf : forall (t : type) (e : Phoas_expr t),
     Phoas_wf e -> Flat_wf (Dephoasify e).
 Proof.
-  intros t e H. apply dephoasify_wf' with (C := nil); auto.
+  intros t e H. apply dephoasify_wf' with (e' := e const_string) (C := nil); auto.
   unfold dephoasify_tenvs_consistent. intros p contra.
   apply in_nil in contra. exfalso. assumption.
 Qed.
 
-(* ??? Question: For mutable variables, do we rely on the same engineering design in the case of malformed environment for both expr and phoas_expr (hence requiring their value envs to be exactly the same in the theorems), or do we talk about the type env for the mutable vars too? *)
+(* An example pipeline converting a flat expression to its PHOAS form, performs a transformation (id in this example), and converts it back to a flat expression.
+The example proves that the pipeline is sound and the resulting expression is wellformed using the soundness and wellformedness theorems above. *)
+Definition ex1 := ELet "x" (EBinop OPlus (EAtom (ANat 2)) (EAtom (ANat 2))) (EBinop OPlus (EVar _ "x") (EAtom (ANat 1))).
+Definition ex1_ph := Phoasify ex1.
+Definition ex1_ph' := id ex1_ph.
+Definition ex1' := Dephoasify ex1_ph'.
+Compute ex1'.
+
+Example ex1_wf : Flat_wf ex1.
+Proof. repeat constructor. Qed.
+
+Example ex1_ph_wf : Phoas_wf ex1_ph.
+Proof. apply phoasify_wf. apply ex1_wf. Qed.
+
+Example ex1_ph_sound:  interp_expr nil ex1 = Interp_Phoas_Expr ex1_ph.
+Proof. apply phoasify_sound. apply ex1_wf. Qed.
+
+Example ex1_ph'_wf : Phoas_wf ex1_ph'.
+Proof. unfold ex1_ph'. unfold id. apply ex1_ph_wf. Qed.
+
+Example ex1_ph'_sound : Interp_Phoas_Expr ex1_ph = Interp_Phoas_Expr ex1_ph'.
+Proof. reflexivity. Qed.
+
+Example ex1'_wf : Flat_wf ex1'.
+Proof. apply dephoasify_wf. apply ex1_ph'_wf. Qed.
+
+Example ex1'_sound : Interp_Phoas_Expr ex1_ph' = interp_expr nil ex1'.
+Proof. apply dephoasify_sound. apply ex1_ph'_wf. Qed.
+
+Example pipeline_sound : interp_expr nil ex1 = interp_expr nil ex1'.
+Proof.
+  rewrite ex1_ph_sound.
+  rewrite ex1_ph'_sound.
+  rewrite ex1'_sound.
+  reflexivity. Qed.
+(* End of example. *)
