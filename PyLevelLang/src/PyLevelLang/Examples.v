@@ -11,13 +11,13 @@ Section Examples.
 
   Instance tenv : map.map string (type * bool) := SortedListString.map _.
   Instance tenv_ok : map.ok tenv := SortedListString.ok _.
-  
+
   Instance locals : map.map string {t & interp_type t} := SortedListString.map _.
   Instance locals_ok : map.ok locals := SortedListString.ok _.
 
-  Definition elaborate_interpret (l : locals) (p : pexpr) : result {t & interp_type t} :=
-    e <- elaborate (map.map_values (fun x => (projT1 x, true)) l) p;;
-    Success (existT _ _ (interp_expr l (projT2 e))).
+  Definition elaborate_interpret (store env : locals) (p : pexpr) : result {t & interp_type t} :=
+    e <- elaborate (map.map_values (fun x => (projT1 x, true)) store) p;;
+    Success (existT _ _ (interp_expr store env (projT2 e))).
 
   Local Open Scope Z_scope.
   Local Open Scope string_scope.
@@ -35,7 +35,7 @@ Section Examples.
             (EBinop (OCons _) (EAtom (AInt 4))
               (EAtom (ANil _))))))).
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex1 =
+  Goal elaborate_interpret map.empty map.empty ex1 =
     Success (existT _ (TList TInt) (1 ::  2 :: 3 :: 4 :: nil)).
   reflexivity. Qed.
 
@@ -49,17 +49,17 @@ Section Examples.
       (EBinop (OCons TInt) (EAtom (AInt 3))
         (EBinop (OCons TInt) (EAtom (AInt 4))
           (EAtom (ANil TInt)))))
-    "has type" 
+    "has type"
     (TList TInt)
     "but expected"
     (TList TString)).
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex2 = error:(
+  Goal elaborate_interpret map.empty map.empty ex2 = error:(
     (EBinop (OCons TInt) (EAtom (AInt 2))
       (EBinop (OCons TInt) (EAtom (AInt 3))
         (EBinop (OCons TInt) (EAtom (AInt 4))
           (EAtom (ANil TInt)))))
-    "has type" 
+    "has type"
     (TList TInt)
     "but expected"
     (TList TString)).
@@ -75,7 +75,7 @@ Section Examples.
           (EBinop (OPair "1" _ _) (EVar TInt "x")
             (EAtom AEmpty)))))).
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex3 = Success (existT _ TInt 42).
+  Goal elaborate_interpret map.empty map.empty ex3 = Success (existT _ TInt 42).
   reflexivity. Qed.
 
   Definition ex4 : pexpr :=
@@ -83,7 +83,7 @@ Section Examples.
       (PEBinop POPair (PEVar "x") (PEVar "y"))) "0".
   Goal elaborate map.empty ex4 = error:("Undefined variable" "y").
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex4 = error:("Undefined variable" "y").
+  Goal elaborate_interpret map.empty map.empty ex4 = error:("Undefined variable" "y").
   reflexivity. Qed.
 
   Definition ex5 : pexpr :=
@@ -98,7 +98,7 @@ Section Examples.
               (EAtom AEmpty)))
           (EAtom AEmpty)))).
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex5 =
+  Goal elaborate_interpret map.empty map.empty ex5 =
     Success (existT _
       (TPair "0" TInt
         (TPair "1"
@@ -122,7 +122,7 @@ Section Examples.
           (EBinop (OPair "int" _ _) (EAtom (AInt (-2)))
             (EAtom AEmpty))))).
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex6 =
+  Goal elaborate_interpret map.empty map.empty ex6 =
     Success (existT _
       (TPair "bool" TBool
         (TPair "string" TString
@@ -144,7 +144,7 @@ Section Examples.
             (EBinop (OPair "b" _ _) (EAtom (AInt 50))
               (EAtom AEmpty)))))).
   reflexivity. Qed.
-  Goal elaborate_interpret map.empty ex7 =
+  Goal elaborate_interpret map.empty map.empty ex7 =
     Success (existT _ TInt 50).
   reflexivity. Qed.
 
@@ -164,5 +164,5 @@ Section Examples.
 
   Definition ex10 : expr _ :=
     EFold (EBinop (OCons _) (EAtom (AInt 2)) (EBinop (OCons _) (EAtom (AInt 5)) (EAtom (ANil _)))) (EAtom (AInt 3)) "x" "y" (EBinop OPlus (EVar _ "x") (EVar _ "y")).
-  Compute interp_expr map.empty ex10.
+  Compute interp_expr map.empty map.empty ex10.
 End Examples.

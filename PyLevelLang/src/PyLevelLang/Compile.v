@@ -124,8 +124,8 @@ Section WithMap.
 
   Lemma interp_type_eq : forall {t : type} (e : expr t) (w : interp_type t),
     (existT interp_type t w =
-    existT interp_type t (interp_expr (locals := locals) map.empty e)) ->
-    (interp_expr map.empty e) = w.
+    existT interp_type t (interp_expr (locals := locals) map.empty map.empty e)) ->
+    (interp_expr map.empty map.empty e) = w.
   Proof.
     intros.
     inversion_sigma.
@@ -183,7 +183,7 @@ Section WithMap.
     compile_expr e = Success (c, e') -> forall tr m l,
     exec map.empty c tr m l (fun tr' m' l' => exists (w : word),
       eval_expr m' l' e' = Some w /\
-      value_relation (interp_expr map.empty e) w /\
+      value_relation (interp_expr map.empty map.empty e) w /\
       m' = m /\
       map.extends l' l
     ).
@@ -238,7 +238,7 @@ Section WithMap.
         apply RWord.
       + (* ONot *)
         rewrite <- Properties.word.ring_morph_sub.
-        destruct (interp_expr map.empty e); apply RBool.
+        destruct (interp_expr map.empty map.empty e); apply RBool.
     - (* EBinop o e1 e2 *)
       destruct o; try easy.
       all:
@@ -276,8 +276,8 @@ Section WithMap.
             apply interp_type_eq in h
         end;
         subst;
-        set (v1 := interp_expr _ e1);
-        set (v2 := interp_expr _ e2).
+        set (v1 := interp_expr _ _ e1);
+        set (v2 := interp_expr _ _ e2).
       1-5:
         (* OWPlus, OWMinus, OWTimes, OWDivU, OWModU *)
         apply RWord.
@@ -316,8 +316,8 @@ Section WithMap.
               apply interp_type_eq in h
           end;
           subst.
-          set (b1 := interp_expr _ e1).
-          set (b2 := interp_expr _ e2).
+          set (b1 := interp_expr _ _ e1).
+          set (b2 := interp_expr _ _ e2).
           destruct b1, b2.
           all:
             apply RBool';

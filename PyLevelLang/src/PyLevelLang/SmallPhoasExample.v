@@ -132,7 +132,7 @@ Fixpoint interp_phoas_expr {t : type} (e : phoas_expr interp_type t) : interp_ty
   end.
 
 Definition Interp_Phoas_Expr {t : type} (e : Phoas_expr t) : interp_type t :=
-  interp_phoas_expr (e interp_type).
+  interp_phoas_expr (e _).
 
 Inductive wf : tenv -> forall {t : type}, expr t -> Prop :=
 | wf_EVar G t (x : string) :

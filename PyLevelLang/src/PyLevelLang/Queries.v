@@ -47,21 +47,21 @@ Section Queries_Section.
 
   Definition artists := listify (artist_1 :: artist_2 :: artist_3 :: artist_4 :: nil).
 
-  Compute interp_expr map.empty artists.
-  
-  Definition artists_filter_q := 
+  Compute interp_expr map.empty map.empty artists.
+
+  Definition artists_filter_q :=
     EFlatmap artists "x" (
       EIf (EBinop OLess (EUnop (OFst _ _ _) (ELoc artist "x")) (EAtom (AInt 3)))
         (EBinop (OCons artist) (ELoc artist "x") (EAtom (ANil _)))
         (EAtom (ANil _))
     ).
-  
+
   Compute artists_filter_q.
 
-  Definition artists_filter_q' := 
+  Definition artists_filter_q' :=
     EFlatmap artists "x" (EBinop (OCons _) (EUnop (OFst "id" _ (TPair "name" TString TEmpty)) (EVar _ "x")) (EAtom (ANil TInt))).
 
-  Compute interp_expr map.empty artists_filter_q.
+  Compute interp_expr map.empty map.empty artists_filter_q.
 
   Definition test := PEProj (PERecord (("a", PEAtom (PAInt 1)) :: ("b", PEAtom (PAInt 2)) :: nil)) "a".
 
@@ -71,7 +71,7 @@ Section Queries_Section.
     | x :: xs => PEBinop POCons x (pexpr_list t xs)
     end.
 
-  Fixpoint as_pexpr {t : type} (v : interp_type t) : pexpr := 
+  Fixpoint as_pexpr {t : type} (v : interp_type t) : pexpr :=
     match t return interp_type t -> pexpr with
     | TWord => fun v => PEAtom (PAWord (word.unsigned v))
     | TInt => fun v => PEAtom (PAInt v)
@@ -93,7 +93,7 @@ Section Queries_Section.
     | nil => fun _ => nil
     | (s, t) :: xs => fun tp => as_pexpr (fst tp) :: (pexperify (snd tp))
     end tp.
-    
+
   Definition from_tuple' {l : list (string * type)} (tp : interp_type (record l)) : pexpr :=
     PERecord (zip (map fst l) (pexperify tp)).
 
@@ -128,19 +128,19 @@ Section Queries_Section.
   }>.
   Compute run_program ((("ans", (TList TString, true)) :: nil)) select_test.
 
-  Definition select_test_elaborated' : command := 
+  Definition select_test_elaborated' : command :=
     Eval cbv in match elaborate_command (map.of_list (("ans", (TList TString, true))::nil)) select_test with
     | Success x => x
     | _ => _
     end.
-  
+
   Definition select_test_elaborated := Eval cbv in match select_test_elaborated' with
                                                     | CGets _ e => e
                                                     | _ => _
                                                     end.
   Compute select_test_elaborated.
   Compute flatmap_flatmap select_test_elaborated.
-  Compute interp_expr map.empty select_test_elaborated.
+  Compute interp_expr map.empty map.empty select_test_elaborated.
 
   Definition album := record (("album_id", TInt) :: ("title", TString) :: ("artist_id", TInt) :: nil).
   Definition albums := pexpr_list album (map from_tuple'
@@ -159,38 +159,38 @@ Section Queries_Section.
 
   (* SELECT * FROM albums JOIN artists WHERE album_id = id *)
   Definition join_test := <{
-    "ans" <- flatmap (flatmap albums "y" (flatmap artists' "z" [("y", "z")])) "x" 
+    "ans" <- flatmap (flatmap albums "y" (flatmap artists' "z" [("y", "z")])) "x"
     (if fst("x")["artist_id"] == snd("x")["id"] then ["x"] else nil[t])
   }>.
   Compute run_program ((("ans", (TList (t), true))) :: nil) join_test.
 
   (* SELECT * FROM albums WHERE album_id = n JOIN artists WHERE album_id = id *)
   Definition filter_albums_with_artist n := <{
-    "ans" <- flatmap (flatmap albums "y" (flatmap artists' "z" [("y", "z")])) "x" 
+    "ans" <- flatmap (flatmap albums "y" (flatmap artists' "z" [("y", "z")])) "x"
     (if (fst("x")["artist_id"] == snd("x")["id"]) && (fst("x")["album_id"] == n) then ["x"] else nil[t]);
     "json" <- <[ PEElaborated _ (generate_json _ (ELoc (List (record (("0", album) :: ("1", artist) :: nil))) "ans")) ]>
   }>.
   Compute run_program (("json", (TString, true)) :: (("ans", (TList t, true))) :: nil) (filter_albums_with_artist 7).
 
   Compute (elaborate_command (map.of_list (("ans", (TList t, true))::nil)) join_test).
-  Definition tmp' : command := 
+  Definition tmp' : command :=
     Eval cbv in match elaborate_command (map.of_list (("ans", (TList t, true))::nil)) join_test with
     | Success x => x
     | _ => _
     end.
-  
+
   Definition tmp := Eval cbv in match tmp' with
                                 | CGets _ e => e
                                 | _ => _
                                 end.
   Compute tmp.
   Compute flatmap_flatmap tmp.
-  Compute interp_expr map.empty tmp.
+  Compute interp_expr map.empty map.empty tmp.
 
   Local Close Scope pylevel_scope.
 
   Declare Scope query_sugar_scope.
-  Notation "'join' ( a : x ) ( b : y )" := 
+  Notation "'join' ( a : x ) ( b : y )" :=
     (PEFlatmap a x%string (PEFlatmap b y%string (PEBinop POPair (PEVar x%string) (PEVar y%string))))
     (at level 0, left associativity) : query_sugar_scope.
 
@@ -204,11 +204,11 @@ Section Queries_Section.
   Notation "[ z ]" := (EBinop (OCons _) z (EAtom (ANil _)))
    (at level 0, only printing) : pretty_expr_scope.
 
-  Notation "[ x , .. , y , z ]" := 
+  Notation "[ x , .. , y , z ]" :=
     (EBinop (OCons _) x .. (EBinop (OCons _) y (EBinop (OCons _) z (EAtom (ANil _)))) ..)
    (at level 110, only printing) : pretty_expr_scope.
 
-  Notation "{ x , .. , y , z }" := 
+  Notation "{ x , .. , y , z }" :=
     (EBinop (OPair _ _ _) x .. (EBinop (OPair _ _ _) y (EBinop (OPair _ _ _) z (EAtom AEmpty))) ..)
    (at level 110, only printing) : pretty_expr_scope.
 
@@ -246,7 +246,7 @@ Section Queries_Section.
   Notation "x" := (EUnop (OSnd _ _ _) x)
     (at level 10, only printing, right associativity) : pretty_expr_scope.
 
-  Notation "[ x | x <- l , e ]" := 
+  Notation "[ x | x <- l , e ]" :=
     (EFlatmap l x%string (EIf e (EBinop (OCons _) (EVar _ x%string) (EAtom (ANil _))) (EAtom (ANil _))))
     (at level 10, only printing, l at level 9, x at level 0, e at level 10, left associativity) : pretty_expr_scope.
 
@@ -275,10 +275,10 @@ Definition export_prog (l : list (string * (type * bool))) (p : pcommand) :=
      | Failure s => "Error: Program errored"
      end.
 
-Definition exported_get_artist (n : Z) := export_prog 
+Definition exported_get_artist (n : Z) := export_prog
   (("json", (String, true)) :: ("ans", (TList artist, true)) :: nil)
   (filter_test (word := Naive.word64) n).
-Definition exported_get_album_and_artist (n : Z) := export_prog 
+Definition exported_get_album_and_artist (n : Z) := export_prog
     (("json", (String, true)) ::
      ("ans", (List (record (("0", album) :: ("1", artist) :: nil)), true)) ::
      nil)

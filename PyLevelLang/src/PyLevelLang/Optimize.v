@@ -13,7 +13,7 @@ Lemma length_eval_range : forall l s, length (eval_range s l) = l.
 Proof.
   induction l; simpl; auto.
 Qed.
-  
+
 Section WithMap.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
@@ -25,8 +25,8 @@ Section WithMap.
     | x :: xs => EBinop (OCons t) x (listify xs)
     end.
 
-  Lemma listify_correct (t : type) (l : locals) (xs : list (expr t)) :
-    interp_expr l (listify xs) = map (interp_expr l) xs.
+  Lemma listify_correct (t : type) (store env : locals) (xs : list (expr t)) :
+    interp_expr store env (listify xs) = map (interp_expr store env) xs.
   Proof.
     induction xs; try easy.
     simpl.
@@ -45,7 +45,7 @@ Section WithMap.
     | TList t => fun l => listify (map (reify t) l)
     end.
 
-  Lemma reify_correct (t : type) (l : locals) (c : interp_type t) : interp_expr l (reify t c) = c.
+  Lemma reify_correct (t : type) (store env : locals) (c : interp_type t) : interp_expr store env (reify t c) = c.
   Proof.
     induction t; intros; try easy.
     - apply word.of_Z_unsigned.
@@ -62,8 +62,8 @@ Section WithMap.
     | _ => None
     end.
 
-  Lemma invert_atom_correct {t : type} (l : locals) (e : expr t) :
-    forall c, invert_atom e = Some c -> interp_expr l e = c.
+  Lemma invert_atom_correct {t : type} (store env : locals) (e : expr t) :
+    forall c, invert_atom e = Some c -> interp_expr store env e = c.
   Proof.
     intros.
     destruct e; inversion H.
@@ -89,15 +89,15 @@ Section WithMap.
     | _ => None
     end.
 
-  Lemma as_const_correct {t : type} (l : locals) (e : expr t) :
-    forall c, as_const e = Some c -> interp_expr l e = c.
+  Lemma as_const_correct {t : type} (store env : locals) (e : expr t) :
+    forall c, as_const e = Some c -> interp_expr store env e = c.
   Proof.
     destruct e; simpl; intros; try solve [inversion H]; auto.
     - inversion H. reflexivity.
     - destruct e; try inversion H. reflexivity.
     - destruct e1; destruct e2; try inversion H. reflexivity.
     - dependent induction e1; simpl; simpl in *; try solve [inversion H];
-      dependent induction a; simpl; simpl in *; try solve [inversion H]; 
+      dependent induction a; simpl; simpl in *; try solve [inversion H];
       destruct b; simpl; apply invert_atom_correct; apply H.
   Qed.
 
@@ -110,8 +110,8 @@ Section WithMap.
     | _ => e
     end.
 
-  Lemma constfold_head_correct l {t} e :
-    interp_expr l (@constfold_head t e) = interp_expr l e.
+  Lemma constfold_head_correct store env {t} e :
+    interp_expr store env (@constfold_head t e) = interp_expr store env e.
   Proof.
     cbv [constfold_head].
     repeat destruct_one_match; auto; try erewrite reify_correct, as_const_correct; auto.
@@ -134,12 +134,12 @@ Section WithMap2.
   Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
   Context {locals: map.map string {t & interp_type (width := width) t}} {locals_ok: map.ok locals}.
 
-  Lemma eLength_correct {t : type} (l : locals) (e : expr (TList t)) :
-    interp_expr l (eLength e) = interp_expr l (EUnop (OLength t) e).
+  Lemma eLength_correct {t : type} (store env : locals) (e : expr (TList t)) :
+    interp_expr store env (eLength e) = interp_expr store env (EUnop (OLength t) e).
   Proof.
     dependent induction e; subst; cbn [eLength]; try reflexivity.
     - case invert_atom eqn:?; trivial. destruct i; trivial.
-      apply invert_atom_correct with (l:=l) in Heqo.
+      apply invert_atom_correct with (store := store) (env := env) in Heqo.
       cbn in *. rewrite Heqo. reflexivity.
     - dependent induction o; subst; cbn [invert_atom]; trivial.
       + cbn [interp_expr interp_binop interp_unop interp_atom Datatypes.length].
@@ -177,13 +177,13 @@ Section WithMap2.
     clear dependent locals.
     clear dependent width.
     dependent induction e; cbn; intuition; try congruence;
-    dependent induction o; inversion H; 
-    try apply Eqdep.EqdepTheory.inj_pair2 in H1, H2; try exact type_eq_dec; 
+    dependent induction o; inversion H;
+    try apply Eqdep.EqdepTheory.inj_pair2 in H1, H2; try exact type_eq_dec;
     congruence.
   Qed.
 
-  Lemma EUnop_correct {t1 t2 : type} (l : locals) (o : unop t1 t2) (e : expr t1)
-    : interp_expr l (eUnop o e) = interp_expr l (EUnop o e).
+  Lemma EUnop_correct {t1 t2 : type} (store env : locals) (o : unop t1 t2) (e : expr t1)
+    : interp_expr store env (eUnop o e) = interp_expr store env (EUnop o e).
   Proof.
     cbv [eUnop]; rewrite constfold_head_correct; case o in *; trivial.
     { apply eLength_correct. }
@@ -238,29 +238,29 @@ Section WithMap2.
     | ELet x e1 e2 => (ELet x (fst (constant_folding' e1)) (fst (constant_folding' e2)), None)
     end.
 
-  Lemma constant_folding'_snd_correct {t : type} (l : locals) (e : expr t) :
-    forall c, snd (constant_folding' e) = Some c -> interp_expr l e = c.
+  Lemma constant_folding'_snd_correct {t : type} (store env : locals) (e : expr t) :
+    forall c, snd (constant_folding' e) = Some c -> interp_expr store env e = c.
   Proof.
-    generalize dependent l.
+    generalize dependent env. generalize dependent store.
     induction e; intros; simpl; try easy.
 
     - inversion H. reflexivity.
 
     - simpl in H.
       destruct (constant_folding' e). destruct o0; inversion H.
-      rewrite (IHe l i); easy.
+      rewrite (IHe store env i); easy.
 
     - simpl in H.
       destruct (constant_folding' e1). destruct (constant_folding' e2). destruct o0; destruct o1; inversion H.
-      rewrite (IHe1 l i), (IHe2 l i0); easy.
+      rewrite (IHe1 store env i), (IHe2 store env i0); easy.
   Qed.
 
   Definition constant_folding {t : type} (e : expr t) : expr t := fst (constant_folding' e).
 
-  Lemma constant_folding_correct {t : type} (l : locals) (e : expr t) :
-    interp_expr l (constant_folding e) = interp_expr l e.
+  Lemma constant_folding_correct {t : type} (store env : locals) (e : expr t) :
+    interp_expr store env (constant_folding e) = interp_expr store env e.
   Proof.
-    generalize dependent l.
+    generalize dependent env. generalize dependent store.
     unfold constant_folding.
     induction e; intros; simpl; try easy.
 
@@ -268,7 +268,7 @@ Section WithMap2.
       + rewrite reify_correct.
         f_equal.
         simpl in IHe.
-        rewrite (constant_folding'_snd_correct l e i); try easy.
+        rewrite (constant_folding'_snd_correct store env e i); try easy.
         rewrite E. reflexivity.
       + simpl in IHe. rewrite IHe. reflexivity.
 
@@ -276,17 +276,17 @@ Section WithMap2.
       + rewrite reify_correct.
         f_equal.
         * simpl in IHe1.
-          rewrite (constant_folding'_snd_correct l e1 i); try easy. rewrite E1. reflexivity.
+          rewrite (constant_folding'_snd_correct store env e1 i); try easy. rewrite E1. reflexivity.
         * simpl in IHe2.
-          rewrite (constant_folding'_snd_correct l e2 i0); try easy. rewrite E2. reflexivity.
+          rewrite (constant_folding'_snd_correct store env e2 i0); try easy. rewrite E2. reflexivity.
 
       + rewrite IHe1, IHe2. reflexivity.
       + rewrite IHe1, IHe2. reflexivity.
       + rewrite IHe1, IHe2. reflexivity.
 
     - rewrite IHe1.
-      assert (H: (fun y : interp_type t1 => interp_expr (set_local l x y) (fst (constant_folding' e2)))
-      = (fun y : interp_type t1 => interp_expr (set_local l x y) e2)).
+      assert (H: (fun y : interp_type t1 => interp_expr store (set_local env x y) (fst (constant_folding' e2)))
+      = (fun y : interp_type t1 => interp_expr store (set_local env x y) e2)).
       { apply functional_extensionality. intros. apply IHe2. }
       rewrite <- H.
       reflexivity.
@@ -309,7 +309,7 @@ Section WithMap2.
     | EAtom a => EAtom a
     | EUnop o e1 => EUnop o (branch_elim e1)
     | EBinop o e1 e2 => EBinop o (branch_elim e1) (branch_elim e2)
-    | EIf e1 e2 e3 => 
+    | EIf e1 e2 e3 =>
         let e1' := branch_elim e1 in
         let e2' := branch_elim e2 in
         let e3' := branch_elim e3 in
@@ -323,25 +323,25 @@ Section WithMap2.
     | ELet x e1 e2 => ELet x (branch_elim e1) (branch_elim e2)
     end.
 
-  Lemma branch_elim_correct {t : type} (l : locals) (e : expr t) 
-    : interp_expr l (branch_elim e) = interp_expr l e.
+  Lemma branch_elim_correct {t : type} (store env : locals) (e : expr t)
+    : interp_expr store env (branch_elim e) = interp_expr store env e.
   Proof.
-    generalize dependent l.
-    induction e; simpl; intros; 
-    try rewrite <- IHe; try rewrite <- IHe1; try rewrite <- IHe2; try rewrite <- IHe3; 
+    generalize dependent env. generalize dependent store.
+    induction e; simpl; intros;
+    try rewrite <- IHe; try rewrite <- IHe1; try rewrite <- IHe2; try rewrite <- IHe3;
     try reflexivity.
 
-    - assert (H:(fun y : interp_type t1 => interp_expr (set_local l x y) (branch_elim e2)) 
-              = (fun y => interp_expr (set_local l x y) e2)).
+    - assert (H:(fun y : interp_type t1 => interp_expr store (set_local env x y) (branch_elim e2))
+              = (fun y => interp_expr store (set_local env x y) e2)).
       { apply functional_extensionality. intros. rewrite IHe2. reflexivity. }
       rewrite H. reflexivity.
 
-    - f_equal. 
+    - f_equal.
       do 2 (apply functional_extensionality; intros).
       easy.
 
     - destruct (as_const (branch_elim e1)) eqn:H; try easy.
-      destruct i; rewrite (as_const_correct l (branch_elim e1) _ H); reflexivity.
+      destruct i; rewrite (as_const_correct store env (branch_elim e1) _ H); reflexivity.
   Qed.
 
   Fixpoint is_name_used {t : type} (x : string) (e : expr t) : bool :=
@@ -352,7 +352,7 @@ Section WithMap2.
     | EUnop _ e1 => is_name_used x e1
     | EBinop _ e1 e2 => is_name_used x e1 || is_name_used x e2
     | EFlatmap e1 x' e2 => is_name_used x e1 || (negb (eqb x' x) && is_name_used x e2)
-    | EFold e1 e2 x' y' e3 => is_name_used x e1 || is_name_used x e2 || 
+    | EFold e1 e2 x' y' e3 => is_name_used x e1 || is_name_used x e2 ||
                                 (negb (eqb x' x) && negb (eqb y' x) && is_name_used x e3)
     | EIf e1 e2 e3 => is_name_used x e1 || is_name_used x e2 || is_name_used x e3
     | ELet x' e1 e2 => is_name_used x e1 || (negb (eqb x' x) && is_name_used x e2)
@@ -382,19 +382,17 @@ Section WithMap2.
     repeat destruct_one_match; try rewrite map.get_put_diff; tauto.
   Qed.
 
-  Lemma is_name_used_correct {t : type} {t' : type} (l : locals) (e : expr t) (x : string):
-    forall y : interp_type t', is_name_used x e = false -> interp_expr (set_local l x y) e = interp_expr l e.
+  Lemma is_name_used_correct {t : type} {t' : type} (store env : locals) (e : expr t) (x : string):
+    forall y : interp_type t', is_name_used x e = false -> interp_expr store (set_local env x y) e = interp_expr store env e.
   Proof.
-    generalize dependent l.
+    generalize dependent env. generalize dependent store.
     induction e; intros; simpl in H; simpl.
-    
-    - unfold get_local, set_local.
-      rewrite map.get_put_diff; try easy. 
-      apply eqb_neq, H.
 
     - unfold get_local, set_local.
       rewrite map.get_put_diff; try easy.
       apply eqb_neq, H.
+
+    - reflexivity.
 
     - reflexivity.
 
@@ -418,7 +416,7 @@ Section WithMap2.
     - destruct (is_name_used x e1) eqn:He1; simpl in *; try discriminate.
       destruct (is_name_used x e2) eqn:He2; simpl in *; try discriminate.
       destruct (eqb x0 x) eqn:H0x; simpl in *;
-      destruct (eqb y x) eqn:Hyx; simpl in *; 
+      destruct (eqb y x) eqn:Hyx; simpl in *;
       rewrite IHe1, IHe2; eauto; f_equal; repeat (apply functional_extensionality; intros);
       try rewrite eqb_eq in *; try rewrite eqb_neq in *; try subst.
       + now rewrite !set_local_same.
@@ -454,19 +452,19 @@ Section WithMap2.
     | EIf e1 e2 e3 => EIf (unused_name_elim e1) (unused_name_elim e2) (unused_name_elim e3)
     | ELet x e1 e2 => if is_name_used x e2 then ELet x (unused_name_elim e1) (unused_name_elim e2) else unused_name_elim e2
     end.
-  
-  Lemma unused_name_elim_correct {t : type} (l : locals) (e : expr t) 
-    : interp_expr l (unused_name_elim e) = interp_expr l e.
+
+  Lemma unused_name_elim_correct {t : type} (store env : locals) (e : expr t)
+    : interp_expr store env (unused_name_elim e) = interp_expr store env e.
   Proof.
-    generalize dependent l.
+    generalize dependent env. generalize dependent store.
     induction e; try easy; intros; simpl.
 
     - rewrite IHe. reflexivity.
 
     - rewrite IHe1, IHe2. reflexivity.
 
-    - assert (H:(fun y : interp_type t1 => interp_expr (set_local l x y) (unused_name_elim e2)) 
-              = (fun y => interp_expr (set_local l x y) e2)).
+    - assert (H:(fun y : interp_type t1 => interp_expr store (set_local env x y) (unused_name_elim e2))
+              = (fun y => interp_expr store (set_local env x y) e2)).
       { apply functional_extensionality. intros. rewrite IHe2. reflexivity. }
       rewrite IHe1, H. reflexivity.
 
@@ -485,15 +483,15 @@ Section WithMap2.
     match e with
     | EFlatmap l x f => match l with
                         | EFlatmap l' y g => if orb (is_name_used y f) (eqb x y)
-                                              then EFlatmap l x f 
-                                              else EFlatmap l' y (EFlatmap g x f) 
+                                              then EFlatmap l x f
+                                              else EFlatmap l' y (EFlatmap g x f)
                         | l' => EFlatmap l' x f
                         end
     | e' => e'
     end.
 
   Lemma flat_map_flat_map :
-    forall {A B C} (l : list A) (f : B -> list C)  (g : A -> list B), 
+    forall {A B C} (l : list A) (f : B -> list C)  (g : A -> list B),
     flat_map f (flat_map g l) = flat_map (fun x => flat_map f (g x)) l.
   Proof.
     induction l; auto.
@@ -506,13 +504,13 @@ Section WithMap3.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
   Context {locals: map.map string {t & interp_type (width := width) t}} {locals_ok: map.ok locals}.
- 
-  Lemma flatmap_flatmap_head_correct {t : type} (l : locals) (e : expr t)
-    : interp_expr l (flatmap_flatmap_head e) = interp_expr l e.
+
+  Lemma flatmap_flatmap_head_correct {t : type} (store env : locals) (e : expr t)
+    : interp_expr store env (flatmap_flatmap_head e) = interp_expr store env e.
   Proof.
     destruct e; auto.
     dependent induction e1; auto; simpl.
-    destruct_one_match; auto; 
+    destruct_one_match; auto;
     simpl. rewrite flat_map_flat_map. f_equal. apply functional_extensionality.
     intros. f_equal. apply functional_extensionality.
     intros. rewrite set_local_comm_diff.
@@ -539,7 +537,7 @@ Section WithMap3.
   Definition fold_flatmap_head {t : type} (e : expr t) : expr t :=
     match e with
     | EFold l a x y f => match l with
-                         | EFlatmap l' z g => 
+                         | EFlatmap l' z g =>
                              if is_name_used z f || is_name_used y g || String.eqb x y || String.eqb x z || String.eqb y z
                              then EFold (EFlatmap l' z g) a x y f
                              else EFold l' a z y (EFold g (EVar _ y) x y f)
@@ -558,7 +556,7 @@ Section WithMap3.
   Lemma ascii_dec_refl : forall c, Ascii.ascii_dec c c = left eq_refl.
   Proof.
     intros.
-    destruct c; eauto. 
+    destruct c; eauto.
     repeat (simpl; rewrite bool_dec_refl). simpl. f_equal.
   Qed.
 
@@ -572,7 +570,7 @@ Section WithMap3.
   Lemma type_eq_dec_refl : forall t, type_eq_dec t t = left eq_refl.
   Proof.
     induction t; eauto; simpl.
-    - rewrite string_dec_refl. simpl. 
+    - rewrite string_dec_refl. simpl.
       rewrite IHt1. simpl.
       rewrite IHt2. simpl.
       f_equal.
@@ -580,8 +578,8 @@ Section WithMap3.
       f_equal.
   Qed.
 
-  Lemma fold_flatmap_head_correct {t : type} (l : locals) (e : expr t)
-    : interp_expr l (fold_flatmap_head e) = interp_expr l e.
+  Lemma fold_flatmap_head_correct {t : type} (store env : locals) (e : expr t)
+    : interp_expr store env (fold_flatmap_head e) = interp_expr store env e.
   Proof.
     destruct e; eauto.
     dependent induction e1; eauto; simpl.
@@ -614,7 +612,7 @@ Section WithMap3.
   Definition fold_flatmap_singleton_head {t : type} (e : expr t) : expr t :=
     match e with
     | EFold l a x y f => match l with
-                         | EFlatmap l' z g => 
+                         | EFlatmap l' z g =>
                              if is_name_used z f || is_name_used y g || String.eqb x y || String.eqb x z || String.eqb y z
                              then EFold (EFlatmap l' z g) a x y f
                              else match invert_singleton g with
@@ -626,18 +624,18 @@ Section WithMap3.
     | e' => e'
     end.
 
-  Compute fold_flatmap_singleton_head 
-    (EFold 
-      (EFlatmap 
-        (EBinop 
-          (OCons TInt) 
+  Compute fold_flatmap_singleton_head
+    (EFold
+      (EFlatmap
+        (EBinop
+          (OCons TInt)
           (EAtom (AInt 3))
           (EAtom (ANil TInt))
         )
         "z"
         (EBinop
           (OCons TInt)
-          (EBinop 
+          (EBinop
             OTimes
             (EVar TInt "z")
             (EVar TInt "z")
@@ -646,24 +644,24 @@ Section WithMap3.
         )
       )
       (EAtom (AInt 0))
-      "x" "y" 
-      (EBinop 
-        OPlus 
+      "x" "y"
+      (EBinop
+        OPlus
         (EVar TInt "x")
         (EVar TInt "y")
       )
     ).
 
   Lemma fold_flatmap_singleton {A B C} (l : list A) (f : A -> B) (g : B -> C -> C) (a : C):
-    
+
     fold_right g a (flat_map (fun x => f x :: nil) l) = fold_right (fun x y => g (f x) y) a l.
   Proof.
     induction l; eauto.
     intros. cbn. f_equal. eauto.
   Qed.
 
-  Lemma fold_flatmap_singleton_head_correct {t : type} (l : locals) (e : expr t)
-    : interp_expr l (fold_flatmap_singleton_head e) = interp_expr l e.
+  Lemma fold_flatmap_singleton_head_correct {t : type} (store env : locals) (e : expr t)
+    : interp_expr store env (fold_flatmap_singleton_head e) = interp_expr store env e.
   Proof.
     destruct e; eauto.
     dependent induction e1; eauto; simpl.
@@ -698,8 +696,8 @@ Section WithMap3.
     | e' => e'
     end.
 
-  Lemma flatmap_singleton_head_correct {t} (l : locals) (e : expr t) :
-    interp_expr l (flatmap_singleton_head e) = interp_expr l e.
+  Lemma flatmap_singleton_head_correct {t} (store env : locals) (e : expr t) :
+    interp_expr store env (flatmap_singleton_head e) = interp_expr store env e.
   Proof.
     destruct e; simpl; eauto.
     dependent induction e1; eauto.
@@ -707,11 +705,11 @@ Section WithMap3.
     dependent induction e1_2; eauto.
     dependent induction a; eauto.
     simpl.
-    now rewrite <- app_nil_end.
+    now rewrite app_nil_r.
   Qed.
 
   Definition flatmap_singleton {t : type} : expr t -> expr t := fold_expr (@flatmap_singleton_head).
-       
+
   (* Everything below is WIP *)
 
   Definition substitute_let {t} (e : expr t) : expr t.
@@ -723,7 +721,7 @@ Section WithMap3.
    *)
   Proof. Abort.
 
-  (* First attempt at implementing substitute. 
+  (* First attempt at implementing substitute.
      HAS A BUG - see comment for ELet *)
   Fixpoint substitute {t tx : type} (x : string) (ex : expr tx) (e : expr t): expr t
     := match e in expr t' return expr t' with
@@ -731,15 +729,12 @@ Section WithMap3.
                        | left H, true => cast H _ ex
                        | _, _ => EVar t' x'
                        end
-       | ELoc t' x' => match type_eq_dec tx t', String.eqb x x' return expr t' with
-                       | left H, true => cast H _ ex
-                       | _, _ => ELoc t' x'
-                       end
+       | ELoc t' x' => ELoc t' x'
        | EAtom a => EAtom a
        | EUnop o e' => EUnop o (substitute x ex e')
        | EBinop o e1 e2 => EBinop o (substitute x ex e1) (substitute x ex e2)
        | EFlatmap e1 x' e2 => if String.eqb x x' || is_name_used x' ex
-                                then EFlatmap e1 x' e2 
+                                then EFlatmap e1 x' e2
                                 else EFlatmap (substitute x ex e1) x' (substitute x ex e2)
        | EFold e1 e2 x' y e3 => if String.eqb x x' || String.eqb x y || is_name_used x' ex || is_name_used y ex
                                   then EFold e1 e2 x' y e3
@@ -756,15 +751,15 @@ Section WithMap3.
   (* Correct, but old and not-strong-enough version of substitute_correct.
      PHOAS was suggested as a possible approach to prove the right version.
      For the meantime, I've left the old version here... *)
-  Lemma substitute_correct' {t tx : type} (l : locals) (x : string) (ex : expr tx) (e : expr t) :
-    get_local l x = interp_expr l ex -> interp_expr l (substitute x ex e) = interp_expr l e.
+  Lemma substitute_correct' {t tx : type} (store env : locals) (x : string) (ex : expr tx) (e : expr t) :
+    get_local env x = interp_expr store env ex -> interp_expr store env (substitute x ex e) = interp_expr store env e.
   Proof.
-    generalize dependent l.
+    generalize dependent env. generalize dependent store.
     induction e; intros; simpl.
     - repeat (destruct_one_match; eauto). now subst.
-    - repeat (destruct_one_match; eauto). now subst.
+    - reflexivity.
     - eauto.
-    - now rewrite IHe. 
+    - now rewrite IHe.
     - now rewrite IHe1, IHe2.
     - repeat (destruct_one_match; eauto).
       simpl. rewrite IHe1; eauto.
@@ -773,7 +768,7 @@ Section WithMap3.
       unfold get_local, set_local in *.
       destruct E.
       rewrite !map.get_put_diff; eauto.
-      rewrite H. 
+      rewrite H.
       epose proof is_name_used_correct as inuc.
       unfold set_local in inuc.
       now rewrite inuc.
@@ -798,5 +793,4 @@ Section WithMap3.
       rewrite H.
       now rewrite is_name_used_correct.
   Abort.
-
 End WithMap3.
