@@ -706,85 +706,6 @@ Section WithWord.
     Qed.
 
     Lemma small_loop_false : forall x n, (S x * S x = n)%nat ->
-                                         fold_left (fun (l' : locals) (v : Z) =>
-                                                      if
-                                                        (match
-                                                            map.get (map.put l' "x" (existT interp_type Int v)) "x"
-                                                          with
-                                                          | Some v0 => proj_expected Int v0
-                                                          | None => 0
-                                                          end *
-                                                           match
-                                                             map.get (map.put l' "x" (existT interp_type Int v)) "x"
-                                                           with
-                                                           | Some v0 => proj_expected Int v0
-                                                           | None => 0
-                                                           end =?
-                                                           match
-                                                             map.get (map.put l' "x" (existT interp_type Int v)) "n"
-                                                           with
-                                                           | Some v0 => proj_expected Int v0
-                                                           | None => 0
-                                                           end)%Z
-                                                      then
-                                                        map.put (map.put l' "x" (existT interp_type Int v)) "ans"
-                                                          (existT interp_type Bool true)
-                                                      else map.put l' "x" (existT interp_type Int v))
-                                           (eval_range 0 (S x))
-                                           (@map.put string (sigT (fun t : type => interp_type t)) locals
-                                              (@map.empty string (@sigT type (fun t : type => interp_type t))
-                                                 locals)
-                                              "n" (existT interp_type TInt (Z.of_nat n)))
-                                         = map.put (map.put map.empty "n" (existT interp_type Int (Z.of_nat n))) "x" (existT interp_type Int (Z.of_nat x)).
-    Proof.
-      intros x n x_Sq. apply Sx_Sq_le in x_Sq.
-      induction x.
-      - intros. simpl in x_Sq. subst. cbn.
-        rewrite map.get_put_same.
-        rewrite map.get_put_diff by congruence.
-        rewrite map.get_put_same .
-        destruct n; try easy.
-      - intros.
-        rewrite last_range. rewrite fold_left_app.
-
-        destruct ((x * x =? n)%nat) eqn:x_Sq_eq.
-        * rewrite Nat.eqb_eq in x_Sq_eq.
-          subst.
-          assert ((S x * S x < x * x)%nat -> False).
-          { lia. }
-          easy.
-        * assert ((S x * S x < n)%nat -> (x * x =? n) % nat = false
-                  -> (x * x < n)%nat).
-          { lia. }
-          specialize (H x_Sq x_Sq_eq).
-          specialize (IHx H).
-
-          rewrite IHx. clear IHx.
-          cbn.
-
-          rewrite !map.get_put_same.
-          rewrite !map.get_put_diff by congruence.
-          rewrite !map.get_put_same.
-          cbn.
-
-          destruct n; try easy.
-        + cbn.
-          assert ((S x * S x < S n)%nat ->
-                  ((Pos.of_succ_nat x * Pos.of_succ_nat x
-                    =? Pos.of_succ_nat n)%positive = false)).
-          { destruct (Pos.of_succ_nat x * Pos.of_succ_nat x =?
-                        Pos.of_succ_nat n)%positive eqn:S_x_sq.
-            - rewrite Pos.eqb_eq in S_x_sq. lia.
-            - lia.
-          }
-          specialize (H0 x_Sq).
-          rewrite H0.
-
-          rewrite map.put_put_same.
-          reflexivity.
-    Qed.
-
-    Lemma small_loop_false' : forall x n, (S x * S x = n)%nat ->
                                           fold_left
                                             (fun (store' : locals) (v : Z) =>
                                                if
@@ -856,98 +777,6 @@ Section WithWord.
     Qed.
 
     Lemma large_loop_true : forall x k,
-        (fold_left
-           (fun (l' : locals) (v : Z) =>
-              if
-                (match map.get (map.put l' "x" (existT interp_type Int v)) "x" with
-                 | Some v0 => proj_expected Int v0
-                 | None => 0
-                 end *
-                   match map.get (map.put l' "x" (existT interp_type Int v)) "x" with
-                   | Some v0 => proj_expected Int v0
-                   | None => 0
-                   end =?
-                   match map.get (map.put l' "x" (existT interp_type Int v)) "n" with
-                   | Some v0 => proj_expected Int v0
-                   | None => 0
-                   end)%Z
-              then
-                map.put (map.put l' "x" (existT interp_type Int v)) "ans"
-                  (existT interp_type Bool true)
-              else map.put l' "x" (existT interp_type Int v))
-           (eval_range (Z.pos (Pos.of_succ_nat x + 1)) (S k))
-           (map.put
-              (map.put
-                 (map.put map.empty "n"
-                    (existT interp_type Int (Z.pos (Pos.of_nat (S x * S x)))))
-                 "ans" (existT interp_type Bool true)) "x"
-              (existT interp_type Int (Z.pos (Pos.of_succ_nat x))))
-         = map.put (map.put (map.put map.empty "ans" (existT interp_type Bool true)) "x"
-                      (existT interp_type Int
-                         match Z.of_nat k with
-                         | 0 => Z.pos (Pos.of_succ_nat x + 1)
-                         | Z.pos y' => Z.pos (Pos.of_succ_nat x + 1 + y')
-                         | Z.neg y' => Z.pos_sub (Pos.of_succ_nat x + 1) y'
-                         end)) "n"
-             (existT interp_type Int
-                (Z.pos
-                   match (x + x * S x)%nat with
-                   | 0%nat => 1
-                   | S _ => Pos.succ (Pos.of_nat (x + x * S x))
-                   end))).
-    Proof.
-      intros. induction k.
-      - simpl eval_range.
-        simpl fold_left.
-        rewrite map.put_put_same.
-        rewrite map.get_put_same.
-        rewrite (map.put_put_diff _ "n" "ans") by congruence.
-        rewrite (map.put_put_diff _ "n" "x") by congruence.
-        rewrite map.get_put_same.
-
-        simpl.
-        destruct (
-            ((Pos.of_succ_nat x + 1) * (Pos.of_succ_nat x + 1) =?
-               match (x + x * S x)%nat with
-               | 0%nat => 1
-               | S _ => Pos.succ (Pos.of_nat (x + x * S x))
-               end)%positive); try reflexivity.
-        rewrite (map.put_put_diff _ "ans" "x") by congruence.
-        rewrite map.put_put_diff by congruence.
-        rewrite map.put_put_same.
-        rewrite (map.put_put_diff _ "ans" "x") by congruence.
-        reflexivity.
-      - rewrite last_range. rewrite fold_left_app.
-        rewrite IHk. clear IHk.
-        simpl.
-
-        rewrite map.get_put_same.
-        rewrite (map.put_put_diff _ "n" "x") by congruence.
-        rewrite map.get_put_same.
-        cbn.
-
-        destruct (
-            ((Pos.of_succ_nat x + 1 + Pos.of_succ_nat k) *
-               (Pos.of_succ_nat x + 1 + Pos.of_succ_nat k) =?
-               match (x + x * S x)%nat with
-               | 0%nat => 1
-               | S _ => Pos.succ (Pos.of_nat (x + x * S x))
-               end)%positive).
-
-        * rewrite map.put_put_diff by congruence.
-          rewrite map.put_put_same.
-          rewrite (map.put_put_diff _ "x" "ans") by congruence.
-          rewrite map.put_put_same.
-          reflexivity.
-        * rewrite map.put_put_diff by congruence.
-
-          rewrite (map.put_put_diff _ "x" "n") by congruence.
-          rewrite map.put_put_same.
-          rewrite (map.put_put_diff _ "x" "n") by congruence.
-          reflexivity.
-    Qed.
-
-    Lemma large_loop_true' : forall x k,
         fold_left
           (fun (store' : locals) (v : Z) =>
              if
@@ -1049,7 +878,7 @@ Section WithWord.
         cbn.
         reflexivity.
       - intros.
-        specialize (small_loop_false' _ _ xSq) as IH.
+        specialize (small_loop_false _ _ xSq) as IH.
         rewrite IH. clear IH.
 
          cbn.
@@ -1095,7 +924,7 @@ Section WithWord.
          destruct k.
          * simpl.
            reflexivity.
-         * rewrite large_loop_true'.
+         * rewrite large_loop_true.
            reflexivity.
     Qed.
   End WithMap.
