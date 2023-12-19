@@ -30,22 +30,22 @@ Section WithWord.
    * A TInt, TBool, or TString
    *)
 
-  Definition to_json_field_list_body to_json to_json_field_list t : interp_type t -> string :=
-    match t as t return (interp_type t -> string) with
-    | TPair key t1 t2 => fun s =>
-                           match s with
-                           | (a, rest) =>
-                               match t2 with
-                               | TEmpty => append (append key ": ") (to_json t1 a)
-                               | _ => append (append (append (append
-                                                                key ": ") (to_json t1 a)) ", ") (to_json_field_list t2 rest)
-                               end
-                           end
-    | TEmpty => fun i => "tt"
-    | _ => fun s => "Error this type cannot be conerted to a json object"
-    end.
-  Fixpoint to_json t : interp_type t -> string :=
-    match t as t return (interp_type t -> string) with
+Definition to_json_field_list_body to_json to_json_field_list t : interp_type t -> string :=
+   match t as t return (interp_type t -> string) with
+   | TPair key t1 t2 => fun s =>
+       match s with
+       | (a, rest) =>
+           match t2 with
+           | TEmpty => append (append (append """" key) """: ") (to_json t1 a)
+           | _ => append (append (append (append (append
+                   """" key) """: ") (to_json t1 a)) ", ") (to_json_field_list t2 rest)
+           end
+         end
+   | TEmpty => fun i => "tt"
+   | _ => fun s => "Error this type cannot be conerted to a json object"
+   end.
+Fixpoint to_json t : interp_type t -> string :=
+  match t as t return (interp_type t -> string) with
     (*TODO: properly implement for words*)
     | TWord => fun w => "TODO"
     | TInt => fun n => DecimalString.NilZero.string_of_int (BinInt.Z.to_int n)
@@ -62,51 +62,53 @@ Section WithWord.
   with to_json_field_list t : interp_type t -> string := to_json_field_list_body to_json to_json_field_list t.
 
 
-  Definition generate_json_field_list_body generate_json generate_json_field_list (t : type) (var : expr t) : expr String :=
-    match t as t return (expr t -> expr String) with
-    | TPair key t1 t2 => match t2 with
-                         | TEmpty => fun f =>
-                                       EBinop OConcatString (EBinop OConcatString (EBinop OConcatString
-                                                                                     (EAtom (AString key))
-                                                                                     (EAtom (AString ": ")))
-                                                               (generate_json t1 (EUnop (OFst _ _ _) f)))
-                                         (EAtom (AString ""))
-                         | t2 => fun f =>
-                                   EBinop OConcatString (EBinop OConcatString (EBinop OConcatString
-                                                                                 (EAtom (AString key))
-                                                                                 (EAtom (AString ": ")))
-                                                           (generate_json t1 (EUnop (OFst _ _ _) f)))
-                                     (EBinop OConcatString (EAtom (AString ", "))
-                                        (generate_json_field_list t2 (EUnop (OSnd _ _ t2) f)))
-                         end
-    | TEmpty => fun f => EAtom (AString "tt")
-    | _ => fun f => EAtom (AString "Error this type cannot be conerted to a json object")
-    end var.
-  Fixpoint generate_json (t : type) (var : expr t) { struct t }: expr String :=
-    match t as t return (expr t -> expr String) with
-    (*TODO: properly implement for words*)
-    | TWord => fun f => EAtom (AString "TODO")
-    | TInt => fun f => EUnop OIntToString f
-    | TBool => fun f =>
-                 EIf (EBinop (OEq TBool eq_refl) f (EAtom (ABool true)))
-                   (EAtom (AString "true")) (EAtom (AString "false"))
-    | TString => fun f => EBinop OConcatString (EBinop OConcatString (EAtom (AString """")) f) (EAtom (AString """"))
-    | TList t => fun f => EBinop OConcatString (EBinop OConcatString
-                                                  (EAtom (AString "["))
-                                                  (EFold f (EAtom (AString "")) "v" "acc"
-                                                     (EBinop OConcatString (EBinop OConcatString
-                                                                              (generate_json t (EVar t "v"))
-                                                                              (EIf (EBinop (OEq TString eq_refl) (EVar String "acc") (EAtom (AString "")))
-                                                                                 (EAtom (AString "")) (EAtom (AString ", "))))
-                                                        (EVar String "acc")))) (EAtom (AString "]"))
-    | TPair key t1 t2 => fun f =>
-                           EBinop OConcatString (EBinop OConcatString
-                                                   (EAtom (AString "{"))
-                                                   (generate_json_field_list_body generate_json generate_json_field_list (TPair key t1 t2) f))
-                             (EAtom (AString "}"))
-    | TEmpty => fun f => EAtom (AString "tt")
-    end var
-  with
+Definition generate_json_field_list_body generate_json generate_json_field_list (t : type) (var : expr t) : expr String :=
+  match t as t return (expr t -> expr String) with
+  | TPair key t1 t2 => match t2 with
+       | TEmpty => fun f =>
+          EBinop OConcatString (EBinop OConcatString (EBinop OConcatString (EBinop OConcatString
+              (EAtom (AString """"))
+              (EAtom (AString key)))
+              (EAtom (AString """: ")))
+              (generate_json t1 (EUnop (OFst _ _ _) f)))
+              (EAtom (AString ""))
+       | t2 => fun f =>
+        EBinop OConcatString (EBinop OConcatString (EBinop OConcatString (EBinop OConcatString
+            (EAtom (AString """"))
+            (EAtom (AString key)))
+            (EAtom (AString """: ")))
+            (generate_json t1 (EUnop (OFst _ _ _) f)))
+            (EBinop OConcatString (EAtom (AString ", "))
+              (generate_json_field_list t2 (EUnop (OSnd _ _ t2) f)))
+                       end
+  | TEmpty => fun f => EAtom (AString "tt")
+  | _ => fun f => EAtom (AString "Error this type cannot be conerted to a json object")
+  end var.
+Fixpoint generate_json (t : type) (var : expr t) { struct t }: expr String :=
+  match t as t return (expr t -> expr String) with
+  (*TODO: properly implement for words*)
+  | TWord => fun f => EAtom (AString "TODO")
+  | TInt => fun f => EUnop OIntToString f
+  | TBool => fun f =>
+      EIf (EBinop (OEq TBool eq_refl) f (EAtom (ABool true)))
+          (EAtom (AString "true")) (EAtom (AString "false"))
+  | TString => fun f => EBinop OConcatString (EBinop OConcatString (EAtom (AString """")) f) (EAtom (AString """"))
+  | TList t => fun f => EBinop OConcatString (EBinop OConcatString
+      (EAtom (AString "["))
+      (EFold f (EAtom (AString "")) "v" "acc"
+             (EBinop OConcatString (EBinop OConcatString
+             (generate_json t (EVar t "v"))
+             (EIf (EBinop (OEq TString eq_refl) (EVar String "acc") (EAtom (AString "")))
+                  (EAtom (AString "")) (EAtom (AString ", "))))
+             (EVar String "acc")))) (EAtom (AString "]"))
+  | TPair key t1 t2 => fun f =>
+      EBinop OConcatString (EBinop OConcatString
+          (EAtom (AString "{"))
+          (generate_json_field_list_body generate_json generate_json_field_list (TPair key t1 t2) f))
+          (EAtom (AString "}"))
+  | TEmpty => fun f => EAtom (AString "tt")
+  end var
+with
   generate_json_field_list t {struct t}: expr t -> expr String
   := generate_json_field_list_body generate_json generate_json_field_list t.
 
@@ -254,294 +256,272 @@ Section WithWord.
       - apply IHl.
     Qed.
 
+  Fixpoint is_record_type (t : type) : Prop :=
+    match t with
+    | Unit => True
+    | Pair s t1 t2 => is_json_type t1 /\ is_record_type t2
+    | _ => False
+    end
+  with is_json_type (t : type) : Prop :=
+  match t with
+  | Pair s t1 t2 => is_json_type t1 /\ is_record_type t2
+  | List t => is_json_type t
+  | _ => True
+  end.
 
-    Fixpoint is_record_type (t : type) : Prop :=
-      match t with
-      | Unit => True
-      | Pair s t1 t2 => is_json_type t1 /\ is_record_type t2
-      | _ => False
-      end
-    with is_json_type (t : type) : Prop :=
-           match t with
-           | Pair s t1 t2 => is_json_type t1 /\ is_record_type t2
-           | List t => is_json_type t
-           | _ => True
-           end.
+  Fixpoint type_size (t : type) : nat :=
+    match t with
+    | Pair s t1 t2 => 2 + (type_size t1 + type_size t2)
+    | List t => S (type_size t)
+    | _ => 0
+    end.
 
-    Fixpoint type_size (t : type) : nat :=
-      match t with
-      | Pair s t1 t2 => 2 + (type_size t1 + type_size t2)
-      | List t => S (type_size t)
-      | _ => 0
-      end.
+  Lemma generate_json_full_eq (l : locals) (n : nat) (t : type) :
+    (type_size t < n)%nat ->
+    (forall (t1 : type) (i2 : interp_type t) (i1 : interp_type t1) s (e : expr (Pair s t1 t)),
+    is_json_type t1 ->
+    is_record_type t ->
+    (S (type_size t1) < n)%nat ->
+    interp_expr map.empty l e = (i1, i2) ->
+    to_json_field_list (Pair s t1 t) (i1, i2) = interp_expr map.empty l (generate_json_field_list (Pair s t1 t) e))
+    /\
+    (forall (v : interp_type t) (e : expr t),
+    interp_expr map.empty l e = v ->
+    is_json_type t ->
+    to_json t v = interp_expr map.empty l (generate_json t e)).
+  Proof.
+    revert l t. induction n; try lia; destruct t; split; intros; cbn -[append] in *;
+      try tauto. 
+    - cbn. congruence.
+    - intros. try (cbn; try rewrite H; reflexivity); cbn.
+      * (* Bool *) destruct v; rewrite H0; reflexivity.
+    - intros. cbn; try rewrite H0; reflexivity; cbn.
+    - cbn -[append]. destruct i2.
+      repeat rewrite string_app_assoc. repeat f_equal.
+      * apply IHn; try lia; auto.
+        ** cbn. rewrite H3. reflexivity.
+      * repeat rewrite <- string_app_assoc.
+        apply IHn; try lia; intuition auto.
+        cbn. rewrite H3. reflexivity.
+    - destruct v. repeat f_equal. apply IHn; try lia; intuition auto.
+    - intros. cbn. repeat rewrite string_app_assoc. repeat f_equal.
+      rewrite string_app_nil.
+      apply IHn; try lia; intuition auto. cbn. rewrite H3. reflexivity.
+    - repeat rewrite string_app_assoc. f_equal. f_equal.
+      rewrite H0.
 
-    Lemma generate_json_full_eq (store env : locals) (n : nat) (t : type) :
-      (type_size t < n)%nat ->
-      (forall (t1 : type) (i2 : interp_type t) (i1 : interp_type t1) s (e : expr (Pair s t1 t)),
-          is_json_type t1 ->
-          is_record_type t ->
-          (S (type_size t1) < n)%nat ->
-          interp_expr store env e = (i1, i2) ->
-          to_json_field_list (Pair s t1 t) (i1, i2) = interp_expr store env (generate_json_field_list (Pair s t1 t) e))
-      /\
-        (forall (v : interp_type t) (e : expr t),
-            interp_expr store env e = v ->
-            is_json_type t ->
-            to_json t v = interp_expr store env (generate_json t e)).
-    Proof.
-      revert store env t. induction n; try lia; destruct t; split; intros; cbn -[append] in *;
-        try tauto.
-      - cbn. congruence.
-      - intros. try (cbn; try rewrite H; reflexivity); cbn.
-        * (* Bool *) destruct v; rewrite H0; reflexivity.
-      - intros. cbn; try rewrite H0; reflexivity; cbn.
-      - cbn -[append]. destruct i2.
-        repeat rewrite string_app_assoc. repeat f_equal.
-        * apply IHn; try lia; auto.
-          ** cbn. rewrite H3. reflexivity.
-        * repeat rewrite <- string_app_assoc.
-          apply IHn; try lia; intuition auto.
-          cbn. rewrite H3. reflexivity.
-      - destruct v. repeat f_equal. apply IHn; try lia; intuition auto.
-      - intros. cbn. repeat rewrite string_app_assoc. repeat f_equal.
-        rewrite string_app_nil.
-        apply IHn; try lia; intuition auto. cbn. rewrite H3. reflexivity.
-      - repeat rewrite string_app_assoc. f_equal. f_equal.
-        rewrite H0.
+      rewrite concat_fold_right.
+      * rewrite fold_right_map. apply fold_right_ext.
+        intros. unfold set_local, get_local.
+        rewrite map.get_put_same.
+        cbn -[append].
+        repeat rewrite string_app_assoc. f_equal.
+        specialize (IHn (map.put (map.put l "v" (existT interp_type t a)) "acc"
+                     (existT interp_type String b)) t).
+        destruct IHn as [field_list to_json_eq]; try lia.
+        rewrite (to_json_eq a (EVar t "v")).
+        ** reflexivity.
+        ** cbn. unfold get_local.
+           rewrite map.put_put_diff by congruence. 
+           rewrite map.get_put_same.
+           apply proj_expected_refl.
+        ** intuition auto.
+      * apply not_in_any2. intros. destruct t; try easy.
+        ** cbn.
+           destruct Z.to_int; try easy.
+           destruct Decimal.Pos; try easy.
+           cbn. destruct d0; try easy.
+        ** destruct y; easy.
+  Qed.
 
-        rewrite concat_fold_right.
-        * rewrite fold_right_map. apply fold_right_ext.
-          intros. unfold set_local, get_local.
-          rewrite map.get_put_same.
-          cbn -[append].
-          repeat rewrite string_app_assoc. f_equal.
-          specialize (IHn store (map.put (map.put env "v" (existT interp_type t a)) "acc"
-                                   (existT interp_type String b)) t).
-          destruct IHn as [field_list to_json_eq]; try lia.
-          rewrite (to_json_eq a (EVar t "v")).
-          ** reflexivity.
-          ** cbn. unfold get_local.
-             rewrite map.put_put_diff by congruence.
-             rewrite map.get_put_same.
-             apply proj_expected_refl.
-          ** intuition auto.
-        * apply not_in_any2. intros. destruct t; try easy.
-          ** cbn.
-             destruct Z.to_int; try easy.
-             destruct Decimal.Pos; try easy.
-             cbn. destruct d0; try easy.
-          ** destruct y; easy.
-    Qed.
-
-    Theorem generate_json_eq : (forall store env t (v : interp_type t) (e : expr t),
-                                   interp_expr store env e = v ->
-                                   is_json_type t ->
-                                   to_json t v = interp_expr store env (generate_json t e)).
-    Proof. intros. eapply generate_json_full_eq; auto. Qed.
-  End Generate_Json_Equal_Section.
-
-
-  Section Generate_Json_Tests_Section.
-    Instance locals : map.map string {t & interp_type t} := SortedListString.map _.
-    Instance locals_ok : map.ok locals := SortedListString.ok _.
-
-    Goal to_json (TList (TList TInt)) [[1]; [3; 33]; [5; 55; 555]]
-         = "[[1], [3, 33], [5, 55, 555]]".
-      reflexivity. Abort.
-
-    Goal to_json (TPair "foo" TString (TPair "bar" TInt TEmpty)) ("hi", (7, tt))
-         = "{foo: ""hi"", bar: 7}".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type Bool true))
-      (generate_json TBool (EVar TBool "x")) = "true".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type Bool true))
-      (generate_json TBool (EVar TBool "x")) = "true".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type String "str"))
-      (generate_json TString (EVar TString "x")) = """str""".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type (TList Bool) [true; false; false]))
-      (generate_json (TList Bool) (EVar (TList Bool) "x")) = "[true, false, false]".
-      reflexivity. Abort.
+  Theorem generate_json_eq : (forall l t (v : interp_type t) (e : expr t),
+    interp_expr map.empty l e = v ->
+    is_json_type t ->
+    to_json t v = interp_expr map.empty l (generate_json t e)).
+  Proof. intros. eapply generate_json_full_eq; auto. Qed.
+End Generate_Json_Equal_Section.
 
 
+Section Generate_Json_Tests_Section.
+  Instance locals : map.map string {t & interp_type t} := SortedListString.map _.
+  Instance locals_ok : map.ok locals := SortedListString.ok _.
+
+  Goal to_json (TList (TList TInt)) [[1]; [3; 33]; [5; 55; 555]]
+    = "[[1], [3, 33], [5, 55, 555]]".
+  reflexivity. Abort.
+
+  Goal to_json (TPair "foo" TString (TPair "bar" TInt TEmpty)) ("hi", (7, tt))
+  = "{""foo"": ""hi"", ""bar"": 7}".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type Bool true))
+        (generate_json TBool (EVar TBool "x")) = "true".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type Bool true))
+        (generate_json TBool (EVar TBool "x")) = "true".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type String "str"))
+        (generate_json TString (EVar TString "x")) = """str""".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type (TList Bool) [true; false; false]))
+        (generate_json (TList Bool) (EVar (TList Bool) "x")) = "[true, false, false]".
+  reflexivity. Abort.
+
+  Compute (interp_expr map.empty (map.put map.empty "x" (existT interp_type (TPair "foo" TString TInt)
+        ("hi", 7)))
+        (generate_json (TPair "foo" TString TInt) (EVar _ "x")) =? 
+  to_json (TPair "foo" TString TInt) ("hi", 7))%string.
+
+  Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type (TPair "foo" TString (TPair "bar" TInt TEmpty))
+        ("hi", (7, tt))))
+        (generate_json (TPair "foo" TString (TPair "bar" TInt TEmpty)) (EVar (TPair "foo" TString (TPair "bar" TInt TEmpty)) "x"))
+        = "{""foo"": ""hi"", ""bar"": 7}".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x"
+      (existT interp_type (TPair "foo" TString (TPair "bar" (TPair "baz" TString TEmpty) TEmpty))
+                          ("a", (("b", tt), tt))))
+        (generate_json (TPair "foo" TString (TPair "bar" (TPair "baz" TString TEmpty) TEmpty)) (EVar _ "x"))
+        = "{""foo"": ""a"", ""bar"": {""baz"": ""b""}}".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x"
+      (existT interp_type (TPair "foo" (TPair "bar" (TPair "baz" TString TEmpty) TEmpty) (TPair "bar" (TPair "baz" TString TEmpty) TEmpty))
+                          ((("a", tt), tt), (("b", tt), tt))))
+        (generate_json (TPair "foo" (TPair "bar" (TPair "baz" TString TEmpty) TEmpty) (TPair "bar" (TPair "baz" TString TEmpty) TEmpty)) (EVar _ "x"))
+        = "{""foo"": {""bar"": {""baz"": ""a""}}, ""bar"": {""baz"": ""b""}}".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x"
+      (existT interp_type (TList (TList TString))
+                          [["a"; "b"]; ["c"; "d"]]))
+        (generate_json (TList (TList TString)) (EVar _ "x"))
+        = "[[""a"", ""b""], [""c"", ""d""]]".
+  reflexivity. Abort.
+
+  Goal interp_expr map.empty (map.put map.empty "x"
+      (existT interp_type (TList (TList TString))
+                          [[]; ["a"; ""]]))
+        (generate_json (TList (TList TString)) (EVar _ "x"))
+        = "[[], [""a"", """"]]".
+  reflexivity. Abort.
+End Generate_Json_Tests_Section.
 
 
-    Compute (interp_expr map.empty (map.put map.empty "x" (existT interp_type (TPair "foo" TString TInt)
-                                                             ("hi", 7)))
-               (generate_json (TPair "foo" TString TInt) (EVar _ "x")) =?
-               to_json (TPair "foo" TString TInt) ("hi", 7))%string.
+Section Square_Section.
+  Instance tenv : map.map string (type * bool) := SortedListString.map _.
+  Instance tenv_ok : map.ok tenv := SortedListString.ok _.
+
+  Definition isSquare (n : Z) : pcommand := <{
+     let "n" := n in
+     for "x" in range(0, "n"+1):
+         if "x"*"x" == "n"
+           then "ans" <- true
+           else skip
+           end
+     end
+     }>.
+
+  Definition isSquare_elaborated (n : Z) : command :=
+     Eval cbv in (match (elaborate_command (map.of_list [("ans", (TBool, true))]) (isSquare n)) with
+                    | Success x => x
+                    | _ => _
+                    end
+        ).
+End Square_Section.
+
+Section Examples.
+  Fixpoint init_locals (vars : list (string * type)) : locals :=
+     match vars with
+     | [] => map.empty
+     | (x, t) :: xs => set_local (init_locals xs) x (default_val t)
+     end.
+  Definition map_to_locals (init : list (string * (type * bool))) : locals :=
+    init_locals (map (fun x => match x with
+                               | (x, (t, _)) => (x, t)
+                               end) init).
+
+  Definition run_program (init : list (string * (type * bool))) (pc : pcommand)
+     := c <- @elaborate_command tenv (map.of_list init) pc;;
+        Success (SortedList.value (interp_command map.empty (map_to_locals init) c)).
 
 
+  Goal run_program [("a", (TInt, true))] <{ "a" <- 5 }> = Success [("a", existT interp_type TInt 5)].
+  reflexivity.  Abort.
 
+  Goal run_program [("a", (TInt, true))] <{
+     let "b" := 100 in
+     "a" <- 5 + "b";
+     "a" <- "a" + 1
+  }> = Success [("a", existT interp_type TInt 106)].
+  reflexivity.  Abort.
 
+  Goal run_program [("y", (TInt, true))] <{
+     let mut "a" := 2 in
+     "a" <- (let "x" := 5 in "x"*"a");
+     "y" <- "a"
+  }> = Success [("y", existT interp_type TInt 10)].
+  reflexivity. Abort.
 
-
-    Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type (TPair "foo" TString (TPair "bar" TInt TEmpty))
-                                                         ("hi", (7, tt))))
-      (generate_json (TPair "foo" TString (TPair "bar" TInt TEmpty)) (EVar (TPair "foo" TString (TPair "bar" TInt TEmpty)) "x"))
-         = "{foo: ""hi"", bar: 7}".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x"
-                                  (existT interp_type (TPair "foo" TString (TPair "bar" (TPair "baz" TString TEmpty) TEmpty))
-                                     ("a", (("b", tt), tt))))
-      (generate_json (TPair "foo" TString (TPair "bar" (TPair "baz" TString TEmpty) TEmpty)) (EVar _ "x"))
-         = "{foo: ""a"", bar: {baz: ""b""}}".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x"
-                                  (existT interp_type (TPair "foo" (TPair "bar" (TPair "baz" TString TEmpty) TEmpty) (TPair "bar" (TPair "baz" TString TEmpty) TEmpty))
-                                     ((("a", tt), tt), (("b", tt), tt))))
-      (generate_json (TPair "foo" (TPair "bar" (TPair "baz" TString TEmpty) TEmpty) (TPair "bar" (TPair "baz" TString TEmpty) TEmpty)) (EVar _ "x"))
-         = "{foo: {bar: {baz: ""a""}}, bar: {baz: ""b""}}".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x"
-                                  (existT interp_type (TList (TList TString))
-                                     [["a"; "b"]; ["c"; "d"]]))
-      (generate_json (TList (TList TString)) (EVar _ "x"))
-         = "[[""a"", ""b""], [""c"", ""d""]]".
-      reflexivity. Abort.
-
-    Goal interp_expr map.empty (map.put map.empty "x"
-                                  (existT interp_type (TList (TList TString))
-                                     [[]; ["a"; ""]]))
-      (generate_json (TList (TList TString)) (EVar _ "x"))
-         = "[[], [""a"", """"]]".
-      reflexivity. Abort.
-  End Generate_Json_Tests_Section.
-
-
-  Section Square_Section.
-    Instance tenv : map.map string (type * bool) := SortedListString.map _.
-    Instance tenv_ok : map.ok tenv := SortedListString.ok _.
-
-    Definition isSquare (n : Z) : pcommand := <{
-          let "n" := n in
-          for "x" in range(0, "n"+1):
-              if "x"*"x" == "n"
-              then "ans" <- true
-              else skip
-          end
-          end
-        }>.
-
-    Definition isSquare_elaborated (n : Z) : command :=
-      Eval cbv in (match (elaborate_command (map.of_list [("ans", (TBool, true))]) (isSquare n)) with
-                   | Success x => x
-                   | _ => _
-                   end
-                  ).
-  End Square_Section.
-
-  Section Examples.
-    Fixpoint init_locals (vars : list (string * type)) : locals :=
-      match vars with
-      | [] => map.empty
-      | (x, t) :: xs => set_local (init_locals xs) x (default_val t)
-      end.
-
-    Fixpoint map_to_mut_locals (init : list (string * (type * bool))) : locals :=
-      match init with
-      | [] => map.empty
-      | x :: xs => match x with
-                   | (x, (t, true)) => set_local (map_to_mut_locals xs) x (default_val t)
-                   | _ => map_to_mut_locals xs
-                   end
-      end.
-
-    Fixpoint map_to_immut_locals (init : list (string * (type * bool))) : locals :=
-      match init with
-      | [] => map.empty
-      | x :: xs => match x with
-                   | (x, (t, false)) => set_local (map_to_immut_locals xs) x (default_val t)
-                   | _ => map_to_immut_locals xs
-                   end
-      end.
-
-    Definition run_program (init : list (string * (type * bool))) (pc : pcommand)
-      := c <- @elaborate_command tenv (map.of_list init) pc;;
-         Success (SortedList.value (interp_command (map_to_mut_locals init) (map_to_immut_locals init) c)).
-
-
-    Goal run_program [("a", (TInt, true))] <{ "a" <- 5 }> = Success [("a", existT interp_type TInt 5)].
-      reflexivity.  Abort.
-
-    Goal run_program [("a", (TInt, true))] <{
-        let "b" := 100 in
-        "a" <- 5 + "b";
-        "a" <- "a" + 1
-      }> = Success [("a", existT interp_type TInt 106)].
-      reflexivity.  Abort.
-
-    Goal run_program [("y", (TInt, true))] <{
-        let mut "a" := 2 in
-        "a" <- (let "x" := 5 in "x"*"a");
-        "y" <- "a"
-      }> = Success [("y", existT interp_type TInt 10)].
-      reflexivity. Abort.
-
-    Goal run_program [("x", (TInt, true))] <{
-        "x" <- 5;
-        (let "y" := ("x" - 2) in
+  Goal run_program [("x", (TInt, true))] <{
+     "x" <- 5;
+     (let "y" := ("x" - 2) in
          "x" <- "y" * 100
-        )
-      }> = Success [("x", existT interp_type TInt 300)].
-      reflexivity. Abort.
+     )
+  }> = Success [("x", existT interp_type TInt 300)].
+  reflexivity. Abort.
 
-    Goal run_program [("o", (TInt, true))] <{
-        "o" <- let "x" := 2 in "x"
-      }> = Success [("o", existT _ TInt 2)].
-    Proof. reflexivity. Abort.
+  Goal run_program [("o", (TInt, true))] <{
+     "o" <- let "x" := 2 in "x"
+  }> = Success [("o", existT _ TInt 2)].
+  Proof. reflexivity. Abort.
 
-    Goal run_program [("o", (TInt, true))] <{
-        "o" <- let "x" := 2 in "x"+3*100
-      }> = Success [("o", existT _ TInt 302)].
-    Proof. reflexivity. Abort.
+  Goal run_program [("o", (TInt, true))] <{
+     "o" <- let "x" := 2 in "x"+3*100
+  }> = Success [("o", existT _ TInt 302)].
+  Proof. reflexivity. Abort.
 
-    Goal run_program [("o", (TBool, true))] <{
-        "o" <- ! (1 == 1)
-      }> = Success [("o", existT _ TBool false)].
-    Proof. reflexivity. Abort.
+  Goal run_program [("o", (TBool, true))] <{
+     "o" <- ! (1 == 1)
+  }> = Success [("o", existT _ TBool false)].
+  Proof. reflexivity. Abort.
 
-    Goal run_program [("o", (TInt, true))] <{
-        "o" <- if !(1 == 2) then 5 else 98+1
-      }> = Success [("o", existT _ TInt 5)].
-    Proof. reflexivity. Abort.
+  Goal run_program [("o", (TInt, true))] <{
+     "o" <- if !(1 == 2) then 5 else 98+1
+  }> = Success [("o", existT _ TInt 5)].
+  Proof. reflexivity. Abort.
 
-    Goal run_program [("o", (TList TInt, true))] <{
-        "o" <- range(3, 5)
-      }> = Success [("o", existT _ (TList TInt) (3 :: 4 :: nil))].
-    Proof. reflexivity. Abort.
+  Goal run_program [("o", (TList TInt, true))] <{
+     "o" <- range(3, 5)
+  }> = Success [("o", existT _ (TList TInt) (3 :: 4 :: nil))].
+  Proof. reflexivity. Abort.
 
-    Goal run_program [("o", (TList TInt, true))] <{
-        "o" <- flatmap [1, 2] "x" ["x"]
-      }> = Success [("o", existT _ (TList TInt) (1 :: 2 :: nil))].
-      reflexivity. Abort.
+  Goal run_program [("o", (TList TInt, true))] <{
+     "o" <- flatmap [1, 2] "x" ["x"]
+  }> = Success [("o", existT _ (TList TInt) (1 :: 2 :: nil))].
+  reflexivity. Abort.
 
-    Goal run_program [("o", (TList TInt, true))] <{
-        "o" <- flatmap [1] "x" ["x"]
-      }> = Success [("o", existT _ (TList TInt) (1 :: nil))].
-      reflexivity.  Abort.
+  Goal run_program [("o", (TList TInt, true))] <{
+     "o" <- flatmap [1] "x" ["x"]
+  }> = Success [("o", existT _ (TList TInt) (1 :: nil))].
+  reflexivity.  Abort.
 
-    Goal run_program [("o", (TList TInt, true))] <{
-        "o" <- flatmap range(1, 10) "x" ["x"*"x"] }>
-         = Success [("o", existT interp_type (TList TInt) [1; 4; 9; 16; 25; 36; 49; 64; 81])].
-    Proof. reflexivity. Abort.
+  Goal run_program [("o", (TList TInt, true))] <{
+     "o" <- flatmap range(1, 10) "x" ["x"*"x"] }>
+     = Success [("o", existT interp_type (TList TInt) [1; 4; 9; 16; 25; 36; 49; 64; 81])].
+  Proof. reflexivity. Abort.
 
-    Definition isEven (n : Z) : pcommand := <{
-          let "n" := n in
-          if "n" % 2 == 0
-          then "ans" <- true
-          else skip
-          end
-        }>.
+   Definition isEven (n : Z) : pcommand := <{
+     "ans" <- false;
+      let "n" := n in
+      if "n" % 2 == 0
+         then "ans" <- true
+         else skip
+      end
+      }>.
 
     Goal run_program [("ans", (TBool, true))]
       (isEven 4) = Success [("ans", existT interp_type TBool true)].
