@@ -10,7 +10,10 @@ Import ResultMonadNotations.
 Section WithMap.
   Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
   Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
-  Context {locals: map.map string {t & interp_type (width := width) t}} {locals_ok: map.ok locals}.
+  Context {phoas_env : forall (V : type -> Type), map.map string {t & V t}}
+    {phoas_env_ok : forall V, map.ok (phoas_env V)}.
+
+  Definition locals := phoas_env interp_type.
 
   Section constant_folding.
     Context {V : type -> Type}.
@@ -151,9 +154,9 @@ Section WithMap.
 
       intros. inversion H.
       induction o; try discriminate.
-      - destruct a. cbn. 
+      - destruct a. cbn.
 
-      - 
+      -
    *)
 
   Lemma interp_expr_reify_id {t : type} (l : locals)
@@ -213,7 +216,7 @@ Section WithMap.
         rewrite <- P0, <- E.
         rewrite interp_expr_reify_id.
         f_equal; easy.
-    - cbn. rewrite <- IHe. 
+    - cbn. rewrite <- IHe.
       induction (interp_phoas_expr); try reflexivity.
       cbn. rewrite H. f_equal. apply IHi.
     - cbn. rewrite <- IHe1. rewrite <- IHe2.
@@ -244,8 +247,3 @@ Section WithMap.
   Qed.
 
 End WithMap.
-
-
-
-
-
