@@ -2,6 +2,8 @@ Require Import PyLevelLang.Language.
 Require Import PyLevelLang.Phoas_Language.
 Require Import PyLevelLang.Interpret.
 Require Import PyLevelLang.Elaborate.
+Require Import coqutil.Tactics.forward.
+Require Import coqutil.Tactics.Tactics.
 Require Import Coq.Strings.String.
 Require Import Coq.Logic.FunctionalExtensionality.
 
@@ -272,13 +274,24 @@ Ltac eq_projT2_eq := match goal with
                      end.
 
 (*??? move to util?*)
-Lemma fold_right_ext : forall (A B : Type) (f g : B -> A -> A) (a : A) (l : list B),
+Lemma fold_right_eq_ext : forall (A B : Type) (f g : B -> A -> A) (a a' : A) (l l' : list B),
+    a = a' -> l = l' ->
     (forall x y, f x y = g x y) ->
-    fold_right f a l = fold_right g a l.
+    fold_right f a l = fold_right g a' l'.
 Proof.
-  induction l as [|a' l' IHl] ; intro H.
+  induction l as [|h t IHt]; intros l' Ha Hl H; subst.
   - reflexivity.
-  - simpl. rewrite (IHl H). apply H.
+  - simpl. rewrite (IHt t); congruence.
+Qed.
+
+Lemma flat_map_eq_ext : forall (A B : Type) (f g : A -> list B) (l l' : list A),
+    l = l' ->
+    (forall x, f x = g x) ->
+    flat_map f l = flat_map g l'.
+Proof.
+  induction l as [|h t IHt]; intros l' Hl H; subst.
+  - reflexivity.
+  - simpl. rewrite (IHt t); congruence.
 Qed.
 
 Section WithMap.
@@ -291,7 +304,7 @@ Section WithMap.
   Proof.
     induction t; try reflexivity.
     (* TPair *)
-    simpl. rewrite IHt1, IHt2. reflexivity.
+    cbn. congruence.
   Qed.
 
   Lemma proj_expected_eq : forall store t v,
@@ -304,21 +317,24 @@ Section WithMap.
     - apply default_val_eq.
   Qed.
 
+  Ltac phoas_expr_induct e :=
+    induction e; intros; simpl;
+    try reflexivity;
+    try (apply flat_map_eq_ext);
+    try (apply fold_right_eq_ext);
+    try (repeat destruct_one_match);
+    try congruence.
+
   Lemma phoasify_sound' :
     forall {t : type} (e : expr t) (store env : phoas_env interp_type),
       interp_expr store env e = interp_phoas_expr store (phoasify env e).
   Proof.
-    induction e; intros store env; simpl; try reflexivity.
-    - unfold get_local. destruct (map.get env x) eqn:E.
-      + symmetry. apply proj_expected_eq.
-      + symmetry. apply default_val_eq.
-    - rewrite IHe. reflexivity.
-    - rewrite IHe1, IHe2; reflexivity.
-    - rewrite IHe1. apply flat_map_ext.
-      intro; rewrite IHe2; reflexivity.
-    - rewrite IHe1, IHe2. apply fold_right_ext.
-      intros; rewrite IHe3; reflexivity.
-    - rewrite IHe1, IHe2, IHe3; reflexivity.
+    phoas_expr_induct e.
+    1, 2: unfold get_local; rewrite E; symmetry.
+    - apply proj_expected_eq.
+    - apply default_val_eq.
+    - intro; rewrite IHe2; reflexivity.
+    - intros; rewrite IHe3; reflexivity.
     - rewrite IHe1, IHe2; reflexivity.
   Qed.
 
@@ -368,8 +384,8 @@ Section WithMap.
   Proof.
     induction t; constructor; try reflexivity.
     (* TPair *)
-    ++ apply IHt1.
-    ++ apply IHt2.
+    - apply IHt1.
+    - apply IHt2.
   Qed.
 
   Lemma phoasify_wf' : forall V V' (C : @ctxt V V') (env : phoas_env V) (env' : phoas_env V'),
@@ -462,30 +478,30 @@ Section WithMap.
       + discriminate.
     - rewrite H; reflexivity.
     - rewrite H; reflexivity.
-    - f_equal. apply IHH_equiv. apply H_consistent.
+    - f_equal. apply IHH_equiv, H_consistent.
     - f_equal.
-      + apply IHH_equiv1. apply H_consistent.
-      + apply IHH_equiv2. apply H_consistent.
-    - rewrite (IHH_equiv _ _ H_consistent). apply flat_map_ext.
+      + apply IHH_equiv1, H_consistent.
+      + apply IHH_equiv2, H_consistent.
+    - rewrite (IHH_equiv _ _ H_consistent). apply flat_map_eq_ext; try congruence.
       remember (fresh used x) as y.
       intros v'. rewrite H0 with (v := y) (used := y :: used) (env := set_local env y v').
       + reflexivity.
-      + rewrite Heqy. apply dephoasify_envs_consistent_step. apply H_consistent.
+      + rewrite Heqy. apply dephoasify_envs_consistent_step, H_consistent.
     - rewrite (IHH_equiv1 _ _ H_consistent), (IHH_equiv2 _ _ H_consistent).
-      apply fold_right_ext. intros v1 v2. apply H0.
+      apply fold_right_eq_ext; try congruence. intros v1 v2. apply H0.
       repeat apply dephoasify_envs_consistent_step. apply H_consistent.
     - rewrite (IHH_equiv1 _ _ H_consistent), (IHH_equiv2 _ _ H_consistent), (IHH_equiv3 _ _ H_consistent). reflexivity.
     - rewrite (IHH_equiv _ _ H_consistent). remember (fresh used x) as y.
       remember (interp_expr store env (dephoasify used e1)) as v.
       rewrite H0 with (v := y) (used := y :: used) (env := set_local env y v);
         [reflexivity |].
-      rewrite Heqy. apply dephoasify_envs_consistent_step. apply H_consistent.
+      rewrite Heqy. apply dephoasify_envs_consistent_step, H_consistent.
   Qed.
 
   Theorem dephoasify_sound : forall {t : type} (e : Phoas_expr t),
       Phoas_wf e ->
       forall (store : phoas_env interp_type) (used : list string),
-        interp_phoas_expr store (e interp_type) = interp_expr store map.empty (Dephoasify used e).
+        interp_Phoas_expr store e = interp_expr store map.empty (Dephoasify used e).
   Proof.
     intros t e H_wf store used.
     apply dephoasify_sound' with (C := nil) (env := map.empty).
@@ -493,4 +509,154 @@ Section WithMap.
     - unfold dephoasify_envs_consistent. intros p contra.
       apply in_nil in contra. exfalso; assumption.
   Qed.
+
+  (* An example pipeline converting a source expression to its PHOAS form, performs a transformation, and converts it back to a source expression.
+We proves that the pipeline in the example is sound using the soundness theorems above. *)
+
+  (* Auxiliary function to destruct e1 and e2 under the match of o
+ so that we expose the dependency of the types of e1 and e2 on the type of o.
+ "Convoy pattern". *)
+  Definition fold_add1 {V t1 t2 t3} (o : binop t1 t2 t3) :
+    phoas_expr V t1 -> phoas_expr V t2 -> phoas_expr V t3 :=
+    match o with
+    | OPlus => fun e1 e2 => match e1, e2 with
+                            | PhEAtom (AInt a1), PhEAtom (AInt a2) => PhEAtom (AInt (Z.add a1 a2))
+                            | e1, e2 => PhEBinop OPlus e1 e2
+                            end
+    (* Use "o" rather than a wildcard in the pattern to make Coq break it down
+     into specific cases with the respective types *)
+    | o => fun e1 e2 => PhEBinop o e1 e2
+    end.
+
+  Fixpoint fold_add' {V t} (e : phoas_expr V t) : phoas_expr V t :=
+    match e with
+    | PhEVar t v => PhEVar t v
+    | PhELoc t x => PhELoc t x
+    | PhEAtom a => PhEAtom a
+    | PhEUnop o e' => PhEUnop o (fold_add' e')
+    | PhEBinop o e1 e2 => fold_add1 o (fold_add' e1) (fold_add' e2)
+    | PhEFlatmap l1 x fn_e2 => PhEFlatmap (fold_add' l1) x (fun v => fold_add' (fn_e2 v))
+    | PhEFold l1 e2 x y fn_e3 => PhEFold (fold_add' l1) (fold_add' e2) x y (fun v1 v2 => fold_add' (fn_e3 v1 v2))
+    | PhEIf e1 e2 e3 => PhEIf (fold_add' e1) (fold_add' e2) (fold_add' e3)
+    | PhELet x e1 fn_e2 => PhELet x (fold_add' e1) (fun v => fold_add' (fn_e2 v))
+    end.
+
+  Definition fold_add {t} (e : Phoas_expr t) : Phoas_expr t :=
+    fun V => fold_add' (e V).
+
+  Lemma phoas_expr_cases : forall V (t : type) (e : phoas_expr V t),
+      (exists a, e = PhEAtom a) \/
+        (exists v, e = PhEVar t v) \/
+        (exists x, e = PhELoc t x) \/
+        (exists t1 o (e' : phoas_expr V t1), e = PhEUnop o e') \/
+        (exists t1 t2 (o : binop t1 t2 t) e1 e2, e = PhEBinop o e1 e2) \/
+        (exists t1 t2 l1 x fn_e2, existT (phoas_expr V) t e = existT (phoas_expr V) (TList t2) (PhEFlatmap (l1 : phoas_expr V (TList t1)) x fn_e2)) \/
+        (exists t1 (l1 : phoas_expr V (TList t1)) e2 x y fn_e3, e = PhEFold l1 e2 x y fn_e3) \/
+        (exists e1 e2 e3, e = PhEIf e1 e2 e3) \/
+        (exists t1 x (e1 : phoas_expr V t1) fn_e2, e = PhELet x e1 fn_e2).
+  Proof.
+    destruct e; eauto 14.
+  Qed.
+
+  Lemma atom_cases : forall (t : type) (a : atom t),
+      match t return atom t -> Prop with
+      | TWord => fun a => exists v, a = AWord v
+      | TInt => fun a => exists v, a = AInt v
+      | TBool => fun a => exists v, a = ABool v
+      | TString => fun a => exists v, a = AString v
+      | TList t' => fun a => a = ANil t'
+      | TEmpty => fun a => a = AEmpty
+      | _ => fun _ => True
+      end a.
+  Proof.
+    destruct a; eauto.
+  Qed.
+
+  Ltac by_phoas_expr_cases :=
+    match goal with
+    | e : phoas_expr _ _ |- _ => unique pose proof (phoas_expr_cases _ _ e)
+    end.
+  Ltac destruct_exists :=
+    match goal with
+    | H : exists v, _ |- _ =>
+        let v' := fresh v in
+        destruct H as [v' H]; subst
+    end.
+  Ltac by_atom_cases :=
+    match goal with
+    | a : atom _ |- _ => unique pose proof (atom_cases _ a)
+    end.
+
+  Ltac existT_projT1_contra :=
+    match goal with
+    | H : existT _ _ _ = existT _ _ _ |- _ =>
+        apply projT1_eq in H; discriminate
+    end.
+
+  Lemma fold_add1_sound : forall t1 t2 t3 (o : binop t1 t2 t3) e1 e2 store,
+      interp_phoas_expr store (fold_add1 o e1 e2) = interp_phoas_expr store (PhEBinop o e1 e2).
+  Proof.
+    intros until o.
+    destruct o; try reflexivity; intros.
+    repeat by_phoas_expr_cases; intuition; repeat destruct_exists;
+      try (repeat by_atom_cases; intuition; repeat destruct_exists; reflexivity);
+      try existT_projT1_contra.
+  Qed.
+
+  Lemma fold_add_sound' : forall t (e : phoas_expr _ t) store,
+      interp_phoas_expr store e = interp_phoas_expr store (fold_add' e).
+  Proof.
+    phoas_expr_induct e.
+    rewrite fold_add1_sound. cbn. congruence.
+  Qed.
+
+  Theorem fold_add_sound : forall t (e : Phoas_expr t) store,
+      interp_Phoas_expr store e = interp_Phoas_expr store (fold_add e).
+  Proof.
+    intros t e store. apply fold_add_sound'.
+  Qed.
+
+  Lemma fold_add1_wf : forall V V' t1 t2 t3 (C : @ctxt V V') e1 e1' e2 e2' (o : binop t1 t2 t3),
+      phoas_expr_equiv C e1 e1' -> phoas_expr_equiv C e2 e2' ->
+      phoas_expr_equiv C (fold_add1 o e1 e2) (fold_add1 o e1' e2').
+  Proof.
+    intros V V' t1 t2 t3 C e1 e1' e2 e2' o H1 H2.
+    destruct o; try (constructor; assumption).
+    inversion H1; inversion H2; subst; repeat eq_projT2_eq;
+      try (repeat by_atom_cases; intuition; repeat destruct_exists; constructor);
+      try assumption;
+      try reflexivity.
+  Qed.
+
+  Lemma fold_add_wf' : forall V V' t (C : @ctxt V V') (e : phoas_expr _ t) (e' : phoas_expr _ t),
+      phoas_expr_equiv C e e' -> phoas_expr_equiv C (fold_add' e) (fold_add' e').
+  Proof.
+    intros V V' t C e e' H. induction H; simpl; try (repeat constructor; assumption).
+    apply fold_add1_wf; assumption.
+  Qed.
+
+  Theorem fold_add_wf : forall t (e : Phoas_expr t),
+      Phoas_wf e -> Phoas_wf (fold_add e).
+  Proof.
+    unfold Phoas_wf. intros t e H V V'. apply fold_add_wf', H.
+  Qed.
+
+  Definition ex1 := ELet "x" (EBinop OPlus (EAtom (AInt (Z.of_nat 2)))
+                                (EAtom (AInt (Z.of_nat 2))))
+                      (EBinop OPlus (EVar _ "x") (EAtom (AInt (Z.of_nat 1)))).
+  Definition ex1_ph := Phoasify ex1.
+
+  Definition ex1_ph' := fold_add ex1_ph.
+  Definition ex1' := Dephoasify nil ex1_ph'.
+
+  Example pipeline_sound : forall store, interp_expr store map.empty ex1 = interp_expr store map.empty ex1'.
+  Proof.
+    intro store.
+    rewrite phoasify_sound.
+    rewrite fold_add_sound.
+    apply dephoasify_sound.
+    (* wellformedness *)
+    apply fold_add_wf, phoasify_wf.
+  Qed.
+  (* End of example. *)
 End WithMap.
