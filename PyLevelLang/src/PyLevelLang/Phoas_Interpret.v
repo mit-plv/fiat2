@@ -641,6 +641,16 @@ We proves that the pipeline in the example is sound using the soundness theorems
     unfold Phoas_wf. intros t e H V V'. apply fold_add_wf', H.
   Qed.
 
+  Theorem fold_add_pipeline_sound : forall t (e : expr t) store used, interp_expr store map.empty e = interp_expr store map.empty (Dephoasify used (fold_add (Phoasify e))).
+  Proof.
+    intros t e store used.
+    rewrite phoasify_sound.
+    rewrite fold_add_sound.
+    apply dephoasify_sound.
+    (* wellformedness *)
+    apply fold_add_wf, phoasify_wf.
+  Qed.
+
   Definition ex1 := ELet "x" (EBinop OPlus (EAtom (AInt (Z.of_nat 2)))
                                 (EAtom (AInt (Z.of_nat 2))))
                       (EBinop OPlus (EVar _ "x") (EAtom (AInt (Z.of_nat 1)))).
@@ -649,14 +659,7 @@ We proves that the pipeline in the example is sound using the soundness theorems
   Definition ex1_ph' := fold_add ex1_ph.
   Definition ex1' := Dephoasify nil ex1_ph'.
 
-  Example pipeline_sound : forall store, interp_expr store map.empty ex1 = interp_expr store map.empty ex1'.
-  Proof.
-    intro store.
-    rewrite phoasify_sound.
-    rewrite fold_add_sound.
-    apply dephoasify_sound.
-    (* wellformedness *)
-    apply fold_add_wf, phoasify_wf.
-  Qed.
+  Example ex1_pipeline_sound : forall store, interp_expr store map.empty ex1 = interp_expr store map.empty ex1'.
+  Proof. intros; apply fold_add_pipeline_sound. Qed.
   (* End of example. *)
 End WithMap.
