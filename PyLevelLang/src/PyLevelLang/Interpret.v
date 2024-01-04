@@ -137,7 +137,7 @@ Section WithMap.
     | EAtom a => interp_atom a
     | EUnop o e1 => interp_unop o (interp_expr store env e1)
     | EBinop o e1 e2 => interp_binop o (interp_expr store env  e1) (interp_expr store env  e2)
-    | EFlatmap l1 x fn => flat_map (fun y => interp_expr store (set_local env x y) fn) (interp_expr store env  l1)
+    | EFlatmap l1 x fn => flat_map (fun y => interp_expr store (set_local env x y) fn) (interp_expr store env l1)
     | EIf e1 e2 e3 => if interp_expr store env e1 then interp_expr store env e2 else interp_expr store env e3
     | EFold l1 a x y fn => let l1' := interp_expr store env l1 in
                            let a' := interp_expr store env a in

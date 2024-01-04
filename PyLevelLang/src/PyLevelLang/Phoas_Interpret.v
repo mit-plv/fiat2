@@ -662,4 +662,89 @@ We proves that the pipeline in the example is sound using the soundness theorems
   Example ex1_pipeline_sound : forall store, interp_expr store map.empty ex1 = interp_expr store map.empty ex1'.
   Proof. intros; apply fold_add_pipeline_sound. Qed.
   (* End of example. *)
+
+  Ltac projT1_eq_for_projT2_eq := match goal with
+                                  | H : existT ?f _ _ = existT ?f _ _ |- _ =>
+                                      let H' := fresh H in
+                                      pose proof projT1_eq H as H'; simpl in H'; try injection H'; intros; subst; eq_projT2_eq
+                                  end.
+
+  Definition flatmap_flatmap_head' {V : type -> Type} {t : type} (e : phoas_expr V t) : phoas_expr V t :=
+    match e with
+    | @PhEFlatmap _ t2 t3 l2 y fn_l3 =>
+        (match l2 in (phoas_expr _ t0) return (V match t0 with
+                                                 | TList t0' => t0'
+                                                 | _ => TEmpty (* impossible case *)
+                                                 end -> phoas_expr V (TList t3)) -> phoas_expr V (TList t3) -> phoas_expr V (TList t3)
+         with
+         | PhEFlatmap l1 x fn_l2 => fun fn_l3 _ => PhEFlatmap l1 x (fun v => PhEFlatmap (fn_l2 v) y fn_l3)
+         | _ => fun _ e0 => e0
+         end) fn_l3 (PhEFlatmap l2 y fn_l3)
+    (* It is necessary to pass the reassembled PhEFlatmap l2 y fn_l3 from outside the convoy pattern for the definition to work *)
+    | e' => e'
+    end.
+
+  Definition flatmap_flatmap_head {t : type} (e : Phoas_expr t) : Phoas_expr t :=
+    fun V => flatmap_flatmap_head' (e V).
+
+  Lemma flat_map_flat_map :
+    forall {A B C} (l : list A) (f : B -> list C)  (g : A -> list B),
+      flat_map f (flat_map g l) = flat_map (fun x => flat_map f (g x)) l.
+  Proof.
+    induction l; auto.
+    intros. simpl. rewrite flat_map_app. rewrite IHl. reflexivity.
+  Qed.
+
+  Lemma flatmap_flatmap_head_correct' {t} (store : phoas_env interp_type) (e : phoas_expr _ t):
+    interp_phoas_expr store e = interp_phoas_expr store (flatmap_flatmap_head' e).
+  Proof.
+    destruct e; auto.
+    by_phoas_expr_cases; intuition; repeat destruct_exists;
+      try (repeat by_atom_cases; intuition; repeat destruct_exists; reflexivity).
+    projT1_eq_for_projT2_eq.
+    apply flat_map_flat_map.
+  Qed.
+
+  Definition fold_flatmap_head' {V : type -> Type} {t : type} (e : phoas_expr V t) : phoas_expr V t :=
+    match e with
+    | @PhEFold _ t3 t4 l3 e4 x y fn_e5 =>
+        match l3 in phoas_expr _ t0 return
+              (V match t0 with
+                 | TList t3' => t3'
+                 | _ => TEmpty end -> V t4 -> phoas_expr V t4) -> phoas_expr V t4 -> phoas_expr V t4
+        with
+        | PhEFlatmap l1 z fn_l2 => fun fn_e5' _ => PhEFold l1 e4 z y (fun v acc => PhEFold (fn_l2 v) (PhEVar _ acc) x y fn_e5')
+        | _ => fun _ e0 => e0
+        end fn_e5 (PhEFold l3 e4 x y fn_e5)
+    | e' => e'
+    end.
+
+  Definition fold_flatmap_head {t : type} (e : Phoas_expr t) : Phoas_expr t :=
+    fun V => fold_flatmap_head' (e V).
+
+  Lemma fold_flat_map : forall {A B C} (l : list A) (f : A -> list B) (g : B -> C -> C) (a : C),
+      fold_right g a (flat_map f l) = fold_right (fun x y => fold_right g y (f x)) a l.
+  Proof.
+    induction l; eauto.
+    intros. cbn. rewrite fold_right_app. f_equal. eauto.
+  Qed.
+
+  Ltac by_phoas_expr_cases_on e :=  unique pose proof (phoas_expr_cases _ _ e).
+
+  Lemma fold_flatmap_head_correct' {t} (store : phoas_env interp_type) (e : phoas_expr _ t) :
+    interp_phoas_expr store e = interp_phoas_expr store (fold_flatmap_head' e).
+  Proof.
+    destruct e; auto.
+    by_phoas_expr_cases_on e1; intuition; repeat destruct_exists;
+      try (repeat by_atom_cases; intuition; repeat destruct_exists; reflexivity).
+    projT1_eq_for_projT2_eq.
+    apply fold_flat_map.
+  Qed.
+
+  Lemma fold_flatmap_head_correct {t} (store : phoas_env interp_type) (e : Phoas_expr t)
+    : interp_Phoas_expr store e = interp_Phoas_expr store (fold_flatmap_head e).
+  Proof.
+    apply fold_flatmap_head_correct'.
+  Qed.
+
 End WithMap.
