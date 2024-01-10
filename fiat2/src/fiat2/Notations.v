@@ -1,6 +1,6 @@
-Require Import PyLevelLang.Language.
-Require Import PyLevelLang.Elaborate.
-Require Import PyLevelLang.Interpret.
+Require Import fiat2.Language.
+Require Import fiat2.Elaborate.
+Require Import fiat2.Interpret.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Map.Properties.
 Require Import coqutil.Datatypes.Result.
 Require Import Coq.Lists.List.
@@ -8,16 +8,16 @@ Require Import Lia.
 Import ListNotations.
 Import ResultMonadNotations.
 
-Declare Scope pylevel_scope.
-Declare Custom Entry py_expr.
-Declare Custom Entry py_comm.
+Declare Scope fiat2_scope.
+Declare Custom Entry fiat2_expr.
+Declare Custom Entry fiat2_comm.
 
 
 Local Open Scope Z_scope.
 Local Open Scope string_scope.
 Local Open Scope list_scope.
 
-Local Open Scope pylevel_scope.
+Local Open Scope fiat2_scope.
 
 Coercion PEVar : string >-> pexpr.
 
@@ -25,32 +25,32 @@ Coercion PAInt : Z >-> patom.
 Coercion PABool : bool >-> patom.
 Coercion PEAtom : patom >-> pexpr.
 
-Notation "<{ e }>"       := (e : pcommand) (at level 0, e custom py_comm at level 99, only parsing) : pylevel_scope.
-Notation "<{ e }>"       := e (at level 0, e custom py_comm at level 99, only printing) : pylevel_scope.
-Notation "<[ e ]>"       := e (in custom py_expr at level 0, e constr at level 200) : pylevel_scope.
-Notation "<[ e ]>"       := e (in custom py_comm at level 0, e constr at level 200) : pylevel_scope.
-Notation "( x )"         := x (in custom py_expr at level 0, x custom py_expr at level 99) : pylevel_scope.
-Notation "( x )"         := x (in custom py_comm at level 0, x custom py_comm at level 99) : pylevel_scope.
-Notation "x"             := x (in custom py_expr at level 0, x constr at level 0) : pylevel_scope.
-Notation "x"             := x (in custom py_comm at level 0, x constr at level 0) : pylevel_scope.
+Notation "<{ e }>"       := (e : pcommand) (at level 0, e custom fiat2_comm at level 99, only parsing) : fiat2_scope.
+Notation "<{ e }>"       := e (at level 0, e custom fiat2_comm at level 99, only printing) : fiat2_scope.
+Notation "<[ e ]>"       := e (in custom fiat2_expr at level 0, e constr at level 200) : fiat2_scope.
+Notation "<[ e ]>"       := e (in custom fiat2_comm at level 0, e constr at level 200) : fiat2_scope.
+Notation "( x )"         := x (in custom fiat2_expr at level 0, x custom fiat2_expr at level 99) : fiat2_scope.
+Notation "( x )"         := x (in custom fiat2_comm at level 0, x custom fiat2_comm at level 99) : fiat2_scope.
+Notation "x"             := x (in custom fiat2_expr at level 0, x constr at level 0) : fiat2_scope.
+Notation "x"             := x (in custom fiat2_comm at level 0, x constr at level 0) : fiat2_scope.
 
 (* TODO Allow string constants (which are different from vars) *)
 
 (* Command parsing *)
 Notation "'skip'"                     := (PCSkip)
-   (in custom py_comm at level 0) : pylevel_scope.
+   (in custom fiat2_comm at level 0) : fiat2_scope.
 Notation "c1 ; c2"                    := (PCSeq c1 c2)
-   (in custom py_comm at level 90, right associativity, c1 custom py_comm, c2 custom py_comm) : pylevel_scope.
+   (in custom fiat2_comm at level 90, right associativity, c1 custom fiat2_comm, c2 custom fiat2_comm) : fiat2_scope.
 Notation "'let' x := p 'in' c"        := (PCLet x p c)
-   (in custom py_comm at level 100, p custom py_expr, c custom py_comm) : pylevel_scope.
+   (in custom fiat2_comm at level 100, p custom fiat2_expr, c custom fiat2_comm) : fiat2_scope.
 Notation "'let' 'mut' x := p 'in' c"    := (PCLetMut x%string p c)
-   (in custom py_comm at level 100, p custom py_expr, c custom py_comm) : pylevel_scope.
+   (in custom fiat2_comm at level 100, p custom fiat2_expr, c custom fiat2_comm) : fiat2_scope.
 Notation "x <- p"                     := (PCGets x p)
-   (in custom py_comm at level 50, p custom py_expr) : pylevel_scope.
+   (in custom fiat2_comm at level 50, p custom fiat2_expr) : fiat2_scope.
 Notation "'if' p 'then' c1 'else' c2 'end'" := (PCIf p c1 c2)
-   (in custom py_comm at level 80, p custom py_expr, c1 custom py_comm, c2 custom py_comm) : pylevel_scope.
+   (in custom fiat2_comm at level 80, p custom fiat2_expr, c1 custom fiat2_comm, c2 custom fiat2_comm) : fiat2_scope.
 Notation "'for' x 'in' p : c 'end'"  := (PCForeach x p c)
-   (in custom py_comm at level 80, p custom py_expr, c custom py_comm) : pylevel_scope.
+   (in custom fiat2_comm at level 80, p custom fiat2_expr, c custom fiat2_comm) : fiat2_scope.
 
 (* Type parsing (Types are prefixed with @ so they do not become keywords and pollute the namespace *)
 Notation Int    := TInt.
@@ -65,70 +65,70 @@ Notation List   := TList.
 
 (* Unary operations (PEUnop) *)
 Notation "- x"         := (PEUnop PONeg x)
-   (in custom py_expr at level 10) : pylevel_scope.
+   (in custom fiat2_expr at level 10) : fiat2_scope.
 Notation "! x"         := (PEUnop PONot x)
-   (in custom py_expr at level 10) : pylevel_scope.
+   (in custom fiat2_expr at level 10) : fiat2_scope.
 Notation "'length(' x ')'"   := (PEUnop POLength x)
-   (in custom py_expr at level 10) : pylevel_scope.
+   (in custom fiat2_expr at level 10) : fiat2_scope.
 
 
 (* not a unary operator, move *)
-Notation "x [ field ]"        := (PEProj x field%string) (in custom py_expr at level 10) : pylevel_scope.
+Notation "x [ field ]"        := (PEProj x field%string) (in custom fiat2_expr at level 10) : fiat2_scope.
 (* syntactic sugar *)
 Notation "'fst(' x ')'" := (PEProj x "0")
-   (in custom py_expr at level 10, format "fst( x )") : pylevel_scope.
+   (in custom fiat2_expr at level 10, format "fst( x )") : fiat2_scope.
 Notation "'snd(' x ')'" := (PEProj x "1")
-   (in custom py_expr at level 10) : pylevel_scope.
+   (in custom fiat2_expr at level 10) : fiat2_scope.
 
 
 (* Binary operators (PEBinop) *)
 Notation "x + y"              := (PEBinop POPlus x y)
-   (in custom py_expr at level 50, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 50, left associativity) : fiat2_scope.
 Notation "x - y"              := (PEBinop POMinus x y)
-   (in custom py_expr at level 50, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 50, left associativity) : fiat2_scope.
 Notation "x * y"              := (PEBinop POTimes x y)
-   (in custom py_expr at level 40, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 40, left associativity) : fiat2_scope.
 Notation "x / y"              := (PEBinop PODiv x y)
-   (in custom py_expr at level 40, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 40, left associativity) : fiat2_scope.
 Notation "x % y"              := (PEBinop POMod x y)
-   (in custom py_expr at level 40, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 40, left associativity) : fiat2_scope.
 Notation "x && y"             := (PEBinop POAnd x y)
-   (in custom py_expr at level 40, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 40, left associativity) : fiat2_scope.
 Notation "x || y"             := (PEBinop POOr x y)
-   (in custom py_expr at level 50, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 50, left associativity) : fiat2_scope.
 Notation "x ++ y"             := (PEBinop POConcat x y)
-   (in custom py_expr at level 60, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 60, left associativity) : fiat2_scope.
 Notation "x < y"              := (PEBinop POLess x y)
-   (in custom py_expr at level 70, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 70, left associativity) : fiat2_scope.
 Notation "x == y"             := (PEBinop POEq x y)
-   (in custom py_expr at level 70, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 70, left associativity) : fiat2_scope.
 Notation "'repeat(' list ',' cnt ')'"       := (PEBinop PORepeat list cnt)
-   (in custom py_expr at level 10, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 10, left associativity) : fiat2_scope.
 Notation "( x , y )"          := (PEBinop POPair x y)
-   (in custom py_expr at level 0, x custom py_expr at level 99,
-    y custom py_expr at level 99, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 0, x custom fiat2_expr at level 99,
+    y custom fiat2_expr at level 99, left associativity) : fiat2_scope.
 Notation "x :: y"             := (PEBinop POCons x y)
-   (in custom py_expr at level 55, right associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 55, right associativity) : fiat2_scope.
 Notation "'range(' x ',' y ')'"  := (PEBinop PORange x y)
-   (in custom py_expr at level 10, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 10, left associativity) : fiat2_scope.
 
 Notation "[ x , .. , y , z ]"   := (PEBinop POCons x .. (PEBinop POCons y (PESingleton z)) ..)
-   (in custom py_expr at level 0, left associativity) : pylevel_scope.
+   (in custom fiat2_expr at level 0, left associativity) : fiat2_scope.
 Notation "[ x ]"                := (PESingleton x)
-   (in custom py_expr at level 0) : pylevel_scope.
+   (in custom fiat2_expr at level 0) : fiat2_scope.
 Notation "'nil[' t ']'"        := (PANil t)
-   (in custom py_expr at level 10, t constr) : pylevel_scope.
+   (in custom fiat2_expr at level 10, t constr) : fiat2_scope.
 
 
 (* Other pexpr *)
 Notation "'flatmap' e1 x e2"           := (PEFlatmap e1 x%string e2)
-   (in custom py_expr at level 99, x constr at level 0) : pylevel_scope.
+   (in custom fiat2_expr at level 99, x constr at level 0) : fiat2_scope.
 Notation "'fold' e1 e2 x y e3"           := (PEFold e1 e2 x%string y%string e3)
-   (in custom py_expr at level 99, x constr at level 0, y constr at level 0) : pylevel_scope.
+   (in custom fiat2_expr at level 99, x constr at level 0, y constr at level 0) : fiat2_scope.
 Notation "'if' p1 'then' p2 'else' p3" := (PEIf p1 p2 p3)
-   (in custom py_expr at level 99) : pylevel_scope.
+   (in custom fiat2_expr at level 99) : fiat2_scope.
 Notation "'let' x := p1 'in' p2"       := (PELet x p1 p2)
-   (in custom py_expr at level 99) : pylevel_scope.
+   (in custom fiat2_expr at level 99) : fiat2_scope.
 (* TODO PERecord *)
 
 Section Tests.
@@ -225,4 +225,3 @@ Section Tests.
                (PCGets "z" 123).
    reflexivity. Abort.
 End Tests.
-

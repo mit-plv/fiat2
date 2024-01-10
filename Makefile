@@ -1,6 +1,6 @@
 default_target: all
 
-.PHONY: update_all clone_all coqutil coq-record-update riscv-coq bedrock2_noex bedrock2_ex LiveVerif_noex LiveVerif_ex PyLevelLang compiler_noex compiler_ex kami processor end2end all clean_coqutil clean_coq-record-update clean_riscv-coq clean_bedrock2 clean_LiveVerif clean_PyLevelLang clean_compiler clean_kami clean_processor clean_end2end clean_manglenames clean install_coqutil install_coq-record-update install_kami install_riscv-coq install_bedrock2 install_bedrock2_ex install_bedrock2_noex install_LiveVerif install_LiveVerif_ex install_LiveVerif_noex install_PyLevelLang install_compiler install_processor install_end2end install
+.PHONY: update_all clone_all bedrock2_noex fiat2 all clean_bedrock2 clean_fiat2 clean clean_deps clean_all install_bedrock2_noex install_fiat2 install
 
 clone_all:
 	git submodule update --init --recursive
@@ -25,21 +25,21 @@ clean_bedrock2:
 install_bedrock2_noex:
 	$(MAKE) -C $(BEDROCK2_DIR) install_bedrock2_noex
 
-PyLevelLang: bedrock2_noex
-	$(MAKE) -C $(ABS_ROOT_DIR)/PyLevelLang
+fiat2: bedrock2_noex
+	$(MAKE) -C $(ABS_ROOT_DIR)/fiat2
 
-clean_PyLevelLang:
-	$(MAKE) -C $(ABS_ROOT_DIR)/PyLevelLang clean
+clean_fiat2:
+	$(MAKE) -C $(ABS_ROOT_DIR)/fiat2 clean
 
-install_PyLevelLang:
-	$(MAKE) -C $(ABS_ROOT_DIR)/PyLevelLang install
+install_fiat2:
+	$(MAKE) -C $(ABS_ROOT_DIR)/fiat2 install
 
-all: bedrock2_noex PyLevelLang
+all: bedrock2_noex fiat2
 
-clean: clean_PyLevelLang
+clean: clean_fiat2
 
 clean_deps: clean_bedrock2
 
 clean_all: clean_deps clean
 
-install: install_bedrock2_noex install_PyLevelLang
+install: install_bedrock2_noex install_fiat2

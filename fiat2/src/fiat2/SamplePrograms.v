@@ -1,7 +1,7 @@
-Require Import PyLevelLang.Language.
-Require Import PyLevelLang.Elaborate.
-Require Import PyLevelLang.Interpret.
-Require Import PyLevelLang.Notations.
+Require Import fiat2.Language.
+Require Import fiat2.Elaborate.
+Require Import fiat2.Interpret.
+Require Import fiat2.Notations.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Map.Properties.
 Require Import coqutil.Datatypes.Result.
 Require Import Coq.Lists.List.
@@ -16,7 +16,7 @@ Local Open Scope Z_scope.
 Local Open Scope string_scope.
 Local Open Scope list_scope.
 
-Local Open Scope pylevel_scope.
+Local Open Scope fiat2_scope.
 
 
 Section WithWord.
@@ -291,7 +291,7 @@ with
     to_json t v = interp_expr map.empty l (generate_json t e)).
   Proof.
     revert l t. induction n; try lia; destruct t; split; intros; cbn -[append] in *;
-      try tauto. 
+      try tauto.
     - cbn. congruence.
     - intros. try (cbn; try rewrite H; reflexivity); cbn.
       * (* Bool *) destruct v; rewrite H0; reflexivity.
@@ -322,7 +322,7 @@ with
         rewrite (to_json_eq a (EVar t "v")).
         ** reflexivity.
         ** cbn. unfold get_local.
-           rewrite map.put_put_diff by congruence. 
+           rewrite map.put_put_diff by congruence.
            rewrite map.get_put_same.
            apply proj_expected_refl.
         ** intuition auto.
@@ -372,7 +372,7 @@ Section Generate_Json_Tests_Section.
 
   Compute (interp_expr map.empty (map.put map.empty "x" (existT interp_type (TPair "foo" TString TInt)
         ("hi", 7)))
-        (generate_json (TPair "foo" TString TInt) (EVar _ "x")) =? 
+        (generate_json (TPair "foo" TString TInt) (EVar _ "x")) =?
   to_json (TPair "foo" TString TInt) ("hi", 7))%string.
 
   Goal interp_expr map.empty (map.put map.empty "x" (existT interp_type (TPair "foo" TString (TPair "bar" TInt TEmpty))

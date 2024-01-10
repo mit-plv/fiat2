@@ -1,4 +1,4 @@
-Require Import PyLevelLang.Language.
+Require Import fiat2.Language.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require Import coqutil.Datatypes.Result.
 Require Import coqutil.Tactics.fwd.
@@ -53,7 +53,7 @@ Section WithMap.
     | wf_EFlatmap G {t1 t2} (e1 : expr (TList t1)) (x : string)
         (e2 : expr (TList t2)) :
         wf G e1 -> wf (map.put G x (t1, false)) e2 -> wf G (EFlatmap e1 x e2)
-    | wf_EFold G {t1 t2} (e1 : expr (TList t1)) (e2 : expr t2) (x : string) 
+    | wf_EFold G {t1 t2} (e1 : expr (TList t1)) (e2 : expr t2) (x : string)
         (y : string) (e3 : expr t2) :
         wf G e1 -> wf G e2 -> wf (map.put (map.put G x (t1, false)) y (t2, false)) e3 -> wf G (EFold e1 e2 x y e3)
     | wf_EIf G {t} (e1 : expr TBool) (e2 e3 : expr t) :
@@ -476,7 +476,7 @@ Section WithMap.
     | PEFold p1 p2 x y p3 =>
         '(existT _ t1 e1) <- elaborate G p1;;
         match t1 as t' return expr t' -> _ with
-        | TList t1 => fun e1 => 
+        | TList t1 => fun e1 =>
             '(existT _ t2 e2) <- elaborate G p2;;
             let G' := map.put (map.put G x (t1, false)) y (t2, false) in
             '(existT _ t3 e3) <- elaborate G' p3;;
@@ -633,7 +633,7 @@ Section WithMap.
       apply elaborate_proj_wf with (e := e0) (s := s).
       + now apply IHp.
       + exact H.
-    - (* PEElaborated t' e' *) 
+    - (* PEElaborated t' e' *)
       destruct (compute_wf G e') eqn:E; try easy.
       destruct a.
       inversion H.

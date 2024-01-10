@@ -1,9 +1,9 @@
-Require Import PyLevelLang.Language.
-Require Import PyLevelLang.Elaborate.
-Require Import PyLevelLang.Notations.
-Require Import PyLevelLang.Interpret.
-Require Import PyLevelLang.SamplePrograms.
-Require Import PyLevelLang.Optimize.
+Require Import fiat2.Language.
+Require Import fiat2.Elaborate.
+Require Import fiat2.Notations.
+Require Import fiat2.Interpret.
+Require Import fiat2.SamplePrograms.
+Require Import fiat2.Optimize.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Map.Properties.
 Require Import coqutil.Datatypes.Result.
 Require Import Coq.Lists.List.
@@ -107,7 +107,7 @@ Section Queries_Section.
 
   Compute artists'.
 
-  Local Open Scope pylevel_scope.
+  Local Open Scope fiat2_scope.
 
   (* SELECT * FROM artists WHERE id < n *)
   Definition filter_test (n : Z) := <{
@@ -194,7 +194,7 @@ Section Queries_Section.
                            end
        | Failure s => "Error: Program errored"
        end.
- 
+
   (* Data from https://www.sqltutorial.org/sql-sample-database/ *)
   Definition db_regions_fields := (("region_id", TInt) :: ("region_name", TString) :: nil).
   Definition db_regions := pexpr_list (record db_regions_fields) (map (@from_tuple' db_regions_fields) (
@@ -373,7 +373,7 @@ Section Queries_Section.
     nil)).
 
   Definition field_product (t1 t2 : type) : type := record (("0", t1) :: ("1", t2) :: nil).
-  Local Open Scope pylevel_scope.
+  Local Open Scope fiat2_scope.
   (* SELECT * FROM employees JOIN jobs WHERE employees.job_id == job.id and jobs.title = "Programmer" *)
 
   Definition select_programmers := <{
@@ -452,7 +452,7 @@ Section Queries_Section.
   Compute flatmap_flatmap tmp.
   Compute interp_expr map.empty map.empty tmp.
 
-  Local Close Scope pylevel_scope.
+  Local Close Scope fiat2_scope.
 
   Declare Scope query_sugar_scope.
   Notation "'join' ( a : x ) ( b : y )" :=
@@ -543,4 +543,3 @@ Definition exported := (exported_get_artist, exported_get_album_and_artist).
 Extraction Language Haskell.
  Extraction "/path/to/haskell/Extracted.hs" exported.
 *)
-

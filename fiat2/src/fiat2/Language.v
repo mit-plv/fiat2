@@ -34,8 +34,8 @@ Defined.
 
 Scheme Boolean Equality for type. (* creates type_beq *)
 
-Declare Scope pylevel_scope. Local Open Scope pylevel_scope.
-Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : pylevel_scope.
+Declare Scope fiat2_scope. Local Open Scope fiat2_scope.
+Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
 
 (* Primitive literals (untyped) *)
 Inductive patom : Type :=
