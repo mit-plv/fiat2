@@ -45,8 +45,12 @@ Definition compile_binop {t1 t2 t3 : type} (o : binop t1 t2 t3) :
       Success (Syntax.expr.op Syntax.bopname.mul)
   | OWDivU =>
       Success (Syntax.expr.op Syntax.bopname.divu)
+  | OWDivS =>
+      error:("unimplemented")
   | OWModU =>
       Success (Syntax.expr.op Syntax.bopname.remu)
+  | OWModS =>
+      error:("unimplemented")
   | OAnd =>
       Success (Syntax.expr.op Syntax.bopname.and)
   | OOr =>
@@ -63,9 +67,7 @@ Definition compile_binop {t1 t2 t3 : type} (o : binop t1 t2 t3) :
   | OPlus
   | OMinus
   | OTimes
-  | OWDivS
   | ODiv
-  | OWModS
   | OMod
   | OLess
   | ORepeat _
@@ -76,32 +78,35 @@ Definition compile_binop {t1 t2 t3 : type} (o : binop t1 t2 t3) :
       error:("unimplemented")
   end.
 
-Fixpoint compile_expr {t : type} (e : expr t) : result (Syntax.cmd * Syntax.expr) :=
+Fixpoint compile_expr {t : type} (e : expr t) : result Syntax.expr :=
   match e with
+  | EVar _ x | ELoc _ x =>
+      Success (Syntax.expr.var x)
   | EAtom a =>
-      e' <- compile_atom a;;
-      Success (Syntax.cmd.skip, e')
+      compile_atom a
   | EUnop o e1 =>
       f <- compile_unop o;;
-      '(c1, e1') <- compile_expr e1;;
-      Success (c1, f e1')
+      e1' <- compile_expr e1;;
+      Success (f e1')
   | EBinop o e1 e2 =>
       f <- compile_binop o;;
-      '(c1, e1') <- compile_expr e1;;
-      '(c2, e2') <- compile_expr e2;;
-      Success (Syntax.cmd.seq c1 c2, f e1' e2')
+      e1' <- compile_expr e1;;
+      e2' <- compile_expr e2;;
+      Success (f e1' e2')
   | _ => error:("unimplemented")
   end.
 
 Section WithMap.
-  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
-  Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
-  Context {tenv : map.map string (type * bool)} {tenv_ok : map.ok tenv}.
-  Context {locals: map.map string {t & interp_type (word := word) t}} {locals_ok: map.ok locals}.
-  Context {locals': map.map string word} {locals'_ok: map.ok locals'}.
-  Context {env: map.map String.string (list String.string * list String.string * Syntax.cmd)}.
-  Context {ext_spec: ExtSpec}.
+  Context {width : Z} {BW : Bitwidth width} {word : word.word width} {mem : map.map word byte}
+          {word_ok : word.ok word} {mem_ok : map.ok mem}
+          {tenv : map.map string (type * bool)} {tenv_ok : map.ok tenv}
+          {locals : map.map string {t & interp_type (word := word) t}} {locals_ok : map.ok locals}
+          {locals' : map.map string word} {locals'_ok : map.ok locals'}
+          {env : map.map String.string (list String.string * list String.string * Syntax.cmd)}
+          {ext_spec : ExtSpec}.
 
+  (* Relation between source language and target language values,
+   * denoting that two values are equivalent for a given type *)
   Inductive value_relation : forall {t : type}, interp_type t -> word -> Prop :=
     | RWord (w : word) : value_relation (t := TWord) w w
     | RBool (b : bool) : value_relation (t := TBool) b (word.of_Z (Z.b2z b)).
@@ -113,19 +118,127 @@ Section WithMap.
     apply RBool.
   Qed.
 
-  (* Prove lemmas for opposite directions *)
+  (* Relation between source language and target language locals maps,
+   * denoting that the source language locals are a "subset" of the target
+   * language locals *)
+  Definition locals_relation (lo : locals) (l : locals') : Prop :=
+    map.forall_keys (fun x =>
+    match map.get lo x with
+    | Some (existT _ _ val) =>
+        match map.get l x with
+        | Some val' => value_relation val val'
+        | None => False
+        end
+    | _ => True
+    end) lo.
 
-  (* Definition compile_value {t : type} (v : interp_type t) : result word := *)
-  (*   match t as t' return interp_type t' -> _ with *)
-  (*   | TInt => fun v => Success (word.of_Z v) *)
-  (*   | TBool => fun v => Success (word.of_Z (Z.b2z v)) *)
-  (*   | _ => fun _ => error:("unimplemented") *)
-  (*   end v. *)
+  Lemma locals_relation_extends (lo : locals) (l l' : locals') :
+    map.extends l' l -> locals_relation lo l -> locals_relation lo l'.
+  Proof.
+    intros Hex.
+    apply weaken_forall_keys.
+    intros x Hl.
+    destruct map.get as [s|]; try easy.
+    destruct s as [t val].
+    destruct (map.get l x) as [v|] eqn:E.
+    - apply (Properties.map.extends_get (m1 := l) (m2 := l')) in E;
+      [| assumption].
+      now rewrite E.
+    - destruct Hl.
+  Qed.
 
-  Lemma interp_type_eq : forall {t : type} (e : expr t) (w : interp_type t),
+  Lemma locals_relation_get (lo : locals) (l : locals') :
+    locals_relation lo l ->
+    forall (x : string) (t : type) (s : {t & interp_type t}),
+    map.get lo x = Some s -> exists (w : word),
+    map.get l x = Some w.
+  Proof.
+    intros Hl x t s Hs.
+    unfold locals_relation, map.forall_keys in Hl.
+    specialize Hl with (1 := Hs).
+    rewrite Hs in Hl.
+    destruct map.get.
+    - fwd. now exists r.
+    - destruct s, Hl.
+  Qed.
+
+  Lemma locals_relation_put (lo : locals) (l : locals') :
+    locals_relation lo l ->
+    forall (x : string) (t : type) (v : interp_type t) (w : word),
+    value_relation v w ->
+    locals_relation (set_local lo x v) (map.put l x w).
+  Proof.
+    intros Hl x t v w Hvw.
+    unfold locals_relation, map.forall_keys, set_local.
+    intros x' [t' v'].
+    repeat rewrite Properties.map.get_put_dec.
+    destruct (x =? x')%string.
+    - easy.
+    - intros Hx'. fwd.
+      unfold locals_relation, map.forall_keys in Hl.
+      specialize Hl with (1 := Hx').
+      rewrite Hx' in Hl.
+      assumption.
+  Qed.
+
+  Definition tenv_relation (G : tenv) (lo : locals) : Prop :=
+    map.forall_keys (fun key =>
+    match map.get G key with
+    | Some (t, _) => match map.get lo key with
+                     | Some (existT _ t' _) => t = t'
+                     | None => False
+                     end
+    | None => True
+    end) G.
+
+  Lemma tenv_relation_get (G : tenv) (lo : locals) :
+    tenv_relation G lo -> forall (x : string) (t : type) (b : bool),
+    map.get G x = Some (t, b) -> exists (v : interp_type t),
+    map.get lo x = Some (existT _ t v).
+  Proof.
+    intros Hlo x t b Htb.
+    unfold tenv_relation, map.forall_keys in Hlo.
+    specialize Hlo with (1 := Htb).
+    rewrite Htb in Hlo.
+    destruct map.get.
+    - destruct s. subst. now exists i.
+    - destruct Hlo.
+  Qed.
+
+  Lemma tenv_relation_put (G : tenv) (lo : locals) :
+    tenv_relation G lo ->
+    forall (x : string) (t : type) (b : bool) (v : interp_type t),
+    tenv_relation (map.put G x (t, b)) (set_local lo x v).
+  Proof.
+    intros Hlo x t b v.
+    unfold tenv_relation, map.forall_keys, set_local.
+    intros x' [t' b'].
+    repeat rewrite Properties.map.get_put_dec.
+    destruct (x =? x')%string.
+    - easy.
+    - intros Hx'. fwd.
+      unfold tenv_relation, map.forall_keys in Hlo.
+      specialize Hlo with (1 := Hx').
+      rewrite Hx' in Hlo.
+      assumption.
+  Qed.
+
+  Lemma proj_expected_existT (t : type) (v : interp_type t) :
+    v = proj_expected t (existT interp_type t v).
+  Proof.
+    unfold proj_expected.
+    simpl.
+    case type_eq_dec eqn:E; [| easy].
+    unfold cast.
+    rewrite (Eqdep_dec.UIP_dec type_eq_dec e eq_refl).
+    trivial.
+  Qed.
+
+  (*
+  Lemma interp_type_eq : forall {t : type} (e : expr t) (w : interp_type t) (l : locals),
     (existT interp_type t w =
-    existT interp_type t (interp_expr (locals := locals) map.empty map.empty e)) ->
-    (interp_expr map.empty map.empty e) = w.
+    existT interp_type t (interp_expr l e)) ->
+    (interp_expr l e) = w.
   Proof.
     intros.
     inversion_sigma.
@@ -133,6 +246,7 @@ Section WithMap.
     * easy.
     * exact type_eq_dec.
   Qed.
+  *)
 
   Lemma eval_map_extends_locals : forall e (m : mem) (l l' : locals') w,
     map.extends l' l ->
@@ -178,15 +292,22 @@ Section WithMap.
         now rewrite H2.
   Qed.
 
-  Lemma compile_correct : forall {t} (e : expr t) (c : Syntax.cmd) (e' : Syntax.expr),
-    wf map.empty e ->
-    compile_expr e = Success (c, e') -> forall tr m l,
-    exec map.empty c tr m l (fun tr' m' l' => exists (w : word),
-      eval_expr m' l' e' = Some w /\
-      value_relation (interp_expr map.empty map.empty e) w /\
-      m' = m /\
-      map.extends l' l
-    ).
+  (*
+  Lemma compile_correct :
+    forall {t} (e : expr t) (e' : Syntax.expr) (G : tenv),
+    wf G e ->
+    compile_expr e = Success e' -> forall lo l,
+    tenv_relation G lo ->
+    locals_relation lo l -> exists w : word, forall m,
+    eval_expr m l e' = Some w /\
+    value_relation (interp_expr lo e) w.
+    (* forall tr m l, *)
+    (* exec map.empty c tr m l (fun tr' m' l' => exists (w : word), *)
+    (*   eval_expr m' l' e' = Some w /\ *)
+    (*   value_relation (interp_expr map.empty map.empty e) w /\ *)
+    (*   m' = m /\ *)
+    (*   map.extends l' l *)
+    (* ). *)
   Proof.
     intros t. induction e; intros c e' He He' tr m l; try easy.
     - (* EAtom a *)
@@ -326,6 +447,7 @@ Section WithMap.
             try rewrite word.unsigned_of_Z_0;
             now try rewrite word.unsigned_of_Z_1.
   Qed.
+  *)
 
 End WithMap.
 
