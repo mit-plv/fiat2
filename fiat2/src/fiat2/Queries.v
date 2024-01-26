@@ -444,6 +444,36 @@ Section Queries_Section.
     print_string s.
   Abort.
 
+  (* Queries with move filter optimization example *)
+  Definition select_steven_job_slow := <{
+    let "ans" := flatmap db_employees "empl"
+      (flatmap db_jobs "job"
+        (if "empl"["first_name"] == <[PAString "Steven"]> then
+          (if "empl"["job_id"] == "job"["job_id"] then [("empl", "job")]
+            else nil[field_product db_employees_fields db_jobs_fields])
+            else nil[field_product db_employees_fields db_jobs_fields]))
+    in "json" <- <[ PEElaborated _ (generate_json _ (EVar (List (field_product db_employees_fields db_jobs_fields)) "ans")) ]>
+  }>.
+
+  Definition select_steven_job_fast := <{
+    let "ans" := flatmap db_employees "empl"
+      (if "empl"["first_name"] == <[PAString "Steven"]> then
+        (flatmap db_jobs "job"
+          (if "empl"["job_id"] == "job"["job_id"] then [("empl", "job")]
+            else nil[field_product db_employees_fields db_jobs_fields]))
+            else nil[field_product db_employees_fields db_jobs_fields])
+    in "json" <- <[ PEElaborated _ (generate_json _ (EVar (List (field_product db_employees_fields db_jobs_fields)) "ans")) ]>
+  }>.
+
+  Goal True.
+    let s := eval vm_compute in (export_prog (("json", (TString, true)) :: nil) select_steven_job_slow)%string in
+    print_string s.
+
+    let s := eval vm_compute in (export_prog (("json", (TString, true)) :: nil) select_steven_job_fast)%string in
+    print_string s.
+  Abort.
+
+
   Definition tmp := Eval cbv in match tmp' with
                                 | CGets _ e => e
                                 | _ => _
