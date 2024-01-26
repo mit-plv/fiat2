@@ -794,3 +794,113 @@ Section WithMap3.
       now rewrite is_name_used_correct.
   Abort.
 End WithMap3.
+
+(* Workaround for COQBUG <https://github.com/coq/coq/issues/17555> *)
+Section WithMap4.
+  Context {width: Z} {BW: Bitwidth width} {word: word.word width} {mem: map.map word byte}.
+  Context {word_ok: word.ok word} {mem_ok: map.ok mem}.
+  Context {locals: map.map string {t & interp_type (width := width) t}} {locals_ok: map.ok locals}.
+
+
+  (* Checks if an expression contains a variable, irrespective of shadowing. It should be called with a dephoasified expression that has globally unique names *)
+  Fixpoint contains_variable {t : type} (e : expr t) (x : string) : bool :=
+    match e with
+    | EVar _ s => (s =? x)%string (* Should it be for both? *)
+    | ELoc _ s => false (* Should it be for both? *)
+    | EAtom a => false
+    | EUnop o e1 => contains_variable e1 x
+    | EBinop o e1 e2 => contains_variable e1 x || contains_variable e2 x
+    | EFlatmap l1 v fn => (x =? v)%string || contains_variable l1 x || contains_variable fn x
+    | EIf e1 e2 e3 => contains_variable e1 x || contains_variable e2 x || contains_variable e3 x
+    | EFold l1 a v1 v2 fn => (x =? v1)%string || (x =? v2)%string || contains_variable l1 x || contains_variable a x || contains_variable fn x
+    | ELet v e1 e2 => (x =? v)%string || contains_variable e1 x || contains_variable e2 x
+    end.
+
+  Definition move_filter' {t : type} (e : expr t) : option (expr t) :=
+    match e with
+    | @EFlatmap _ t1 l x f => 
+        match f in expr t' return option (expr t') with
+        | @EIf t2 pred e1 e2 =>
+            match t2 return (expr t2 -> expr t2 -> option (expr t2)) with
+            | TList t => fun e1' e2' => Some
+                (if contains_variable pred x
+                 then EFlatmap l x (EIf pred e1' e2')
+                 else EIf pred (EFlatmap l x e1') (EFlatmap l x e2'))
+            | _ => fun _ _ => None
+            end e1 e2
+        | _ => None
+        end
+    | _ => None
+    end.
+  Definition move_filter {t : type} (e : expr t) : expr t :=
+    match move_filter' e with
+    | Some e' => e'
+    | None => e
+    end.
+
+  Lemma doesnt_contain_same {t1 t2 : type} (store env : locals) (e : expr t1) (x : string) (y : interp_type t2):
+    contains_variable e x = false ->
+    interp_expr store (set_local env x y) e = interp_expr store env e.
+  Proof.
+    symmetry. intros. revert env. induction e; 
+      try reflexivity; cbn; cbn in H;
+      try (intros; rewrite IHe; try easy);
+      try (rewrite IHe; try easy); intros.
+    - destruct (x0 =? x)%string eqn:E.
+      + apply eqb_eq in E; subst.
+        exfalso. apply Bool.diff_true_false in H. apply H.
+      + apply eqb_neq in E.
+        unfold get_local, set_local.
+        rewrite map.get_put_diff by congruence.
+        reflexivity.
+    - apply Bool.orb_false_elim in H.
+      rewrite IHe1, IHe2; try easy.
+    - repeat (apply Bool.orb_false_elim in H; destruct H).
+      rewrite IHe1 by easy. apply flat_map_ext.
+      unfold set_local. rewrite eqb_neq in H.
+      intros. rewrite map.put_put_diff by congruence.
+      rewrite IHe2 by congruence.
+      reflexivity.
+    - repeat (apply Bool.orb_false_elim in H; destruct H).
+      rewrite IHe1, IHe2 by easy.
+      induction (interp_expr store (set_local env x y) e1); try reflexivity.
+      cbn. rewrite IHi.
+      rewrite IHe3 by congruence.
+      unfold set_local. rewrite eqb_neq in H, H3.
+      rewrite (map.put_put_diff _ x x0) by congruence.
+      rewrite (map.put_put_diff _ x y0) by congruence.
+      reflexivity.
+    - repeat (apply Bool.orb_false_elim in H; destruct H).
+      rewrite IHe1, IHe2, IHe3 by congruence.
+      reflexivity.
+    - repeat (apply Bool.orb_false_elim in H; destruct H).
+      rewrite IHe1, IHe2 by congruence.
+      unfold set_local. apply eqb_neq in H.
+      rewrite map.put_put_diff by congruence.
+      reflexivity.
+  Qed.
+
+  Theorem move_filter_correct {t : type} (store env : locals) (e : expr t) :
+    interp_expr store env (move_filter e) = interp_expr store env e.
+  Proof.
+    destruct e as [| | | | | t1 t2 l x f| | |]; try reflexivity.
+    refine (
+      match f with
+      | EIf pred e1 e2 => _
+      | _ => _
+      end
+    ); try (destruct t; try easy);
+       try (destruct t0; easy);
+       try (destruct t3; easy).
+
+   cbn.
+   destruct (contains_variable pred x) eqn:contains; try reflexivity.
+
+   cbn.
+   destruct (interp_expr store env pred) eqn:E;
+     apply flat_map_ext; intros;
+     rewrite (doesnt_contain_same _ _ pred) by congruence;
+     rewrite E; reflexivity.
+  Qed.
+
+End WithMap4.
