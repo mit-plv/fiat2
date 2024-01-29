@@ -872,7 +872,7 @@ We proves that the pipeline in the example is sound using the soundness theorems
     apply flatmap_flatmap_head_correct'.
   Qed.
 
-  (* let-lifting (work in progress)  *)
+  (* let-lifting (with A Normal Form transformation technique  *)
   Fixpoint lift_let_from {V t} (e : phoas_expr V t) :
     (phoas_expr V t -> phoas_command V) -> phoas_command V :=
     match e with
@@ -884,7 +884,7 @@ We proves that the pipeline in the example is sound using the soundness theorems
                                       (fun e1' => lift_let_from e2
                                                     (fun e2' => g (PhEBinop o e1' e2')))
     | PhEFlatmap l1 x fn_l2 => fun g => lift_let_from l1
-                                           (fun l1' => g (PhEFlatmap l1' x fn_l2)) (* ??? Need to lift let in fn_l2 too? *)
+                                          (fun l1' => g (PhEFlatmap l1' x fn_l2))
     | PhEFold l1 e2 x y fn_e3 => fun g => lift_let_from l1
                                              (fun l1' => lift_let_from e2
                                                            (fun e2' => g (PhEFold l1' e2' x y fn_e3)))
@@ -906,7 +906,44 @@ We proves that the pipeline in the example is sound using the soundness theorems
     | PhCForeach x l fn_c => lift_let_from l (fun l' => PhCForeach x l' (fun v => lift_let' (fn_c v)))
     end.
 
-(* End of let-lifting *)
+  Lemma lift_let_from_correct : forall store t fn_e_c fn_v_c,
+      (forall (e : phoas_expr _ t), interp_phoas_command store (fn_e_c e) = fn_v_c (interp_phoas_expr store e)) ->
+      forall (e : phoas_expr _ t), interp_phoas_command store (lift_let_from e (fn_e_c)) = fn_v_c (interp_phoas_expr store e).
+  Proof.
+    induction e; try apply H; simpl in *.
+    - rewrite IHe with (fn_v_c := fun v => fn_v_c (interp_unop o v)); trivial.
+    - rewrite IHe1 with (fn_v_c := fun v => fn_v_c (interp_binop o v (interp_phoas_expr store e2))); trivial.
+      intro e1'; rewrite IHe2 with (fn_v_c := fun v => fn_v_c (interp_binop o (interp_phoas_expr store e1') v)); trivial.
+    - rewrite IHe with (fn_v_c := fun v => fn_v_c (flat_map (fun y => interp_phoas_expr store (fn_l2 y)) v)); trivial.
+    - rewrite IHe1 with (fn_v_c := fun v => fn_v_c (fold_right (fun u acc => interp_phoas_expr store (fn_e3 u acc))
+                                                      (interp_phoas_expr store e2) v)); trivial.
+      intro e1'; rewrite IHe2 with (fn_v_c := fun v => fn_v_c (fold_right (fun u acc => interp_phoas_expr store (fn_e3 u acc))
+                                                      v (interp_phoas_expr store e1'))); trivial.
+    - rewrite IHe1 with (fn_v_c := fun v : interp_type TBool => fn_v_c (if v then interp_phoas_expr store e2 else interp_phoas_expr store e3)); trivial.
+      intro e1'; rewrite IHe2 with (fn_v_c := fun v => fn_v_c (if interp_phoas_expr store e1' then v else interp_phoas_expr store e3)); trivial.
+      intro e2'; rewrite IHe3 with (fn_v_c := fun v => fn_v_c (if interp_phoas_expr store e1' then interp_phoas_expr store e2' else v)); trivial.
+    - rewrite IHe with (fn_v_c := fun v => fn_v_c (interp_phoas_expr store (fn_e2 v))); trivial.
+      intro e'; simpl. apply H.
+  Qed.
+(* ??? Is it possible to automate the instantiation of fn_v_c? *)
+  Lemma lift_let_correct' : forall store c,
+      interp_phoas_command store (lift_let' c) = interp_phoas_command store c.
+  Proof.
+    intros store c; revert store; induction c;
+      intro store; simpl; try reflexivity.
+    - rewrite IHc1, IHc2; reflexivity.
+    - rewrite lift_let_from_correct with (fn_v_c := fun v => interp_phoas_command store (fn_c v)); trivial. intro; apply H.
+    - rewrite lift_let_from_correct with (fn_v_c := fun v => map.update (interp_phoas_command (set_local store x v) c) x (map.get store x)); trivial. intro; simpl; rewrite IHc; reflexivity.
+    - rewrite lift_let_from_correct with (fn_v_c := fun v => set_local store x v); trivial.
+    - rewrite lift_let_from_correct with (fn_v_c := fun (v : interp_type TBool) => interp_phoas_command store (if v then c1 else c2)); trivial. simpl. intro e0. destruct (interp_phoas_expr store e0); rewrite ?IHc1, ?IHc2; reflexivity.
+    - rewrite lift_let_from_correct with (fn_v_c := fun (v : interp_type (TList t)) => fold_left (fun store' u => interp_phoas_command store' (fn_c u)) v store); trivial. simpl. intro; apply fold_left_eq_ext; trivial.
+  Qed.
+
+  (* End of let-lifting *)
+
+  (* Transformations that involve rearrangement of bindings are implemented in PHOAS
+   Others, especially those which require pattern matching on the function argument or the function body,
+   should not be implemented here *)
   Definition fold_flatmap_head' {V : type -> Type} {t : type} (e : phoas_expr V t) : phoas_expr V t :=
     match e with
     | @PhEFold _ t3 t4 l3 e4 x y fn_e5 =>
@@ -948,44 +985,6 @@ We proves that the pipeline in the example is sound using the soundness theorems
   Proof.
     apply fold_flatmap_head_correct'.
   Qed.
-
-(*  Require Import Coq.Program.Equality. (* ??? Currently using dependent destruction on o *)
-
-  Definition invert_singleton {V} {t : type} (e : phoas_expr V (TList t)) : option (phoas_expr V t) :=
-    match e in phoas_expr _ t' return option (phoas_expr V t) with
-    | PhEBinop (OCons t') h (PhEAtom (ANil _)) => match type_eq_dec t' t with
-                                                  | left H => Some (cast H _ h)
-                                                  | right _ => None
-                                                  end
-    | _ => None
-    end.
-
-  Definition fold_singleton_head' {V} {t : type} (e : phoas_expr V t) : phoas_expr V t :=
-    match e with
-    | @PhEFold _ t1 t2 l1 e2 x y fn_e3 =>
-          match invert_singleton l1 with
-          | Some e1 => PhELet x e1 (fun v => PhELet y e2 (fn_e3 v))
-          | None => PhEFold l1 e2 x y fn_e3
-          end
-    | e' => e'
-    end.
-
-  Definition fold_singleton_head {t : type} (e : Phoas_expr t) : Phoas_expr t :=
-    fun V => fold_singleton_head' (e V).
-
- Lemma fold_singleton_head_correct' {t} (store : phoas_env interp_type) (e : phoas_expr _ t) :
-    interp_phoas_expr store e = interp_phoas_expr store (fold_singleton_head' e).
-  Proof.
-    destruct e; auto.
-    by_phoas_expr_cases_on e1; intuition; repeat destruct_exists;
-      try (repeat by_atom_cases; intuition; repeat destruct_exists; reflexivity).
-    - dependent destruction o; intuition. by_phoas_expr_cases_on e3; intuition; repeat destruct_exists;
-         try (repeat by_atom_cases; intuition; repeat destruct_exists; reflexivity).
-       + by_atom_cases; intuition; subst. simpl. rewrite eq_dec_refl. reflexivity.
-       + projT1_eq_for_projT2_eq.
-    - projT1_eq_for_projT2_eq.
-  Qed.
- *)
 
   Definition elt_ty t :=
   match t with
