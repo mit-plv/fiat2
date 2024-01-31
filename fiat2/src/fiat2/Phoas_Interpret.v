@@ -906,39 +906,40 @@ We proves that the pipeline in the example is sound using the soundness theorems
     | PhCForeach x l fn_c => lift_let_from l (fun l' => PhCForeach x l' (fun v => lift_let' (fn_c v)))
     end.
 
+  Ltac reflexivity_with_lhs_evar_fun :=
+    lazymatch goal with
+    | |- ?f ?a = ?RHS =>
+        let rhs := fresh "RHS" in
+        set RHS as rhs;
+        pattern a in rhs;
+        subst rhs;
+        apply eq_refl
+    end.
+
   Lemma lift_let_from_correct : forall store t fn_e_c fn_v_c,
       (forall (e : phoas_expr _ t), interp_phoas_command store (fn_e_c e) = fn_v_c (interp_phoas_expr store e)) ->
       forall (e : phoas_expr _ t), interp_phoas_command store (lift_let_from e (fn_e_c)) = fn_v_c (interp_phoas_expr store e).
   Proof.
-    induction e; try apply H; simpl in *.
-    - rewrite IHe with (fn_v_c := fun v => fn_v_c (interp_unop o v)); trivial.
-    - rewrite IHe1 with (fn_v_c := fun v => fn_v_c (interp_binop o v (interp_phoas_expr store e2))); trivial.
-      intro e1'; rewrite IHe2 with (fn_v_c := fun v => fn_v_c (interp_binop o (interp_phoas_expr store e1') v)); trivial.
-    - rewrite IHe with (fn_v_c := fun v => fn_v_c (flat_map (fun y => interp_phoas_expr store (fn_l2 y)) v)); trivial.
-    - rewrite IHe1 with (fn_v_c := fun v => fn_v_c (fold_right (fun u acc => interp_phoas_expr store (fn_e3 u acc))
-                                                      (interp_phoas_expr store e2) v)); trivial.
-      intro e1'; rewrite IHe2 with (fn_v_c := fun v => fn_v_c (fold_right (fun u acc => interp_phoas_expr store (fn_e3 u acc))
-                                                      v (interp_phoas_expr store e1'))); trivial.
-    - rewrite IHe1 with (fn_v_c := fun v : interp_type TBool => fn_v_c (if v then interp_phoas_expr store e2 else interp_phoas_expr store e3)); trivial.
-      intro e1'; rewrite IHe2 with (fn_v_c := fun v => fn_v_c (if interp_phoas_expr store e1' then v else interp_phoas_expr store e3)); trivial.
-      intro e2'; rewrite IHe3 with (fn_v_c := fun v => fn_v_c (if interp_phoas_expr store e1' then interp_phoas_expr store e2' else v)); trivial.
-    - rewrite IHe with (fn_v_c := fun v => fn_v_c (interp_phoas_expr store (fn_e2 v))); trivial.
-      intro e'; simpl. apply H.
+    induction e; try apply H; simpl in *;
+    try (erewrite IHe; [reflexivity_with_lhs_evar_fun | trivial]);
+    try (erewrite IHe1; [reflexivity_with_lhs_evar_fun | trivial];
+         intro; erewrite IHe2; [reflexivity_with_lhs_evar_fun | trivial]);
+    try (intro; erewrite IHe3; [reflexivity_with_lhs_evar_fun | trivial]).
+    intro; apply H.
   Qed.
-(* ??? Is it possible to automate the instantiation of fn_v_c? *)
+
   Lemma lift_let_correct' : forall store c,
       interp_phoas_command store (lift_let' c) = interp_phoas_command store c.
   Proof.
     intros store c; revert store; induction c;
-      intro store; simpl; try reflexivity.
-    - rewrite IHc1, IHc2; reflexivity.
-    - rewrite lift_let_from_correct with (fn_v_c := fun v => interp_phoas_command store (fn_c v)); trivial. intro; apply H.
-    - rewrite lift_let_from_correct with (fn_v_c := fun v => map.update (interp_phoas_command (set_local store x v) c) x (map.get store x)); trivial. intro; simpl; rewrite IHc; reflexivity.
-    - rewrite lift_let_from_correct with (fn_v_c := fun v => set_local store x v); trivial.
-    - rewrite lift_let_from_correct with (fn_v_c := fun (v : interp_type TBool) => interp_phoas_command store (if v then c1 else c2)); trivial. simpl. intro e0. destruct (interp_phoas_expr store e0); rewrite ?IHc1, ?IHc2; reflexivity.
-    - rewrite lift_let_from_correct with (fn_v_c := fun (v : interp_type (TList t)) => fold_left (fun store' u => interp_phoas_command store' (fn_c u)) v store); trivial. simpl. intro; apply fold_left_eq_ext; trivial.
+      intro store; simpl; try reflexivity;
+      try (rewrite IHc1, IHc2; reflexivity);
+      try (erewrite lift_let_from_correct; [reflexivity_with_lhs_evar_fun | trivial]).
+    - intro; apply H.
+    - intro; simpl. rewrite IHc; reflexivity.
+    - simpl. intro e0. destruct (interp_phoas_expr store e0); rewrite ?IHc1, ?IHc2; reflexivity.
+    - simpl. intro; apply fold_left_eq_ext; trivial.
   Qed.
-
   (* End of let-lifting *)
 
   (* Transformations that involve rearrangement of bindings are implemented in PHOAS
