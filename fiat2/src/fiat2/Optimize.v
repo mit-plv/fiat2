@@ -805,8 +805,8 @@ Section WithMap4.
   (* Checks if an expression contains a variable, irrespective of shadowing. It should be called with a dephoasified expression that has globally unique names *)
   Fixpoint contains_variable {t : type} (e : expr t) (x : string) : bool :=
     match e with
-    | EVar _ s => (s =? x)%string (* Should it be for both? *)
-    | ELoc _ s => false (* Should it be for both? *)
+    | EVar _ s => (s =? x)%string
+    | ELoc _ s => false
     | EAtom a => false
     | EUnop o e1 => contains_variable e1 x
     | EBinop o e1 e2 => contains_variable e1 x || contains_variable e2 x
