@@ -210,6 +210,24 @@ Section WithMap2.
       | ELet x e1 e2 => ELet x (fold_expr e1) (fold_expr e2)
       | (EVar _ _ | ELoc _ _ | EAtom _) as e => e
       end.
+
+    Context (H : (forall store env t e, interp_expr store env (@f t e) = interp_expr store env e)).
+    Theorem fold_expr_correct {t : type} (store env : locals) (e : expr t) :
+      interp_expr store env (fold_expr e) = interp_expr store env e.
+    Proof.
+      generalize dependent (store).
+      generalize dependent (env).
+      induction e; cbn; intros; rewrite H; cbn; try congruence.
+      - rewrite IHe1. induction (interp_expr store env e1); try reflexivity.
+        cbn. rewrite IHi.
+        f_equal. rewrite IHe2. reflexivity.
+      - rewrite IHe1, IHe2.
+        induction (interp_expr store env e1); try reflexivity.
+        cbn. rewrite IHe3, IHi.
+        reflexivity.
+      - rewrite IHe1, IHe2, IHe3.
+        reflexivity.
+    Qed.
   End fold_expr.
 
   Definition partial {t : type} := @fold_expr (@partial_head) t.
@@ -805,8 +823,8 @@ Section WithMap4.
   (* Checks if an expression contains a variable, irrespective of shadowing. It should be called with a dephoasified expression that has globally unique names *)
   Fixpoint contains_variable {t : type} (e : expr t) (x : string) : bool :=
     match e with
-    | EVar _ s => (s =? x)%string (* Should it be for both? *)
-    | ELoc _ s => false (* Should it be for both? *)
+    | EVar _ s => (s =? x)%string
+    | ELoc _ s => false
     | EAtom a => false
     | EUnop o e1 => contains_variable e1 x
     | EBinop o e1 e2 => contains_variable e1 x || contains_variable e2 x
@@ -902,5 +920,9 @@ Section WithMap4.
      rewrite (doesnt_contain_same _ _ pred) by congruence;
      rewrite E; reflexivity.
   Qed.
+
+  Theorem move_filter_fold_correct {t : type} (store env : locals) (e : expr t) :
+    interp_expr store env (fold_expr (@move_filter) e) = interp_expr store env e.
+  Proof. apply fold_expr_correct. intros. apply move_filter_correct. Qed.
 
 End WithMap4.

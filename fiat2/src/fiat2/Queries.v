@@ -11,6 +11,7 @@ Require Import ExtrHaskellBasic.
 Require Import ExtrHaskellString.
 Require Import ExtrHaskellZInteger.
 Require Import bedrock2.PrintString.
+Import ResultMonadNotations.
 
 Local Open Scope Z_scope.
 Local Open Scope string_scope.
@@ -455,7 +456,7 @@ Section Queries_Section.
     in "json" <- <[ PEElaborated _ (generate_json _ (EVar (List (field_product db_employees_fields db_jobs_fields)) "ans")) ]>
   }>.
 
-  Definition select_steven_job_fast := <{
+  Definition select_steven_job_fast_manual := <{
     let "ans" := flatmap db_employees "empl"
       (if "empl"["first_name"] == <[PAString "Steven"]> then
         (flatmap db_jobs "job"
@@ -465,11 +466,39 @@ Section Queries_Section.
     in "json" <- <[ PEElaborated _ (generate_json _ (EVar (List (field_product db_employees_fields db_jobs_fields)) "ans")) ]>
   }>.
 
+  Definition select_steven_job_fast_auto : command :=
+    match @elaborate_command tenv (map.of_list (("json", (TString, true)) :: nil)) select_steven_job_slow with
+    | Success (CLet v e1 e2) =>
+        match enforce_type (List (field_product db_employees_fields db_jobs_fields)) e1 with
+        | Success e1' => CLet v (@fold_expr (@move_filter) _ e1') e2
+        | Failure _ => CSkip
+        end
+    | _ => CSkip
+    end.
+
   Goal True.
     let s := eval vm_compute in (export_prog (("json", (TString, true)) :: nil) select_steven_job_slow)%string in
     print_string s.
 
-    let s := eval vm_compute in (export_prog (("json", (TString, true)) :: nil) select_steven_job_fast)%string in
+    let s := eval vm_compute in (export_prog (("json", (TString, true)) :: nil) select_steven_job_fast_manual)%string in
+    print_string s.
+
+    Definition export_command_prog (l : list (string * (type * bool))) (c : command) :=
+      let output := Success (SortedList.value (interp_command map.empty (map_to_locals l) c))
+      in let getJsonStrs := flat_map (fun p =>
+          match p return list string with
+          | ("json", existT _ String s) => s :: nil
+          | _ => nil
+          end)
+      in match output with
+         | Success locals => match getJsonStrs locals with
+                             | str :: nil => str
+                             | _ => "Error: Program did not output json str"
+                             end
+         | Failure s => "Error: Program errored"
+         end.
+
+    let s := eval vm_compute in (export_command_prog (("json", (TString, true)) :: nil) select_steven_job_fast_auto)%string in
     print_string s.
   Abort.
 
