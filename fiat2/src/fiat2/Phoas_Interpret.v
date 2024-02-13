@@ -892,7 +892,7 @@ We proves that the pipeline in the example is sound using the soundness theorems
                                     (fun e1' => lift_let_from e2
                                                    (fun e2' => lift_let_from e3
                                                                  (fun e3' => g (PhEIf e1' e2' e3'))))
-    | PhELet x e1 fn_e2 => fun g => lift_let_from e1 (fun e1' => PhCLet x e1' (fun v => g (fn_e2 v)))
+    | PhELet x e1 fn_e2 => fun g => lift_let_from e1 (fun e1' => PhCLet x e1' (fun v => lift_let_from (fn_e2 v) g))
     end.
 
   Fixpoint lift_let' {V} (e : phoas_command V) : phoas_command V :=
@@ -906,6 +906,9 @@ We proves that the pipeline in the example is sound using the soundness theorems
     | PhCForeach x l fn_c => lift_let_from l (fun l' => PhCForeach x l' (fun v => lift_let' (fn_c v)))
     end.
 
+  Definition lift_let (e : Phoas_command) : Phoas_command :=
+    fun V => lift_let' (e V).
+
   Ltac reflexivity_with_lhs_evar_fun :=
     lazymatch goal with
     | |- ?f ?a = ?RHS =>
@@ -916,16 +919,16 @@ We proves that the pipeline in the example is sound using the soundness theorems
         apply eq_refl
     end.
 
-  Lemma lift_let_from_correct : forall store t fn_e_c fn_v_c,
-      (forall (e : phoas_expr _ t), interp_phoas_command store (fn_e_c e) = fn_v_c (interp_phoas_expr store e)) ->
-      forall (e : phoas_expr _ t), interp_phoas_command store (lift_let_from e (fn_e_c)) = fn_v_c (interp_phoas_expr store e).
+  Lemma lift_let_from_correct : forall store t e_to_c v_to_c,
+      (forall (e : phoas_expr _ t), interp_phoas_command store (e_to_c e) = v_to_c (interp_phoas_expr store e)) ->
+      forall (e : phoas_expr _ t), interp_phoas_command store (lift_let_from e e_to_c) = v_to_c (interp_phoas_expr store e).
   Proof.
     induction e; try apply H; simpl in *;
     try (erewrite IHe; [reflexivity_with_lhs_evar_fun | trivial]);
     try (erewrite IHe1; [reflexivity_with_lhs_evar_fun | trivial];
          intro; erewrite IHe2; [reflexivity_with_lhs_evar_fun | trivial]);
     try (intro; erewrite IHe3; [reflexivity_with_lhs_evar_fun | trivial]).
-    intro; apply H.
+    intro. simpl. erewrite H0; [reflexivity_with_lhs_evar_fun | trivial].
   Qed.
 
   Lemma lift_let_correct' : forall store c,
@@ -933,13 +936,39 @@ We proves that the pipeline in the example is sound using the soundness theorems
   Proof.
     intros store c; revert store; induction c;
       intro store; simpl; try reflexivity;
-      try (rewrite IHc1, IHc2; reflexivity);
+      try congruence;
       try (erewrite lift_let_from_correct; [reflexivity_with_lhs_evar_fun | trivial]).
     - intro; apply H.
-    - intro; simpl. rewrite IHc; reflexivity.
-    - simpl. intro e0. destruct (interp_phoas_expr store e0); rewrite ?IHc1, ?IHc2; reflexivity.
+    - intro; simpl. congruence.
+    - simpl. intro e0. destruct (interp_phoas_expr store e0); congruence.
     - simpl. intro; apply fold_left_eq_ext; trivial.
   Qed.
+
+  Lemma lift_let_correct : forall store c,
+      interp_Phoas_command store (lift_let c) = interp_Phoas_command store c.
+  Proof.
+    intros; apply lift_let_correct'.
+  Qed.
+
+  Open Scope string_scope.
+  Definition lift_let_ex1 := fun V =>
+                              @PhCLet V _ "x"
+                                (PhELet "u"
+                                   (PhEAtom (AInt 0))
+                                   (fun vu => PhELet "r"
+                                                (PhEVar _ vu)
+                                                (fun vr => PhEVar _ vr)))
+                                (fun _ => PhCSkip).
+  Compute lift_let lift_let_ex1.
+
+  Definition lift_let_ex2 := fun V => PhCForeach (V := V) "x"
+                                        (PhELet "u" (PhEAtom (ANil TInt)) (fun vu => PhEVar _ vu))
+                                        (fun vx => PhCLetMut "y"
+                                                    (PhEAtom (AInt 0))
+                                                    (PhCGets "y"
+                                                       (PhELet "z" (PhEVar _ vx)
+                                                          (fun vz => PhEVar _ vz)))).
+  Compute lift_let lift_let_ex2.
   (* End of let-lifting *)
 
   (* Transformations that involve rearrangement of bindings are implemented in PHOAS
@@ -1080,5 +1109,44 @@ We proves that the pipeline in the example is sound using the soundness theorems
     unfold fold_singleton_head'. destruct (match_singleton_list e1) eqn:E; auto.
     apply invert_match_singleton_list in E.
     simpl in *. eq_projT2_eq.
+  Qed.
+
+  Section fold_phoas_expr.
+    Context (V : type -> Type).
+    Context (f : forall t, phoas_expr V t -> phoas_expr V t). Local Arguments f {t}.
+    Fixpoint fold_phoas_expr {t : type} (e : phoas_expr _ t) : phoas_expr _ t :=
+      f
+        match e in phoas_expr _ t return phoas_expr V t with
+        | (PhEVar _ _ | PhELoc _ _ | PhEAtom _) as e => e
+        | PhEUnop o e1 => PhEUnop o (fold_phoas_expr e1)
+        | PhEBinop o e1 e2 => PhEBinop o (fold_phoas_expr e1) (fold_phoas_expr e2)
+        | PhEFlatmap l1 x fn_l2 => PhEFlatmap (fold_phoas_expr l1) x (fun v => (fold_phoas_expr (fn_l2 v)))
+        | PhEFold l1 e2 x y fn_e3 =>
+            PhEFold (fold_phoas_expr l1) (fold_phoas_expr e2) x y (fun v acc => fold_phoas_expr (fn_e3 v acc))
+        | PhEIf e1 e2 e3 => PhEIf (fold_phoas_expr e1) (fold_phoas_expr e2) (fold_phoas_expr e3)
+        | PhELet x e1 fn_e2 => PhELet x (fold_phoas_expr e1) (fun v => fold_phoas_expr (fn_e2 v))
+        end.
+  End fold_phoas_expr.
+
+  Lemma fold_phoas_expr_correct (store : phoas_env interp_type) f :
+    (forall t (e : phoas_expr _ t), interp_phoas_expr store (f _ e) = interp_phoas_expr store e) ->
+    forall t (e : phoas_expr _ t), interp_phoas_expr store (fold_phoas_expr _ f e) = interp_phoas_expr store e.
+  Proof.
+    induction e; try apply H;
+      simpl; rewrite H; simpl;
+      try (rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3; reflexivity).
+    - erewrite IHe, flat_map_eq_ext; auto.
+    - erewrite IHe1, IHe2, fold_right_eq_ext; auto.
+    - rewrite H0, IHe; reflexivity.
+  Qed.
+
+  Definition transform_correct f : Prop :=
+    forall store t (e : phoas_expr _ t), interp_phoas_expr store (f _ e) = interp_phoas_expr store e.
+
+  Lemma compose_transform_correct :
+    forall f g, transform_correct f -> transform_correct g ->
+                transform_correct (fun t (e : phoas_expr _ t) => g _ (f _ e)).
+  Proof.
+    congruence.
   Qed.
 End WithMap.
