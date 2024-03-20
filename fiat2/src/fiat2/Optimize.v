@@ -210,6 +210,17 @@ Section WithMap2.
       | ELet x e1 e2 => ELet x (fold_expr e1) (fold_expr e2)
       | (EVar _ _ | ELoc _ _ | EAtom _) as e => e
       end.
+
+    Fixpoint fold_command (c : command) : command :=
+      match c with
+      | CSkip => CSkip
+      | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
+      | CLet x e c => CLet x (fold_expr e) (fold_command c)
+      | CLetMut x e c => CLetMut x (fold_expr e) (fold_command c)
+      | CGets x e => CGets x (fold_expr e)
+      | CIf e c1 c2 => CIf (fold_expr e) (fold_command c1) (fold_command c2)
+      | CForeach x e c => CForeach x (fold_expr e) (fold_command c)
+      end.
   End fold_expr.
 
   Definition partial {t : type} := @fold_expr (@partial_head) t.
