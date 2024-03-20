@@ -54,8 +54,8 @@ Section Queries_Section.
 
   Definition artists_filter_q :=
     EFlatmap artists "x" (
-      EIf (EBinop OLess (EUnop (OFst _ _ _) (ELoc artist "x")) (EAtom (AInt 3)))
-        (EBinop (OCons artist) (ELoc artist "x") (EAtom (ANil _)))
+      EIf (EBinop OLess (EUnop (OFst _ _ _) (EVar artist "x")) (EAtom (AInt 3)))
+        (EBinop (OCons artist) (EVar artist "x") (EAtom (ANil _)))
         (EAtom (ANil _))
     ).
 

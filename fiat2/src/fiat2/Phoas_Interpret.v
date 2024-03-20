@@ -7,6 +7,16 @@ Require Import coqutil.Tactics.Tactics.
 Require Import Coq.Strings.String.
 Require Import Coq.Logic.FunctionalExtensionality.
 
+Require Import coqutil.Datatypes.Result.
+Import ResultMonadNotations.
+
+Require Import Coq.Logic.Eqdep_dec.
+Module DecidableFiat2Type <: DecidableType.
+  Definition eq_dec := type_eq_dec.
+  Definition U := type.
+End DecidableFiat2Type.
+Module Fiat2TypeEqDep := DecidableEqDep(DecidableFiat2Type).
+
 Section PhoasExprEquiv.
   Context {V V' : type -> Type}.
 
@@ -46,7 +56,43 @@ Section PhoasExprEquiv.
     phoas_expr_equiv C e1 e1' ->
     (forall v v', phoas_expr_equiv (vars _ (v, v') :: C) (fn_e2 v) (fn_e2' v')) ->
     phoas_expr_equiv C (PhELet x e1 fn_e2) (PhELet x' e1' fn_e2').
+
+  Inductive phoas_command_equiv : ctxt -> phoas_command V -> phoas_command V' -> Prop :=
+  | eq_PhCSkip C : phoas_command_equiv C PhCSkip PhCSkip
+  | eq_PhCSeq C c1 c1' c2 c2' :
+    phoas_command_equiv C c1 c1' ->
+    phoas_command_equiv C c2 c2' ->
+    phoas_command_equiv C (PhCSeq c1 c2) (PhCSeq c1' c2')
+  | eq_PhCLet C {t} (x x' : string) (e : phoas_expr _ t) e' fn_c fn_c' :
+    phoas_expr_equiv C e e' ->
+    (forall v v', phoas_command_equiv (vars _ (v, v') :: C) (fn_c v) (fn_c' v')) ->
+    phoas_command_equiv C (PhCLet x e fn_c) (PhCLet x' e' fn_c')
+  | eq_PhCLetMut C {t} (x x' : string) (e : phoas_expr _ t) e' c c' :
+    x = x' ->
+    phoas_expr_equiv C e e' ->
+    phoas_command_equiv C c c' ->
+    phoas_command_equiv C (PhCLetMut x e c) (PhCLetMut x' e' c')
+  | eq_PhCGets C {t} x x' (e : phoas_expr _ t) e' :
+    x = x' ->
+    phoas_expr_equiv C e e' ->
+    phoas_command_equiv C (PhCGets x e) (PhCGets x' e')
+  | eq_PhCIf C e e' c1 c1' c2 c2' :
+    phoas_expr_equiv C e e' ->
+    phoas_command_equiv C c1 c1' ->
+    phoas_command_equiv C c2 c2' ->
+    phoas_command_equiv C (PhCIf e c1 c2) (PhCIf e' c1' c2')
+  | eq_PhCForeach C {t} x x' (e : phoas_expr _ (TList t)) e' fn_c fn_c' :
+    x = x' ->
+    phoas_expr_equiv C e e' ->
+    (forall v v', phoas_command_equiv (vars _ (v, v') :: C) (fn_c v) (fn_c' v')) ->
+    phoas_command_equiv C (PhCForeach x e fn_c) (PhCForeach x' e' fn_c').
 End PhoasExprEquiv.
+
+Definition Phoas_wf {t : type} (e : Phoas_expr t) :=
+  forall V1 V2, phoas_expr_equiv nil (e V1) (e V2).
+
+Definition Phoas_command_wf (c : Phoas_command) :=
+  forall V1 V2, phoas_command_equiv nil (c V1) (c V2).
 
 Definition projT1_fst_T2 {A : Type} {P1 P2 : A -> Type} (v : {t : A & (P1 t * P2 t)%type}) :
   {t : A & P1 t} :=
@@ -79,6 +125,23 @@ Section WithMap.
 
   Definition interp_Phoas_expr (store : phoas_env interp_type) {t : type} (e : Phoas_expr t) :=
     interp_phoas_expr store (e _).
+
+  Fixpoint interp_phoas_command (store : phoas_env interp_type) (c : phoas_command interp_type) : phoas_env interp_type :=
+    match c with
+    | PhCSkip => store
+    | PhCSeq c1 c2 => interp_phoas_command (interp_phoas_command store c1) c2
+    | PhCLet x e fn_c => interp_phoas_command store (fn_c (interp_phoas_expr store e))
+    | PhCLetMut x e c =>
+        let store' := set_local store x (interp_phoas_expr store e) in
+        let store'' := interp_phoas_command store' c in
+        map.update store'' x (map.get store x)
+    | PhCGets x e => set_local store x (interp_phoas_expr store e)
+    | PhCIf e c1 c2 => interp_phoas_command store (if interp_phoas_expr store e then c1 else c2)
+    | PhCForeach x l fn_c => fold_left (fun store' v => interp_phoas_command store' (fn_c v)) (interp_phoas_expr store l) store
+    end.
+
+  Definition interp_Phoas_command (store : phoas_env interp_type) (c : Phoas_command) :=
+    interp_phoas_command store (c _).
 
   Section WithPhoasV.
     Context {V : type -> Type}.
@@ -125,14 +188,25 @@ Section WithMap.
                                (fun v acc => phoasify (set_phoas_local (set_phoas_local env x v) y acc) fn)
       | ELet x e1 e2 => PhELet x (phoasify env e1) (fun v => phoasify (set_phoas_local env x v) e2)
       end.
+
+    Fixpoint phoasify_command (env : phoas_env V) (c : command) : phoas_command V :=
+      match c with
+      | CSkip => PhCSkip
+      | CSeq c1 c2 => PhCSeq (phoasify_command env c1) (phoasify_command env c2)
+      | CLet x e c => PhCLet x (phoasify env e) (fun v => phoasify_command (set_phoas_local env x v) c)
+      | CLetMut x e c => PhCLetMut x (phoasify env e) (phoasify_command env c)
+      | CGets x e => PhCGets x (phoasify env e)
+      | CIf e c1 c2 => PhCIf (phoasify env e) (phoasify_command env c1) (phoasify_command env c2)
+      | CForeach x l c => PhCForeach x (phoasify env l) (fun v => phoasify_command (set_phoas_local env x v) c)
+      end.
   End WithPhoasV.
 
-  Definition Phoasify {t : type} (e : expr t) : Phoas_expr t:=
+  Definition Phoasify {t : type} (e : expr t) : Phoas_expr t :=
     fun (V : type -> Type) => phoasify (V := V) map.empty e.
-End WithMap.
 
-Definition Phoas_wf {t : type} (e : Phoas_expr t) :=
-  forall V1 V2, phoas_expr_equiv nil (e V1) (e V2).
+  Definition Phoasify_command (c : command) : Phoas_command :=
+    fun (V : type -> Type) => phoasify_command (V := V) map.empty c.
+End WithMap.
 
 (* Remove one occurrence of x from store if there is one.
  * Auxiliary function for the definition of fresh' below *)
@@ -257,8 +331,29 @@ Fixpoint dephoasify (used : list string) {t : type} (e : phoas_expr const_string
       ELet x' (dephoasify used e1) (dephoasify used' (fn x'))
   end.
 
+(* Precondition: used contains all occurrences of mutable variable names in the command *)
+Fixpoint dephoasify_command (used : list string) (c : phoas_command const_string) : command :=
+  match c with
+  | PhCSkip => CSkip
+  | PhCSeq c1 c2 => CSeq (dephoasify_command used c1) (dephoasify_command used c2)
+  | PhCLet x e fn_c =>
+      let x' := fresh used x in
+      let used' := x' :: used in
+      CLet x' (dephoasify used e) (dephoasify_command used' (fn_c x'))
+  | PhCLetMut x e c => CLetMut x (dephoasify used e) (dephoasify_command used c)
+  | PhCGets x e => CGets x (dephoasify used e)
+  | PhCIf e c1 c2 => CIf (dephoasify used e) (dephoasify_command used c1) (dephoasify_command used c2)
+  | PhCForeach x l fn_c =>
+      let x' := fresh used x in
+      let used' := x' :: used in
+      CForeach x' (dephoasify used l) (dephoasify_command used' (fn_c x'))
+  end.
+
 Definition Dephoasify (used : list string) {t : type} (e : Phoas_expr t) : expr t :=
   dephoasify used (e const_string).
+
+Definition Dephoasify_command (used : list string) (c : Phoas_command) : command :=
+  dephoasify_command used (c const_string).
 
 Lemma eq_dec_refl : forall  {t : Type} (eq_dec : forall (v1 v2 : t), {v1 = v2} + {v1 <> v2}),
   forall (x : t), eq_dec x x = left eq_refl.
@@ -292,6 +387,17 @@ Proof.
   induction l as [|h t IHt]; intros l' Hl H; subst.
   - reflexivity.
   - simpl. rewrite (IHt t); congruence.
+Qed.
+
+Lemma fold_left_eq_ext : forall (A B : Type) (f g : A -> B -> A) (a a' : A) (l l' : list B),
+    a = a' -> l = l' ->
+    (forall x y, f x y = g x y) ->
+    fold_left f l a = fold_left g l' a'.
+Proof.
+  intros A B f g a a' l; revert a a'.
+  induction l as [|h t IHt]; intros a a' l' Ha Hl H; subst.
+  - reflexivity.
+  - simpl. apply IHt; congruence.
 Qed.
 
 Section WithMap.
@@ -343,6 +449,28 @@ Section WithMap.
   Proof.
     intros store t e. unfold Phoasify. unfold interp_Phoas_expr.
     apply phoasify_sound'.
+  Qed.
+
+  Lemma phoasify_command_sound' :
+    forall (c : command) (store env : phoas_env interp_type),
+      interp_command store env c = interp_phoas_command store (phoasify_command env c).
+  Proof.
+    induction c; intros; simpl;
+    try (rewrite IHc, phoasify_sound'; reflexivity).
+    - reflexivity.
+    - rewrite IHc1, IHc2; reflexivity.
+    - rewrite phoasify_sound'; reflexivity.
+    - rewrite phoasify_sound', IHc1, IHc2.
+      destruct (interp_phoas_expr store (phoasify env e)); reflexivity.
+    - rewrite phoasify_sound'. apply fold_left_eq_ext; try congruence.
+      intros; apply IHc.
+  Qed.
+
+  Theorem phoasify_command_sound :
+    forall (c : command) (store : phoas_env interp_type),
+      interp_command store map.empty c = interp_Phoas_command store (Phoasify_command c).
+  Proof.
+    intros; apply phoasify_command_sound'.
   Qed.
 
   Definition phoasify_form_consistent {V V'} (C : @ctxt V V')
@@ -436,7 +564,6 @@ Section WithMap.
     intro x. repeat rewrite map.get_empty. reflexivity.
   Qed.
 
-
   Definition dephoasify_envs_consistent (C : ctxt) (used : list string) (env : phoas_env interp_type) :=
     forall (p : {t : type & (string * interp_type t)%type}),
       In p C ->
@@ -507,6 +634,43 @@ Section WithMap.
     apply dephoasify_sound' with (C := nil) (env := map.empty).
     - apply H_wf.
     - unfold dephoasify_envs_consistent. intros p contra.
+      apply in_nil in contra. exfalso; assumption.
+  Qed.
+
+  Lemma dephoasify_command_sound' :
+    forall (c : phoas_command const_string) (c0 : phoas_command interp_type) (C : ctxt),
+      phoas_command_equiv C c c0 ->
+      forall (used : list string) (env : phoas_env interp_type),
+        dephoasify_envs_consistent C used env ->
+        forall (store : phoas_env interp_type),
+          interp_phoas_command store c0 = interp_command store env (dephoasify_command used c).
+  Proof.
+    intros c c0 C H_equiv.
+    induction H_equiv; intros used env H_consistent store; simpl.
+    - reflexivity.
+    - rewrite (IHH_equiv1 _ _ H_consistent). apply IHH_equiv2, H_consistent.
+    - apply H1. rewrite (dephoasify_sound' _ _ _ _ H _ _ H_consistent).
+      apply dephoasify_envs_consistent_step, H_consistent.
+    - rewrite (IHH_equiv _ _ H_consistent).
+      rewrite (dephoasify_sound' _ _ _ _ H0 _ _ H_consistent). congruence.
+    - rewrite (dephoasify_sound' _ _ _ _ H0 _ _ H_consistent). congruence.
+    - rewrite (dephoasify_sound' _ _ _ _ H _ _ H_consistent).
+      destruct (interp_expr store env (dephoasify used e));
+        [apply IHH_equiv1 | apply IHH_equiv2]; apply H_consistent.
+    - apply fold_left_eq_ext; try trivial.
+      + rewrite (dephoasify_sound' _ _ _ _ H0 _ _ H_consistent); reflexivity.
+      + intros store' v'. apply H2, dephoasify_envs_consistent_step, H_consistent.
+  Qed.
+
+  Theorem dephoasify_command_sound :
+    forall (c : Phoas_command),
+      Phoas_command_wf c ->
+        forall (store : phoas_env interp_type) (used : list string),
+          interp_Phoas_command store c = interp_command store map.empty (Dephoasify_command used c).
+  Proof.
+    intros c H_wf store used; apply dephoasify_command_sound' with (C := nil).
+    + apply H_wf.
+    + unfold dephoasify_envs_consistent. intros p contra.
       apply in_nil in contra. exfalso; assumption.
   Qed.
 
@@ -663,6 +827,320 @@ We proves that the pipeline in the example is sound using the soundness theorems
   Proof. intros; apply fold_add_pipeline_sound. Qed.
   (* End of example. *)
 
+  Open Scope string_scope.
+  (* Lifting complex expressions *)
+  Section restrict_expr.
+    Context {V : type -> Type}.
+    Inductive is_aexpr : forall {t}, phoas_expr V t -> Prop :=
+      aex_PhEVar t x : is_aexpr (PhEVar t x)
+    | aex_PhELoc t x : is_aexpr (PhELoc t x)
+    | aex_PhEAtom t a : is_aexpr (@PhEAtom _ t a)
+    | aex_PhEUnop t1 t2 (o : unop t1 t2) e :
+      is_aexpr e -> is_aexpr (PhEUnop o e)
+    | aex_PhEBinop t1 t2 t3 (o : binop t1 t2 t3) e1 e2 :
+      is_aexpr e1 -> is_aexpr e2 -> is_aexpr (PhEBinop o e1 e2).
+
+    Inductive is_cexpr : forall {t}, phoas_expr V t -> Prop :=
+      cex_PhEFlatmap t1 t2 l1 x (fn_l2 : V t1 -> phoas_expr _ (TList t2)) :
+        is_aexpr l1 -> (forall v, is_rexpr (fn_l2 v)) ->
+        is_cexpr (PhEFlatmap l1 x fn_l2)
+    | cex_PhEFold t1 t2 l1 e2 x y (fn_e3 : V t1 -> V t2 -> phoas_expr _ t2) :
+      is_aexpr l1 -> is_aexpr e2 -> (forall v1 v2, is_rexpr (fn_e3 v1 v2)) ->
+      is_cexpr (PhEFold l1 e2 x y fn_e3)
+    | cex_PhEIf t e1 (e2 : phoas_expr _ t) e3 :
+      is_aexpr e1 -> is_rexpr e2 -> is_rexpr e3 ->
+      is_cexpr (PhEIf e1 e2 e3)
+
+    with is_rexpr : forall {t}, phoas_expr V t -> Prop :=
+    | rex_PhELet t1 t2 x e1 (fn_e2 : V t1 -> phoas_expr _ t2) :
+      (is_aexpr e1 \/ is_cexpr e1) ->
+      (forall v, is_rexpr (fn_e2 v)) ->
+      is_rexpr (PhELet x e1 fn_e2)
+    | rex_aexpr t (e : phoas_expr _ t) : is_aexpr e -> is_rexpr e
+    | rex_cexpr t (e : phoas_expr _ t) : is_cexpr e -> is_rexpr e.
+
+    Fixpoint lift_for_aexpr {t t'} (e : phoas_expr V t) : (phoas_expr V t -> phoas_expr V t') -> phoas_expr V t' :=
+      match e with
+      | PhEVar _ _ as e | PhELoc _ _ as e | PhEAtom _ as e  => fun g => g e
+      | PhEUnop o e => fun g => lift_for_aexpr e (fun e' => g (PhEUnop o e'))
+      | PhEBinop o e1 e2 => fun g => lift_for_aexpr e1
+                                       (fun e1' => lift_for_aexpr e2
+                                                     (fun e2' => g (PhEBinop o e1' e2')))
+      | PhEFlatmap l1 x fn_l2 => fun g => lift_for_aexpr l1
+                                            (fun l1' => PhELet "lifted"
+                                                          (PhEFlatmap l1' x (fun v => restrict_expr (fn_l2 v)))
+                                                          (fun lifted => g (PhEVar _ lifted)))
+      | PhEFold l1 e2 x y fn_e3 => fun g => lift_for_aexpr l1
+                                              (fun l1' => lift_for_aexpr e2
+                                                            (fun e2' => PhELet "lifted"
+                                                                          (PhEFold l1' e2' x y (fun u v => restrict_expr (fn_e3 u v)))
+                                                                          (fun lifted => g (PhEVar _ lifted))))
+      | PhEIf e1 e2 e3 => fun g => lift_for_aexpr e1
+                                     (fun e1' => PhELet "lifted"
+                                                   (PhEIf e1' (restrict_expr e2) (restrict_expr e3))
+                                                   (fun lifted => g (PhEVar _ lifted)))
+      | PhELet x e1 fn_e2 => fun g => lift_let e1
+                                        (fun e1' => PhELet x e1' (fun x => lift_for_aexpr (fn_e2 x) g))
+      end
+
+    with lift_let {t t'} (e : phoas_expr V t) : (phoas_expr V t -> phoas_expr V t') -> phoas_expr V t' :=
+           match e with
+           | PhEVar _ _ as e | PhELoc _ _ as e | PhEAtom _ as e  => fun g => g e
+           | PhEUnop o e => fun g => lift_for_aexpr e (fun e' => g (PhEUnop o e'))
+           | PhEBinop o e1 e2 => fun g => lift_for_aexpr e1
+                                            (fun e1' => lift_for_aexpr e2
+                                                          (fun e2' => g (PhEBinop o e1' e2')))
+           | PhEFlatmap l1 x fn_l2 => fun g => lift_for_aexpr l1
+                                                 (fun l1' => g (PhEFlatmap l1' x (fun v => restrict_expr (fn_l2 v))))
+           | PhEFold l1 e2 x y fn_e3 => fun g => lift_for_aexpr l1
+                                                   (fun l1' => lift_for_aexpr e2
+                                                                 (fun e2' => g (PhEFold l1' e2' x y (fun u v => restrict_expr (fn_e3 u v)))))
+           | PhEIf e1 e2 e3 => fun g => lift_for_aexpr e1 (fun e1' => g (PhEIf e1' (restrict_expr e2) (restrict_expr e3)))
+           | PhELet x e1 fn_e2 => fun g => lift_let e1 (fun e1' => PhELet x e1' (fun v => lift_let (fn_e2 v) g))
+           end
+
+    with restrict_expr {t} (e : phoas_expr V t) : phoas_expr V t :=
+           match e in phoas_expr _ t0 return phoas_expr _ t0 with
+           | PhEVar _ _ as e | PhELoc _ _ as e | PhEAtom _ as e => e
+           | PhEUnop o e => lift_for_aexpr e (fun e' => PhEUnop o e')
+           | PhEBinop o e1 e2 => lift_for_aexpr e1
+                                   (fun e1' => lift_for_aexpr e2
+                                                 (fun e2' => PhEBinop o e1' e2'))
+           | PhEFlatmap l1 x fn_l2 => lift_for_aexpr l1
+                                        (fun l1' => PhEFlatmap l1' x (fun v => restrict_expr (fn_l2 v)))
+           | PhEFold l1 e2 x y fn_e3 => lift_for_aexpr l1
+                                          (fun l1' => lift_for_aexpr e2
+                                                        (fun e2' => PhEFold l1' e2' x y (fun u v => restrict_expr (fn_e3 u v))))
+           | PhEIf e1 e2 e3 => lift_for_aexpr e1
+                                 (fun e1' => PhEIf e1' (restrict_expr e2) (restrict_expr e3))
+           | PhELet x e1 fn_e2 => lift_let e1 (fun e1' => PhELet x e1' (fun v => restrict_expr (fn_e2 v)))
+           end.
+
+    Definition lift_for_aexpr_correct {t} (e : phoas_expr V t) := forall t' (f : phoas_expr V t -> phoas_expr V t'),
+        (forall e, is_aexpr e -> is_rexpr (f e)) ->
+        is_rexpr (lift_for_aexpr e f).
+
+    Definition lift_let_correct {t} (e : phoas_expr V t) := forall t' (f : phoas_expr V t -> phoas_expr V t'),
+        (forall e, is_aexpr e \/ is_cexpr e -> is_rexpr (f e)) ->
+        is_rexpr (lift_let e f).
+
+    Definition restrict_expr_correct {t} (e : phoas_expr V t) := is_rexpr (restrict_expr e).
+
+    Ltac rexpr_tacs :=
+      match goal with
+      | H : lift_for_aexpr_correct ?e |- is_rexpr (lift_for_aexpr ?e _) =>
+          apply H; intros
+      | H : lift_let_correct ?e |- is_rexpr (lift_let ?e _) =>
+          apply H; intros
+      | H : forall e, _ -> is_rexpr (?f e) |- is_rexpr (?f _) =>
+          apply H; intros
+      | |- is_rexpr (PhEFold _ _ _ _ _) => apply rex_cexpr
+      | |- is_rexpr (PhEFlatmap _ _ _) => apply rex_cexpr
+      | |- is_rexpr (PhEIf _ _ _) => apply rex_cexpr
+      | |- is_aexpr (PhEFold _ _ _ _ _) \/ is_cexpr (PhEFold _ _ _ _ _) => right
+      | |- is_aexpr (PhEFlatmap _ _ _) \/ is_cexpr (PhEFlatmap _ _ _) => right
+      | |- is_aexpr (PhEIf _ _ _) \/ is_cexpr (PhEIf _ _ _) => right
+      | |- is_aexpr _ \/ is_cexpr _ => left
+      end.
+
+    Lemma lifting_correct : forall t (e : phoas_expr V t),
+        restrict_expr_correct e /\ lift_for_aexpr_correct e /\ lift_let_correct e.
+    Proof.
+      clear word_ok.
+      induction e.
+      1, 2, 3, 4, 5: intuition; red;
+      intros; simpl; repeat rexpr_tacs; repeat constructor; firstorder; auto.
+      1, 2, 3: intuition; red;
+      [ | intros; simpl; repeat rexpr_tacs; constructor | ];
+      intros; simpl; repeat rexpr_tacs; constructor; firstorder.
+      1: intuition; red;
+      intros; simpl; repeat rexpr_tacs; constructor; firstorder.
+    Qed.
+
+  (* ??? Remove the "clear word_ok" line and reproduce an error at Qed, likely caused by firstorder. Minimize the issue and file bug report
+   ??? Compile complex expr to command or to Bedrock2 statements directly *)
+  End restrict_expr.
+
+  Definition lift_for_aexpr_sound {t} (e : phoas_expr _ t) store :=
+    forall t' (e_to_e : _ -> phoas_expr _ t'),
+      (forall e, interp_phoas_expr store (e_to_e e) = interp_phoas_expr store (e_to_e (PhEVar _ (interp_phoas_expr store e)))) ->
+      interp_phoas_expr store (lift_for_aexpr e e_to_e) = interp_phoas_expr store (e_to_e e).
+
+  Definition lift_let_sound {t} (e : phoas_expr _ t) store :=
+    forall t' (e_to_e : _ -> phoas_expr _ t'),
+      (forall e, interp_phoas_expr store (e_to_e e) = interp_phoas_expr store (e_to_e (PhEVar _ (interp_phoas_expr store e)))) ->
+      interp_phoas_expr store (lift_let e e_to_e) = interp_phoas_expr store (e_to_e e).
+
+  Definition restrict_expr_sound {t} (e : phoas_expr _ t) store :=
+    interp_phoas_expr store (restrict_expr e) = interp_phoas_expr store e.
+
+  Lemma lifting_sound : forall t (e : phoas_expr _ t) store,
+      restrict_expr_sound e store /\ lift_for_aexpr_sound e store /\ lift_let_sound e store.
+  Proof.
+    induction e; intro store;
+      try now (intuition; red; intros; try reflexivity);
+      intros.
+    - try repeat match goal with
+        | [H : forall store,  _ /\ _ /\ _ |- _] =>
+            let h0 := fresh "H0" in
+            let h1 := fresh "H1" in
+            let h2 := fresh "H2" in
+            destruct (H store) as [h0 [h1 h2]]; clear H
+        end; intuition; red; intros; simpl.
+      + unfold restrict_expr. fold (@lift_for_aexpr interp_type t1 t2). apply H1; trivial.
+      + apply H1; intros. rewrite H. rewrite (H (PhEUnop _ _)). reflexivity.
+      + apply H1; intros. rewrite H. rewrite (H (PhEUnop _ _)). reflexivity.
+    - try repeat match goal with
+        | [H : forall store,  _ /\ _ /\ _ |- _] =>
+            let h0 := fresh "H0" in
+            let h1 := fresh "H1" in
+            let h2 := fresh "H2" in
+            destruct (H store) as [h0 [h1 h2]]; clear H
+        end; intuition; red; intros; simpl.
+      + unfold restrict_expr. fold (@lift_for_aexpr interp_type t1 t3). fold (@lift_for_aexpr interp_type t2 t3).
+        rewrite H4, H1; trivial. intro. repeat rewrite H1; reflexivity.
+      + rewrite H4, H1; trivial; intro; repeat rewrite H1; intros; repeat rewrite (H (PhEBinop _ _ _)); reflexivity.
+      + rewrite H4, H1; trivial; intro; repeat rewrite H1; intros; repeat rewrite (H (PhEBinop _ _ _)); reflexivity.
+    - try repeat match goal with
+        | [H : forall store,  _ /\ _ /\ _ |- _] =>
+            let h0 := fresh "H0" in
+            let h1 := fresh "H1" in
+            let h2 := fresh "H2" in
+            destruct (H store) as [h0 [h1 h2]]; clear H
+        end; intuition; red; intros; simpl.
+      + unfold restrict_expr. fold (@lift_for_aexpr interp_type (TList t1) (TList t2)) (@restrict_expr interp_type (TList t2)).
+        rewrite H1; trivial; simpl.
+        * erewrite flat_map_eq_ext; try apply eq_refl.
+          intro x0. destruct (H x0 store) as [H' _]. apply H'.
+      + rewrite H1.
+        * rewrite (H3 (PhEFlatmap _ _ _)). simpl. erewrite flat_map_eq_ext; try apply eq_refl.
+          intro x0. destruct (H x0 store) as [H' _]. apply H'.
+        * trivial.
+      + rewrite H1.
+        * repeat rewrite (H3 (PhEFlatmap _ _ _)). simpl. erewrite flat_map_eq_ext; try apply eq_refl.
+          intro x0. destruct (H x0 store) as [H' _]. apply H'.
+        * intro. repeat rewrite (H3 (PhEFlatmap _ _ _)). reflexivity.
+    - try repeat match goal with
+        | [H : forall store,  _ /\ _ /\ _ |- _] =>
+            let h0 := fresh "H0" in
+            let h1 := fresh "H1" in
+            let h2 := fresh "H2" in
+            destruct (H store) as [h0 [h1 h2]]; clear H
+        end; intuition; red; intros; simpl.
+      + unfold restrict_expr. fold (@restrict_expr interp_type t2) (@lift_for_aexpr interp_type t2 t2) (@lift_for_aexpr interp_type (TList t1) t2).
+        rewrite H4, H1; trivial; simpl.
+        * erewrite fold_right_eq_ext; try apply eq_refl. intros x0 y0; edestruct H as [H' _]; eapply H'.
+        * intros. repeat rewrite H1; trivial.
+      + rewrite H4, H1; trivial; simpl.
+        * rewrite (H6 (PhEFold _ _ _ _ _)). simpl. f_equal; f_equal; f_equal.
+          erewrite fold_right_eq_ext; try apply eq_refl. intros x0 y0; edestruct H as [H' _]; eapply H'.
+        * intros. repeat rewrite H1; trivial.
+      + rewrite H4, H1; trivial; simpl.
+        * repeat rewrite (H6 (PhEFold _ _ _ _ _)). simpl. f_equal; f_equal; f_equal.
+          erewrite fold_right_eq_ext; try apply eq_refl. intros x0 y0; edestruct H as [H' _]; eapply H'.
+        * intros. repeat rewrite (H6 (PhEFold _ _ _ _ _)). reflexivity.
+        * intros; repeat rewrite H1; intros; repeat rewrite (H6 (PhEFold _ _ _ _ _)); simpl; trivial.
+    - try repeat match goal with
+        | [H : forall store,  _ /\ _ /\ _ |- _] =>
+            let h0 := fresh "H0" in
+            let h1 := fresh "H1" in
+            let h2 := fresh "H2" in
+            destruct (H store) as [h0 [h1 h2]]; clear H
+        end; intuition; red; intros; simpl.
+      + unfold restrict_expr. fold (@restrict_expr interp_type t) (@lift_for_aexpr interp_type TBool t).
+        rewrite H7; trivial; simpl. rewrite H3, H0. reflexivity.
+      + rewrite H7; trivial; simpl. rewrite (H (PhEIf _ _ _)). rewrite H3, H0. reflexivity.
+      + rewrite H7; intros; repeat rewrite (H (PhEIf _ _ _)); simpl; rewrite H3, H0; reflexivity.
+    - try repeat match goal with
+        | [H : forall store,  _ /\ _ /\ _ |- _] =>
+            let h0 := fresh "H0" in
+            let h1 := fresh "H1" in
+            let h2 := fresh "H2" in
+            destruct (H store) as [h0 [h1 h2]]; clear H
+        end; intuition; red; intros; simpl.
+      + unfold restrict_expr. fold (@restrict_expr interp_type t2) (@lift_let interp_type t1 t2).
+        rewrite H2; trivial; simpl. edestruct H as [H' _]; eapply H'.
+      + rewrite H2; trivial; simpl. edestruct H as [_ [H' _]]. rewrite H'.
+        * rewrite H3. rewrite (H3 (PhELet _ _ _)); reflexivity.
+        * intros. apply H3.
+      + rewrite H2; trivial; simpl. edestruct H as [_ [_ H']]. rewrite H'.
+        * rewrite H3. rewrite (H3 (PhELet _ _ _)); reflexivity.
+        * intros. apply H3.
+  Qed.
+
+  Section fold_command.
+    Variable f : command -> command.
+    Fixpoint fold_command (c : command) : command :=
+      f
+        match c with
+        | CSkip as c | CGets _ _ as c => c
+        | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
+        | CLet x e c => CLet x e (fold_command c)
+        | CLetMut x e c => CLetMut x e (fold_command c)
+        | CIf e c1 c2 => CIf e (fold_command c1) (fold_command c2)
+        | CForeach x l c => CForeach x l (fold_command c)
+        end.
+  End fold_command.
+  (* End of complex expression lifting *)
+
+  Fixpoint is_in (x : string) (l : list string) : bool :=
+    match l with
+    | nil => false
+    | y :: l' => if x =? y then true else is_in x l'
+    end.
+
+  (* No-shadowing computation *)
+  (* If there is no shadowing, return the list of used strings, else return None *)
+  Fixpoint no_shadow_expr (used : list string) {t} (e : expr t) : result (list string) :=
+    match e with
+    | EVar _ x | ELoc _ x => if is_in x used then error:("Name " x " already used")
+                             else Success (x :: used)
+    | EAtom _ => Success used
+    | EUnop o e => no_shadow_expr used e
+    | EBinop o e1 e2 => used1 <- no_shadow_expr used e1;;
+                        no_shadow_expr used1 e2
+    | EFlatmap l1 x l2 => used1 <- no_shadow_expr used l1;;
+                          used2 <- no_shadow_expr used1 l2;;
+                          if is_in x used2 then error:("Name " x " already used")
+                          else Success (x :: used2)
+    | EFold l1 e2 x y e3 => used1 <- no_shadow_expr used l1;;
+                            used2 <- no_shadow_expr used1 e2;;
+                            used3 <- no_shadow_expr used2 e3;;
+                            if is_in x used3 then error:("Name " x " already used")
+                            else if is_in y used3 then error:("Name " y " already used")
+                                 else Success (y :: x :: used3)
+    | EIf e1 e2 e3 => used1 <- no_shadow_expr used e1;;
+                      used2 <- no_shadow_expr used1 e2;;
+                      no_shadow_expr used2 e3
+    | ELet x e1 e2 => used1 <- no_shadow_expr used e1;;
+                      used2 <- no_shadow_expr used1 e2;;
+                      if is_in x used2 then error:("Name " x " already used")
+                      else Success (x :: used2)
+    end.
+
+  Fixpoint no_shadow (used : list string) (c : command) : result (list string) :=
+    match c with
+    | CSkip => Success used
+    | CSeq c1 c2 => used1 <- no_shadow used c1;;
+                    no_shadow used1 c2
+    | CLet x e c | CLetMut x e c => used1 <- no_shadow_expr used e;;
+                                    used2 <- no_shadow used1 c;;
+                                    if is_in x used2
+                                    then error:("Name " x " already used")
+                                    else Success (x :: used2)
+    | CGets x e => used1 <- no_shadow_expr used e;;
+                   if is_in x used1 then error:("Name " x " already used")
+                   else Success (x :: used1)
+    | CIf e c1 c2 => used1 <- no_shadow_expr used e;;
+                     used2 <- no_shadow used1 c1;;
+                     no_shadow used2 c2
+    | CForeach x l c => used1 <- no_shadow_expr used l;;
+                        used2 <- no_shadow used1 c;;
+                        if is_in x used2 then error:("Name " x " already used")
+                        else Success (x :: used2)
+    end.
+(* End of no-shadowing computation *)
+
   Ltac projT1_eq_for_projT2_eq := match goal with
                                   | H : existT ?f _ _ = existT ?f _ _ |- _ =>
                                       let H' := fresh H in
@@ -705,6 +1183,15 @@ We proves that the pipeline in the example is sound using the soundness theorems
     apply flat_map_flat_map.
   Qed.
 
+  Lemma flatmap_flatmap_head_correct {t} (store : phoas_env interp_type) (e : Phoas_expr t):
+    interp_Phoas_expr store e = interp_Phoas_expr store (flatmap_flatmap_head e).
+  Proof.
+    apply flatmap_flatmap_head_correct'.
+  Qed.
+
+  (* Transformations that involve rearrangement of bindings are implemented in PHOAS
+   Others, especially those which require pattern matching on the function argument or the function body,
+   should not be implemented here *)
   Definition fold_flatmap_head' {V : type -> Type} {t : type} (e : phoas_expr V t) : phoas_expr V t :=
     match e with
     | @PhEFold _ t3 t4 l3 e4 x y fn_e5 =>
@@ -747,4 +1234,137 @@ We proves that the pipeline in the example is sound using the soundness theorems
     apply fold_flatmap_head_correct'.
   Qed.
 
+  Definition elt_ty t :=
+  match t with
+  | TList t' => t'
+  | _ => TEmpty
+  end.
+
+  Definition match_singleton_list {V} {t} (e : phoas_expr V t) : option (phoas_expr V (elt_ty t)) :=
+    match e with
+    | PhEBinop o e' (PhEAtom (ANil _)) =>
+        match o in binop t1 t2 t3 return (phoas_expr V t1) -> option (phoas_expr V (elt_ty t3)) with
+        | OCons _ => fun e' => Some e'
+        | _ => fun _ => None
+        end e'
+    | _ => None
+    end.
+
+  Lemma match_singleton_list_inner :
+    forall V t1 t2 t3 (o : binop t1 t2 t3) e' e'',
+      match o in binop t1 t2 t3 return (phoas_expr V t1) -> option (phoas_expr V (elt_ty t3)) with
+        | OCons _ => fun e' => Some e'
+        | _ => fun _ => None
+      end e' = Some e'' -> existT (fun p => binop t1 (fst p) (snd p)) (t2, t3) o = existT _ (TList t1, TList t1) (OCons _).
+  Proof.
+    destruct o; intuition; try congruence.
+  Qed.
+
+  Lemma invert_match_singleton_list_ty :
+    forall V t (e : phoas_expr V t) (p : phoas_expr V (elt_ty t)),
+      match_singleton_list e = Some p ->
+      TList (elt_ty t) = t.
+  Proof.
+    destruct e; simpl; try congruence.
+    destruct e2; simpl; try congruence.
+    destruct a; simpl; try congruence.
+    intros. apply match_singleton_list_inner in H.
+    apply projT1_eq in H as H1; simpl in H1.
+    inversion H1; subst. reflexivity.
+  Qed.
+
+  Section __.
+  Context (A B : Type)
+    {HA : forall a b : A, {a=b} + {a<>b}}
+    {HB : forall a b : B, {a=b} + {a<>b}}.
+  Definition pair_eq_dec (p1 p2 : A * B) : {p1 = p2} + {p1 <> p2}.
+    refine (let '(a1,b1) := p1 in let '(a2, b2) := p2 in
+                                 if HA a1 a2 then if HB b1 b2 then left _ else right _ else right _);
+      congruence.
+    Defined.
+  End __.
+
+  Lemma invert_match_singleton_list :
+    forall V t (e : phoas_expr V t) (p : phoas_expr V (elt_ty t)),
+      match_singleton_list e = Some p ->
+      existT _ t e = existT _ (TList (elt_ty t)) (PhEBinop (OCons _) p (PhEAtom (ANil _))).
+  Proof.
+    intros. apply invert_match_singleton_list_ty in H as H1.
+    unshelve eapply eq_existT_curried.
+    - congruence.
+    - destruct e; simpl in *; try congruence.
+      destruct e2; simpl; try congruence.
+      destruct a; simpl; try congruence.
+      apply match_singleton_list_inner in H as H2.
+      apply projT1_eq in H2 as H3; simpl in H3.
+      inversion H3; subst.
+      apply Eqdep_dec.inj_pair2_eq_dec in H2.
+      + subst. inversion H. subst. simpl in *.
+        rewrite Fiat2TypeEqDep.UIP_refl with (p := H1).
+      (* instead of rewrite Eqdep.EqdepTheory.UIP_refl *)
+        reflexivity.
+      + apply pair_eq_dec; apply type_eq_dec.
+  Qed.
+  Print Assumptions invert_match_singleton_list.
+
+  Definition fold_singleton_head' {V} {t : type} (e : phoas_expr V t) : phoas_expr V t :=
+    match e with
+    | @PhEFold _ t1 t2 l1 e2 x y fn_e3 =>
+        match match_singleton_list l1 with
+        | Some e1 => PhELet x e1 (fun v => PhELet y e2 (fn_e3 v))
+        | None => PhEFold l1 e2 x y fn_e3
+        end
+    | e' => e'
+    end.
+
+  Definition fold_singleton_head {t : type} (e : Phoas_expr t) : Phoas_expr t :=
+    fun V => fold_singleton_head' (e V).
+
+  Lemma fold_singleton_head_correct' {t} (store : phoas_env interp_type) (e : phoas_expr _ t) :
+    interp_phoas_expr store e = interp_phoas_expr store (fold_singleton_head' e).
+  Proof.
+    destruct e; auto.
+    unfold fold_singleton_head'. destruct (match_singleton_list e1) eqn:E; auto.
+    apply invert_match_singleton_list in E.
+    simpl in *. eq_projT2_eq.
+  Qed.
+
+  Section fold_phoas_expr.
+    Context (V : type -> Type).
+    Context (f : forall t, phoas_expr V t -> phoas_expr V t). Local Arguments f {t}.
+    Fixpoint fold_phoas_expr {t : type} (e : phoas_expr _ t) : phoas_expr _ t :=
+      f
+        match e in phoas_expr _ t return phoas_expr V t with
+        | (PhEVar _ _ | PhELoc _ _ | PhEAtom _) as e => e
+        | PhEUnop o e1 => PhEUnop o (fold_phoas_expr e1)
+        | PhEBinop o e1 e2 => PhEBinop o (fold_phoas_expr e1) (fold_phoas_expr e2)
+        | PhEFlatmap l1 x fn_l2 => PhEFlatmap (fold_phoas_expr l1) x (fun v => (fold_phoas_expr (fn_l2 v)))
+        | PhEFold l1 e2 x y fn_e3 =>
+            PhEFold (fold_phoas_expr l1) (fold_phoas_expr e2) x y (fun v acc => fold_phoas_expr (fn_e3 v acc))
+        | PhEIf e1 e2 e3 => PhEIf (fold_phoas_expr e1) (fold_phoas_expr e2) (fold_phoas_expr e3)
+        | PhELet x e1 fn_e2 => PhELet x (fold_phoas_expr e1) (fun v => fold_phoas_expr (fn_e2 v))
+        end.
+  End fold_phoas_expr.
+
+  Lemma fold_phoas_expr_correct (store : phoas_env interp_type) f :
+    (forall t (e : phoas_expr _ t), interp_phoas_expr store (f _ e) = interp_phoas_expr store e) ->
+    forall t (e : phoas_expr _ t), interp_phoas_expr store (fold_phoas_expr _ f e) = interp_phoas_expr store e.
+  Proof.
+    induction e; try apply H;
+      simpl; rewrite H; simpl;
+      try (rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3; reflexivity).
+    - erewrite IHe, flat_map_eq_ext; auto.
+    - erewrite IHe1, IHe2, fold_right_eq_ext; auto.
+    - rewrite H0, IHe; reflexivity.
+  Qed.
+
+  Definition transform_correct f : Prop :=
+    forall store t (e : phoas_expr _ t), interp_phoas_expr store (f _ e) = interp_phoas_expr store e.
+
+  Lemma compose_transform_correct :
+    forall f g, transform_correct f -> transform_correct g ->
+                transform_correct (fun t (e : phoas_expr _ t) => g _ (f _ e)).
+  Proof.
+    congruence.
+  Qed.
 End WithMap.

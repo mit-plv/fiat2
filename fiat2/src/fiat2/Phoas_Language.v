@@ -16,7 +16,19 @@ Section Phoas.
   | PhEFold {t1 t2 : type} (l1 : phoas_expr (TList t1)) (e2 : phoas_expr t2) (x y : string) (fn_e3 : V t1 -> V t2 -> phoas_expr t2) : phoas_expr t2
   | PhEIf {t : type} (e1 : phoas_expr TBool) (e2 e3 : phoas_expr t) : phoas_expr t
   | PhELet {t1 t2 : type} (x : string) (e1 : phoas_expr t1) (fn_e2 : V t1 -> phoas_expr t2) : phoas_expr t2.
+
+  Inductive phoas_command : Type :=
+  | PhCSkip
+  | PhCSeq (c1 c2 : phoas_command)
+  | PhCLet {t : type} (x : string) (e : phoas_expr t) (fn_c : V t -> phoas_command)
+  | PhCLetMut {t : type} (x : string) (e : phoas_expr t) (c : phoas_command)
+  | PhCGets {t : type} (x : string) (e : phoas_expr t)
+  | PhCIf (e : phoas_expr TBool) (c1 c2 : phoas_command)
+  | PhCForeach {t : type} (x : string) (l : phoas_expr (TList t)) (fn_c : V t -> phoas_command).
 End Phoas.
 Arguments phoas_expr : clear implicits.
+Arguments phoas_command : clear implicits.
 
 Definition Phoas_expr (t : type) := forall V, phoas_expr V t.
+
+Definition Phoas_command := forall V, phoas_command V.

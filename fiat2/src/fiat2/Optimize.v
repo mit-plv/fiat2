@@ -221,6 +221,24 @@ Section WithMap2.
       | CIf e c1 c2 => CIf (fold_expr e) (fold_command c1) (fold_command c2)
       | CForeach x e c => CForeach x (fold_expr e) (fold_command c)
       end.
+
+    Context (H : (forall store env t e, interp_expr store env (@f t e) = interp_expr store env e)).
+    Theorem fold_expr_correct {t : type} (store env : locals) (e : expr t) :
+      interp_expr store env (fold_expr e) = interp_expr store env e.
+    Proof.
+      generalize dependent (store).
+      generalize dependent (env).
+      induction e; cbn; intros; rewrite H; cbn; try congruence.
+      - rewrite IHe1. induction (interp_expr store env e1); try reflexivity.
+        cbn. rewrite IHi.
+        f_equal. rewrite IHe2. reflexivity.
+      - rewrite IHe1, IHe2.
+        induction (interp_expr store env e1); try reflexivity.
+        cbn. rewrite IHe3, IHi.
+        reflexivity.
+      - rewrite IHe1, IHe2, IHe3.
+        reflexivity.
+    Qed.
   End fold_expr.
 
   Definition partial {t : type} := @fold_expr (@partial_head) t.
@@ -913,5 +931,9 @@ Section WithMap4.
      rewrite (doesnt_contain_same _ _ pred) by congruence;
      rewrite E; reflexivity.
   Qed.
+
+  Theorem move_filter_fold_correct {t : type} (store env : locals) (e : expr t) :
+    interp_expr store env (fold_expr (@move_filter) e) = interp_expr store env e.
+  Proof. apply fold_expr_correct. intros. apply move_filter_correct. Qed.
 
 End WithMap4.
