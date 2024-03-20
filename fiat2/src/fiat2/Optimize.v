@@ -197,6 +197,16 @@ Section WithMap2.
     | e => e
     end.
 
+    (* TODO Move to coq util *)
+    Lemma fold_left_extensionality A B acc (f f' : A -> B -> A) l :
+      (forall a b, f a b = f' a b) ->
+      fold_left f l acc = fold_left f' l acc.
+    Proof.
+      intro. revert acc.
+      induction l; cbn; try eauto.
+      intros. rewrite H. congruence.
+    Qed.
+
   Section fold_expr.
     Context (f : forall {t}, expr t -> expr t). Local Arguments f {_}.
     Fixpoint fold_expr {t : type} (e : expr t) : expr t :=
@@ -238,6 +248,20 @@ Section WithMap2.
         reflexivity.
       - rewrite IHe1, IHe2, IHe3.
         reflexivity.
+    Qed.
+
+    Theorem fold_command_correct {t : type} (store env : locals) (c : command) :
+      interp_command store env (fold_command c) = interp_command store env c.
+    Proof.
+      generalize dependent (store).
+      generalize dependent (env).
+      induction c; cbn; intros;
+        try (rewrite IHc);
+        try (rewrite IHc1, IHc2);
+        try (rewrite fold_expr_correct);
+        try reflexivity.
+      - apply fold_left_extensionality.
+        intros. apply IHc.
     Qed.
   End fold_expr.
 
