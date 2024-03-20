@@ -4,6 +4,7 @@ Require Import fiat2.Notations.
 Require Import fiat2.Interpret.
 Require Import fiat2.SamplePrograms.
 Require Import fiat2.Optimize.
+Require Import fiat2.PrintingNotations.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Map.Properties.
 Require Import coqutil.Datatypes.Result.
 Require Import Coq.Lists.List.
@@ -462,17 +463,16 @@ Section Queries_Section.
         (flatmap db_jobs "job"
           (if "empl"["job_id"] == "job"["job_id"] then [("empl", "job")]
             else nil[field_product db_employees_fields db_jobs_fields]))
+            else (flatmap db_jobs "job" nil[field_product db_employees_fields db_jobs_fields]))
+            (*
             else nil[field_product db_employees_fields db_jobs_fields])
+             *)
     in "json" <- <[ PEElaborated _ (generate_json _ (EVar (List (field_product db_employees_fields db_jobs_fields)) "ans")) ]>
   }>.
 
-  Definition select_steven_job_fast_auto : command :=
+  Definition select_steven_job_fast_auto (opt : forall t, expr t -> expr t) : command :=
     match @elaborate_command tenv (map.of_list (("json", (TString, true)) :: nil)) select_steven_job_slow with
-    | Success (CLet v e1 e2) =>
-        match enforce_type (List (field_product db_employees_fields db_jobs_fields)) e1 with
-        | Success e1' => CLet v (@fold_expr (@move_filter) _ e1') e2
-        | Failure _ => CSkip
-        end
+    | Success c => fold_command opt c
     | _ => CSkip
     end.
 
@@ -498,10 +498,9 @@ Section Queries_Section.
          | Failure s => "Error: Program errored"
          end.
 
-    let s := eval vm_compute in (export_command_prog (("json", (TString, true)) :: nil) select_steven_job_fast_auto)%string in
+    let s := eval vm_compute in (export_command_prog (("json", (TString, true)) :: nil) (select_steven_job_fast_auto (@move_filter)))%string in
     print_string s.
   Abort.
-
 
   Definition tmp := Eval cbv in match tmp' with
                                 | CGets _ e => e
@@ -513,10 +512,25 @@ Section Queries_Section.
 
   Local Close Scope fiat2_scope.
 
+  Local Open Scope pretty_elab_scope.
+
+  Compute (select_steven_job_fast_auto (@move_filter)).
+  Compute (select_steven_job_fast_auto (fun t e => constant_folding (move_filter e))).
+
+  Local Close Scope pretty_elab_scope.
+
+  Goal
+    @elaborate_command tenv
+      ((map.of_list (("json", (TString, true)) :: nil))) select_steven_job_fast_manual = Success (select_steven_job_fast_auto (@move_filter)).
+  reflexivity.
+  Abort.
+
+
   Declare Scope query_sugar_scope.
   Notation "'join' ( a : x ) ( b : y )" :=
     (PEFlatmap a x%string (PEFlatmap b y%string (PEBinop POPair (PEVar x%string) (PEVar y%string))))
     (at level 0, left associativity) : query_sugar_scope.
+
 
   Declare Scope pretty_expr_scope.
   Notation "[ e | x <- l ]" := (EFlatmap l x%string (EBinop (OCons _) e (EAtom (ANil _))))
@@ -535,17 +549,6 @@ Section Queries_Section.
   Notation "{ x , .. , y , z }" :=
     (EBinop (OPair _ _ _) x .. (EBinop (OPair _ _ _) y (EBinop (OPair _ _ _) z (EAtom AEmpty))) ..)
    (at level 110, only printing) : pretty_expr_scope.
-
-  Declare Custom Entry pretty_record_fields.
-
-  Notation "{{ x }}" := x
-    (x custom pretty_record_fields at level 100, only printing) : pretty_expr_scope.
-
-  Notation "x : t , rest" := (TPair x t rest)
-    (in custom pretty_record_fields at level 100, x constr at level 0, t constr at level 0, right associativity, only printing) : pretty_expr_scope.
-
-  Notation "x : t" := (TPair x t TEmpty)
-    (in custom pretty_record_fields at level 100, x constr at level 0, t constr at level 0, only printing) : pretty_expr_scope.
 
   Notation "{{}}" := TEmpty : pretty_expr_scope.
 
@@ -575,10 +578,11 @@ Section Queries_Section.
     (at level 10, only printing, l at level 9, x at level 0, e at level 10, left associativity) : pretty_expr_scope.
 
   Local Open Scope pretty_expr_scope.
+
   Compute tmp.
   Compute partial (flatmap_singleton (flatmap_flatmap (flatmap_flatmap tmp))).
-  Local Close Scope pretty_expr_scope.
 
+  Local Close Scope pretty_expr_scope.
 
 
 End Queries_Section.

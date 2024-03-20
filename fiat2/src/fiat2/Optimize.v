@@ -197,6 +197,16 @@ Section WithMap2.
     | e => e
     end.
 
+    (* TODO Move to coq util *)
+    Lemma fold_left_extensionality A B acc (f f' : A -> B -> A) l :
+      (forall a b, f a b = f' a b) ->
+      fold_left f l acc = fold_left f' l acc.
+    Proof.
+      intro. revert acc.
+      induction l; cbn; try eauto.
+      intros. rewrite H. congruence.
+    Qed.
+
   Section fold_expr.
     Context (f : forall {t}, expr t -> expr t). Local Arguments f {_}.
     Fixpoint fold_expr {t : type} (e : expr t) : expr t :=
@@ -209,6 +219,17 @@ Section WithMap2.
       | EIf e1 e2 e3 => EIf (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | ELet x e1 e2 => ELet x (fold_expr e1) (fold_expr e2)
       | (EVar _ _ | ELoc _ _ | EAtom _) as e => e
+      end.
+
+    Fixpoint fold_command (c : command) : command :=
+      match c with
+      | CSkip => CSkip
+      | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
+      | CLet x e c => CLet x (fold_expr e) (fold_command c)
+      | CLetMut x e c => CLetMut x (fold_expr e) (fold_command c)
+      | CGets x e => CGets x (fold_expr e)
+      | CIf e c1 c2 => CIf (fold_expr e) (fold_command c1) (fold_command c2)
+      | CForeach x e c => CForeach x (fold_expr e) (fold_command c)
       end.
 
     Context (H : (forall store env t e, interp_expr store env (@f t e) = interp_expr store env e)).
@@ -227,6 +248,20 @@ Section WithMap2.
         reflexivity.
       - rewrite IHe1, IHe2, IHe3.
         reflexivity.
+    Qed.
+
+    Theorem fold_command_correct {t : type} (store env : locals) (c : command) :
+      interp_command store env (fold_command c) = interp_command store env c.
+    Proof.
+      generalize dependent (store).
+      generalize dependent (env).
+      induction c; cbn; intros;
+        try (rewrite IHc);
+        try (rewrite IHc1, IHc2);
+        try (rewrite fold_expr_correct);
+        try reflexivity.
+      - apply fold_left_extensionality.
+        intros. apply IHc.
     Qed.
   End fold_expr.
 
