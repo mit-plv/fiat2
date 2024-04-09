@@ -4,7 +4,10 @@ Require Import fiat2.Language.
 Require Import fiat2.Interpret.
 Require Import coqutil.Map.Interface coqutil.Map.Properties coqutil.Tactics.Tactics.
 Require Import Coq.Lists.List.
+Require Import fiat2.SamplePrograms. (* This is imported for the string_app_assoc lemma, which should be moved elsewhere anyway *)
 From Coq Require Import FunctionalExtensionality.
+
+Require Import fiat2.PrintingNotations.
 
 Local Open Scope Z_scope.
 Local Open Scope bool_scope.
@@ -960,4 +963,241 @@ Section WithMap4.
     interp_expr store env (fold_expr (@move_filter) e) = interp_expr store env e.
   Proof. apply fold_expr_correct. intros. apply move_filter_correct. Qed.
 
+
+  Fixpoint flatten_concat_str (e : expr TString) : list (expr TString) :=
+    match e with
+    | EBinop OConcatString s1 s2 => flatten_concat_str s1 ++ flatten_concat_str s2
+    | _ => e :: nil
+    end.
+
+  Fixpoint merge_assoc_list (l : list (expr TString)) : list (expr TString) :=
+    match l with
+    | EAtom (AString s1) :: l' =>
+        match merge_assoc_list l' with
+        | e2 :: l'' => match e2 with
+                       | EAtom (AString s2) => EAtom (AString (s1 ++ s2)) :: l''
+                       | _ => EAtom (AString s1) :: e2 :: l''
+                       end
+        | l'' => EAtom (AString s1) :: l''
+        end
+    | e1 :: l' => e1 :: merge_assoc_list l'
+    | nil => nil
+    end.
+
+  Fixpoint concat_flat_list (l : list (expr TString)) : expr TString :=
+    match l with
+    | nil => EAtom (AString "")
+    | x :: nil => x
+    | x :: xs => EBinop OConcatString x (concat_flat_list xs)
+    end.
+
+  Definition constant_fold_assoc {t : type} (e : expr t) : expr t :=
+    match t return expr t -> expr t with
+    | TString => fun e => concat_flat_list (merge_assoc_list (flatten_concat_str e))
+    | _ => fun e => e
+    end e.
+
+  Lemma concat_move_head (store env : locals) a l :
+    interp_expr store env (concat_flat_list (a :: l)) =
+    (interp_expr store env a ++ interp_expr store env (concat_flat_list l))%string.
+  Proof.
+    revert a. induction l; intros.
+    - cbn. induction interp_expr; cbn; congruence.
+    - cbn. cbn in IHl. congruence.
+  Qed.
+
+  Lemma concat_flat_append (store env : locals) (l1 l2 : list (expr TString)) :
+    interp_expr store env (concat_flat_list (l1 ++ l2)) =
+    interp_expr store env (EBinop OConcatString (concat_flat_list l1) (concat_flat_list l2)).
+  Proof.
+    revert l2. induction l1; try reflexivity.
+    intros.
+    replace ((a :: l1) ++ l2) with (a :: (l1 ++ l2)) by reflexivity.
+    rewrite concat_move_head. rewrite IHl1.
+    cbn.
+    destruct l1; try reflexivity.
+    rewrite <- string_app_assoc.
+    f_equal.
+  Qed.
+
+  Definition expr_is_atom_str {t : type} (e : expr t) :=
+    match e with
+    | EAtom (AString s) => Some s
+    | _ => None
+    end.
+
+  Lemma is_const_str_eq {t : type} (e : expr t) s :
+    match t return expr t -> Prop with
+    | TString => fun e => expr_is_atom_str e = Some s -> e = EAtom (AString s)
+    | _ => fun _ => True
+    end e.
+  Proof.
+    intros. destruct e; try easy;
+        try (destruct t; easy);
+        try (destruct t2; easy);
+        try (destruct t3; easy).
+        destruct a; try easy.
+        cbn. intros. inversion H. easy.
+  Qed.
+
+  Lemma merge_flat_list_move_head e l :
+    expr_is_atom_str e = None ->
+    concat_flat_list (merge_assoc_list (e :: l)) =
+    concat_flat_list (e :: merge_assoc_list l).
+  Proof.
+    cbn.
+    refine (match e with
+            | EAtom _ => _
+            | _ => _
+            end);
+      try (destruct t; easy);
+      try (destruct t0; easy);
+      try (destruct t1; easy).
+      destruct a; easy.
+  Qed.
+
+  Lemma merge_flat_list_move_snd_head {t : type} e a l :
+    expr_is_atom_str a = None ->
+    match t return expr t -> expr t -> Prop with
+    | TString => fun e a =>
+                        concat_flat_list (merge_assoc_list (e :: a :: l)) =
+                        concat_flat_list (e :: a :: merge_assoc_list l)
+    | _ => fun _ _ => True
+    end e a.
+  Proof.
+    intros.
+
+    destruct a; try easy.
+    - destruct e; try easy.
+      all: destruct_one_match; try easy.
+      cbn.
+      repeat destruct_one_match; cbn.
+      try easy.
+      all: try (destruct t; try easy).
+
+      destruct t; try easy.
+      destruct e.
+
+    destruct a; try easy;
+     try (destruct a; easy);
+     destruct e; try easy;
+     try (destruct a; try easy);
+     try (destruct a0; try easy);
+     try (destruct t; try easy);
+     try (destruct t2; try easy);
+     try (destruct t3; try easy);
+     try (destruct t4; try easy).
+  Qed.
+
+  Lemma merge_flat_list_move_both_head (* store env *) s1 s2 l :
+    merge_assoc_list (EAtom (AString s1) :: EAtom (AString s2) :: l) =
+    merge_assoc_list (EAtom (AString (s1 ++ s2)) :: l).
+  Proof.
+    cbn. induction merge_assoc_list; try reflexivity.
+    refine (match a with
+            | EAtom _ => _
+            | _ => _
+            end);
+           try (destruct t0; easy);
+           try (destruct t1; easy);
+           try (destruct t; try easy).
+    refine (match a0 with
+            | AString _ => _
+            | _ => _
+            end); try easy.
+    cbn.
+    induction l0; cbn; rewrite string_app_assoc; reflexivity.
+  Qed.
+
+  Lemma concat_merge_flat_correct {t : type} (store env : locals) (l : list (expr t)) :
+    match t return list (expr t) -> Prop with
+    | TString => fun l => interp_expr store env (concat_flat_list (merge_assoc_list l)) = interp_expr store env (concat_flat_list l)
+    | _ => fun _ => True
+    end l.
+  Proof.
+    assert (str_prepend_eq:forall s s1 s2,
+      (s ++ s1)%string = (s ++ s2)%string -> s1 = s2).
+    { induction s; try easy. intros. inversion H. apply (IHs _ _ H1). }
+
+    destruct l; try (destruct t; easy).
+    revert e. induction l.
+    { destruct e; try easy;
+        try (destruct t; easy);
+        try (destruct t2; easy);
+        try (destruct t3; easy).
+      destruct a; easy. }
+
+    intros.
+    destruct (expr_is_atom_str e) eqn:e_const.
+    - destruct e; try discriminate.
+      destruct (expr_is_atom_str a) eqn:a_const;
+      destruct a; try easy;
+        try (destruct a; easy); (* False EAtom case *)
+        try (destruct a0; try easy);
+        try (destruct t; try easy);
+        try (destruct t2; try easy);
+        try (destruct t3; try easy).
+      1: { (* EAtom (AString _) :: EAtom (AString _) case *)
+        refine (match a with
+                | AString _ => _
+                | _ => _
+                end); try easy.
+        rewrite merge_flat_list_move_both_head.
+        rewrite IHl.
+        repeat rewrite concat_move_head.
+        cbn.
+        apply string_app_assoc.
+      }
+      all:
+        specialize (IHl (EVar _ "foo")); (* A trick in order to get indcutive hypothesis on just l and not e :: l *)
+        rewrite merge_flat_list_move_head in IHl by reflexivity;
+        repeat rewrite concat_move_head in IHl;
+        apply str_prepend_eq in IHl;
+        rewrite (@merge_flat_list_move_snd_head TString) by reflexivity;
+        repeat rewrite concat_move_head;
+        rewrite IHl; reflexivity.
+    - destruct e;
+        try (destruct a0; try easy); (* EAtom case *)
+        try (destruct t; try reflexivity);
+        try (destruct t2; try reflexivity);
+        try (destruct t3; try reflexivity);
+        try (destruct a0; try reflexivity);
+        try (rewrite merge_flat_list_move_head by reflexivity;
+             repeat rewrite concat_move_head;
+             rewrite IHl;
+             rewrite concat_move_head;
+             reflexivity).
+  Qed.
+
+  Theorem concat_flatten_inv {t : type} (store env : locals) (e : expr t) :
+    match t return expr t -> Prop with
+    | TString => fun e => interp_expr store env (concat_flat_list (flatten_concat_str e)) = interp_expr store env e
+    | _ => fun _ => True
+    end e.
+  Proof.
+    induction e;
+      try (destruct t; reflexivity);
+      try (destruct t2; reflexivity).
+    destruct o; try reflexivity.
+    cbn. rewrite concat_flat_append.
+    cbn. rewrite IHe1, IHe2.
+    reflexivity.
+  Qed.
+
+  Theorem constant_fold_assoc_correct {t : type} (store env : locals) (e : expr t) :
+    interp_expr store env (constant_fold_assoc e) = interp_expr store env e.
+  Proof.
+    destruct e;
+      try (destruct t; reflexivity);
+      try (destruct o; try destruct t1, t2; try reflexivity);
+      try (destruct t1; reflexivity);
+      try (destruct t2; reflexivity);
+      try (destruct a; reflexivity).
+    cbn.
+    rewrite (@concat_merge_flat_correct TString).
+    rewrite concat_flat_append.
+    cbn.
+    repeat rewrite (@concat_flatten_inv TString).
+    reflexivity.
+  Qed.
 End WithMap4.
