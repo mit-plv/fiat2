@@ -1065,19 +1065,6 @@ Section WithMap4.
     | _ => fun _ _ => True
     end e a.
   Proof.
-    intros.
-
-    destruct a; try easy.
-    - destruct e; try easy.
-      all: destruct_one_match; try easy.
-      cbn.
-      repeat destruct_one_match; cbn.
-      try easy.
-      all: try (destruct t; try easy).
-
-      destruct t; try easy.
-      destruct e.
-
     destruct a; try easy;
      try (destruct a; easy);
      destruct e; try easy;

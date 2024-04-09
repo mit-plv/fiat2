@@ -166,7 +166,7 @@ Require Import Coq.Sorting.Sorted.
 Definition ascending {A} (f : A -> nat) (l : list A) :=
   StronglySorted (fun u v => Nat.le (f u) (f v)) l.
 
-Lemma Forall_sortedInsert : forall A R (n : A) l f, R n -> Forall R l -> Forall R (sortedInsert f n l).
+Lemma Forall_sortedInsert : forall A (R : A -> Prop) (n : A) l f, R n -> Forall R l -> Forall R (sortedInsert f n l).
 Proof.
   induction l.
   - simpl. intuition.
