@@ -957,8 +957,7 @@ We proves that the pipeline in the example is sound using the soundness theorems
       intros; simpl; repeat rexpr_tacs; constructor; firstorder.
     Qed.
 
-  (* ??? Remove the "clear word_ok" line and reproduce an error at Qed, likely caused by firstorder. Minimize the issue and file bug report
-   ??? Compile complex expr to command or to Bedrock2 statements directly *)
+  (* ??? Remove the "clear word_ok" line and reproduce an error at Qed, likely caused by firstorder. Minimize the issue and file bug report *)
   End restrict_expr.
 
   Definition lift_for_aexpr_sound {t} (e : phoas_expr _ t) store :=
@@ -974,60 +973,43 @@ We proves that the pipeline in the example is sound using the soundness theorems
   Definition restrict_expr_sound {t} (e : phoas_expr _ t) store :=
     interp_phoas_expr store (restrict_expr e) = interp_phoas_expr store e.
 
+  Ltac fold_lift := match goal with
+                    | [ |- context [?f ?t1 ?t2] ] => fold (@lift_for_aexpr interp_type t1 t2) || (progress fold (@restrict_expr interp_type t1)) || (progress fold (@lift_let interp_type t1 t2))
+                    end.
+
   Lemma lifting_sound : forall t (e : phoas_expr _ t) store,
       restrict_expr_sound e store /\ lift_for_aexpr_sound e store /\ lift_let_sound e store.
   Proof.
     induction e; intro store;
       try now (intuition; red; intros; try reflexivity);
       intros.
-    - try repeat match goal with
+    all: try repeat match goal with
         | [H : forall store,  _ /\ _ /\ _ |- _] =>
             let h0 := fresh "H0" in
             let h1 := fresh "H1" in
             let h2 := fresh "H2" in
             destruct (H store) as [h0 [h1 h2]]; clear H
-        end; intuition; red; intros; simpl.
-      + unfold restrict_expr. fold (@lift_for_aexpr interp_type t1 t2). apply H1; trivial.
-      + apply H1; intros. rewrite H. rewrite (H (PhEUnop _ _)). reflexivity.
-      + apply H1; intros. rewrite H. rewrite (H (PhEUnop _ _)). reflexivity.
-    - try repeat match goal with
-        | [H : forall store,  _ /\ _ /\ _ |- _] =>
-            let h0 := fresh "H0" in
-            let h1 := fresh "H1" in
-            let h2 := fresh "H2" in
-            destruct (H store) as [h0 [h1 h2]]; clear H
-        end; intuition; red; intros; simpl.
-      + unfold restrict_expr. fold (@lift_for_aexpr interp_type t1 t3). fold (@lift_for_aexpr interp_type t2 t3).
-        rewrite H4, H1; trivial. intro. repeat rewrite H1; reflexivity.
-      + rewrite H4, H1; trivial; intro; repeat rewrite H1; intros; repeat rewrite (H (PhEBinop _ _ _)); reflexivity.
-      + rewrite H4, H1; trivial; intro; repeat rewrite H1; intros; repeat rewrite (H (PhEBinop _ _ _)); reflexivity.
-    - try repeat match goal with
-        | [H : forall store,  _ /\ _ /\ _ |- _] =>
-            let h0 := fresh "H0" in
-            let h1 := fresh "H1" in
-            let h2 := fresh "H2" in
-            destruct (H store) as [h0 [h1 h2]]; clear H
-        end; intuition; red; intros; simpl.
-      + unfold restrict_expr. fold (@lift_for_aexpr interp_type (TList t1) (TList t2)) (@restrict_expr interp_type (TList t2)).
+        end.
+    - intuition; red; intros; simpl;
+        try (unfold restrict_expr; fold_lift; apply H1; trivial);
+        apply H1; intros; rewrite H; rewrite (H (PhEUnop _ _)); reflexivity.
+    - intuition; red; intros; simpl;
+      try (unfold restrict_expr; repeat fold_lift);
+        rewrite H4, H1; trivial; intro; repeat rewrite H1; intros; repeat rewrite (H (PhEBinop _ _ _)); reflexivity.
+    - intuition; red; intros; simpl.
+      + unfold restrict_expr. repeat fold_lift.
         rewrite H1; trivial; simpl.
         * erewrite flat_map_eq_ext; try apply eq_refl.
           intro x0. destruct (H x0 store) as [H' _]. apply H'.
-      + rewrite H1.
-        * rewrite (H3 (PhEFlatmap _ _ _)). simpl. erewrite flat_map_eq_ext; try apply eq_refl.
-          intro x0. destruct (H x0 store) as [H' _]. apply H'.
-        * trivial.
+      + rewrite H1; trivial.
+        rewrite (H3 (PhEFlatmap _ _ _)). simpl. erewrite flat_map_eq_ext; try apply eq_refl.
+        intro x0. destruct (H x0 store) as [H' _]. apply H'.
       + rewrite H1.
         * repeat rewrite (H3 (PhEFlatmap _ _ _)). simpl. erewrite flat_map_eq_ext; try apply eq_refl.
           intro x0. destruct (H x0 store) as [H' _]. apply H'.
         * intro. repeat rewrite (H3 (PhEFlatmap _ _ _)). reflexivity.
-    - try repeat match goal with
-        | [H : forall store,  _ /\ _ /\ _ |- _] =>
-            let h0 := fresh "H0" in
-            let h1 := fresh "H1" in
-            let h2 := fresh "H2" in
-            destruct (H store) as [h0 [h1 h2]]; clear H
-        end; intuition; red; intros; simpl.
-      + unfold restrict_expr. fold (@restrict_expr interp_type t2) (@lift_for_aexpr interp_type t2 t2) (@lift_for_aexpr interp_type (TList t1) t2).
+    - intuition; red; intros; simpl.
+      + unfold restrict_expr. repeat fold_lift.
         rewrite H4, H1; trivial; simpl.
         * erewrite fold_right_eq_ext; try apply eq_refl. intros x0 y0; edestruct H as [H' _]; eapply H'.
         * intros. repeat rewrite H1; trivial.
@@ -1040,25 +1022,13 @@ We proves that the pipeline in the example is sound using the soundness theorems
           erewrite fold_right_eq_ext; try apply eq_refl. intros x0 y0; edestruct H as [H' _]; eapply H'.
         * intros. repeat rewrite (H6 (PhEFold _ _ _ _ _)). reflexivity.
         * intros; repeat rewrite H1; intros; repeat rewrite (H6 (PhEFold _ _ _ _ _)); simpl; trivial.
-    - try repeat match goal with
-        | [H : forall store,  _ /\ _ /\ _ |- _] =>
-            let h0 := fresh "H0" in
-            let h1 := fresh "H1" in
-            let h2 := fresh "H2" in
-            destruct (H store) as [h0 [h1 h2]]; clear H
-        end; intuition; red; intros; simpl.
-      + unfold restrict_expr. fold (@restrict_expr interp_type t) (@lift_for_aexpr interp_type TBool t).
+    - intuition; red; intros; simpl.
+      + unfold restrict_expr. repeat fold_lift.
         rewrite H7; trivial; simpl. rewrite H3, H0. reflexivity.
       + rewrite H7; trivial; simpl. rewrite (H (PhEIf _ _ _)). rewrite H3, H0. reflexivity.
       + rewrite H7; intros; repeat rewrite (H (PhEIf _ _ _)); simpl; rewrite H3, H0; reflexivity.
-    - try repeat match goal with
-        | [H : forall store,  _ /\ _ /\ _ |- _] =>
-            let h0 := fresh "H0" in
-            let h1 := fresh "H1" in
-            let h2 := fresh "H2" in
-            destruct (H store) as [h0 [h1 h2]]; clear H
-        end; intuition; red; intros; simpl.
-      + unfold restrict_expr. fold (@restrict_expr interp_type t2) (@lift_let interp_type t1 t2).
+    - intuition; red; intros; simpl.
+      + unfold restrict_expr. repeat fold_lift.
         rewrite H2; trivial; simpl. edestruct H as [H' _]; eapply H'.
       + rewrite H2; trivial; simpl. edestruct H as [_ [H' _]]. rewrite H'.
         * rewrite H3. rewrite (H3 (PhELet _ _ _)); reflexivity.
@@ -1067,20 +1037,6 @@ We proves that the pipeline in the example is sound using the soundness theorems
         * rewrite H3. rewrite (H3 (PhELet _ _ _)); reflexivity.
         * intros. apply H3.
   Qed.
-
-  Section fold_command.
-    Variable f : command -> command.
-    Fixpoint fold_command (c : command) : command :=
-      f
-        match c with
-        | CSkip as c | CGets _ _ as c => c
-        | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
-        | CLet x e c => CLet x e (fold_command c)
-        | CLetMut x e c => CLetMut x e (fold_command c)
-        | CIf e c1 c2 => CIf e (fold_command c1) (fold_command c2)
-        | CForeach x l c => CForeach x l (fold_command c)
-        end.
-  End fold_command.
   (* End of complex expression lifting *)
 
   Fixpoint is_in (x : string) (l : list string) : bool :=
