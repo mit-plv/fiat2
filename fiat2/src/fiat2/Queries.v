@@ -516,6 +516,8 @@ Section Queries_Section.
 
   Compute (select_steven_job_fast_auto (@move_filter)).
   Compute (select_steven_job_fast_auto (fun t e => constant_folding (move_filter e))).
+  Compute (select_steven_job_fast_auto (fun t e => constant_fold_assoc (move_filter e))).
+  Compute (select_steven_job_fast_auto (fun t e => constant_folding (constant_fold_assoc (move_filter e)))).
 
   Local Close Scope pretty_elab_scope.
 

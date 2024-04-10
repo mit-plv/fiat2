@@ -35,7 +35,7 @@ Notation "! x"         := (EUnop ONot x)
 Notation "'length(' x ')'"   := (EUnop OLength x)
    (only printing, in custom fiat2_elaborated at level 10) : pretty_elab_scope.
 Notation "'intToString(' x ')'"   := (EUnop OIntToString x)
-   (only printing, in custom fiat2_elaborated at level 10) : pretty_elab_scope.
+   (only printing, in custom fiat2_elaborated at level 10, format "'intToString(' x ')'") : pretty_elab_scope.
 
 (*
 Notation "'fst(' x ')'" := (PEProj x "0")
@@ -110,7 +110,7 @@ Notation "n"           := (EAtom (_ n))
    (only printing, in custom fiat2_elaborated at level 0, n constr) : pretty_elab_scope.
 Notation "( e )" := e (only printing, in custom fiat2_elaborated at level 0, e custom fiat2_elaborated at level 99) : pretty_elab_scope.
 Notation "'let' x := p1 'in' p2"       := (ELet x p1 p2)
-   (only printing, in custom fiat2_elaborated at level 99) : fiat2_scope.
+   (only printing, in custom fiat2_elaborated at level 99) : pretty_elab_scope.
 
 (* Notation for printing record access. Weird tricks are used, but when expanded the brackets look correct *)
 Notation "e [" := (e)
@@ -123,5 +123,5 @@ Notation "x k ']'" := (EUnop (OFst k _ _) x)
   (only printing, in custom fiat2_elaborated at level 10, x custom fiat2_record_access, k constr at level 0, format "x k ]") : pretty_elab_scope.
 
 Notation "<{{ e }}>" := e (e custom fiat2_comm_elaborated) : pretty_elab_scope.
+Notation "<{[ e ]}>" := e (e custom fiat2_elaborated) : pretty_elab_scope.
 Notation "{ e }" := e (only printing, in custom fiat2_elaborated, e custom pretty_record_fields at level 99).
-
