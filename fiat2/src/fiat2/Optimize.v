@@ -288,11 +288,22 @@ Section WithMap2.
         | Some v1', Some v2' => let r := interp_binop o v1' v2' in (reify _ r, Some r)
         | _, _ => (EBinop o e1' e2', None)
         end
-    | EFlatmap e1 x e2 => (EFlatmap (fst (constant_folding' e1)) x (fst (constant_folding' e2)), None)
+    | EFlatmap e1 x e2 =>
+        match constant_folding' e1 with
+        | (_, Some nil) => (EAtom (ANil _), Some nil)
+        | (e1', _) => match constant_folding' e2 with
+                      | (_, Some nil) => (EAtom (ANil _), Some nil)
+                      | (e2', _) => (EFlatmap e1' x e2', None)
+                      end
+        end
     | EFold e1 e2 x y e3 => (EFold (fst(constant_folding' e1)) (fst(constant_folding' e2)) x y (fst(constant_folding' e3)), None)
     | EIf e1 e2 e3 => (EIf (fst (constant_folding' e1)) (fst (constant_folding' e2)) (fst (constant_folding' e3)), None)
     | ELet x e1 e2 => (ELet x (fst (constant_folding' e1)) (fst (constant_folding' e2)), None)
     end.
+
+  Lemma flat_map_all_nil A B (f: A -> list B) l :
+    (forall x, f x = nil) -> flat_map f l = nil.
+  Proof. induction l; try easy. intros. cbn. rewrite H. cbn. apply (IHl H). Qed.
 
   Lemma constant_folding'_snd_correct {t : type} (store env : locals) (e : expr t) :
     forall c, snd (constant_folding' e) = Some c -> interp_expr store env e = c.
@@ -309,6 +320,19 @@ Section WithMap2.
     - simpl in H.
       destruct (constant_folding' e1). destruct (constant_folding' e2). destruct o0; destruct o1; inversion H.
       rewrite (IHe1 store env i), (IHe2 store env i0); easy.
+
+    - simpl in H.
+      destruct constant_folding'.
+
+      destruct o; try discriminate;
+        try (destruct i; try discriminate).
+      1: inversion H; rewrite (IHe1 _ _ nil); reflexivity.
+
+      all: destruct constant_folding';
+         destruct o; try discriminate;
+         try (destruct i); try (destruct i1); try discriminate;
+         inversion H;
+         apply flat_map_all_nil; intros; rewrite (IHe2 _ _ nil); reflexivity.
   Qed.
 
   Definition constant_folding {t : type} (e : expr t) : expr t := fst (constant_folding' e).
@@ -329,32 +353,37 @@ Section WithMap2.
       + simpl in IHe. rewrite IHe. reflexivity.
 
     - destruct (constant_folding' e1) eqn:E1. destruct (constant_folding' e2) eqn:E2. destruct o0; destruct o1; simpl.
-      + rewrite reify_correct.
-        f_equal.
-        * simpl in IHe1.
-          rewrite (constant_folding'_snd_correct store env e1 i); try easy. rewrite E1. reflexivity.
-        * simpl in IHe2.
-          rewrite (constant_folding'_snd_correct store env e2 i0); try easy. rewrite E2. reflexivity.
-
-      + rewrite IHe1, IHe2. reflexivity.
-      + rewrite IHe1, IHe2. reflexivity.
-      + rewrite IHe1, IHe2. reflexivity.
-
-    - rewrite IHe1.
-      assert (H: (fun y : interp_type t1 => interp_expr store (set_local env x y) (fst (constant_folding' e2)))
-      = (fun y : interp_type t1 => interp_expr store (set_local env x y) e2)).
-      { apply functional_extensionality. intros. apply IHe2. }
-      rewrite <- H.
-      reflexivity.
-
+      all: try (rewrite IHe1, IHe2; reflexivity).
+      rewrite reify_correct.
+      f_equal.
+      * simpl in IHe1.
+        rewrite (constant_folding'_snd_correct store env e1 i); try easy. rewrite E1. reflexivity.
+      * simpl in IHe2.
+        rewrite (constant_folding'_snd_correct store env e2 i0); try easy. rewrite E2. reflexivity.
+    - destruct (constant_folding' e1) eqn:E1, (constant_folding' e2) eqn:E2.
+      destruct o.
+      * destruct i.
+        ** assert (interp_expr store env e1 = nil).
+           { apply (constant_folding'_snd_correct). rewrite E1. reflexivity. }
+           rewrite H; reflexivity.
+        ** destruct o0;
+            try (destruct i1); cbn;
+            try (rewrite IHe1; apply flat_map_ext; easy).
+           rewrite flat_map_all_nil; try easy. intros.
+           assert (H: snd (constant_folding' e2) = Some nil). { rewrite E2. easy. }
+           apply (constant_folding'_snd_correct store (set_local env x x0) e2 _ H).
+      * destruct o0;
+            try (destruct i); cbn;
+            try (rewrite IHe1; apply flat_map_ext; easy).
+           rewrite flat_map_all_nil; try easy. intros.
+           assert (H: snd (constant_folding' e2) = Some nil). { rewrite E2. easy. }
+           apply (constant_folding'_snd_correct store (set_local env x x0) e2 _ H).
     - rewrite IHe1.
       f_equal; eauto.
       apply functional_extensionality. intros.
       apply functional_extensionality. intros.
       easy.
-
     - rewrite IHe1, IHe2, IHe3. reflexivity.
-
     - rewrite IHe1, IHe2. reflexivity.
   Qed.
 
