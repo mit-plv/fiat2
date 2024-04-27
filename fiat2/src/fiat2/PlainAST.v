@@ -1,8 +1,9 @@
 Require Export String.
 Require Export ZArith.
-Require Export List.
+Require Export List Sorted.
 Require Export coqutil.Map.Interface coqutil.Map.SortedListString.
 Require Export coqutil.Byte coqutil.Word.Interface coqutil.Word.Bitwidth.
+Require Export Std.Sorting.Mergesort.
 
 (* ===== Fiat2 types ===== *)
 Inductive type : Type :=
@@ -100,6 +101,7 @@ Inductive command : Type :=
 (* ===== Interpreter ===== *)
 Require Import coqutil.Word.Interface.
 Require Import Coq.Numbers.DecimalString.
+Require Import coqutil.Word.Properties.
 Section WithWord.
   Context {width: Z} {word: word.word width}.
   Context {word_ok: word.ok word}.
@@ -202,22 +204,22 @@ Section WithWord.
       end.
   End __.
 
+  Definition pair_compare {A B : Type} (fst_compare : A -> A -> comparison) (snd_compare : B -> B -> comparison) (p1 p2 : A * B) : comparison :=
+    let '(a1, b1) := p1 in
+    let '(a2, b2) := p2 in
+    match fst_compare a1 a2 with
+    | Eq => snd_compare b1 b2
+    | c => c
+    end.
+
   Section WithValueCompare.
     Context (value_compare : value -> value -> comparison).
 
-    Definition record_compare (l l' : list (string * value)) : comparison :=
-      let f := fun '(s, e) '(s', e') => match String.compare s s' with
-                           | Eq => value_compare e e'
-                           | _ as c => c
-                           end in
-      list_compare f l l'.
+    Definition record_compare : list (string * value) -> list (string * value) -> comparison :=
+      list_compare (pair_compare String.compare value_compare).
 
-    Definition dict_compare (l l' : list (value * value)) : comparison :=
-      let f := fun '(k, v) '(k', v') => match value_compare k k' with
-                           | Eq => value_compare v v'
-                           | _ as c => c
-                           end in
-      list_compare f l l'.
+    Definition dict_compare : list (value * value) -> list (value * value) -> comparison :=
+      list_compare (pair_compare value_compare value_compare).
   End WithValueCompare.
 
   Fixpoint value_compare (a b : value) : comparison :=
@@ -225,11 +227,12 @@ Section WithWord.
     | VWord a, VWord b =>
         if word.eqb a b then Eq else if word.ltu a b then Lt else Gt
     | VInt a, VInt b =>
-        if Z.eqb a b then Eq else if Z.ltb a b then Lt else Gt
+        Z.compare a b
+        (* if Z.eqb a b then Eq else if Z.ltb a b then Lt else Gt *)
     | VBool a, VBool b =>
-        if Bool.eqb a b then Eq else if andb (negb a) b then Lt else Gt
+        Bool.compare a b (* if Bool.eqb a b then Eq else if andb (negb a) b then Lt else Gt *)
     | VString a, VString b =>
-        if String.eqb a b then Eq else if String.ltb a b then Lt else Gt
+        String.compare a b (* if String.eqb a b then Eq else if String.ltb a b then Lt else Gt *)
     | VOption a, VOption b =>
         match a with
         |None => match b with None => Eq | _ => Lt end
@@ -239,7 +242,14 @@ Section WithWord.
     | VRecord a, VRecord b => record_compare value_compare a b
     | VDict a, VDict b => dict_compare value_compare a b
     | VUnit, VUnit => Eq
-    | _, _ => Lt (* unreachable cases, must compare values of the same type *)
+    | VUnit, _ => Lt | _, VUnit => Gt
+    | VBool _, _ => Lt | _, VBool _ => Gt
+    | VWord _, _ => Lt | _, VWord _ => Gt
+    | VInt _, _ => Lt | _, VInt _ => Gt
+    | VString _, _ => Lt | _, VString _ => Gt
+    | VOption _, _ => Lt | _, VOption _ => Gt
+    | VList _, _ => Lt | _, VList _ => Gt
+    | VRecord _, _ => Lt | _, VRecord _ => Gt
     end.
 
   Definition value_eqb (a b : value) : bool :=
@@ -253,10 +263,165 @@ Section WithWord.
     | Lt => true
     | _ => false
     end.
-  (* ----- End of comparison ----- *)
-  Definition record_sort (l : list (string * value)) : list (string * value). Admitted.
-  Definition dict_sort (l : list (value * value)) : list (value * value). Admitted.
 
+  Section ValueIH.
+    Context (P : value -> Prop).
+    Hypothesis (f0 : forall w : word, P (VWord w)) (f1 : forall z : Z, P (VInt z)) (f2 : forall b : bool, P (VBool b)) (f3 : forall s : string, P (VString s))
+      (f4 : forall m : option value, match m with Some v => P v | None => True end -> P (VOption m)) (f5 : forall l : list value, Forall P l -> P (VList l)) (f6 : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l)) (f7 : forall l : list (value * value), Forall (fun v => P (fst v) /\ P (snd v)) l -> P (VDict l)) (f8 : P VUnit).
+    Section __.
+      Context (value_IH : forall v, P v).
+      Fixpoint list_value_IH (l : list value) : Forall P l :=
+                            match l as l0 return Forall P l0 with
+                            | nil => Forall_nil P
+                            | v :: l' => Forall_cons v (value_IH v) (list_value_IH l')
+                            end.
+      Fixpoint record_value_IH (l : list (string * value)) : Forall (fun v => P (snd v)) l :=
+        match l as l0 return Forall (fun v => P (snd v)) l0 with
+        | nil => Forall_nil (fun v => P (snd v))
+        | v :: l' => Forall_cons v (value_IH (snd v)) (record_value_IH l')
+        end.
+      Fixpoint dict_value_IH (l : list (value * value)) : Forall (fun v => P (fst v) /\ P (snd v)) l :=
+        match l as l0 return Forall (fun v => P (fst v) /\ P (snd v)) l0 with
+        | nil => Forall_nil (fun v => P (fst v) /\ P (snd v))
+        | v :: l' => Forall_cons v (conj (value_IH (fst v)) (value_IH (snd v)))(dict_value_IH l')
+        end.
+    End __.
+    Fixpoint value_IH (v : value) {struct v} : P v :=
+      match v with
+      | VWord w => f0 w
+      | VInt z => f1 z
+      | VBool b => f2 b
+      | VString s => f3 s
+      | VOption m => f4 m match m with Some v => value_IH v | None => I end
+      | VList l => f5 l (list_value_IH value_IH l)
+      | VRecord l => f6 l (record_value_IH value_IH l)
+      | VDict l => f7 l (dict_value_IH value_IH l)
+      | VUnit => f8
+      end.
+  End ValueIH.
+
+  Definition is_antisym {A : Type} (cmp : A -> A -> comparison) := forall x y : A, cmp x y = CompOpp (cmp y x).
+
+  Lemma antisym__pair_antisym : forall (A B : Type) (A_cmp : A -> A -> comparison) (B_cmp : B -> B -> comparison),
+      is_antisym A_cmp -> is_antisym B_cmp -> is_antisym (pair_compare A_cmp B_cmp).
+  Proof.
+    intros A B A_cmp B_cmp HA HB. unfold is_antisym. intros [xa xb] [ya yb].
+    simpl. rewrite HA, HB. destruct (A_cmp ya xa), (B_cmp yb xb); auto.
+  Qed.
+
+  Definition leb_from_compare {A : Type} (cmp : A -> A -> comparison) (x y : A) : bool :=
+    match cmp x y with
+    | Lt | Eq => true
+    | Gt => false
+    end.
+
+  Definition is_total {A : Type} (leb : A -> A -> bool) : Prop :=
+    forall x y, leb x y = true \/ leb y x = true.
+
+  Lemma compare_antisym__leb_total : forall (A : Type) (cmp : A -> A -> comparison), is_antisym cmp -> is_total (leb_from_compare cmp).
+  Proof.
+    unfold is_antisym, is_total, leb_from_compare.
+    intros A cmp H x y. rewrite H; destruct (cmp y x); intuition.
+  Qed.
+
+  Lemma string_compare_refl : forall s : string, String.compare s s = Eq.
+  Proof.
+    induction s; trivial. simpl. unfold Ascii.compare.
+    rewrite N.compare_refl; trivial.
+  Qed.
+
+  Lemma value_compare_refl : forall v : value, value_compare v v = Eq.
+    apply value_IH; auto; intros; simpl.
+    - rewrite word.eqb_eq; trivial.
+    - apply Z.compare_refl.
+    - destruct b; trivial.
+    - apply string_compare_refl.
+    - destruct m; auto.
+    - induction l; auto. simpl. inversion H; subst; auto.
+      rewrite H2. apply IHl. assumption.
+    - induction l; auto. destruct a. simpl.
+      rewrite string_compare_refl. inversion H; subst; simpl in *.
+      rewrite H2. apply IHl. assumption.
+    - induction l; auto. destruct a; simpl.
+      inversion H; subst; simpl in *. destruct H2.
+      rewrite H0, H1. apply IHl. assumption.
+  Qed.
+
+  Lemma value_compare_antisym : is_antisym value_compare.
+  Proof.
+    intro u. apply (value_IH ((fun u => forall v, value_compare u v = CompOpp (value_compare v u))));
+      destruct v; auto; intros; simpl.
+    - repeat match goal with
+             | |- context[word.eqb ?a ?b] => destruct (word.eqb_spec a b)
+             | |- context[word.ltu ?a ?b] => destruct (word.ltu_spec a b)
+             | H1: ?a <> ?b, H2: ?b = ?a |- _ => symmetry in H2; intuition
+             end; auto; intuition.
+      + exfalso. apply (Z.lt_asymm _ _ H1). assumption.
+      + exfalso. apply H. apply (Z.le_antisymm _ _ H1) in H2.
+        rewrite <-word.of_Z_unsigned. rewrite <-word.of_Z_unsigned at 1. congruence.
+    - apply Z.compare_antisym.
+    - destruct b, b0; auto.
+    - apply String.compare_antisym.
+    - destruct m, m0; auto.
+    - revert l0. induction l; destruct l0; auto.
+      simpl. inversion H; subst. pose proof (H2 v) as H2. destruct (value_compare v a) eqn:E.
+      + rewrite H2. simpl. apply IHl. assumption.
+      + rewrite H2. trivial.
+      + rewrite H2. trivial.
+    - revert l0. induction l as [| a l IHl]; destruct l0 as [| b l0]; auto. destruct a as [sa va], b as [sb vb].
+      simpl. inversion H; subst. pose proof (H2 vb) as H2. simpl in *.
+      rewrite String.compare_antisym. destruct (sb ?= sa)%string; simpl; auto. rewrite H2.
+      destruct (value_compare vb va); simpl; auto.
+    - revert l0. induction l as [| a l IHl]; destruct l0 as [| b l0]; auto. destruct a as [ka va], b as [kb vb].
+      simpl. inversion H; subst. destruct H2 as [H2L H2R]. pose proof (H2L kb) as H2L. pose proof (H2R vb) as H2R.
+      simpl in *. rewrite H2L, H2R. destruct (value_compare kb ka), (value_compare vb va); simpl; auto.
+  Qed.
+
+  Local Coercion is_true : bool >-> Sortclass.
+
+  Definition value_leb := leb_from_compare value_compare.
+  Lemma value_leb_total : is_total value_leb.
+  Proof.
+    apply compare_antisym__leb_total. exact value_compare_antisym.
+  Qed.
+
+  Definition record_entry_compare := pair_compare String.compare value_compare.
+  Definition record_entry_leb := leb_from_compare record_entry_compare.
+  Definition record_sort := Sectioned.sort record_entry_leb.
+  Lemma record_entry_compare_antisym : is_antisym record_entry_compare.
+  Proof.
+    apply antisym__pair_antisym.
+    - exact String.compare_antisym.
+    - exact value_compare_antisym.
+  Qed.
+  Lemma record_entry_leb_total : is_total record_entry_leb.
+  Proof.
+    apply compare_antisym__leb_total. exact record_entry_compare_antisym.
+  Qed.
+  Lemma LocallySorted_record_sort : forall l, LocallySorted record_entry_leb (record_sort l).
+  Proof.
+    exact (Sectioned.LocallySorted_sort _ record_entry_leb record_entry_leb_total).
+  Qed.
+
+
+  Definition dict_entry_compare := pair_compare value_compare value_compare.
+  Definition dict_entry_leb := leb_from_compare dict_entry_compare.
+  Definition dict_sort := Sectioned.sort dict_entry_leb.
+  Lemma dict_entry_compare_antisym : is_antisym dict_entry_compare.
+  Proof.
+    apply antisym__pair_antisym; exact value_compare_antisym.
+  Qed.
+  Lemma dict_entry_leb_total : is_total dict_entry_leb.
+  Proof.
+    apply compare_antisym__leb_total. exact dict_entry_compare_antisym.
+  Qed.
+  Lemma LocallySorted_dict_sort : forall l, LocallySorted dict_entry_leb (dict_sort l).
+  Proof.
+    exact (Sectioned.LocallySorted_sort _ dict_entry_leb dict_entry_leb_total).
+  Qed.
+
+
+  (* ----- End of comparison ----- *)
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
     | OWPlus => apply_word_binop word.add a b
@@ -583,7 +748,13 @@ Definition proj_record_field (e : expr) (s : string) : result expr :=
   | _ => error:(e "is not a record")
   end.
 
-(* ??? Should we try to infer the type of dict from a single key and a single value whose types are successfully synthesized? *)
+Fixpoint first_success (l : list (result (type * expr))) :  result type :=
+  match l with
+  | nil => error:("Insufficient type information")
+  | Success (t, e) :: l => Success t
+  | _ :: l => first_success l
+  end.
+
 Fixpoint dict_type_from' (l : list (result (type * expr * type * expr))) : result (type * type * list (expr * expr)) :=
   match l with
   | nil => error:("Insufficient type information for dictionary")
@@ -609,6 +780,15 @@ Definition dict_from (l : list (result (expr * expr))) : result expr :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+
+  Section __.
+    Context (analyze_expr : tenv -> tenv -> type -> expr -> result expr).
+
+    Definition analyze_dict_body (Gstore Genv : tenv) (kt vt : type) (l : list (expr * expr)) :=
+      dict_from (List.map (fun '(k, v) => k' <- analyze_expr Gstore Genv kt k ;;
+                                          v' <- analyze_expr Gstore Genv vt v ;;
+                                          Success (k', v')) l).
+  End __.
 
   Fixpoint analyze_expr (Gstore Genv : tenv) (expected : type) (e : expr) : result expr :=
     match e with
@@ -698,16 +878,13 @@ Section WithMap.
                    end
     | EProj e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
                    match t with
-                   | TRecord l => t <- proj_record_type l s ;; e <- proj_record_field e' s ;;
-                                  if type_eqb expected t then Success e
+                   | TRecord l => t <- proj_record_type l s ;;
+                                  if type_eqb expected t then Success (EProj e' s)
                                   else error:("Attribute" s "has type" t "but expected" expected)
                    | t => error:(e "has type" t "but expected a record")
                    end
     | EDict l => match expected with
-                 | TDict kt vt =>
-                     dict_from (List.map (fun '(k, v) => k' <- analyze_expr Gstore Genv kt k ;;
-                                                              v' <- analyze_expr Gstore Genv vt v ;;
-                                                              Success (k', v')) l)
+                 | TDict kt vt => analyze_dict_body analyze_expr Gstore Genv kt vt l
                  | _ => error:(e "is a dictionary but expected" expected)
                  end
     | EInsert d k v => match expected with
@@ -815,12 +992,15 @@ Section WithMap.
     | ERecord l => record_type_from (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)
     | EProj e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
                    match t with
-                   | TRecord l => t <- proj_record_type l s ;; e <- proj_record_field e' s ;; Success (t, e)
+                   | TRecord l => t <- proj_record_type l s ;; Success (t, EProj e' s)
                    | t => error:(e "has type" t "but expected a record")
                    end
-    | EDict l => dict_type_from (List.map (fun '(k, v) => '(kt, k') <- synthesize_expr Gstore Genv k ;;
-                                                          '(vt, v') <- synthesize_expr Gstore Genv v ;;
-                                                          Success (kt, k', vt, v')) l)
+    | EDict l => let kl := List.map (fun '(k, _) => synthesize_expr Gstore Genv k) l in
+                 let vl := List.map (fun '(_, v) => synthesize_expr Gstore Genv v) l in
+                 fst_kt <- first_success kl ;; fst_vt <- first_success vl ;;
+                 d <- analyze_dict_body analyze_expr Gstore Genv fst_kt fst_vt l ;;
+                 Success (TDict fst_kt fst_vt, d)
+
     | EInsert d k v => '(t1, d') <- synthesize_expr Gstore Genv d ;;
                        match t1 with
                        | TDict kt vt => k' <- analyze_expr Gstore Genv kt k ;;
@@ -842,14 +1022,7 @@ Section WithMap.
                      end
     end.
 End WithMap.
-(* ?????
-For sorting, use the bookmarked modification of coqstdlib.
-If it works, make it a submodule like bedrock2, with Makefiles doing the right things.
 
-Use inclb to check each attribute in expected is in the record expr (after two maps)
-                                                      For each entry in record expr, grab its type from expected and analyze
-
-*)
 (* ===== PHOAS ===== *)
 Section WithPhoasEnv.
   Context {V : Type}.
@@ -862,8 +1035,7 @@ Section WithPhoasEnv.
   | PhEAtom (a : atom)
   | PhEUnop (o : unop) (e : phoas_expr)
   | PhEBinop (o : binop) (e1 e2: phoas_expr)
-  (* Retain the variable names as hints for dephoasify *)
-  | PhEFlatmap (e : phoas_expr) (x : string) (f : V -> phoas_expr)
+  | PhEFlatmap (e : phoas_expr) (x : string) (f : V -> phoas_expr) (* Retain the variable names as hints for dephoasify *)
   | PhEFold (e1 e2 : phoas_expr) (x y : string) (f : V -> V -> phoas_expr)
   | PhEIf (e1 e2 e3 : phoas_expr)
   | PhELet (e : phoas_expr) (x : string) (f : V -> phoas_expr)
@@ -933,81 +1105,87 @@ Section WithGeneralPhoasEnv.
 
   Local Notation interp_unop := (interp_unop (width:=width)).
   (* ===== PHOAS interpreter ===== *)
-  Fixpoint phoas_interp_expr (store : phoas_env value) (e : phoas_expr value) : value :=
+  Fixpoint interp_phoas_expr (store : phoas_env value) (e : phoas_expr value) : value :=
     match e with
     | PhEVar v => v
-    | PhELoc x => match map.get store x with
-                  | Some v => v
-                  | None => VUnit
-                  end
+    | PhELoc x => get_local store x
     | PhEAtom a => interp_atom a
-    | PhEUnop o e => interp_unop o (phoas_interp_expr store e)
-    | PhEBinop o e1 e2 => interp_binop o (phoas_interp_expr store e1) (phoas_interp_expr store e2)
+    | PhEUnop o e => interp_unop o (interp_phoas_expr store e)
+    | PhEBinop o e1 e2 => interp_binop o (interp_phoas_expr store e1) (interp_phoas_expr store e2)
     | PhEIf e1 e2 e3 =>
-        match phoas_interp_expr store e1 with
-        | VBool true => phoas_interp_expr store e2
-        | VBool false => phoas_interp_expr store e3
+        match interp_phoas_expr store e1 with
+        | VBool true => interp_phoas_expr store e2
+        | VBool false => interp_phoas_expr store e3
         | _ => VUnit
         end
-    | PhELet e _ f => phoas_interp_expr store (f (phoas_interp_expr store e))
-    | PhEFlatmap e _ f => match phoas_interp_expr store e with
+    | PhELet e _ f => interp_phoas_expr store (f (interp_phoas_expr store e))
+    | PhEFlatmap e _ f => match interp_phoas_expr store e with
                           | VList l1 =>
-                              VList (flat_map (fun y => match phoas_interp_expr store (f y) with
+                              VList (flat_map (fun y => match interp_phoas_expr store (f y) with
                                                         | VList l2 => l2
                                                         | _ => nil
                                                         end) l1)
                           | _ => VUnit
                           end
-    | PhEFold e1 e2 _ _ f => match phoas_interp_expr store e1 with
+    | PhEFold e1 e2 _ _ f => match interp_phoas_expr store e1 with
                              | VList l1 =>
-                                 let a := phoas_interp_expr store e2 in
-                                 let f := fun v acc => phoas_interp_expr store (f v acc) in
+                                 let a := interp_phoas_expr store e2 in
+                                 let f := fun v acc => interp_phoas_expr store (f v acc) in
                                  fold_right f a l1
                              | _ => VUnit
                              end
-    | PhERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, phoas_interp_expr store e)) l))
-    | PhEProj r s => match phoas_interp_expr store r with
+    | PhERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, interp_phoas_expr store e)) l))
+    | PhEProj r s => match interp_phoas_expr store r with
                      | VRecord l => record_proj s l
                      | _ => VUnit
                      end
-    | PhEDict l => VDict (dict_sort (List.map (fun '(k, v) => (phoas_interp_expr store k, phoas_interp_expr store v)) l))
-    | PhEInsert d k v => match phoas_interp_expr store d with
-                         | VDict l => VDict (dict_insert (phoas_interp_expr store k) (phoas_interp_expr store v) l)
+    | PhEDict l => VDict (dict_sort (List.map (fun '(k, v) => (interp_phoas_expr store k, interp_phoas_expr store v)) l))
+    | PhEInsert d k v => match interp_phoas_expr store d with
+                         | VDict l => VDict (dict_insert (interp_phoas_expr store k) (interp_phoas_expr store v) l)
                          | _ => VUnit
                          end
-  | PhEDelete d k => match phoas_interp_expr store d with
-                   | VDict l => VDict (dict_delete (phoas_interp_expr store k) l)
+  | PhEDelete d k => match interp_phoas_expr store d with
+                   | VDict l => VDict (dict_delete (interp_phoas_expr store k) l)
                    | _ => VUnit
                    end
-  | PhELookup d k => match phoas_interp_expr store d with
-                   | VDict l => VOption (dict_lookup (phoas_interp_expr store k) l)
+  | PhELookup d k => match interp_phoas_expr store d with
+                   | VDict l => VOption (dict_lookup (interp_phoas_expr store k) l)
                    | _ => VUnit
                    end
   end.
 
 End WithGeneralPhoasEnv.
 
-Inductive rel_expr : Type :=
+Inductive rel_atomic_expr :=
+| REAVar (x : string)
+| REALoc (x : string)
+| RERecord (l : list (string * rel_atomic_expr))
+| REProj (e : rel_atomic_expr) (s : string).
+
+Inductive rel_expr :=
+(* constructs for relational algebra *)
+| REReturn (e : rel_atomic_expr)
 | REVar (x : string)
 | RELoc (x : string)
-| REAtom (a : atom)
-| REUnop (o : unop) (e : rel_expr)
-| REBinop (o : binop) (e1 e2: rel_expr)
-| REIf (e1 e2 e3 : rel_expr)
-| RELet (e1 : rel_expr) (x : string) (e2 : rel_expr)
-| REFlatmap (e1 : rel_expr) (x : string) (e2 : rel_expr)
-| REFold (e1 e2 : rel_expr) (x y : string) (e3 : rel_expr)
-| RERecord (l : list (string * rel_expr))
-| REProj (e : rel_expr) (s : string)
-| REDict (l : list (rel_expr * rel_expr))
-| REInsert (d k v : rel_expr)
-| REDelete (d k : rel_expr)
-| RELookup (d k : rel_expr)
-(* constructs for relational algebra *)
-| REFilter (e1 : rel_expr) (x : string) (p : rel_expr) (e2 : rel_expr)
-| REJoin (e1 : rel_expr) (x : string) (e2 : rel_expr) (y : string) (p e3 : rel_expr)
-| REProject (e1 : rel_expr) (cols : list string) (x : string) (e2 : rel_expr)
-| RExpr (e : expr) (* ??? placeholer *).
+| REFilter (e1 : rel_expr) (x : string) (p : with_rel_expr) (e2 : rel_expr)
+| REJoin (e1 : rel_expr) (x : string) (e2 : rel_expr) (y : string) (p : with_rel_expr) (e3 : rel_expr)
+with with_rel_expr :=
+| WREVar (x : string)
+| WRELoc (x : string)
+| WREAtom (a : atom)
+| WREUnop (o : unop) (e : with_rel_expr)
+| WREBinop (o : binop) (e1 e2: with_rel_expr)
+| WREIf (e1 e2 e3 : with_rel_expr)
+| WRELet (e1 : with_rel_expr) (x : string) (e2 : with_rel_expr)
+| WREFlatmap (e1 : with_rel_expr) (x : string) (e2 : with_rel_expr)
+| WREFold (e1 e2 : with_rel_expr) (x y : string) (e3 : with_rel_expr)
+| WRERecord (l : list (string * with_rel_expr))
+| WREProj (e : with_rel_expr) (s : string)
+| WREDict (l : list (with_rel_expr * with_rel_expr))
+| WREInsert (d k v : with_rel_expr)
+| WREDelete (d k : with_rel_expr)
+| WRELookup (d k : with_rel_expr)
+| WREInject (e : rel_expr).
 
 Section WithWord.
   Context {width: Z} {word: word.word width}.
@@ -1016,128 +1194,145 @@ Section WithWord.
     Local Notation value := (value (word := word)).
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-    Fixpoint restrict_record_to_col (r : list (string * value)) (col : string) : list (string * value) :=
-      match r with
-      | nil => nil
-      | (s, v) :: r => if String.eqb s col then (s, v) :: nil else restrict_record_to_col r col
-      end.
-
-    Definition restrict_record_to_cols (r : list (string * value)) (cols : list string) : list (string * value) :=
-      concat (List.map (restrict_record_to_col r) cols).
-
-    Definition restrict_record (cols : list string) (v : value) : value :=
-      match v with
-      | VRecord l => VRecord (restrict_record_to_cols l cols)
-      | v => v
-      end.
-
-    Fixpoint rel_interp_expr (store env : locals) (e : rel_expr) :=
+    Fixpoint interp_rel_atomic_expr (store env : locals) (e : rel_atomic_expr) : value :=
       match e with
+      | REAVar x => get_local env x
+      | REALoc x => get_local store x
+      | RERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, interp_rel_atomic_expr store env e)) l))
+      | REProj e s => match interp_rel_atomic_expr store env e with
+                      | VRecord l => record_proj s l
+                      | _ => VUnit
+                      end
+      end.
+
+    Fixpoint interp_rel_expr (store env : locals) (e : rel_expr) :=
+      match e with
+      | REReturn e => VList (interp_rel_atomic_expr store env e :: nil)
       | REVar x => get_local env x
       | RELoc x => get_local store x
-      | REAtom a => interp_atom a
-      | REUnop o e => (interp_unop o) (rel_interp_expr store env e)
-      | REBinop o e1 e2 => (interp_binop o) (rel_interp_expr store env e1) (rel_interp_expr store env e2)
-      | REIf e1 e2 e3 =>
-          match rel_interp_expr store env e1 with
-          | VBool true => rel_interp_expr store env e2
-          | VBool false => rel_interp_expr store env e3
+      | REFilter e1 x p e2 =>
+          match interp_rel_expr store env e1 with
+          | VList l1 =>
+              VList (flat_map
+                       (fun v => let env' := (set_local env x v) in
+                                 match interp_with_rel_expr store env' p with
+                                 | VBool b => if b then
+                                                match interp_rel_expr store env' e2 with
+                                                | VList l2 => l2
+                                                | _ => nil
+                                                end
+                                              else nil
+                                 | _ => nil
+                                 end) l1)
           | _ => VUnit
           end
-      | RELet e1 x e2 => rel_interp_expr store (set_local env x (rel_interp_expr store env e1)) e2
-      | REFlatmap e1 x e2 =>
-          match rel_interp_expr store env e1 with
+      | REJoin e1 x e2 y p e3 =>
+          match interp_rel_expr store env e1 with
           | VList l1 =>
-              VList (flat_map (fun v =>
-                                 match rel_interp_expr store (set_local env x v) e2 with
+              match interp_rel_expr store env e2 with
+              | VList l2 => VList (flat_map
+                                     (fun v2 =>
+                                        flat_map
+                                          (fun v1 => let env' := set_local (set_local env x v1) y v2 in
+                                                     match interp_with_rel_expr store env' p with
+                                                     | VBool b => if b then
+                                                                    match interp_rel_expr store env' e3 with
+                                                                    | VList l3 => l3
+                                                                    | _ => nil
+                                                                    end
+                                                                  else nil
+                                                     | _ => nil
+                                                     end) l1) l2)
+              | _ => VUnit
+              end
+          | _ => VUnit
+          end
+      end
+
+      with interp_with_rel_expr (store env : locals) (e : with_rel_expr) :=
+      match e with
+      | WREVar x => get_local env x
+      | WRELoc x => get_local store x
+      | WREAtom a => interp_atom a
+      | WREUnop o e => (interp_unop o) (interp_with_rel_expr store env e)
+      | WREBinop o e1 e2 => (interp_binop o) (interp_with_rel_expr store env e1) (interp_with_rel_expr store env e1)
+      | WREIf e1 e2 e3 =>
+          match interp_with_rel_expr store env e1 with
+          | VBool b => if b then interp_with_rel_expr store env e2
+                       else interp_with_rel_expr store env e3
+          | _ => VUnit
+          end
+      | WRELet e1 x e2 => interp_with_rel_expr store (set_local env x (interp_with_rel_expr store env e1)) e2
+      | WREFlatmap e1 x e2 =>
+          match interp_with_rel_expr store env e1 with
+          | VList l1 =>
+              VList (flat_map
+                       (fun v => match interp_with_rel_expr store (set_local env x v) e2 with
                                  | VList l2 => l2
                                  | _ => nil
                                  end) l1)
           | _ => VUnit
           end
-      | REFold e1 e2 x y e3 =>
-          match rel_interp_expr store env e1 with
+      | WREFold e1 e2 x y e3 =>
+          match interp_with_rel_expr store env e1 with
           | VList l1 =>
-              let a := rel_interp_expr store env e2 in
-              let f := fun v acc => rel_interp_expr store (set_local (set_local env x v) y acc) e3 in
-              fold_right f a l1
+              let a := interp_with_rel_expr store env e2 in
+              let f := fun v acc => interp_with_rel_expr store (set_local (set_local env x v) y acc) e3 in fold_right f a l1
           | _ => VUnit
           end
-      | RERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, rel_interp_expr store env e)) l))
-      | REProj r s =>
-          match rel_interp_expr store env r with
+      | WRERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, interp_with_rel_expr store env e)) l))
+      | WREProj r s =>
+          match interp_with_rel_expr store env r with
           | VRecord l => record_proj s l
           | _ => VUnit
           end
-      | REDict l => VDict (dict_sort (List.map
-                                        (fun '(k, v) => (rel_interp_expr store env k, rel_interp_expr store env v))
-                                        l))
-      | REInsert d k v =>
-          match rel_interp_expr store env d with
-          | VDict l => VDict (dict_insert (rel_interp_expr store env k) (rel_interp_expr store env v) l)
+      | WREDict l =>
+          VDict (dict_sort (List.map (fun '(k, v) => (interp_with_rel_expr store env k, interp_with_rel_expr store env v)) l))
+      | WREInsert d k v =>
+           match interp_with_rel_expr store env d with
+           | VDict l => VDict (dict_insert (interp_with_rel_expr store env k) (interp_with_rel_expr store env v) l)
+           | _ => VUnit
+           end
+      | WREDelete d k =>
+          match interp_with_rel_expr store env d with
+          | VDict l => VDict (dict_delete (interp_with_rel_expr store env k) l)
           | _ => VUnit
           end
-      | REDelete d k =>
-          match rel_interp_expr store env d with
-          | VDict l => VDict (dict_delete (rel_interp_expr store env k) l)
+      | WRELookup d k =>
+          match interp_with_rel_expr store env d with
+          | VDict l => VOption (dict_lookup (interp_with_rel_expr store env k) l)
           | _ => VUnit
           end
-      | RELookup d k =>
-          match rel_interp_expr store env d with
-          | VDict l => VOption (dict_lookup (rel_interp_expr store env k) l)
-          | _ => VUnit
-          end
-      (* constructs for relational algebra *)
-      | REFilter e1 x p e2 => match rel_interp_expr store env e1 with
-                              | VList l1 => VList (flat_map (fun v =>
-                                                               match rel_interp_expr store (map.put env x v) p with
-                                                               | VBool true =>
-                                                                   match rel_interp_expr store (map.put env x v) e2 with
-                                                                   | VList l2 => l2
-                                                                   | _ => nil
-                                                                   end
-                                                               | _ => nil
-                                                               end) l1)
-                              | _ => VUnit
-                              end
-      | REJoin e1 x e2 y p e3 => match rel_interp_expr store env e1 with
-                                   | VList l1 =>
-                                       match rel_interp_expr store env e2 with
-                                       | VList l2 =>
-                                           VList (flat_map (fun v1 =>
-                                                              flat_map (fun v2 =>
-                                                                          let env' := map.put (map.put env x v1) y v2 in
-                                                                          match rel_interp_expr store env' p with
-                                                                          | VBool true => match rel_interp_expr store env' e3 with
-                                                                                          | VList l3 => l3
-                                                                                          | _ => nil
-                                                                                          end
-                                                                          | _ => nil
-                                                                          end) l2) l1)
-                                       | _ => VUnit
-                                       end
-                                 | _ => VUnit
-                                 end
-      | REProject e1 cols x e2 => match rel_interp_expr store env e1 with
-                                  | VList l => VList (flat_map (fun v =>
-                                                                  match rel_interp_expr store (map.put env x v) e2 with
-                                                                  | VList l2 => l2
-                                                                  | _ => nil
-                                                                  end)
-                                                        (List.map (restrict_record cols) l))
-                                  | _ => VUnit
-                                  end
-      | RExpr e => interp_expr store env e (* ??? placeholer *)
+      | WREInject e => interp_rel_expr store env e
       end.
 
-    (* Some correspondence between expr and rel_expr *)
-    Fixpoint to_rel_expr (e : expr) : rel_expr :=
+    Fixpoint to_rel_expr (e : expr) : with_rel_expr :=
       match e with
-      | EFlatmap e1 x (EIf p e2 (EAtom (ANil _))) =>
-          REFilter (to_rel_expr e1) x (to_rel_expr p) (to_rel_expr e2)
-      | EFlatmap e1 x (EFlatmap e2 y (EIf p e3 (EAtom (ANil _)))) =>
-          REJoin (to_rel_expr e1) x (to_rel_expr e2) y (to_rel_expr p) (to_rel_expr e3)
-      | e' => RExpr e'
+      | EVar x => WREVar x
+      | ELoc x => WRELoc x
+      | EAtom a => WREAtom a
+      | EUnop o e => WREUnop o (to_rel_expr e)
+      | EBinop o e1 e2 => WREBinop o (to_rel_expr e1) (to_rel_expr e2)
+      | EIf e1 e2 e3 => WREIf (to_rel_expr e1) (to_rel_expr e2) (to_rel_expr e3)
+      | ELet e1 x e2 => WRELet (to_rel_expr e1) x (to_rel_expr e2)
+      | EFlatmap e1 x e2 => WREFlatmap (to_rel_expr e1) x (to_rel_expr e2)
+      | EFold e1 e2 x y e3 => WREFold (to_rel_expr e1) (to_rel_expr e2) x y (to_rel_expr e3)
+      | ERecord l => WRERecord (List.map (fun '(s, e') => (s, to_rel_expr e')) l)
+      | EProj r s => WREProj (to_rel_expr r) s
+      | EDict l => WREDict (List.map (fun '(k, v) => (to_rel_expr k, to_rel_expr v)) l)
+      | EInsert d k v => WREInsert (to_rel_expr d) (to_rel_expr k) (to_rel_expr v)
+      | EDelete d k => WREDelete (to_rel_expr d) (to_rel_expr k)
+      | ELookup d k => WRELookup (to_rel_expr d) (to_rel_expr k)
+      end.
+
+    (* Identify relational algebra constructs *)
+    Definition match_filter (e : with_rel_expr) : with_rel_expr :=
+      match e with
+      | WREFlatmap (WREInject e1) x (WREIf p (WREInject e2) (WREAtom (ANil _))) =>
+          WREInject (REFilter e1 x p e2)
+      | WREFlatmap (WREInject e1) x (WREFlatmap (WREInject e2) y (WREIf p (WREInject e3) (WREAtom (ANil _)))) =>
+          WREInject (REJoin e1 x e2 y p e3)
+      | e => e
       end.
   End WithMap.
 End WithWord.
