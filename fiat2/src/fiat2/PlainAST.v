@@ -82,11 +82,15 @@ Inductive expr : Type :=
 | EFlatmap (e1 : expr) (x : string) (e2 : expr)
 | EFold (e1 e2 : expr) (x y : string) (e3 : expr)
 | ERecord (l : list (string * expr))
-| EProj (r : expr) (s : string)
+| EAccess (r : expr) (s : string)
 | EDict (l : list (expr * expr))
 | EInsert (d k v : expr)
 | EDelete (d k : expr)
-| ELookup (d k : expr).
+| ELookup (d k : expr)
+(* relational algebra (??? not calculus, as relational calculus seems more expressive and unsafe *)
+| ESelect (l : expr) (x : string) (p : expr) (r : expr) (* Select a subset of rows from table*)
+| EJoin (l1 l2 : expr) (x y : string) (p r : expr) (* record may use x and y hence avoiding ambiguity - OR require attribute names in x and y be disjoint and just join the tuples? *)
+| EProj (l : expr) (x : string) (r : expr).
 
 (* Commands *)
 Inductive command : Type :=
@@ -228,7 +232,7 @@ Section WithWord.
         if word.eqb a b then Eq else if word.ltu a b then Lt else Gt
     | VInt a, VInt b =>
         Z.compare a b
-        (* if Z.eqb a b then Eq else if Z.ltb a b then Lt else Gt *)
+    (* if Z.eqb a b then Eq else if Z.ltb a b then Lt else Gt *)
     | VBool a, VBool b =>
         Bool.compare a b (* if Bool.eqb a b then Eq else if andb (negb a) b then Lt else Gt *)
     | VString a, VString b =>
@@ -271,10 +275,10 @@ Section WithWord.
     Section __.
       Context (value_IH : forall v, P v).
       Fixpoint list_value_IH (l : list value) : Forall P l :=
-                            match l as l0 return Forall P l0 with
-                            | nil => Forall_nil P
-                            | v :: l' => Forall_cons v (value_IH v) (list_value_IH l')
-                            end.
+        match l as l0 return Forall P l0 with
+        | nil => Forall_nil P
+        | v :: l' => Forall_cons v (value_IH v) (list_value_IH l')
+        end.
       Fixpoint record_value_IH (l : list (string * value)) : Forall (fun v => P (snd v)) l :=
         match l as l0 return Forall (fun v => P (snd v)) l0 with
         | nil => Forall_nil (fun v => P (snd v))
@@ -527,8 +531,8 @@ Section WithWord.
       | EFlatmap e1 x e2 =>
           match interp_expr store env e1 with
           | VList l1 => VList (flat_map (fun v => match interp_expr store (set_local env x v) e2 with
-                                                 | VList l2 => l2
-                                                 | _ => nil
+                                                  | VList l2 => l2
+                                                  | _ => nil
                                                   end) l1)
           | _ => VUnit
           end
@@ -541,10 +545,10 @@ Section WithWord.
           end
       | ERecord l => VRecord (record_sort
                                 (List.map (fun '(s, e) => (s, (interp_expr store env e))) l))
-      | EProj r s => match interp_expr store env r with
-                     | VRecord l => record_proj s l
-                     | _ => VUnit
-                     end
+      | EAccess r s => match interp_expr store env r with
+                       | VRecord l => record_proj s l
+                       | _ => VUnit
+                       end
       | EDict l => VDict (dict_sort
                             (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l))
       | EInsert d k v =>
@@ -560,6 +564,39 @@ Section WithWord.
       | ELookup d k =>
           match interp_expr store env d with
           | VDict l => VOption (dict_lookup (interp_expr store env k) l)
+          | _ => VUnit
+          end
+      | ESelect l x p r =>
+          match interp_expr store env l with
+          | VList l => VList (flat_map
+                                (fun v =>
+                                   let env' := set_local env x v in
+                                   match interp_expr store env' p with
+                                   | VBool b => interp_expr store env' r :: nil
+                                   | _ => nil
+                                   end) l)
+          | _ => VUnit
+          end
+      | EJoin l1 l2 x y p r =>
+          match interp_expr store env l1 with
+          | VList l1 =>
+              match interp_expr store env l2 with
+              | VList l2 => VList (flat_map
+                                     (fun v2 =>
+                                        flat_map
+                                          (fun v1 => let env' := set_local (set_local env x v1) y v2 in
+                                                     match interp_expr store env' p with
+                                                     | VBool b => if b then interp_expr store env' r :: nil
+                                                                  else nil
+                                                     | _ => nil
+                                                     end) l1) l2)
+              | _ => VUnit
+              end
+          | _ => VUnit
+          end
+      | EProj l x r =>
+          match interp_expr store env l with
+          | VList l => VList (flat_map (fun v => interp_expr store (set_local env x v) r :: nil) l)
           | _ => VUnit
           end
       end.
@@ -579,9 +616,9 @@ Section WithWord.
           map.update store'' x (map.get store x)
       | CAssign x e => set_local store x (interp_expr store env e)
       | CIf e c1 c2 => match interp_expr store env e with
-                        | VBool b => if b then interp_command store env c1 else interp_command store env c2
-                        | _ => store (* unreachable cases *)
-                        end
+                       | VBool b => if b then interp_command store env c1 else interp_command store env c2
+                       | _ => store (* unreachable cases *)
+                       end
       | CForeach e x c =>
           match interp_expr store env e with
           | VList l => fold_left (fun store' v => interp_command store' (set_local env x v) c) l store
@@ -616,7 +653,7 @@ Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   | TOption t1, TOption t1' => type_eqb t1 t1'
   | TList t1, TList t1' => type_eqb t1 t1'
   | TRecord l, TRecord l' => list_beq _ (fun p p' => andb (String.eqb (fst p) (fst p'))
-                                                          (type_eqb (snd p) (snd p'))) l l'
+                                                       (type_eqb (snd p) (snd p'))) l l'
   | TDict kt vt, TDict kt' vt' => andb (type_eqb kt kt') (type_eqb vt vt')
   | _, _ => false
   end.
@@ -665,7 +702,7 @@ Definition synthesize_atom (a : atom) : result (type * atom) :=
               | None => error:("Insufficient type information for" a)
               end
   | AUnit => Success (TUnit, a)
- end.
+  end.
 
 Definition unop_types (o : unop) : (type * type) :=
   match o with
@@ -760,8 +797,8 @@ Fixpoint dict_type_from' (l : list (result (type * expr * type * expr))) : resul
   | nil => error:("Insufficient type information for dictionary")
   | Success (kt, ke, vt, ve) :: nil => Success (kt, vt, (ke, ve) :: nil)
   | Success (kt, ke, vt, ve) :: l => '(kt0, vt0, el) <- dict_type_from' l ;;
-                                                 if andb (type_eqb kt kt0) (type_eqb vt vt0) then Success (kt0, vt0, (ke, ve) :: el)
-                                                 else error:(ke "has type" kt "and" ve "has type" vt "but expected" kt0 "and" vt0 "respectively")
+                                     if andb (type_eqb kt kt0) (type_eqb vt vt0) then Success (kt0, vt0, (ke, ve) :: el)
+                                     else error:(ke "has type" kt "and" ve "has type" vt "but expected" kt0 "and" vt0 "respectively")
   | Failure err :: _ => Failure err
   end.
 
@@ -776,7 +813,7 @@ Fixpoint dict_from' (l : list (result (expr * expr))) : result (list (expr * exp
   end.
 
 Definition dict_from (l : list (result (expr * expr))) : result expr :=
-    l' <- dict_from' l ;; Success (EDict l').
+  l' <- dict_from' l ;; Success (EDict l').
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
@@ -856,7 +893,7 @@ Section WithMap.
                               '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                               match t1 with
                               | TList t1 => e2' <- analyze_expr Gstore (map.put Genv x t1) (TList t2) e2 ;;
-                                             Success (EFlatmap e1' x e2')
+                                            Success (EFlatmap e1' x e2')
                               | t1 => error:(e1 "has type" t1 "but expected a list")
                               end
                           | _ => error:(e "is a list but expected" expected)
@@ -876,13 +913,13 @@ Section WithMap.
                                    else error:(e "does not have all expected attributes" tl)
                    | _ => error:(e "is a record but expected" expected)
                    end
-    | EProj e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
-                   match t with
-                   | TRecord l => t <- proj_record_type l s ;;
-                                  if type_eqb expected t then Success (EProj e' s)
-                                  else error:("Attribute" s "has type" t "but expected" expected)
-                   | t => error:(e "has type" t "but expected a record")
-                   end
+    | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                     match t with
+                     | TRecord l => t <- proj_record_type l s ;;
+                                    if type_eqb expected t then Success (EAccess e' s)
+                                    else error:("Attribute" s "has type" t "but expected" expected)
+                     | t => error:(e "has type" t "but expected a record")
+                     end
     | EDict l => match expected with
                  | TDict kt vt => analyze_dict_body analyze_expr Gstore Genv kt vt l
                  | _ => error:(e "is a dictionary but expected" expected)
@@ -896,11 +933,11 @@ Section WithMap.
                        | _ => error:(e "is a dictionary but expected" expected)
                        end
     | EDelete d k => match expected with
-                       | TDict kt vt =>
-                           d' <- analyze_expr Gstore Genv (TDict kt vt) d ;;
-                           k' <- analyze_expr Gstore Genv kt k ;;
-                           Success (EDelete d' k')
-                       | _ => error:(e "is a dictionary but expected" expected)
+                     | TDict kt vt =>
+                         d' <- analyze_expr Gstore Genv (TDict kt vt) d ;;
+                         k' <- analyze_expr Gstore Genv kt k ;;
+                         Success (EDelete d' k')
+                     | _ => error:(e "is a dictionary but expected" expected)
                      end
     | ELookup d k => '(t1, d') <- synthesize_expr Gstore Genv d ;;
                      match t1 with
@@ -910,117 +947,189 @@ Section WithMap.
                                       else error:(e "has type" (TOption vt) "but expected" expected)
                      | t => error:(e "has type" t "but expected a record")
                      end
+    | ESelect l x p r =>  '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                          match t1 with
+                          | TList t1 => let Genv' := map.put Genv x t1 in
+                                        p' <- analyze_expr Gstore Genv' TBool p ;;
+                                        match expected with
+                                        | TList t2 =>
+                                            r' <- analyze_expr Gstore Genv' t2 r ;;
+                                            Success (ESelect l' x p' r')
+                                        | _ => error:(e "is a list but expected" expected)
+                                        end
+                          | t => error:(l "has type" t "but expected a list")
+                          end
+    | EJoin l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
+                             match t1 with
+                             | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
+                                           match t2 with
+                                           | TList t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
+                                                         p' <- analyze_expr Gstore Genv' TBool p ;;
+                                                         match expected with
+                                                         | TList t3 =>
+                                                             r' <- analyze_expr Gstore Genv' t3 r ;;
+                                                             Success (EJoin l1' l2' x y p' r')
+                                                         | _ => error:(e "is a list but expected" expected)
+                                                         end
+                                           | t => error:(l2 "has type" t "but expected a list")
+                                           end
+                             | t => error:(l1 "has type" t "but expected a list")
+                             end
+    | EProj l x r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                     match t1 with
+                     | TList t1 => match expected with
+                                   | TList t2 => r' <- analyze_expr Gstore (map.put Genv x t1) t2 r ;;
+                                                 Success (EProj l' x r')
+                                   | _ => error:(e "is a list but expected" expected)
+                                   end
+                     | t => error:(l "has type" t "but expected a list")
+                     end
     end
 
   with synthesize_expr (Gstore Genv : tenv) (e : expr) : result (type * expr) :=
-    match e with
-    | EVar x => match map.get Genv x with
-                | Some t => Success (t, e)
-                | None => error:(x "not found in the immutable variable type environment")
-                end
-    | ELoc x => match map.get Gstore x with
-                | Some t => Success (t, e)
-                | None => error:(x "not found in the mutable variable type environment")
-                end
-    | EAtom a => '(t, a') <- synthesize_atom a ;; Success (t, EAtom a')
-    | EUnop o e => match o with
-                   | OLength => '(t, e') <- synthesize_expr Gstore Genv e ;;
-                                match t with
-                                | TList _ => Success (TInt, EUnop o e')
-                                | _ => error:(e "has type" t "but expected a list")
-                                end
-                   | OSome => '(t, e') <- synthesize_expr Gstore Genv e ;; Success (TOption t, EUnop o e')
-                   | o => let '(t1, t2) := unop_types o in
-                          e' <- analyze_expr Gstore Genv t1 e ;; Success (t2, EUnop o e')
-                   end
-    | EBinop o e1 e2 => match o with
-                        | OCons =>
-                            match synthesize_expr Gstore Genv e1 with
-                            | Success (t, e1') => e2' <- analyze_expr Gstore Genv (TList t) e2 ;; Success (TList t, EBinop o e1' e2')
-                            | Failure err1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
-                                              match t2 with
-                                              | TList t => e1' <- analyze_expr Gstore Genv t e1 ;; Success (TList t, EBinop o e1' e2')
-                                              | t => error:(e2 "has type" t "but expected a list")
-                                              end
-                            end
-                        | OConcat =>
-                            match synthesize_expr Gstore Genv e1 with
-                            | Success (TList t, e1') => e2' <- analyze_expr Gstore Genv (TList t) e2 ;; Success (TList t, EBinop o e1' e2')
-                            | Success (t, _) => error:(e1 "has type" t "but expected a list")
-                            | Failure err1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
-                                              match t2 with
-                                              | TList t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;; Success (TList t, EBinop o e1' e2')
-                                              | t => error:(e2 "has type" t "but expected a list")
-                                              end
-                            end
-                        | ORepeat =>
-                            '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                            match t1 with
-                            | TList t => e2' <- analyze_expr Gstore Genv TInt e2 ;; Success (TList t, EBinop o e1' e2')
-                            | t => error:(e1 "has type" t "but expected a list")
-                            end
-                        | o => let '(t1, t2, t3) := binop_types o in
-                               e1' <- analyze_expr Gstore Genv t1 e1 ;;
-                               e2' <- analyze_expr Gstore Genv t2 e2 ;;
-                               Success (t3, EBinop o e1' e2')
+         match e with
+         | EVar x => match map.get Genv x with
+                     | Some t => Success (t, e)
+                     | None => error:(x "not found in the immutable variable type environment")
+                     end
+         | ELoc x => match map.get Gstore x with
+                     | Some t => Success (t, e)
+                     | None => error:(x "not found in the mutable variable type environment")
+                     end
+         | EAtom a => '(t, a') <- synthesize_atom a ;; Success (t, EAtom a')
+         | EUnop o e => match o with
+                        | OLength => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                                     match t with
+                                     | TList _ => Success (TInt, EUnop o e')
+                                     | _ => error:(e "has type" t "but expected a list")
+                                     end
+                        | OSome => '(t, e') <- synthesize_expr Gstore Genv e ;; Success (TOption t, EUnop o e')
+                        | o => let '(t1, t2) := unop_types o in
+                               e' <- analyze_expr Gstore Genv t1 e ;; Success (t2, EUnop o e')
                         end
-    | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
-                      match synthesize_expr Gstore Genv e2 with
-                      | Success (t, e2') => e3' <- analyze_expr Gstore Genv t e3 ;; Success (t, EIf e1' e2' e3')
-                      | Failure err2 => '(t, e3') <- synthesize_expr Gstore Genv e3 ;;
-                                        e2' <- analyze_expr Gstore Genv t e2 ;; Success (t, EIf e1' e2' e3')
-                      end
-    | ELet e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                      '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
-                      Success (t2, ELet e1' x e2')
-    | EFlatmap e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                          match t1 with
-                          | TList t1 => '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
-                                        match t2 with
-                                        | TList t2 => Success (TList t2, EFlatmap e1' x e2')
-                                        | t2 => error:(e2 "has type" t2 "but expected a list")
-                                        end
-                          | t1 => error:(e1 "has type" t1 "but expected a list")
+         | EBinop o e1 e2 => match o with
+                             | OCons =>
+                                 match synthesize_expr Gstore Genv e1 with
+                                 | Success (t, e1') => e2' <- analyze_expr Gstore Genv (TList t) e2 ;; Success (TList t, EBinop o e1' e2')
+                                 | Failure err1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
+                                                   match t2 with
+                                                   | TList t => e1' <- analyze_expr Gstore Genv t e1 ;; Success (TList t, EBinop o e1' e2')
+                                                   | t => error:(e2 "has type" t "but expected a list")
+                                                   end
+                                 end
+                             | OConcat =>
+                                 match synthesize_expr Gstore Genv e1 with
+                                 | Success (TList t, e1') => e2' <- analyze_expr Gstore Genv (TList t) e2 ;; Success (TList t, EBinop o e1' e2')
+                                 | Success (t, _) => error:(e1 "has type" t "but expected a list")
+                                 | Failure err1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
+                                                   match t2 with
+                                                   | TList t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;; Success (TList t, EBinop o e1' e2')
+                                                   | t => error:(e2 "has type" t "but expected a list")
+                                                   end
+                                 end
+                             | ORepeat =>
+                                 '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                 match t1 with
+                                 | TList t => e2' <- analyze_expr Gstore Genv TInt e2 ;; Success (TList t, EBinop o e1' e2')
+                                 | t => error:(e1 "has type" t "but expected a list")
+                                 end
+                             | o => let '(t1, t2, t3) := binop_types o in
+                                    e1' <- analyze_expr Gstore Genv t1 e1 ;;
+                                    e2' <- analyze_expr Gstore Genv t2 e2 ;;
+                                    Success (t3, EBinop o e1' e2')
+                             end
+         | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
+                           match synthesize_expr Gstore Genv e2 with
+                           | Success (t, e2') => e3' <- analyze_expr Gstore Genv t e3 ;; Success (t, EIf e1' e2' e3')
+                           | Failure err2 => '(t, e3') <- synthesize_expr Gstore Genv e3 ;;
+                                             e2' <- analyze_expr Gstore Genv t e2 ;; Success (t, EIf e1' e2' e3')
+                           end
+         | ELet e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                           '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
+                           Success (t2, ELet e1' x e2')
+         | EFlatmap e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                               match t1 with
+                               | TList t1 => '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
+                                             match t2 with
+                                             | TList t2 => Success (TList t2, EFlatmap e1' x e2')
+                                             | t2 => error:(e2 "has type" t2 "but expected a list")
+                                             end
+                               | t1 => error:(e1 "has type" t1 "but expected a list")
+                               end
+         | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                 match t1 with
+                                 | TList t1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
+                                               e3' <- analyze_expr Gstore (map.put (map.put Genv x t1) y t2) t2 e3 ;;
+                                               Success (t2, EFold e1' e2' x y e3')
+                                 | t1 => error:(e1 "has type" t1 "but expected a list")
+                                 end
+         | ERecord l => record_type_from (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)
+         | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                          match t with
+                          | TRecord l => t <- proj_record_type l s ;; Success (t, EAccess e' s)
+                          | t => error:(e "has type" t "but expected a record")
                           end
-    | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                            match t1 with
-                            | TList t1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
-                                          e3' <- analyze_expr Gstore (map.put (map.put Genv x t1) y t2) t2 e3 ;;
-                                          Success (t2, EFold e1' e2' x y e3')
-                            | t1 => error:(e1 "has type" t1 "but expected a list")
-                            end
-    | ERecord l => record_type_from (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)
-    | EProj e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
-                   match t with
-                   | TRecord l => t <- proj_record_type l s ;; Success (t, EProj e' s)
-                   | t => error:(e "has type" t "but expected a record")
-                   end
-    | EDict l => let kl := List.map (fun '(k, _) => synthesize_expr Gstore Genv k) l in
-                 let vl := List.map (fun '(_, v) => synthesize_expr Gstore Genv v) l in
-                 fst_kt <- first_success kl ;; fst_vt <- first_success vl ;;
-                 d <- analyze_dict_body analyze_expr Gstore Genv fst_kt fst_vt l ;;
-                 Success (TDict fst_kt fst_vt, d)
+         | EDict l => let kl := List.map (fun '(k, _) => synthesize_expr Gstore Genv k) l in
+                      let vl := List.map (fun '(_, v) => synthesize_expr Gstore Genv v) l in
+                      fst_kt <- first_success kl ;; fst_vt <- first_success vl ;;
+                      d <- analyze_dict_body analyze_expr Gstore Genv fst_kt fst_vt l ;;
+                      Success (TDict fst_kt fst_vt, d)
 
-    | EInsert d k v => '(t1, d') <- synthesize_expr Gstore Genv d ;;
-                       match t1 with
-                       | TDict kt vt => k' <- analyze_expr Gstore Genv kt k ;;
-                                        v' <- analyze_expr Gstore Genv vt v ;;
-                                        Success (t1, EInsert d' k' v')
-                       | t => error:(e "has type" t "but expected a record")
-                       end
-    | EDelete d k => '(t1, d') <- synthesize_expr Gstore Genv d ;;
-                     match t1 with
-                     | TDict kt _ => k' <- analyze_expr Gstore Genv kt k ;;
-                                     Success (t1, EDelete d' k')
-                     | t => error:(e "has type" t "but expected a record")
-                     end
-    | ELookup d k => '(t1, d') <- synthesize_expr Gstore Genv d ;;
-                     match t1 with
-                     | TDict kt vt => k' <- analyze_expr Gstore Genv kt k ;;
-                                      Success (TOption vt, ELookup d' k')
-                     | t => error:(e "has type" t "but expected a record")
-                     end
-    end.
+         | EInsert d k v => '(t1, d') <- synthesize_expr Gstore Genv d ;;
+                            match t1 with
+                            | TDict kt vt => k' <- analyze_expr Gstore Genv kt k ;;
+                                             v' <- analyze_expr Gstore Genv vt v ;;
+                                             Success (t1, EInsert d' k' v')
+                            | t => error:(e "has type" t "but expected a record")
+                            end
+         | EDelete d k => '(t1, d') <- synthesize_expr Gstore Genv d ;;
+                          match t1 with
+                          | TDict kt _ => k' <- analyze_expr Gstore Genv kt k ;;
+                                          Success (t1, EDelete d' k')
+                          | t => error:(e "has type" t "but expected a record")
+                          end
+         | ELookup d k => '(t1, d') <- synthesize_expr Gstore Genv d ;;
+                          match t1 with
+                          | TDict kt vt => k' <- analyze_expr Gstore Genv kt k ;;
+                                           Success (TOption vt, ELookup d' k')
+                          | t => error:(e "has type" t "but expected a record")
+                          end
+         | ESelect l x p r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                              match t1 with
+                              | TList t1 => let Genv' := map.put Genv x t1 in
+                                            p' <- analyze_expr Gstore Genv' TBool p ;;
+                                            '(t2, r') <- synthesize_expr Gstore Genv' r ;;
+                                            Success (TList t2, ESelect l' x p' r')
+                              | t => error:(l "has type" t "but expected a list")
+                              end
+         | EJoin l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
+                                  match t1 with
+                                  | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
+                                                match t2 with
+                                                | TList t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
+                                                              p' <- analyze_expr Gstore Genv' TBool p ;;
+                                                              '(t3, r') <- synthesize_expr Gstore Genv' r ;;
+                                                              Success (TList t3, EJoin l1' l2' x y p' r')
+                                                | t => error:(l2 "has type" t "but expected a list")
+                                                end
+                                  | t => error:(l1 "has type" t "but expected a list")
+                                  end
+         | EProj l x r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                          match t1 with
+                          | TList t1 => '(t2, r') <- synthesize_expr Gstore (map.put Genv x t1) r ;;
+                                        Success (TList t2, EProj l' x r')
+                          | t => error:(l "has type" t "but expected a list")
+                          end
+         end.
+
+  (* ===== type soundness ===== *)
+  Section WithWord.
+    Context {width: Z} {word: word.word width}.
+    Context {word_ok: word.ok word}.
+
+    Local Notation value := (value (word := word)).
+    Context {locals: map.map string value} {locals_ok: map.ok locals}.
+  End WithWord.
 End WithMap.
 
 (* ===== PHOAS ===== *)
@@ -1040,11 +1149,14 @@ Section WithPhoasEnv.
   | PhEIf (e1 e2 e3 : phoas_expr)
   | PhELet (e : phoas_expr) (x : string) (f : V -> phoas_expr)
   | PhERecord (l : list (string * phoas_expr))
-  | PhEProj (r : phoas_expr) (s : string)
+  | PhEAccess (r : phoas_expr) (s : string)
   | PhEDict (l : list (phoas_expr * phoas_expr))
   | PhEInsert (d k v : phoas_expr)
   | PhEDelete (d k : phoas_expr)
-  | PhELookup (d k : phoas_expr).
+  | PhELookup (d k : phoas_expr)
+  | PhESelect (l : phoas_expr) (x : string) (p r : V -> phoas_expr)
+  | PhEJoin (l1 l2 : phoas_expr) (x y : string) (p r : V -> V -> phoas_expr)
+  | PhEProj (l : phoas_expr) (x : string) (r : V -> phoas_expr).
 
   Inductive phoas_command : Type :=
   | PhCSkip
@@ -1071,11 +1183,16 @@ Section WithPhoasEnv.
     | EFold e1 e2 x y e3 => PhEFold (phoasify env e1) (phoasify env e2) x y
                               (fun v acc => phoasify (map.put (map.put env x v) y acc) e3)
     | ERecord l => PhERecord (List.map (fun '(s, e)  => (s, phoasify env e)) l)
-    | EProj e s => PhEProj (phoasify env e) s
+    | EAccess e s => PhEAccess (phoasify env e) s
     | EDict l => PhEDict (List.map (fun '(k, v)  => (phoasify env k, phoasify env v)) l)
     | EInsert d k v => PhEInsert (phoasify env d) (phoasify env k) (phoasify env v)
     | EDelete d k => PhEDelete (phoasify env d) (phoasify env k)
     | ELookup d k  => PhELookup (phoasify env d) (phoasify env k)
+    | ESelect l x p r => PhESelect (phoasify env l) x (fun v => phoasify (map.put env x v) p) (fun v => phoasify (map.put env x v) r)
+    | EJoin l1 l2 x y p r => PhEJoin (phoasify env l1) (phoasify env l2) x y
+                                     (fun v1 v2 => phoasify (map.put (map.put env x v1) y v2) p)
+                                     (fun v1 v2 => phoasify (map.put (map.put env x v1) y v2) r)
+    | EProj l x r => PhEProj (phoasify env l) x (fun v => phoasify (map.put env x v) r)
     end.
 
   Fixpoint phoasify_command (env : phoas_env) (c : command) : phoas_command :=
@@ -1135,207 +1252,56 @@ Section WithGeneralPhoasEnv.
                              | _ => VUnit
                              end
     | PhERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, interp_phoas_expr store e)) l))
-    | PhEProj r s => match interp_phoas_expr store r with
-                     | VRecord l => record_proj s l
-                     | _ => VUnit
-                     end
+    | PhEAccess r s => match interp_phoas_expr store r with
+                       | VRecord l => record_proj s l
+                       | _ => VUnit
+                       end
     | PhEDict l => VDict (dict_sort (List.map (fun '(k, v) => (interp_phoas_expr store k, interp_phoas_expr store v)) l))
     | PhEInsert d k v => match interp_phoas_expr store d with
                          | VDict l => VDict (dict_insert (interp_phoas_expr store k) (interp_phoas_expr store v) l)
                          | _ => VUnit
                          end
-  | PhEDelete d k => match interp_phoas_expr store d with
-                   | VDict l => VDict (dict_delete (interp_phoas_expr store k) l)
-                   | _ => VUnit
-                   end
-  | PhELookup d k => match interp_phoas_expr store d with
-                   | VDict l => VOption (dict_lookup (interp_phoas_expr store k) l)
-                   | _ => VUnit
-                   end
-  end.
+    | PhEDelete d k => match interp_phoas_expr store d with
+                       | VDict l => VDict (dict_delete (interp_phoas_expr store k) l)
+                       | _ => VUnit
+                       end
+    | PhELookup d k => match interp_phoas_expr store d with
+                       | VDict l => VOption (dict_lookup (interp_phoas_expr store k) l)
+                       | _ => VUnit
+                       end
+    | PhESelect l x p r => match interp_phoas_expr store l with
+                           | VList l =>
+                               VList
+                                 (flat_map (fun v =>
+                                              match interp_phoas_expr store (p v) with
+                                              | VBool _ => interp_phoas_expr store (r v) :: nil
+                                              | _ => nil
+                                              end) l)
+                           | _ => VUnit
+                           end
+    | PhEJoin l1 l2 x y p r =>
+        match interp_phoas_expr store l1 with
+        | VList l1 =>
+            match interp_phoas_expr store l2 with
+            | VList l2 =>
+                VList (flat_map (fun v2 =>
+                                   flat_map (fun v1 =>
+                                               match interp_phoas_expr store (p v1 v2) with
+                                               | VBool true => interp_phoas_expr store (r v1 v2) :: nil
+                                               | _ => nil
+                                               end) l1) l2)
+            | _ => VUnit
+            end
+        | _ => VUnit
+        end
+    | PhEProj l x r =>
+        match interp_phoas_expr store l with
+        | VList l => VList (flat_map (fun v => interp_phoas_expr store (r v) :: nil) l)
+        | _ => VUnit
+        end
+    end.
 
 End WithGeneralPhoasEnv.
-
-Inductive rel_atomic_expr :=
-| REAVar (x : string)
-| REALoc (x : string)
-| RERecord (l : list (string * rel_atomic_expr))
-| REProj (e : rel_atomic_expr) (s : string).
-
-Inductive rel_expr :=
-(* constructs for relational algebra *)
-| REReturn (e : rel_atomic_expr)
-| REVar (x : string)
-| RELoc (x : string)
-| REFilter (e1 : rel_expr) (x : string) (p : with_rel_expr) (e2 : rel_expr)
-| REJoin (e1 : rel_expr) (x : string) (e2 : rel_expr) (y : string) (p : with_rel_expr) (e3 : rel_expr)
-with with_rel_expr :=
-| WREVar (x : string)
-| WRELoc (x : string)
-| WREAtom (a : atom)
-| WREUnop (o : unop) (e : with_rel_expr)
-| WREBinop (o : binop) (e1 e2: with_rel_expr)
-| WREIf (e1 e2 e3 : with_rel_expr)
-| WRELet (e1 : with_rel_expr) (x : string) (e2 : with_rel_expr)
-| WREFlatmap (e1 : with_rel_expr) (x : string) (e2 : with_rel_expr)
-| WREFold (e1 e2 : with_rel_expr) (x y : string) (e3 : with_rel_expr)
-| WRERecord (l : list (string * with_rel_expr))
-| WREProj (e : with_rel_expr) (s : string)
-| WREDict (l : list (with_rel_expr * with_rel_expr))
-| WREInsert (d k v : with_rel_expr)
-| WREDelete (d k : with_rel_expr)
-| WRELookup (d k : with_rel_expr)
-| WREInject (e : rel_expr).
-
-Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
-  Section WithMap.
-    Local Notation value := (value (word := word)).
-    Context {locals: map.map string value} {locals_ok: map.ok locals}.
-
-    Fixpoint interp_rel_atomic_expr (store env : locals) (e : rel_atomic_expr) : value :=
-      match e with
-      | REAVar x => get_local env x
-      | REALoc x => get_local store x
-      | RERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, interp_rel_atomic_expr store env e)) l))
-      | REProj e s => match interp_rel_atomic_expr store env e with
-                      | VRecord l => record_proj s l
-                      | _ => VUnit
-                      end
-      end.
-
-    Fixpoint interp_rel_expr (store env : locals) (e : rel_expr) :=
-      match e with
-      | REReturn e => VList (interp_rel_atomic_expr store env e :: nil)
-      | REVar x => get_local env x
-      | RELoc x => get_local store x
-      | REFilter e1 x p e2 =>
-          match interp_rel_expr store env e1 with
-          | VList l1 =>
-              VList (flat_map
-                       (fun v => let env' := (set_local env x v) in
-                                 match interp_with_rel_expr store env' p with
-                                 | VBool b => if b then
-                                                match interp_rel_expr store env' e2 with
-                                                | VList l2 => l2
-                                                | _ => nil
-                                                end
-                                              else nil
-                                 | _ => nil
-                                 end) l1)
-          | _ => VUnit
-          end
-      | REJoin e1 x e2 y p e3 =>
-          match interp_rel_expr store env e1 with
-          | VList l1 =>
-              match interp_rel_expr store env e2 with
-              | VList l2 => VList (flat_map
-                                     (fun v2 =>
-                                        flat_map
-                                          (fun v1 => let env' := set_local (set_local env x v1) y v2 in
-                                                     match interp_with_rel_expr store env' p with
-                                                     | VBool b => if b then
-                                                                    match interp_rel_expr store env' e3 with
-                                                                    | VList l3 => l3
-                                                                    | _ => nil
-                                                                    end
-                                                                  else nil
-                                                     | _ => nil
-                                                     end) l1) l2)
-              | _ => VUnit
-              end
-          | _ => VUnit
-          end
-      end
-
-      with interp_with_rel_expr (store env : locals) (e : with_rel_expr) :=
-      match e with
-      | WREVar x => get_local env x
-      | WRELoc x => get_local store x
-      | WREAtom a => interp_atom a
-      | WREUnop o e => (interp_unop o) (interp_with_rel_expr store env e)
-      | WREBinop o e1 e2 => (interp_binop o) (interp_with_rel_expr store env e1) (interp_with_rel_expr store env e1)
-      | WREIf e1 e2 e3 =>
-          match interp_with_rel_expr store env e1 with
-          | VBool b => if b then interp_with_rel_expr store env e2
-                       else interp_with_rel_expr store env e3
-          | _ => VUnit
-          end
-      | WRELet e1 x e2 => interp_with_rel_expr store (set_local env x (interp_with_rel_expr store env e1)) e2
-      | WREFlatmap e1 x e2 =>
-          match interp_with_rel_expr store env e1 with
-          | VList l1 =>
-              VList (flat_map
-                       (fun v => match interp_with_rel_expr store (set_local env x v) e2 with
-                                 | VList l2 => l2
-                                 | _ => nil
-                                 end) l1)
-          | _ => VUnit
-          end
-      | WREFold e1 e2 x y e3 =>
-          match interp_with_rel_expr store env e1 with
-          | VList l1 =>
-              let a := interp_with_rel_expr store env e2 in
-              let f := fun v acc => interp_with_rel_expr store (set_local (set_local env x v) y acc) e3 in fold_right f a l1
-          | _ => VUnit
-          end
-      | WRERecord l => VRecord (record_sort (List.map (fun '(s, e) => (s, interp_with_rel_expr store env e)) l))
-      | WREProj r s =>
-          match interp_with_rel_expr store env r with
-          | VRecord l => record_proj s l
-          | _ => VUnit
-          end
-      | WREDict l =>
-          VDict (dict_sort (List.map (fun '(k, v) => (interp_with_rel_expr store env k, interp_with_rel_expr store env v)) l))
-      | WREInsert d k v =>
-           match interp_with_rel_expr store env d with
-           | VDict l => VDict (dict_insert (interp_with_rel_expr store env k) (interp_with_rel_expr store env v) l)
-           | _ => VUnit
-           end
-      | WREDelete d k =>
-          match interp_with_rel_expr store env d with
-          | VDict l => VDict (dict_delete (interp_with_rel_expr store env k) l)
-          | _ => VUnit
-          end
-      | WRELookup d k =>
-          match interp_with_rel_expr store env d with
-          | VDict l => VOption (dict_lookup (interp_with_rel_expr store env k) l)
-          | _ => VUnit
-          end
-      | WREInject e => interp_rel_expr store env e
-      end.
-
-    Fixpoint to_rel_expr (e : expr) : with_rel_expr :=
-      match e with
-      | EVar x => WREVar x
-      | ELoc x => WRELoc x
-      | EAtom a => WREAtom a
-      | EUnop o e => WREUnop o (to_rel_expr e)
-      | EBinop o e1 e2 => WREBinop o (to_rel_expr e1) (to_rel_expr e2)
-      | EIf e1 e2 e3 => WREIf (to_rel_expr e1) (to_rel_expr e2) (to_rel_expr e3)
-      | ELet e1 x e2 => WRELet (to_rel_expr e1) x (to_rel_expr e2)
-      | EFlatmap e1 x e2 => WREFlatmap (to_rel_expr e1) x (to_rel_expr e2)
-      | EFold e1 e2 x y e3 => WREFold (to_rel_expr e1) (to_rel_expr e2) x y (to_rel_expr e3)
-      | ERecord l => WRERecord (List.map (fun '(s, e') => (s, to_rel_expr e')) l)
-      | EProj r s => WREProj (to_rel_expr r) s
-      | EDict l => WREDict (List.map (fun '(k, v) => (to_rel_expr k, to_rel_expr v)) l)
-      | EInsert d k v => WREInsert (to_rel_expr d) (to_rel_expr k) (to_rel_expr v)
-      | EDelete d k => WREDelete (to_rel_expr d) (to_rel_expr k)
-      | ELookup d k => WRELookup (to_rel_expr d) (to_rel_expr k)
-      end.
-
-    (* Identify relational algebra constructs *)
-    Definition match_filter (e : with_rel_expr) : with_rel_expr :=
-      match e with
-      | WREFlatmap (WREInject e1) x (WREIf p (WREInject e2) (WREAtom (ANil _))) =>
-          WREInject (REFilter e1 x p e2)
-      | WREFlatmap (WREInject e1) x (WREFlatmap (WREInject e2) y (WREIf p (WREInject e3) (WREAtom (ANil _)))) =>
-          WREInject (REJoin e1 x e2 y p e3)
-      | e => e
-      end.
-  End WithMap.
-End WithWord.
 
 (* Notations *)
 Coercion EVar : string >-> expr.
