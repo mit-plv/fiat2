@@ -3,6 +3,7 @@ Require Export ZArith.
 Require Export List Sorted.
 Require Export coqutil.Map.Interface coqutil.Map.SortedListString.
 Require Export coqutil.Byte coqutil.Word.Interface coqutil.Word.Bitwidth.
+Require Import coqutil.Tactics.Tactics.
 Require Export Std.Sorting.Mergesort.
 
 (* ===== Fiat2 types ===== *)
@@ -11,11 +12,11 @@ Inductive type : Type :=
 | TInt
 | TBool
 | TString
+| TUnit
 | TOption (t : type)
 | TList (t : type)
 | TRecord (l : list (string * type))
-| TDict (kt vt : type)
-| TUnit.
+| TDict (kt vt : type).
 
 Scheme Boolean Equality for type. (* creates type_beq *)
 Declare Scope fiat2_scope. Local Open Scope fiat2_scope.
@@ -87,10 +88,63 @@ Inductive expr : Type :=
 | EInsert (d k v : expr)
 | EDelete (d k : expr)
 | ELookup (d k : expr)
-(* relational algebra (??? not calculus, as relational calculus seems more expressive and unsafe *)
-| ESelect (l : expr) (x : string) (p : expr) (r : expr) (* Select a subset of rows from table*)
-| EJoin (l1 l2 : expr) (x y : string) (p r : expr) (* record may use x and y hence avoiding ambiguity - OR require attribute names in x and y be disjoint and just join the tuples? *)
-| EProj (l : expr) (x : string) (r : expr).
+(* relational algebra *)
+| EFilter (l : expr) (x : string) (p : expr) (* Select a subset of rows from table *)
+| EJoin (l1 l2 : expr) (x y : string) (p r : expr) (* Join two tables *)
+| EProj (l : expr) (x : string) (r : expr) (* Generalized projection *).
+
+Section ExprIH.
+  Context (P : expr -> Prop).
+  Hypothesis (f_var : forall x, P (EVar x)) (f_loc : forall x, P (ELoc x)) (f_atom : forall a, P (EAtom a))
+    (f_unop : forall o e, P e -> P (EUnop o e)) (f_binop : forall o e1 e2, P e1 -> P e2 -> P (EBinop o e1 e2))
+    (f_if : forall e1 e2 e3, P e1 -> P e2 -> P e3 -> P (EIf e1 e2 e3))
+    (f_let : forall e1 x e2, P e1 -> P e2 -> P (ELet e1 x e2))
+    (f_flatmap : forall e1 x e2, P e1 -> P e2 -> P (EFlatmap e1 x e2))
+    (f_fold : forall e1 e2 x y e3, P e1 -> P e2 -> P e3 -> P (EFold e1 e2 x y e3))
+    (f_record : forall l, Forall (fun p => P (snd p)) l -> P (ERecord l))
+    (f_access : forall r s, P r -> P (EAccess r s))
+    (f_dict : forall l, Forall (fun p => P (fst p) /\ P (snd p)) l -> P (EDict l))
+    (f_insert : forall d k v, P d -> P k -> P v -> P (EInsert d k v))
+    (f_delete : forall d k, P d -> P k -> P (EDelete d k))
+    (f_lookup : forall d k, P d -> P k -> P (ELookup d k))
+    (f_filter : forall l x p, P l -> P p -> P (EFilter l x p))
+    (f_join : forall l1 l2 x y p r, P l1 -> P l2 -> P p -> P r -> P (EJoin l1 l2 x y p r))
+    (f_proj : forall l x r, P l -> P r -> P (EProj l x r)).
+    Section __.
+      Context (expr_IH : forall e, P e).
+      Fixpoint record_expr_IH (l : list (string * expr)) : Forall (fun p => P (snd p)) l :=
+        match l as l0 return Forall (fun p => P (snd p)) l0 with
+        | nil => Forall_nil (fun p => P (snd p))
+        | p :: l' => Forall_cons p (expr_IH (snd p)) (record_expr_IH l')
+        end.
+      Fixpoint dict_expr_IH (l : list (expr * expr)) : Forall (fun v => P (fst v) /\ P (snd v)) l :=
+        match l as l0 return Forall (fun v => P (fst v) /\ P (snd v)) l0 with
+        | nil => Forall_nil (fun v => P (fst v) /\ P (snd v))
+        | v :: l' => Forall_cons v (conj (expr_IH (fst v)) (expr_IH (snd v)))(dict_expr_IH l')
+        end.
+    End __.
+    Fixpoint expr_IH (e : expr) : P e :=
+      match e with
+      | EVar x => f_var x
+      | ELoc x => f_loc x
+      | EAtom a => f_atom a
+      | EUnop o e => f_unop o e (expr_IH e)
+      | EBinop o e1 e2 => f_binop o e1 e2 (expr_IH e1) (expr_IH e2)
+      | EIf e1 e2 e3 => f_if e1 e2 e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
+      | ELet e1 x e2 => f_let e1 x e2 (expr_IH e1) (expr_IH e2)
+      | EFlatmap e1 x e2 => f_flatmap e1 x e2 (expr_IH e1) (expr_IH e2)
+      | EFold e1 e2 x y e3 => f_fold e1 e2 x y e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
+      | ERecord l => f_record l (record_expr_IH expr_IH l)
+      | EAccess r s => f_access r s (expr_IH r)
+      | EDict l => f_dict l (dict_expr_IH expr_IH l)
+      | EInsert d k v => f_insert d k v (expr_IH d) (expr_IH k) (expr_IH v)
+      | EDelete d k => f_delete d k (expr_IH d) (expr_IH k)
+      | ELookup d k => f_lookup d k (expr_IH d) (expr_IH k)
+      | EFilter l x p => f_filter l x p (expr_IH l) (expr_IH p)
+      | EJoin l1 l2 x y p r => f_join l1 l2 x y p r (expr_IH l1) (expr_IH l2) (expr_IH p) (expr_IH r)
+      | EProj l x r => f_proj l x r (expr_IH l) (expr_IH r)
+      end.
+End ExprIH.
 
 (* Commands *)
 Inductive command : Type :=
@@ -270,8 +324,11 @@ Section WithWord.
 
   Section ValueIH.
     Context (P : value -> Prop).
-    Hypothesis (f0 : forall w : word, P (VWord w)) (f1 : forall z : Z, P (VInt z)) (f2 : forall b : bool, P (VBool b)) (f3 : forall s : string, P (VString s))
-      (f4 : forall m : option value, match m with Some v => P v | None => True end -> P (VOption m)) (f5 : forall l : list value, Forall P l -> P (VList l)) (f6 : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l)) (f7 : forall l : list (value * value), Forall (fun v => P (fst v) /\ P (snd v)) l -> P (VDict l)) (f8 : P VUnit).
+    Hypothesis (f_word : forall w : word, P (VWord w)) (f_int : forall z : Z, P (VInt z)) (f_bool : forall b : bool, P (VBool b)) (f_string : forall s : string, P (VString s))
+      (f_option : forall m : option value, match m with Some v => P v | None => True end -> P (VOption m))
+      (f_list : forall l : list value, Forall P l -> P (VList l))
+      (f_record : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l))
+      (f_dict : forall l : list (value * value), Forall (fun v => P (fst v) /\ P (snd v)) l -> P (VDict l)) (f_unit : P VUnit).
     Section __.
       Context (value_IH : forall v, P v).
       Fixpoint list_value_IH (l : list value) : Forall P l :=
@@ -292,15 +349,15 @@ Section WithWord.
     End __.
     Fixpoint value_IH (v : value) {struct v} : P v :=
       match v with
-      | VWord w => f0 w
-      | VInt z => f1 z
-      | VBool b => f2 b
-      | VString s => f3 s
-      | VOption m => f4 m match m with Some v => value_IH v | None => I end
-      | VList l => f5 l (list_value_IH value_IH l)
-      | VRecord l => f6 l (record_value_IH value_IH l)
-      | VDict l => f7 l (dict_value_IH value_IH l)
-      | VUnit => f8
+      | VWord w => f_word w
+      | VInt z => f_int z
+      | VBool b => f_bool b
+      | VString s => f_string s
+      | VOption m => f_option m match m with Some v => value_IH v | None => I end
+      | VList l => f_list l (list_value_IH value_IH l)
+      | VRecord l => f_record l (record_value_IH value_IH l)
+      | VDict l => f_dict l (dict_value_IH value_IH l)
+      | VUnit => f_unit
       end.
   End ValueIH.
 
@@ -407,7 +464,6 @@ Section WithWord.
     exact (Sectioned.LocallySorted_sort _ record_entry_leb record_entry_leb_total).
   Qed.
 
-
   Definition dict_entry_compare := pair_compare value_compare value_compare.
   Definition dict_entry_leb := leb_from_compare dict_entry_compare.
   Definition dict_sort := Sectioned.sort dict_entry_leb.
@@ -424,7 +480,14 @@ Section WithWord.
     exact (Sectioned.LocallySorted_sort _ dict_entry_leb dict_entry_leb_total).
   Qed.
 
-
+  Definition record_type_entry_leb (p p' : (string * type)) : bool := String.leb (fst p) (fst p').
+  Definition record_type_sort := Sectioned.sort record_type_entry_leb.
+  Lemma record_type_entry_leb_total : is_total record_type_entry_leb.
+  Proof.
+    unfold is_total. intros p p'. destruct p as [s t], p' as [s' t'].
+    unfold record_type_entry_leb; simpl. destruct (String.leb s s') eqn:E; auto.
+    right. pose proof String.leb_total as H. destruct (H s s'); congruence.
+  Qed.
   (* ----- End of comparison ----- *)
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
@@ -490,7 +553,9 @@ Section WithWord.
   Fixpoint dict_insert (k v : value) (l : list (value * value)) : list (value * value) :=
     match l with
     | nil => (k, v) :: nil
-    | (k', v) :: l => if value_ltb k k' then (k, v) :: (k', v) :: l else (k', v) :: dict_insert k v l
+    | (k', v) :: l => if value_ltb k k' then (k, v) :: (k', v) :: l
+                      else if value_eqb k k' then (k, v) :: l
+                           else (k', v) :: dict_insert k v l
     end.
 
   Fixpoint dict_delete (k : value) (l : list (value * value)) : list (value * value) :=
@@ -566,14 +631,14 @@ Section WithWord.
           | VDict l => VOption (dict_lookup (interp_expr store env k) l)
           | _ => VUnit
           end
-      | ESelect l x p r =>
+      | EFilter l x p =>
           match interp_expr store env l with
-          | VList l => VList (flat_map
+          | VList l => VList (List.filter
                                 (fun v =>
                                    let env' := set_local env x v in
                                    match interp_expr store env' p with
-                                   | VBool b => interp_expr store env' r :: nil
-                                   | _ => nil
+                                   | VBool b => b
+                                   | _ => false
                                    end) l)
           | _ => VUnit
           end
@@ -582,21 +647,25 @@ Section WithWord.
           | VList l1 =>
               match interp_expr store env l2 with
               | VList l2 => VList (flat_map
-                                     (fun v2 =>
-                                        flat_map
-                                          (fun v1 => let env' := set_local (set_local env x v1) y v2 in
-                                                     match interp_expr store env' p with
-                                                     | VBool b => if b then interp_expr store env' r :: nil
-                                                                  else nil
-                                                     | _ => nil
-                                                     end) l1) l2)
+                                     (fun v1 =>
+                                        List.map
+                                          (fun v2 => let env' := set_local (set_local env x v1) y v2 in
+                                                            interp_expr store env' r)
+                                          (List.filter
+                                             (fun v2 => let env' := set_local (set_local env x v1) y v2 in
+                                                        match interp_expr store env' p with
+                                                        | VBool b => b
+                                                        | _ => false
+                                                        end)
+                                             l2))
+                                     l1)
               | _ => VUnit
               end
           | _ => VUnit
           end
       | EProj l x r =>
           match interp_expr store env l with
-          | VList l => VList (flat_map (fun v => interp_expr store (set_local env x v) r :: nil) l)
+          | VList l => VList (List.map (fun v => interp_expr store (set_local env x v) r) l)
           | _ => VUnit
           end
       end.
@@ -648,6 +717,7 @@ Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   match t, t' with
   | TWord, TWord
   | TInt, TInt
+  | TBool, TBool
   | TString, TString
   | TUnit, TUnit => true
   | TOption t1, TOption t1' => type_eqb t1 t1'
@@ -657,6 +727,47 @@ Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   | TDict kt vt, TDict kt' vt' => andb (type_eqb kt kt') (type_eqb vt vt')
   | _, _ => false
   end.
+
+Section TypeIH.
+  Context (P : type -> Prop).
+    Hypothesis (f_word : P TWord) (f_int : P TInt) (f_bool : P TBool) (f_string : P TString) (f_unit : P TUnit)
+      (f_option : forall t : type, P t -> P (TOption t)) (f_list : forall t : type, P t -> P (TList t))
+      (f_record : forall l : list (string * type), Forall (fun p => P (snd p)) l -> P (TRecord l))
+      (f_dict : forall tk tv : type, P tk -> P tv -> P (TDict tk tv)).
+    Section __.
+      Context (type_IH : forall t, P t).
+      Fixpoint record_type_IH (l : list (string * type)) : Forall (fun p => P (snd p)) l :=
+        match l as l0 return Forall (fun p => P (snd p)) l0 with
+        | nil => Forall_nil (fun p => P (snd p))
+        | p :: l' => Forall_cons p (type_IH (snd p)) (record_type_IH l')
+        end.
+    End __.
+    Fixpoint type_IH (t : type) : P t :=
+      match t with
+      | TWord => f_word
+      | TInt => f_int
+      | TBool => f_bool
+      | TString => f_string
+      | TUnit => f_unit
+      | TOption t => f_option t (type_IH t)
+      | TList t => f_list t (type_IH t)
+      | TRecord l => f_record l (record_type_IH type_IH l)
+      | TDict tk tv => f_dict tk tv (type_IH tk) (type_IH tv)
+       end.
+End TypeIH.
+
+Lemma type_eqb_eq : forall t t', type_eqb t t' = true -> t = t'.
+Proof.
+  apply (type_IH (fun t => forall t', type_eqb t t' = true -> t = t')); intros;
+    destruct t'; try discriminate; simpl in *; intuition;
+  try (apply H in H0; congruence).
+  - generalize dependent l0. induction l; destruct l0; simpl in *; try discriminate; intuition.
+    destruct (andb (fst a =? fst p)%string (type_eqb (snd a) (snd p))) eqn:E; simpl in *; try discriminate.
+    inversion H; subst. apply (IHl H4) in H0. injection H0; intros; subst.
+    destruct a, p; inversion H; simpl in *; subst. apply andb_prop in E as [EL ER].
+    rewrite eqb_eq in EL. apply H3 in ER. congruence.
+  - apply andb_prop in H1 as [HL HR]. apply H in HL; apply H0 in HR. congruence.
+Qed.
 
 Require Import coqutil.Datatypes.Result.
 Import ResultMonadNotations.
@@ -687,6 +798,19 @@ Definition analyze_atom (expected : type) (a : atom) : result atom :=
   | AUnit => compare_types expected TUnit a
   end.
 
+(* Inductive typing relation *)
+Inductive type_of_atom : atom -> type -> Prop :=
+| TyAWord n : type_of_atom (AWord n) TWord
+| TyAInt n : type_of_atom (AInt n) TInt
+| TyABool b : type_of_atom (ABool b) TBool
+| TyAString s : type_of_atom (AString s) TString
+| TyANil' t : type_of_atom (ANil None) (TList t)
+| TyANil t : type_of_atom (ANil (Some t)) (TList t)
+| TyANone' t : type_of_atom (ANone None) (TOption t)
+| TyANone t : type_of_atom (ANone (Some t)) (TOption t)
+| TyAUnit : type_of_atom AUnit TUnit.
+
+(* Computable type-checker *)
 Definition synthesize_atom (a : atom) : result (type * atom) :=
   match a with
   | AWord n => Success (TWord, a)
@@ -744,13 +868,12 @@ Fixpoint get_attr_type (tl : list (string * type)) (s : string) : type :=
   | (s', t) :: tl => if String.eqb s' s then t else get_attr_type tl s
   end.
 
-Definition record_type_sort (l : list (string * type)) : list (string * type). Admitted.
-
 Fixpoint record_type_from' (l : list (string * result (type * expr))) : result (list (string * type) * list (string * expr)) :=
   match l with
   | nil => Success (nil, nil)
   | (s, Success (t, e)) :: l => '(tl, el) <- record_type_from' l ;;
-                                Success ((s, t) :: tl, (s, e) :: el)
+                                if inb (String.eqb) (List.map fst l) s then error:("Duplicate record key" s)
+                                else Success ((s, t) :: tl, (s, e) :: el)
   | (_, Failure err) :: _ => Failure err
   end.
 
@@ -760,7 +883,9 @@ Definition record_type_from (l : list (string * result (type * expr))) : result 
 Fixpoint record_from' (l : list (string * result expr)) : result (list (string * expr)) :=
   match l with
   | nil => Success nil
-  | (s, Success e) :: l => l' <- record_from' l ;; Success ((s, e) :: l')
+  | (s, Success e) :: l => l' <- record_from' l ;;
+                           if inb (String.eqb) (List.map fst l) s then error:("Duplicate record key" s)
+                           else Success ((s, e) :: l')
   | (_, Failure err) :: _ => Failure err
   end.
 
@@ -817,6 +942,84 @@ Definition dict_from (l : list (result (expr * expr))) : result expr :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+
+  Inductive type_of (Gstore Genv : tenv) : expr -> type -> Prop :=
+  | TyEVar x t : map.get Genv x = Some t -> type_of Gstore Genv (EVar x) t
+  | TyELoc x t : map.get Gstore x = Some t -> type_of Gstore Genv (ELoc x) t
+  | TyEAtom a t : type_of_atom a t -> type_of Gstore Genv (EAtom a) t
+  | TyEUnopLength e t : type_of Gstore Genv e (TList t) -> type_of Gstore Genv (EUnop OLength e) TInt
+  | TyEUnopSome e t : type_of Gstore Genv e t -> type_of Gstore Genv (EUnop OSome e) (TOption t)
+  | TyEUnop o e t : type_of Gstore Genv e t ->
+                    match o with
+                    | OWNeg | ONeg | ONot | OLengthString | OIntToString => t = fst (unop_types o)
+                    | _ => False
+                    end ->
+                    type_of Gstore Genv (EUnop o e) (snd (unop_types o))
+  | TyEBinopConcat e1 e2 t : type_of Gstore Genv e1 (TList t) ->
+                             type_of Gstore Genv e2 (TList t) ->
+                             type_of Gstore Genv (EBinop OConcat e1 e2) (TList t)
+  | TyEBinopRepeat e1 e2 t : type_of Gstore Genv e1 (TList t) ->
+                             type_of Gstore Genv e2 TInt ->
+                             type_of Gstore Genv (EBinop ORepeat e1 e2) (TList t)
+  | TyEBinopCons e1 e2 t :  type_of Gstore Genv e1 t ->
+                            type_of Gstore Genv e2 (TList t) ->
+                            type_of Gstore Genv (EBinop OCons e1 e2) (TList t)
+  | TyEBinop o e1 t1 e2 t2 : type_of Gstore Genv e1 t1 ->
+                             type_of Gstore Genv e2 t2 ->
+                             match o with
+                             | OWPlus | OWMinus | OWTimes | OWDivU | OWDivS | OWModU | OWModS
+                             | OPlus | OMinus | OTimes | ODiv | OMod
+                             | OConcatString | OAnd | OOr | OWLessU | OWLessS
+                             | OLess | OEq | ORange | OWRange => t1 = fst (fst (binop_types o)) /\ t2 = snd (fst (binop_types o))
+                             | _ => False
+                             end ->
+                             type_of Gstore Genv (EBinop o e1 e2) (snd (binop_types o))
+  | TyEIf e1 e2 e3 t : type_of Gstore Genv e1 TBool ->
+                       type_of Gstore Genv e2 t ->
+                       type_of Gstore Genv e3 t ->
+                       type_of Gstore Genv (EIf e1 e2 e3) t
+  | TyELet e1 t1 x e2 t2 : type_of Gstore Genv e1 t1 ->
+                           type_of Gstore (map.put Genv x t1) e2 t2 ->
+                           type_of Gstore Genv (ELet e1 x e2) t2
+  | TyEFlatmap e1 t1 x e2 t2 : type_of Gstore Genv e1 (TList t1) ->
+                               type_of Gstore (map.put Genv x t1) e2 (TList t2) ->
+                               type_of Gstore Genv (EFlatmap e1 x e2) (TList t2)
+  | TyEFold e1 t1 e2 t2 x y e3 : type_of Gstore Genv e1 (TList t1) ->
+                                 type_of Gstore Genv e2 t2 ->
+                                 type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 ->
+                                 type_of Gstore Genv (EFold e1 e2 x y e3) t2
+  | TyERecordNil : type_of Gstore Genv (ERecord nil) (TRecord nil)
+  | TyERecord s e t l lt : type_of Gstore Genv e t ->
+                            type_of Gstore Genv (ERecord l) (TRecord lt) ->
+                            ~ In s (List.map fst l) ->
+                            type_of Gstore Genv (ERecord ((s, e) :: l)) (TRecord (record_type_sort ((s, t) :: lt)))
+  | TyEAccess e lt x t : type_of Gstore Genv e (TRecord lt) ->
+                         In (x, t) lt ->
+                         type_of Gstore Genv (EAccess e x) t
+  | TyEDict l kt vt : Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
+                      type_of Gstore Genv (EDict l) (TDict kt vt)
+  (* ??? Why is this a non-strictly positive occurrence of type_of? Forall (fun '(k, v) => type_of Gstore Genv k kt /\ type_of Gstore Genv v vt) l -> type_of Gstore Genv (EDict l) (TDict kt vt). *)
+  | TyInsert d kt vt k v : type_of Gstore Genv d (TDict kt vt) ->
+                           type_of Gstore Genv k kt ->
+                           type_of Gstore Genv v vt ->
+                           type_of Gstore Genv (EInsert d k v) (TDict kt vt)
+  | TyDelete d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
+                           type_of Gstore Genv k kt ->
+                           type_of Gstore Genv (EDelete d k) (TDict kt vt)
+  | TyLookup d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
+                         type_of Gstore Genv k kt ->
+                         type_of Gstore Genv (ELookup d k) (TOption vt)
+  | TyEFilter e t x p : type_of Gstore Genv e (TList t) ->
+                        type_of Gstore (map.put Genv x t) p TBool ->
+                        type_of Gstore Genv (EFilter e x p) (TList t)
+  | TyEJoin e1 t1 e2 t2 x y p r t3 : type_of Gstore Genv e1 (TList t1) ->
+                                     type_of Gstore Genv e2 (TList t2) ->
+                                     type_of Gstore Genv p TBool ->
+                                     type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 ->
+                                     type_of Gstore Genv (EJoin e1 e2 x y p r) (TList t3)
+  | TyEProj e t1 x r t2 : type_of Gstore Genv e (TList t1) ->
+                          type_of Gstore (map.put Genv x t1) r t2 ->
+                          type_of Gstore Genv (EProj e x r) (TList t2).
 
   Section __.
     Context (analyze_expr : tenv -> tenv -> type -> expr -> result expr).
@@ -906,7 +1109,8 @@ Section WithMap.
                             | t1 => error:(e1 "has type" t1 "but expected a list")
                             end
     | ERecord l => match expected with
-                   | TRecord tl => if inclb String.eqb (List.map fst tl) (List.map fst l)
+                   | TRecord tl => if inclb String.eqb (List.map fst tl) (List.map fst l) &&
+                                        inclb String.eqb (List.map fst l) (List.map fst tl)
                                    then record_from (List.map
                                                        (fun '(s, e) => (s, analyze_expr Gstore Genv(get_attr_type tl s) e))
                                                        l)
@@ -947,18 +1151,12 @@ Section WithMap.
                                       else error:(e "has type" (TOption vt) "but expected" expected)
                      | t => error:(e "has type" t "but expected a record")
                      end
-    | ESelect l x p r =>  '(t1, l') <- synthesize_expr Gstore Genv l ;;
-                          match t1 with
-                          | TList t1 => let Genv' := map.put Genv x t1 in
-                                        p' <- analyze_expr Gstore Genv' TBool p ;;
-                                        match expected with
-                                        | TList t2 =>
-                                            r' <- analyze_expr Gstore Genv' t2 r ;;
-                                            Success (ESelect l' x p' r')
-                                        | _ => error:(e "is a list but expected" expected)
-                                        end
-                          | t => error:(l "has type" t "but expected a list")
-                          end
+    | EFilter l x p => match expected with
+                       | TList t => l' <- analyze_expr Gstore Genv expected l ;;
+                                    p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
+                                    Success (EFilter l' x p')
+                       | _ => error:(e "is a list but expected" expected)
+                       end
     | EJoin l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
                              match t1 with
                              | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
@@ -1094,12 +1292,10 @@ Section WithMap.
                                            Success (TOption vt, ELookup d' k')
                           | t => error:(e "has type" t "but expected a record")
                           end
-         | ESelect l x p r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
-                              match t1 with
-                              | TList t1 => let Genv' := map.put Genv x t1 in
-                                            p' <- analyze_expr Gstore Genv' TBool p ;;
-                                            '(t2, r') <- synthesize_expr Gstore Genv' r ;;
-                                            Success (TList t2, ESelect l' x p' r')
+         | EFilter l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
+                              match t with
+                              | TList t => p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
+                                           Success (TList t, EFilter l' x p')
                               | t => error:(l "has type" t "but expected a list")
                               end
          | EJoin l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
@@ -1129,6 +1325,233 @@ Section WithMap.
 
     Local Notation value := (value (word := word)).
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+    Inductive has_type : value -> type -> Prop :=
+    | TyVWord w : has_type (VWord w) TWord
+    | TyVInt n : has_type (VInt n) TInt
+    | TyVBool b : has_type (VBool b) TBool
+    | TyVString s : has_type (VString s) TString
+    | TyVOptionNone t : has_type (VOption None) (TOption t)
+    | TyVOptionSome v t : has_type v t ->
+                          has_type (VOption (Some v)) (TOption t)
+    | TyVList l t : Forall (fun v => has_type v t) l -> has_type (VList l) (TList t) (* ??? *)
+    | TyVListNil t : has_type (VList nil) (TList t)
+    | TyVListCons v l t : has_type v t ->
+                          has_type (VList l) (TList t) ->
+                          has_type (VList (v :: l)) (TList t)
+    | TyVRecordNil : has_type (VRecord nil) (TRecord nil)
+    | TyVRecordCons s v l tv tl : has_type v tv ->
+                                  has_type (VRecord l) (TRecord tl) ->
+                                  has_type (VRecord ((s, v) :: l)) (TRecord ((s, tv) :: tl))
+    | TyVDictNil tk tv : has_type (VDict nil) (TDict tk tv)
+    | TyVDictCons k v l tk tv : has_type k tk ->
+                                has_type v tv ->
+                                has_type (VDict l) (TDict tk tv) ->
+                                has_type (VDict ((k, v) :: l)) (TDict tk tv)
+    | TyVUnit : has_type VUnit TUnit.
+
+    Definition tenv_env_agree (G : tenv) (E : locals) :=
+      forall x t, map.get G x = Some t ->
+                  match map.get E x with
+                  | Some v => has_type v t
+                  | _ => False
+                  end.
+
+    Local Ltac destruct_match :=
+      lazymatch goal with
+      | H : (if type_eqb ?x ?y then _ else _) = _ |- _ =>
+          let E := fresh "E" in
+          destruct (type_eqb x y) eqn:E; try discriminate; apply type_eqb_eq in E; subst
+      | H: (match ?x with _ => _ end) = Success _ |- _ =>
+          let E := fresh "E" in
+          destruct x eqn:E; try discriminate
+      end.
+
+    Local Ltac destruct_compare_types :=
+      unfold compare_types in *; destruct_match; constructor.
+
+    Local Ltac invert_result :=
+      lazymatch goal with
+      | H: Success _ = Success _ |- _ => inversion H; clear H; intros; subst
+      end.
+
+    Lemma atom_typechecker_sound : forall a t a',
+        (synthesize_atom a = Success (t, a') -> type_of_atom a t) /\
+          (analyze_atom t a = Success a' -> type_of_atom a t).
+    Proof.
+      destruct a; split; simpl; intro;
+        repeat (try destruct_compare_types; try destruct_match; try invert_result; try constructor).
+    Qed.
+
+    Lemma atom_type_sound : forall a t, type_of_atom a t -> has_type (interp_atom a) t.
+    Proof.
+      intros a t H. inversion H; subst; repeat constructor.
+    Qed.
+
+    Local Ltac apply_typechecker_IH :=
+       match goal with
+           | IH: (forall _ _ _ _, (synthesize_expr _ _ ?e = _ -> _) /\ _),
+               H: synthesize_expr _ _ ?e = _ |- _ => eapply IH in H; eauto
+           | IH: (forall _ _ _ _, _ /\ (analyze_expr _ _ _ ?e = _ -> _)),
+               H: analyze_expr _ _ _ ?e = _ |- _ => eapply IH in H; eauto
+       end.
+
+    Lemma record_type_from'_sound : forall (l : list (string * expr)),
+        Forall (fun p : string * expr =>
+                  forall (Gstore Genv : tenv) (t : type) (e' : expr),
+                    (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+                      (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
+        forall Gstore Genv tl el,
+          record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
+          type_of Gstore Genv (ERecord l) (TRecord (record_type_sort tl)).
+    Proof.
+      induction l; simpl; intros.
+      - invert_result. constructor.
+      - repeat destruct_match. invert_result.
+        assert (forall l h, record_type_sort (h :: l) = record_type_sort (h :: record_type_sort l)).
+        { clear. induction l; try reflexivity.
+          intro h. admit. }
+        rewrite H0. destruct a. inversion E; subst. constructor.
+        + inversion H; subst. apply H4 in H3. auto.
+        + inversion H; subst. apply (IHl H5 _ _ _ _ E2).
+        + assert (forall s l, inb eqb l s = false -> ~ In s l).
+          { clear. induction l.
+            - intros. apply in_nil.
+            - simpl. destruct (String.eqb a s) eqn:E; try discriminate.
+              rewrite String.eqb_neq in E. intuition. }
+          assert (List.map fst l = List.map fst (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)).
+          { clear. induction l; intuition. simpl. rewrite IHl; auto. }
+          rewrite H2. apply H1. auto.
+    Admitted.
+
+    Lemma typechecker_sound : forall e Gstore Genv t e',
+        (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
+          (analyze_expr Gstore Genv t e = Success e' -> type_of Gstore Genv e t).
+    Proof.
+      apply (expr_IH (fun e => forall (Gstore Genv : tenv) (t : type) (e' : expr),
+  (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
+  (analyze_expr Gstore Genv t e = Success e' -> type_of Gstore Genv e t))); intros; simpl.
+      - (* EVar *)
+        split; intros; repeat destruct_match; invert_result; constructor; easy.
+      - (* ELoc *)
+        split; intros; repeat destruct_match; invert_result; constructor; easy.
+      - (* EAtom *)
+        split; intros; repeat destruct_match; constructor;
+          invert_result; apply atom_typechecker_sound in E; auto.
+      - (* EUnop *)
+        split; intros; destruct o; simpl in *;
+          try (destruct_match; try invert_result; apply_typechecker_IH; econstructor; eauto);
+          try (repeat destruct_match; invert_result; apply_typechecker_IH; econstructor; eauto).
+      - (* EBinop *)
+        split; intros; destruct o; simpl in *;
+          try (repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto).
+      - (* EIf *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* ELet *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* EFlatmap *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* EFold *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* ERecord *)
+        split; intros; repeat destruct_match.
+        + unfold record_type_from in *. repeat destruct_match. invert_result.
+        assert (forall l, Forall
+        (fun p : string * expr =>
+         forall (Gstore Genv : tenv) (t : type) (e' : expr),
+         (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+           (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
+                          forall Gstore Genv tl el,
+                            record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) -> type_of Gstore Genv (ERecord l) (TRecord (record_type_sort tl))).
+          * admit.
+          * eapply H0; eauto.
+      Admitted.
+(*
+    Lemma app_has_type : forall l r t, has_type (VList l) t /\ has_type (VList r) t -> has_type (VList (l ++ r)) t.
+    Proof.
+      induction l; intros r t [HL HR].
+      - easy.
+      - simpl. inversion HL; subst. constructor; auto.
+    Qed.
+
+    Theorem typechecker_sound' : forall e Gstore Genv store env t e',
+        tenv_env_agree Gstore store ->
+        tenv_env_agree Genv env ->
+        (synthesize_expr Gstore Genv e = Success (t, e') ->
+        has_type (interp_expr store env e) t) /\
+        (analyze_expr Gstore Genv t e = Success e' ->
+        has_type (interp_expr store env e) t).
+    Proof.
+      induction e; intros Gstore Genv store env t e'.
+      - (* EVar *)
+        simpl; split; intros H _ Henv; unfold get_local;
+        destruct (map.get Genv x) eqn:G; try discriminate; apply Henv in G;
+          destruct (map.get env x); intuition;
+          try (injection H; intros; subst; auto);
+          destruct_type_eqb; auto.
+      - (* ELoc *)
+        simpl; split; intros H Hstore _; unfold get_local;
+        destruct (map.get Gstore x) eqn:G; try discriminate; apply Hstore in G;
+          destruct (map.get store x); intuition;
+          try (injection H; intros; subst; auto);
+          destruct_type_eqb; auto.
+      - (* EAtom *)
+        simpl; split; intros H _ _.
+        + destruct (synthesize_atom a) eqn:Hsyn; try discriminate.
+          pose proof atom_type_safe' as Hatom. destruct a0.
+          apply Hatom in Hsyn. injection H; intros; subst; auto.
+        + destruct (analyze_atom t a) eqn:Halz; try discriminate.
+          pose proof atom_type_safe' as Hatom.
+          apply Hatom in Halz; auto.
+      - (* EUnop *)
+        split; intros H Hstore Henv.
+        + destruct o; simpl in *;
+            try (match goal with
+                 | H: e' <- ?x;; _ = _ |- _ => destruct x eqn:H'
+                 end; try discriminate; eapply IHe in H'; eauto;
+                 inversion H'; inversion H; constructor).
+          * destruct (synthesize_expr Gstore Genv e) eqn:H'; try discriminate. destruct a; eapply IHe in H'; eauto.
+            destruct t0; try discriminate. inversion H'; inversion H; simpl; constructor.
+          * destruct (synthesize_expr Gstore Genv e) eqn:H'; try discriminate. destruct a. eapply IHe in H'; eauto. inversion H; simpl; constructor; auto.
+        + destruct o; simpl in *;
+            try (simpl in H; destruct_type_eqb; eapply IHe in H; eauto; inversion H; constructor).
+          * destruct (synthesize_expr Gstore Genv e) eqn:H'; try discriminate.
+            destruct a; eapply IHe in H'; eauto. destruct t0; try discriminate.
+            inversion H'; simpl; destruct_type_eqb; constructor.
+          * destruct t; try discriminate. constructor. eapply IHe; eauto.
+      - (* EBinop *)
+        split; intros H Hstore Henv.
+        + destruct o; simpl in *;
+            try (repeat (match goal with
+                       | H: e' <- ?x;; _ = _ |- _ =>
+                           let H' := fresh H' in
+                           destruct x eqn:H'
+                       end; try discriminate);
+               eapply IHe1 in H'; eauto; eapply IHe2 in H'0; eauto;
+               inversion H'; inversion H'0; inversion H; constructor).
+          * destruct (synthesize_expr Gstore Genv e1) eqn:H1'.
+            -- destruct a. destruct t0; try discriminate. destruct (analyze_expr Gstore Genv (TList t0) e2) eqn:H2'; try discriminate. eapply IHe1 in H1'; eapply IHe2 in H2'; eauto. inversion H; inversion H1'; inversion H2'; constructor; auto.
+               ++ fold (app l nil). rewrite app_nil_r. auto.
+               ++ fold (app l (v0 :: l0)). apply app_has_type; intuition; constructor; auto.
+            -- destruct (synthesize_expr Gstore Genv e2) eqn:H2'; try discriminate.
+               destruct a. destruct t0; try discriminate.
+               destruct (analyze_expr Gstore Genv (TList t0) e1) eqn:H1''; try discriminate.
+               eapply IHe2 in H2'; eapply IHe1 in H1''; eauto.
+
+    Theorem type_annotation_sound : forall e Gstore Genv store env t e',
+        synthesize_expr Gstore Genv e = Success (t, e') ->
+        tenv_env_agree Gstore store ->
+        tenv_env_agree Genv env ->
+        interp_expr store env e = interp_expr store env e'.
+    Proof.
+      intros e Gstore Genv store env t e' H_syn Hstore Henv. induction e; simpl in *.
+      - destruct (map.get Genv x); try discriminate.
+        injection H_syn; intros; subst; reflexivity.
+      - destruct (map.get Gstore x);  try discriminate.
+        injection H_syn; intros; subst; reflexivity.
+      - destruct a; simpl in *; try (injection H_syn; intros; subst; reflexivity);
+        destruct t0; try discriminate; injection H_syn; intros; subst; reflexivity.
+      Admitted.*)
   End WithWord.
 End WithMap.
 
@@ -1154,7 +1577,7 @@ Section WithPhoasEnv.
   | PhEInsert (d k v : phoas_expr)
   | PhEDelete (d k : phoas_expr)
   | PhELookup (d k : phoas_expr)
-  | PhESelect (l : phoas_expr) (x : string) (p r : V -> phoas_expr)
+  | PhEFilter (l : phoas_expr) (x : string) (p : V -> phoas_expr)
   | PhEJoin (l1 l2 : phoas_expr) (x y : string) (p r : V -> V -> phoas_expr)
   | PhEProj (l : phoas_expr) (x : string) (r : V -> phoas_expr).
 
@@ -1188,7 +1611,7 @@ Section WithPhoasEnv.
     | EInsert d k v => PhEInsert (phoasify env d) (phoasify env k) (phoasify env v)
     | EDelete d k => PhEDelete (phoasify env d) (phoasify env k)
     | ELookup d k  => PhELookup (phoasify env d) (phoasify env k)
-    | ESelect l x p r => PhESelect (phoasify env l) x (fun v => phoasify (map.put env x v) p) (fun v => phoasify (map.put env x v) r)
+    | EFilter l x p => PhEFilter (phoasify env l) x (fun v => phoasify (map.put env x v) p)
     | EJoin l1 l2 x y p r => PhEJoin (phoasify env l1) (phoasify env l2) x y
                                      (fun v1 v2 => phoasify (map.put (map.put env x v1) y v2) p)
                                      (fun v1 v2 => phoasify (map.put (map.put env x v1) y v2) r)
@@ -1269,13 +1692,13 @@ Section WithGeneralPhoasEnv.
                        | VDict l => VOption (dict_lookup (interp_phoas_expr store k) l)
                        | _ => VUnit
                        end
-    | PhESelect l x p r => match interp_phoas_expr store l with
+    | PhEFilter l x p => match interp_phoas_expr store l with
                            | VList l =>
                                VList
-                                 (flat_map (fun v =>
+                                 (List.filter (fun v =>
                                               match interp_phoas_expr store (p v) with
-                                              | VBool _ => interp_phoas_expr store (r v) :: nil
-                                              | _ => nil
+                                              | VBool b => b
+                                              | _ => false
                                               end) l)
                            | _ => VUnit
                            end
@@ -1284,19 +1707,23 @@ Section WithGeneralPhoasEnv.
         | VList l1 =>
             match interp_phoas_expr store l2 with
             | VList l2 =>
-                VList (flat_map (fun v2 =>
-                                   flat_map (fun v1 =>
-                                               match interp_phoas_expr store (p v1 v2) with
-                                               | VBool true => interp_phoas_expr store (r v1 v2) :: nil
-                                               | _ => nil
-                                               end) l1) l2)
+                VList (flat_map
+                         (fun v1 =>
+                            List.map
+                              (fun v2 => interp_phoas_expr store (r v1 v2))
+                              (List.filter (fun v2 =>
+                                             match interp_phoas_expr store (p v1 v2) with
+                                             | VBool b => b
+                                             | _ => false
+                                             end) l2))
+                         l1)
             | _ => VUnit
             end
         | _ => VUnit
         end
     | PhEProj l x r =>
         match interp_phoas_expr store l with
-        | VList l => VList (flat_map (fun v => interp_phoas_expr store (r v) :: nil) l)
+        | VList l => VList (List.map (fun v => interp_phoas_expr store (r v)) l)
         | _ => VUnit
         end
     end.
