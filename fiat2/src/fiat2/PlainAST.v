@@ -1,10 +1,11 @@
-Require Export String.
-Require Export ZArith.
-Require Export List Sorted.
-Require Export coqutil.Map.Interface coqutil.Map.SortedListString.
-Require Export coqutil.Byte coqutil.Word.Interface coqutil.Word.Bitwidth.
+Require Import String.
+Require Import ZArith.
+Require Import List Sorted.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
+Require Import coqutil.Byte coqutil.Word.Interface coqutil.Word.Bitwidth.
 Require Import coqutil.Tactics.Tactics.
-Require Export Std.Sorting.Mergesort.
+Require Import Std.Sorting.Mergesort.
+Require Import Coq.Sorting.Permutation.
 
 (* ===== Fiat2 types ===== *)
 Inductive type : Type :=
@@ -487,6 +488,10 @@ Section WithWord.
     unfold is_total. intros p p'. destruct p as [s t], p' as [s' t'].
     unfold record_type_entry_leb; simpl. destruct (String.leb s s') eqn:E; auto.
     right. pose proof String.leb_total as H. destruct (H s s'); congruence.
+  Qed.
+  Lemma LocallySorted_record_type_sort : forall l, LocallySorted record_type_entry_leb (record_type_sort l).
+  Proof.
+    exact (Sectioned.LocallySorted_sort _ record_type_entry_leb record_type_entry_leb_total).
   Qed.
   (* ----- End of comparison ----- *)
   Definition interp_binop (o : binop) (a b : value) : value :=
@@ -988,6 +993,10 @@ Section WithMap.
                                  type_of Gstore Genv e2 t2 ->
                                  type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 ->
                                  type_of Gstore Genv (EFold e1 e2 x y e3) t2
+(*  | TyERecord l lt : Forall (fun p => exists t, type_of Gstore Genv (snd p) t /\ In (fst p, t) lt) l ->
+                    (Sectioned.sort String.leb (List.map fst l)) = List.map fst lt ->
+                    NoDup (List.map fst l) ->
+                    type_of Gstore Genv (ERecord l) (TRecord lt) *)
   | TyERecordNil : type_of Gstore Genv (ERecord nil) (TRecord nil)
   | TyERecord s e t l lt : type_of Gstore Genv e t ->
                             type_of Gstore Genv (ERecord l) (TRecord lt) ->
@@ -1014,7 +1023,7 @@ Section WithMap.
                         type_of Gstore Genv (EFilter e x p) (TList t)
   | TyEJoin e1 t1 e2 t2 x y p r t3 : type_of Gstore Genv e1 (TList t1) ->
                                      type_of Gstore Genv e2 (TList t2) ->
-                                     type_of Gstore Genv p TBool ->
+                                     type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool ->
                                      type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 ->
                                      type_of Gstore Genv (EJoin e1 e2 x y p r) (TList t3)
   | TyEProj e t1 x r t2 : type_of Gstore Genv e (TList t1) ->
@@ -1396,6 +1405,91 @@ Section WithMap.
                H: analyze_expr _ _ _ ?e = _ |- _ => eapply IH in H; eauto
        end.
 
+    Lemma StronglySorted_eq : forall t R (l l' : list t), StronglySorted R l -> StronglySorted R l' -> Permutation l l' ->
+                                          (forall x y, In x l -> In y l -> R x y -> R y x -> x = y) ->
+                                          l = l'.
+    Proof.
+      intros. generalize dependent l'. induction H; intros.
+      - symmetry. apply Permutation_nil. auto.
+      - destruct l'.
+        + apply Permutation_sym in H3. apply Permutation_nil_cons in H3. intuition.
+        + inversion H1; subst. assert (a = t0).
+          { assert (In t0 (a :: l)). { apply Permutation_in with (l := t0 :: l'); intuition. }
+            inversion H4; auto.
+            assert (In a (t0 :: l')). { apply Permutation_in with (l := a :: l); intuition. }
+            inversion H8; auto.
+            apply (List.Forall_In H7) in H9. apply (List.Forall_In H0) in H5. intuition. }
+          subst. f_equal. apply IHStronglySorted; intuition.
+          eapply Permutation_cons_inv; eauto.
+    Qed.
+
+    Section __.
+      Local Coercion is_true : bool >-> Sortclass.
+
+      Lemma string_compare_trans : forall s1 s2 s3,
+          String.compare s1 s2 = Lt -> String.compare s2 s3 = Lt -> String.compare s1 s3 = Lt.
+      Proof.
+        induction s1; destruct s2, s3; auto; simpl in *; try discriminate.
+        - intros. destruct (Ascii.compare a a0) eqn:E1, (Ascii.compare a0 a1) eqn:E2; try discriminate; auto.
+          + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. eapply IHs1; eauto.
+          + apply Ascii.compare_eq_iff in E1; subst. rewrite E2. auto.
+          + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. auto.
+          + unfold Ascii.compare in *. rewrite N.compare_lt_iff in E1, E2.
+            pose proof (N.lt_trans _ _ _ E1 E2). rewrite <-  N.compare_lt_iff in H1.
+            rewrite H1. easy.
+      Qed.
+
+      Lemma record_type_entry_leb_trans : RelationClasses.Transitive record_type_entry_leb.
+      Proof.
+        unfold RelationClasses.Transitive. destruct x, y, z. unfold record_type_entry_leb. simpl.
+        unfold String.leb. destruct (String.compare s s0) eqn:E1, (String.compare s0 s1) eqn:E2; intuition.
+        - apply compare_eq_iff in E2. subst. rewrite E1; easy.
+        - apply compare_eq_iff in E1. subst. rewrite E2; easy.
+        - apply compare_eq_iff in E2. subst. rewrite E1; easy.
+        - pose proof (string_compare_trans _ _ _ E1 E2). rewrite H1; easy.
+      Qed.
+
+      Lemma StronglySorted_record_type_sort : forall l, StronglySorted (record_type_entry_leb) (record_type_sort l).
+      Proof.
+        intros. apply Sectioned.StronglySorted_sort.
+        - apply record_type_entry_leb_total.
+        - apply record_type_entry_leb_trans.
+      Qed.
+
+      Lemma Permuted_record_type_sort : forall l, Permutation l (record_type_sort l).
+      Proof.
+        apply Sectioned.Permuted_sort.
+      Qed.
+
+      Lemma record_type_from'_nodup : forall l tl el,
+          record_type_from' l = Success (tl, el) -> forall x y,
+            In x tl -> In y tl -> record_type_entry_leb x y -> record_type_entry_leb y x -> x = y.
+        induction l.
+        - simpl; intros. invert_result. apply in_nil in H0; intuition.
+        - assert (forall t s (l : list (string * t)), inb eqb (List.map fst l) s = false -> forall y, In y l -> s <> fst y).
+            { clear. induction l; auto. simpl; intros.
+              destruct (fst a =? s)%string eqn:E; try discriminate. rewrite eqb_neq in E.
+              destruct H0; try congruence. firstorder. }
+            assert (forall l tl el, record_type_from' l = Success (tl, el) -> forall y, In y tl -> exists y', In y' l /\ fst y = fst y').
+            { clear. induction l.
+              - simpl. intros; invert_result. apply in_nil in H0. intuition.
+              - simpl. intros. repeat destruct_match. invert_result. inversion H0.
+                + exists (s, Success(t, e)); destruct y. destruct H. intuition.
+                + apply (IHl l0 l1) in H as [y' [HL HR]]; auto. exists y'. intuition.
+            }
+          simpl; intros. repeat destruct_match. invert_result. inversion H2; inversion H3; try congruence.
+          + unfold record_type_entry_leb in H4, H5. pose proof (leb_antisym _ _ H4 H5).
+            eapply H0 in E2. 2: apply H6. destruct E2 as [y' [HL HR]].
+            exfalso. eapply H; eauto. destruct x; simpl in *. congruence.
+          + unfold record_type_entry_leb in H4, H5. pose proof (leb_antisym _ _ H4 H5).
+            eapply H0 in E2. 2: apply H1. destruct E2 as [y' [HL HR]].
+            exfalso. eapply H; eauto. destruct y; simpl in *. congruence.
+          + eapply IHl; eauto.
+      Qed.
+
+      (* ??? Attempt with the initial definition of TyERecord
+           Problems: could have (s, a) (s, b) ordered either way, and currently only have type_eqb, no type_compare, so the order of tl is purely by the fst elem using String.leb
+         Problems: need transitivity to get the StronglySorted property, but couldn't find with String.leb *)
     Lemma record_type_from'_sound : forall (l : list (string * expr)),
         Forall (fun p : string * expr =>
                   forall (Gstore Genv : tenv) (t : type) (e' : expr),
@@ -1408,9 +1502,21 @@ Section WithMap.
       induction l; simpl; intros.
       - invert_result. constructor.
       - repeat destruct_match. invert_result.
-        assert (forall l h, record_type_sort (h :: l) = record_type_sort (h :: record_type_sort l)).
-        { clear. induction l; try reflexivity.
-          intro h. admit. }
+        assert (record_type_sort ((s, t) :: l0) = record_type_sort ((s, t) :: record_type_sort l0)).
+        { intros; apply StronglySorted_eq with (R := record_type_entry_leb);
+          try apply StronglySorted_record_type_sort.
+          - apply perm_trans with (l' := (s, t) :: l0).
+            + apply Permutation_sym, Permuted_record_type_sort.
+            + apply perm_trans with (l' := (s, t) :: record_type_sort l0).
+              * apply Permutation_cons; auto. apply Permuted_record_type_sort.
+              * apply Permuted_record_type_sort.
+          - intros. apply record_type_from'_nodup with (l := (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) (a :: l))) (tl := (s, t) :: l0) (el := (s, e) :: l1); auto.
+            + simpl. rewrite E, E2, E4. congruence.
+            + apply Permutation_in with (l := record_type_sort ((s, t) :: l0)); auto.
+              apply Permutation_sym. apply Permuted_record_type_sort.
+            + apply Permutation_in with (l := record_type_sort ((s, t) :: l0)); auto.
+              apply Permutation_sym. apply Permuted_record_type_sort.
+        }
         rewrite H0. destruct a. inversion E; subst. constructor.
         + inversion H; subst. apply H4 in H3. auto.
         + inversion H; subst. apply (IHl H5 _ _ _ _ E2).
@@ -1422,7 +1528,30 @@ Section WithMap.
           assert (List.map fst l = List.map fst (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)).
           { clear. induction l; intuition. simpl. rewrite IHl; auto. }
           rewrite H2. apply H1. auto.
-    Admitted.
+    Qed.
+    End __.
+
+    (* ??? Attempt with the new definition of TyERecord
+    Lemma record_type_from'_sound : forall l,
+        Forall (fun p : string * expr =>
+                  forall (Gstore Genv : tenv) (t : type) (e' : expr),
+                    (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+                      (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
+        forall Gstore Genv tl el,
+          record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
+          type_of Gstore Genv (ERecord l) (TRecord (record_type_sort tl)).
+    Proof.
+      induction l; intros.
+      - simpl in *. invert_result. constructor; intuition; constructor.
+      - simpl in *. repeat destruct_match. inversion H; destruct a; inversion E; invert_result.
+        constructor.
+        + constructor; simpl.
+          * exists t. split.
+            { apply H3 in H7. auto. }
+            { eapply IHl in H4; eauto. }
+            Sort->Permutation. Permutation_in.
+*)
+
 
     Lemma typechecker_sound : forall e Gstore Genv t e',
         (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
@@ -1456,16 +1585,17 @@ Section WithMap.
       - (* ERecord *)
         split; intros; repeat destruct_match.
         + unfold record_type_from in *. repeat destruct_match. invert_result.
-        assert (forall l, Forall
-        (fun p : string * expr =>
-         forall (Gstore Genv : tenv) (t : type) (e' : expr),
-         (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
-           (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
-                          forall Gstore Genv tl el,
-                            record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) -> type_of Gstore Genv (ERecord l) (TRecord (record_type_sort tl))).
-          * admit.
-          * eapply H0; eauto.
-      Admitted.
+          eapply record_type_from'_sound; eauto.
+        + unfold record_from in *. destruct_match. invert_result. admit.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+    Admitted.
 (*
     Lemma app_has_type : forall l r t, has_type (VList l) t /\ has_type (VList r) t -> has_type (VList (l ++ r)) t.
     Proof.
