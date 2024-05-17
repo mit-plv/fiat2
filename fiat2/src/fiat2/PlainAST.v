@@ -850,11 +850,46 @@ Definition binop_types (o : binop) : (type * type * type) :=
   | OConcatString => (TString, TString, TString)
   | OAnd | OOr => (TBool, TBool, TBool)
   | OWLessU | OWLessS => (TWord, TWord, TBool)
-  | OLess | OEq => (TInt, TInt, TBool)
+  | OLess => (TInt, TInt, TBool)
   | OWRange => (TWord, TWord, TList TWord)
   | ORange => (TInt, TInt, TList TInt)
   | _ => (TUnit, TUnit, TUnit) (* unused *)
   end.
+
+Inductive type_of_unop : unop -> type -> type -> Prop :=
+| TyOWNeg : type_of_unop OWNeg TWord TWord
+| TyONeg : type_of_unop ONeg TInt TInt
+| TyONot : type_of_unop ONot TBool TBool
+| TyOLength t : type_of_unop OLength (TList t) TInt
+| TyOLengthString : type_of_unop OLengthString TString TInt
+| TyOIntToString : type_of_unop OIntToString TInt TString
+| TyOSome t : type_of_unop OSome t (TOption t).
+
+Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
+| TyOWPlus : type_of_binop OWPlus TWord TWord TWord
+| TyOPlus : type_of_binop OPlus TInt TInt TInt
+| TyOWMinus : type_of_binop OWMinus TWord TWord TWord
+| TyOMinus : type_of_binop OMinus TInt TInt TInt
+| TyOWTimes : type_of_binop OWTimes TWord TWord TWord
+| TyOTimes : type_of_binop OTimes TInt TInt TInt
+| TyOWDivU : type_of_binop OWDivU TWord TWord TWord
+| TyOWDivS : type_of_binop OWDivS TWord TWord TWord
+| TyODiv : type_of_binop ODiv TInt TInt TInt
+| TyOWModU : type_of_binop OWModU TWord TWord TWord
+| TyOWModS : type_of_binop OWModS TWord TWord TWord
+| TyOMod : type_of_binop OMod TInt TInt TInt
+| TyOAnd : type_of_binop OAnd TBool TBool TBool
+| TyOOr : type_of_binop OOr TBool TBool TBool
+| TyOConcat t : type_of_binop OConcat (TList t) (TList t) (TList t)
+| TyOConcatString : type_of_binop OConcatString TString TString TString
+| TyOWLessU : type_of_binop OWLessU TWord TWord TBool
+| TyOWLessS : type_of_binop OWLessS TWord TWord TBool
+| TyOLess : type_of_binop OLess TInt TInt TBool
+| TyOEq t : type_of_binop OEq t t TBool
+| TyORepeat t : type_of_binop ORepeat (TList t) TInt (TList t)
+| TyOCons t :  type_of_binop OCons t (TList t) (TList t)
+| TyORange : type_of_binop ORange TInt TInt (TList TInt)
+| TyOWRange : type_of_binop OWRange TWord TWord (TList TWord).
 
 (* Whether a is in l *)
 Fixpoint inb {A : Type} (A_eqb : A -> A -> bool) (l : list A) (a : A) : bool :=
@@ -987,38 +1022,18 @@ Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 
   Local Coercion is_true : bool >-> Sortclass.
+
   Inductive type_of (Gstore Genv : tenv) : expr -> type -> Prop :=
   | TyEVar x t : map.get Genv x = Some t -> type_of Gstore Genv (EVar x) t
   | TyELoc x t : map.get Gstore x = Some t -> type_of Gstore Genv (ELoc x) t
   | TyEAtom a t : type_of_atom a t -> type_of Gstore Genv (EAtom a) t
-  | TyEUnopLength e t : type_of Gstore Genv e (TList t) -> type_of Gstore Genv (EUnop OLength e) TInt
-  | TyEUnopSome e t : type_of Gstore Genv e t -> type_of Gstore Genv (EUnop OSome e) (TOption t)
-  | TyEUnop o e t : type_of Gstore Genv e t ->
-                    match o with
-                    | OWNeg | ONeg | ONot | OLengthString | OIntToString => t = fst (unop_types o)
-                    | _ => False
-                    end ->
-                    type_of Gstore Genv (EUnop o e) (snd (unop_types o))
-                            (* ??? binop and unop : inductive binop -> type -> type -> type -> Prop judgement *)
-  | TyEBinopConcat e1 e2 t : type_of Gstore Genv e1 (TList t) ->
-                             type_of Gstore Genv e2 (TList t) ->
-                             type_of Gstore Genv (EBinop OConcat e1 e2) (TList t)
-  | TyEBinopRepeat e1 e2 t : type_of Gstore Genv e1 (TList t) ->
-                             type_of Gstore Genv e2 TInt ->
-                             type_of Gstore Genv (EBinop ORepeat e1 e2) (TList t)
-  | TyEBinopCons e1 e2 t :  type_of Gstore Genv e1 t ->
-                            type_of Gstore Genv e2 (TList t) ->
-                            type_of Gstore Genv (EBinop OCons e1 e2) (TList t)
-  | TyEBinop o e1 t1 e2 t2 : type_of Gstore Genv e1 t1 ->
-                             type_of Gstore Genv e2 t2 ->
-                             match o with
-                             | OWPlus | OWMinus | OWTimes | OWDivU | OWDivS | OWModU | OWModS
-                             | OPlus | OMinus | OTimes | ODiv | OMod
-                             | OConcatString | OAnd | OOr | OWLessU | OWLessS
-                             | OLess | OEq | ORange | OWRange => t1 = fst (fst (binop_types o)) /\ t2 = snd (fst (binop_types o))
-                             | _ => False
-                             end ->
-                             type_of Gstore Genv (EBinop o e1 e2) (snd (binop_types o))
+  | TyEUnop o e t1 t2 : type_of_unop o t1 t2 ->
+                        type_of Gstore Genv e t1 ->
+                        type_of Gstore Genv (EUnop o e) t2
+  | TyEBinop o e1 e2 t1 t2 t3 : type_of_binop o t1 t2 t3 ->
+                                type_of Gstore Genv e1 t1 ->
+                                type_of Gstore Genv e2 t2 ->
+                                type_of Gstore Genv (EBinop o e1 e2) t3
   | TyEIf e1 e2 e3 t : type_of Gstore Genv e1 TBool ->
                        type_of Gstore Genv e2 t ->
                        type_of Gstore Genv e3 t ->
@@ -1123,6 +1138,17 @@ Section WithMap.
                             | TList t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;; e2' <- analyze_expr Gstore Genv TInt e2 ;;
                                          Success (EBinop o e1' e2')
                             | _ => error:(e "is a list but expected" expected)
+                            end
+                        | OEq =>
+                            match expected with
+                            | TBool => match synthesize_expr Gstore Genv e1 with
+                                       | Success (t, e1') => e2' <- analyze_expr Gstore Genv t e2 ;;
+                                                              Success (EBinop OEq e1' e2')
+                                       | Failure err => '(t, e2') <- synthesize_expr Gstore Genv e2 ;;
+                                                        e1' <- analyze_expr Gstore Genv t e1 ;;
+                                                        Success (EBinop OEq e1' e2')
+                                       end
+                            | _ => error:(e "is a boolean but expected" expected)
                             end
                         | o => let '(t1, t2, t3) := binop_types o in
                                if type_eqb expected t3
@@ -1284,6 +1310,13 @@ Section WithMap.
                                  match t1 with
                                  | TList t => e2' <- analyze_expr Gstore Genv TInt e2 ;; Success (TList t, EBinop o e1' e2')
                                  | t => error:(e1 "has type" t "but expected a list")
+                                 end
+                             | OEq =>
+                                 match synthesize_expr Gstore Genv e1 with
+                                 | Success (t, e1') => e2' <- analyze_expr Gstore Genv t e2 ;; Success (TBool, EBinop o e1' e2')
+                                 | Failure err => '(t, e2') <- synthesize_expr Gstore Genv e2 ;;
+                                                  e1' <- analyze_expr Gstore Genv t e1 ;;
+                                                  Success (TBool, EBinop o e1' e2')
                                  end
                              | o => let '(t1, t2, t3) := binop_types o in
                                     e1' <- analyze_expr Gstore Genv t1 e1 ;;
@@ -1642,11 +1675,10 @@ Section WithMap.
           invert_result; apply atom_typechecker_sound in E; auto.
       - (* EUnop *)
         split; intros; destruct o; simpl in *;
-          try (destruct_match; try invert_result; apply_typechecker_IH; econstructor; eauto);
-          try (repeat destruct_match; invert_result; apply_typechecker_IH; econstructor; eauto).
+          repeat (repeat destruct_match; try invert_result; apply_typechecker_IH; repeat econstructor; eauto).
       - (* EBinop *)
         split; intros; destruct o; simpl in *;
-          try (repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto).
+        try (repeat destruct_match; try invert_result; repeat apply_typechecker_IH; repeat econstructor; eauto).
       - (* EIf *)
         split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
       - (* ELet *)
