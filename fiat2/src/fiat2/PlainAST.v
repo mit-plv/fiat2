@@ -945,9 +945,48 @@ Fixpoint dict_from' (l : list (result (expr * expr))) : result (list (expr * exp
 Definition dict_from (l : list (result (expr * expr))) : result expr :=
   l' <- dict_from' l ;; Success (EDict l').
 
+
+    Lemma NoDup_In_get_attr_type : forall tl,  NoDup (List.map fst tl) -> forall s t, In (s, t) tl -> get_attr_type tl s = t.
+    Proof.
+      clear. induction tl; simpl; intros.
+      - intuition.
+      - destruct a. destruct (String.eqb s0 s) eqn:E.
+        + intuition; try congruence. rewrite String.eqb_eq in E; inversion H; subst.
+          assert (In s (List.map fst tl)).
+          { clear H H3 H4 IHtl. induction tl; auto. destruct a; inversion H1; subst; simpl.
+            - left; congruence.
+            - right; auto. }
+          intuition.
+        + inversion H; subst. apply IHtl; auto. destruct H0; auto.
+          rewrite String.eqb_neq in E; inversion H0; congruence.
+    Qed.
+
+    Lemma Permutation_NoDup_In_get_attr_type : forall tl tl',
+        Permutation tl tl' -> NoDup (List.map fst tl') ->
+        forall s, In s (List.map fst tl') -> get_attr_type tl s = get_attr_type tl' s.
+    Proof.
+      intros.
+      assert (exists t, In (s, t) tl').
+      { clear H H0. induction tl'; simpl in *; intuition.
+        - exists (snd a). left; subst. apply surjective_pairing.
+        - destruct H0 as [t Ht]. firstorder. }
+      assert (NoDup (List.map fst tl)).
+      { apply Permutation_map with (f := fst) in H. apply Permutation_sym in H.
+        eapply Permutation_NoDup; eauto. }
+      destruct H2 as [t Ht]. repeat rewrite NoDup_In_get_attr_type with (t := t); auto.
+      apply Permutation_sym in H. eapply Permutation_in; eauto.
+    Qed.
+
+    Lemma Permutation_incl : forall A (l l' : list A), Permutation l l' -> incl l l'.
+    Proof.
+      intros. unfold incl; intros.
+      eapply Permutation_in; eauto.
+    Qed.
+
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 
+  Local Coercion is_true : bool >-> Sortclass.
   Inductive type_of (Gstore Genv : tenv) : expr -> type -> Prop :=
   | TyEVar x t : map.get Genv x = Some t -> type_of Gstore Genv (EVar x) t
   | TyELoc x t : map.get Gstore x = Some t -> type_of Gstore Genv (ELoc x) t
@@ -960,6 +999,7 @@ Section WithMap.
                     | _ => False
                     end ->
                     type_of Gstore Genv (EUnop o e) (snd (unop_types o))
+                            (* ??? binop and unop : inductive binop -> type -> type -> type -> Prop judgement *)
   | TyEBinopConcat e1 e2 t : type_of Gstore Genv e1 (TList t) ->
                              type_of Gstore Genv e2 (TList t) ->
                              type_of Gstore Genv (EBinop OConcat e1 e2) (TList t)
@@ -993,17 +1033,15 @@ Section WithMap.
                                  type_of Gstore Genv e2 t2 ->
                                  type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 ->
                                  type_of Gstore Genv (EFold e1 e2 x y e3) t2
-(*  | TyERecord l lt : Forall (fun p => exists t, type_of Gstore Genv (snd p) t /\ In (fst p, t) lt) l ->
-                    (Sectioned.sort String.leb (List.map fst l)) = List.map fst lt ->
-                    NoDup (List.map fst l) ->
-                    type_of Gstore Genv (ERecord l) (TRecord lt) *)
-  | TyERecordNil : type_of Gstore Genv (ERecord nil) (TRecord nil)
-  | TyERecord s e t l lt : type_of Gstore Genv e t ->
-                            type_of Gstore Genv (ERecord l) (TRecord lt) ->
-                            ~ In s (List.map fst l) ->
-                            type_of Gstore Genv (ERecord ((s, e) :: l)) (TRecord (record_type_sort ((s, t) :: lt)))
-  | TyEAccess e lt x t : type_of Gstore Genv e (TRecord lt) ->
-                         In (x, t) lt ->
+  | TyERecord (l : list (string * expr)) (tl tl' : list (string * type)) :
+    List.map fst l = List.map fst tl ->
+    Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
+    NoDup (List.map fst l) ->
+    Permutation tl tl' ->
+    StronglySorted record_type_entry_leb tl' ->
+    type_of Gstore Genv (ERecord l) (TRecord tl')
+  | TyEAccess e tl x t : type_of Gstore Genv e (TRecord tl) ->
+                         In (x, t) tl ->
                          type_of Gstore Genv (EAccess e x) t
   | TyEDict l kt vt : Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
                       type_of Gstore Genv (EDict l) (TDict kt vt)
@@ -1118,12 +1156,19 @@ Section WithMap.
                             | t1 => error:(e1 "has type" t1 "but expected a list")
                             end
     | ERecord l => match expected with
-                   | TRecord tl => if inclb String.eqb (List.map fst tl) (List.map fst l) &&
-                                        inclb String.eqb (List.map fst l) (List.map fst tl)
-                                   then record_from (List.map
-                                                       (fun '(s, e) => (s, analyze_expr Gstore Genv(get_attr_type tl s) e))
-                                                       l)
-                                   else error:(e "does not have all expected attributes" tl)
+                   | TRecord tl =>
+                       if type_eqb (TRecord tl) (TRecord (record_type_sort tl))
+                       then
+                         if leb (length tl) (length l)
+                         then
+                           if inclb String.eqb (List.map fst l) (List.map fst tl) &&
+                                inclb String.eqb (List.map fst tl) (List.map fst l)
+                           then record_from (List.map
+                                               (fun '(s, e) => (s, analyze_expr Gstore Genv(get_attr_type tl s) e))
+                                               l)
+                           else error:(e "does not have all expected attributes" tl)
+                         else error:("Record type" tl "has more fields than record" l)
+                       else error:("Record type" tl "not sorted by record entry names")
                    | _ => error:(e "is a record but expected" expected)
                    end
     | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
@@ -1343,11 +1388,7 @@ Section WithMap.
     | TyVOptionNone t : has_type (VOption None) (TOption t)
     | TyVOptionSome v t : has_type v t ->
                           has_type (VOption (Some v)) (TOption t)
-    | TyVList l t : Forall (fun v => has_type v t) l -> has_type (VList l) (TList t) (* ??? *)
-    | TyVListNil t : has_type (VList nil) (TList t)
-    | TyVListCons v l t : has_type v t ->
-                          has_type (VList l) (TList t) ->
-                          has_type (VList (v :: l)) (TList t)
+    | TyVList l t : Forall (fun v => has_type v t) l -> has_type (VList l) (TList t)
     | TyVRecordNil : has_type (VRecord nil) (TRecord nil)
     | TyVRecordCons s v l tv tl : has_type v tv ->
                                   has_type (VRecord l) (TRecord tl) ->
@@ -1405,27 +1446,7 @@ Section WithMap.
                H: analyze_expr _ _ _ ?e = _ |- _ => eapply IH in H; eauto
        end.
 
-    Lemma StronglySorted_eq : forall t R (l l' : list t), StronglySorted R l -> StronglySorted R l' -> Permutation l l' ->
-                                          (forall x y, In x l -> In y l -> R x y -> R y x -> x = y) ->
-                                          l = l'.
-    Proof.
-      intros. generalize dependent l'. induction H; intros.
-      - symmetry. apply Permutation_nil. auto.
-      - destruct l'.
-        + apply Permutation_sym in H3. apply Permutation_nil_cons in H3. intuition.
-        + inversion H1; subst. assert (a = t0).
-          { assert (In t0 (a :: l)). { apply Permutation_in with (l := t0 :: l'); intuition. }
-            inversion H4; auto.
-            assert (In a (t0 :: l')). { apply Permutation_in with (l := a :: l); intuition. }
-            inversion H8; auto.
-            apply (List.Forall_In H7) in H9. apply (List.Forall_In H0) in H5. intuition. }
-          subst. f_equal. apply IHStronglySorted; intuition.
-          eapply Permutation_cons_inv; eauto.
-    Qed.
-
     Section __.
-      Local Coercion is_true : bool >-> Sortclass.
-
       Lemma string_compare_trans : forall s1 s2 s3,
           String.compare s1 s2 = Lt -> String.compare s2 s3 = Lt -> String.compare s1 s3 = Lt.
       Proof.
@@ -1461,97 +1482,149 @@ Section WithMap.
         apply Sectioned.Permuted_sort.
       Qed.
 
-      Lemma record_type_from'_nodup : forall l tl el,
-          record_type_from' l = Success (tl, el) -> forall x y,
-            In x tl -> In y tl -> record_type_entry_leb x y -> record_type_entry_leb y x -> x = y.
-        induction l.
-        - simpl; intros. invert_result. apply in_nil in H0; intuition.
-        - assert (forall t s (l : list (string * t)), inb eqb (List.map fst l) s = false -> forall y, In y l -> s <> fst y).
-            { clear. induction l; auto. simpl; intros.
-              destruct (fst a =? s)%string eqn:E; try discriminate. rewrite eqb_neq in E.
-              destruct H0; try congruence. firstorder. }
-            assert (forall l tl el, record_type_from' l = Success (tl, el) -> forall y, In y tl -> exists y', In y' l /\ fst y = fst y').
-            { clear. induction l.
-              - simpl. intros; invert_result. apply in_nil in H0. intuition.
-              - simpl. intros. repeat destruct_match. invert_result. inversion H0.
-                + exists (s, Success(t, e)); destruct y. destruct H. intuition.
-                + apply (IHl l0 l1) in H as [y' [HL HR]]; auto. exists y'. intuition.
-            }
-          simpl; intros. repeat destruct_match. invert_result. inversion H2; inversion H3; try congruence.
-          + unfold record_type_entry_leb in H4, H5. pose proof (leb_antisym _ _ H4 H5).
-            eapply H0 in E2. 2: apply H6. destruct E2 as [y' [HL HR]].
-            exfalso. eapply H; eauto. destruct x; simpl in *. congruence.
-          + unfold record_type_entry_leb in H4, H5. pose proof (leb_antisym _ _ H4 H5).
-            eapply H0 in E2. 2: apply H1. destruct E2 as [y' [HL HR]].
-            exfalso. eapply H; eauto. destruct y; simpl in *. congruence.
-          + eapply IHl; eauto.
-      Qed.
+    Lemma fst_map_fst : forall (A B C : Type) (l : list (A * B)) (f : A -> B -> C),
+        List.map fst (List.map (fun '(a, b) => (a, f a b)) l) = List.map fst l.
+    Proof.
+      induction l; auto.
+      intros. destruct a. simpl. f_equal. auto.
+    Qed.
 
-      (* ??? Attempt with the initial definition of TyERecord
-           Problems: could have (s, a) (s, b) ordered either way, and currently only have type_eqb, no type_compare, so the order of tl is purely by the fst elem using String.leb
-         Problems: need transitivity to get the StronglySorted property, but couldn't find with String.leb *)
-    Lemma record_type_from'_sound : forall (l : list (string * expr)),
-        Forall (fun p : string * expr =>
-                  forall (Gstore Genv : tenv) (t : type) (e' : expr),
-                    (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
-                      (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
-        forall Gstore Genv tl el,
-          record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
-          type_of Gstore Genv (ERecord l) (TRecord (record_type_sort tl)).
+    Lemma inb_false_iff : forall s l, inb eqb l s = false <-> ~ In s l.
     Proof.
       induction l; simpl; intros.
-      - invert_result. constructor.
-      - repeat destruct_match. invert_result.
-        assert (record_type_sort ((s, t) :: l0) = record_type_sort ((s, t) :: record_type_sort l0)).
-        { intros; apply StronglySorted_eq with (R := record_type_entry_leb);
-          try apply StronglySorted_record_type_sort.
-          - apply perm_trans with (l' := (s, t) :: l0).
-            + apply Permutation_sym, Permuted_record_type_sort.
-            + apply perm_trans with (l' := (s, t) :: record_type_sort l0).
-              * apply Permutation_cons; auto. apply Permuted_record_type_sort.
-              * apply Permuted_record_type_sort.
-          - intros. apply record_type_from'_nodup with (l := (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) (a :: l))) (tl := (s, t) :: l0) (el := (s, e) :: l1); auto.
-            + simpl. rewrite E, E2, E4. congruence.
-            + apply Permutation_in with (l := record_type_sort ((s, t) :: l0)); auto.
-              apply Permutation_sym. apply Permuted_record_type_sort.
-            + apply Permutation_in with (l := record_type_sort ((s, t) :: l0)); auto.
-              apply Permutation_sym. apply Permuted_record_type_sort.
-        }
-        rewrite H0. destruct a. inversion E; subst. constructor.
-        + inversion H; subst. apply H4 in H3. auto.
-        + inversion H; subst. apply (IHl H5 _ _ _ _ E2).
-        + assert (forall s l, inb eqb l s = false -> ~ In s l).
-          { clear. induction l.
-            - intros. apply in_nil.
-            - simpl. destruct (String.eqb a s) eqn:E; try discriminate.
-              rewrite String.eqb_neq in E. intuition. }
-          assert (List.map fst l = List.map fst (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)).
-          { clear. induction l; intuition. simpl. rewrite IHl; auto. }
-          rewrite H2. apply H1. auto.
+      - intuition.
+      - destruct (String.eqb a s) eqn:E; intuition.
+        + rewrite String.eqb_eq in E; intuition.
+        + rewrite String.eqb_neq in E; intuition.
     Qed.
-    End __.
 
-    (* ??? Attempt with the new definition of TyERecord
-    Lemma record_type_from'_sound : forall l,
-        Forall (fun p : string * expr =>
-                  forall (Gstore Genv : tenv) (t : type) (e' : expr),
-                    (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
-                      (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
-        forall Gstore Genv tl el,
-          record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
-          type_of Gstore Genv (ERecord l) (TRecord (record_type_sort tl)).
+    Lemma inb_true_iff : forall s l, inb eqb l s = true <-> In s l.
+    Proof.
+      induction l; simpl; intros.
+      - split; intuition.
+      - destruct (String.eqb a s) eqn:E; intuition.
+        + rewrite String.eqb_eq in E; intuition.
+        + rewrite String.eqb_neq in E; intuition.
+    Qed.
+
+    Lemma inclb_correct : forall l l', inclb String.eqb l l' = true -> incl l l'.
+    Proof.
+      induction l; simpl; intros.
+      - apply incl_nil_l.
+      - rewrite Bool.andb_true_iff in H. destruct H as [HL HR].
+        apply IHl in HR. rewrite inb_true_iff in HL.
+        unfold incl. intros. inversion H; subst; intuition.
+    Qed.
+
+    Lemma inclb_complete : forall l l', incl l l' -> inclb String.eqb l l' = true.
+    Proof.
+      intros l l' H. unfold inclb. rewrite forallb_forall; intros.
+      rewrite inb_true_iff. intuition.
+    Qed.
+
+    Lemma record_type_from'_sound : forall l tl el Gstore Genv,
+        Forall
+        (fun p : string * expr =>
+         forall (Gstore Genv : tenv) (t : type) (e' : expr),
+         (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+         (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
+        record_type_from' (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
+        List.map fst l = List.map fst tl /\ Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) /\ NoDup (List.map fst l).
     Proof.
       induction l; intros.
-      - simpl in *. invert_result. constructor; intuition; constructor.
-      - simpl in *. repeat destruct_match. inversion H; destruct a; inversion E; invert_result.
-        constructor.
-        + constructor; simpl.
-          * exists t. split.
-            { apply H3 in H7. auto. }
-            { eapply IHl in H4; eauto. }
-            Sort->Permutation. Permutation_in.
-*)
+      - simpl in *. invert_result. intuition. apply NoDup_nil.
+      - simpl in *. repeat destruct_match. invert_result. destruct a. inversion E; subst; simpl.
+        inversion H; subst. apply (IHl _ _ _ _ H4)in E2 as [IHl1 [IHl2 IHl3]]. split; [| split].
+        + f_equal. auto.
+        + constructor; auto. apply H3 in H2. auto.
+        + constructor; auto. apply inb_false_iff. erewrite <- fst_map_fst. apply E4.
+    Qed.
 
+    Lemma record_from'_sound :
+      forall l tl' el Gstore Genv,
+        Forall
+        (fun p : string * expr =>
+         forall (Gstore Genv : tenv) (t : type) (e' : expr),
+         (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+         (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t)) l ->
+        record_from' (List.map (fun '(s, e) => (s, analyze_expr Gstore Genv (get_attr_type tl' s) e)) l) = Success el ->
+        let tl := List.map (fun '(s, _) => (s, get_attr_type tl' s)) l in
+        List.map fst l = List.map fst tl /\ Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) /\ NoDup (List.map fst l).
+    Proof.
+      induction l; intros.
+      - simpl in *. invert_result. intuition. apply NoDup_nil.
+      - simpl in *. repeat destruct_match. destruct a. inversion H; inversion E; subst.
+        invert_result. simpl in *. intuition.
+        + f_equal. rewrite fst_map_fst. auto.
+        + constructor.
+          * eapply H3; eauto.
+          * eapply IHl; eauto.
+        + rewrite fst_map_fst in E2. apply inb_false_iff in E2. apply NoDup_cons; auto.
+          eapply IHl; eauto.
+    Qed.
+
+    Lemma double_incl_NoDup_Permuted : forall (l : list (string * expr)) (tl' : list (string * type)),
+        inclb String.eqb (List.map fst l) (List.map fst tl') = true ->
+        inclb String.eqb (List.map fst tl') (List.map fst l) = true ->
+        NoDup (List.map fst l) ->
+        length (List.map fst tl') <= length (List.map fst l) ->
+        Permutation (List.map (fun '(s, _) => (s, get_attr_type tl' s)) l) tl'.
+    Proof.
+      intros.
+      assert (NoDup (List.map fst tl')).
+      { apply inclb_correct in H, H0. eapply NoDup_incl_NoDup; eauto. }
+      generalize dependent tl'. induction l; simpl; intros.
+      - destruct tl'; simpl in *; intuition; discriminate.
+      - destruct a; simpl in *. remember (s, get_attr_type tl' s) as p.
+        rewrite Bool.andb_true_iff in H; destruct H. rewrite inb_true_iff in H.
+        assert (forall s, In s (List.map fst tl') -> In (s, get_attr_type tl' s) tl').
+        { clear; induction tl'; simpl; intros.
+          - auto.
+          - destruct a; simpl in *. destruct (String.eqb s0 s) eqn:E.
+            + rewrite String.eqb_eq in E; subst; auto.
+            + rewrite String.eqb_neq in E. right. apply IHtl'. intuition. }
+        apply H5 in H.
+        assert (forall A (x : A) l', In x l' -> exists l, Permutation (x :: l) l').
+        { clear. induction l'; intros.
+          - apply in_nil in H; intuition.
+          - inversion H.
+            + exists l'; subst; auto.
+            + apply IHl' in H0 as [l Hl]. exists (a :: l). eapply perm_trans; try apply perm_swap.
+              constructor; assumption. }
+        apply H6 in H. destruct H as [tl Htl].
+        eapply Permutation_trans; [| apply Htl].
+        subst; apply perm_skip.
+        assert (forall (l : list (string * expr)) tl tl' s t,
+                   incl (List.map fst l) (List.map fst tl') ->
+                   Permutation ((s, t) :: tl) tl' ->
+                   ~ In s (List.map fst l) -> NoDup (List.map fst tl') ->
+                   List.map (fun '(s, _) => (s, get_attr_type tl' s)) l = List.map (fun '(s, _) => (s, get_attr_type tl s)) l).
+        { clear. induction l; simpl; intros; auto.
+          destruct a; simpl in *. f_equal.
+          - rewrite <- Permutation_NoDup_In_get_attr_type with (tl := (s,t) :: tl) (tl' := tl'); auto.
+            + simpl. destruct (String.eqb s s0) eqn:E; auto.
+              exfalso; apply H1; left; symmetry; apply String.eqb_eq; auto.
+            + intuition.
+          - eapply IHl; eauto. apply incl_cons_inv in H. intuition. }
+        erewrite H; eauto.
+        + apply IHl.
+          * inversion H1. auto.
+          * apply Permutation_sym in Htl. apply inclb_complete. apply inclb_correct in H4. auto.
+            apply Permutation_map with (f := fst) in Htl. apply Permutation_incl in Htl. unfold incl; intros.
+            apply H4 in H7 as H8. apply Htl in H8. inversion H8; auto. simpl in *; subst. inversion H1; intuition.
+          * apply inclb_complete. apply inclb_correct in H0.
+            apply Permutation_map with (f := fst) in Htl. apply Permutation_sym in Htl. apply (Permutation_NoDup Htl) in H3.
+            apply Permutation_sym in Htl. apply Permutation_incl in Htl.
+            unfold incl; intros. simpl in *. apply incl_cons_inv in Htl. apply Htl in H7 as H8. apply H0 in H8. inversion H8; auto.
+            subst. inversion H3; intuition.
+          * apply Permutation_map with (f := fst) in Htl; apply Permutation_length in Htl. simpl in Htl.
+            rewrite <- Htl in H2. apply le_S_n in H2. auto.
+          * apply Permutation_map with (f := fst) in Htl. apply Permutation_sym in Htl. apply (Permutation_NoDup Htl) in H3.
+            simpl in *. inversion H3; intuition.
+        + apply inclb_correct; auto.
+        + inversion H1; auto.
+    Qed.
+    End __.
 
     Lemma typechecker_sound : forall e Gstore Genv t e',
         (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
@@ -1585,8 +1658,16 @@ Section WithMap.
       - (* ERecord *)
         split; intros; repeat destruct_match.
         + unfold record_type_from in *. repeat destruct_match. invert_result.
-          eapply record_type_from'_sound; eauto.
-        + unfold record_from in *. destruct_match. invert_result. admit.
+          pose proof record_type_from'_sound. eapply H0 in H; eauto.
+          apply TyERecord with (tl := l0); intuition;
+          [ apply Permuted_record_type_sort | apply StronglySorted_record_type_sort ].
+        + assert (type_eqb (TRecord l0) (TRecord (record_type_sort l0))); auto.
+          apply type_eqb_eq in H1. injection H1; intro. unfold record_from in *. destruct_match. invert_result.
+          pose proof record_from'_sound. eapply H0 in H; eauto.
+          apply TyERecord with (tl := List.map (fun '(s, e) => (s, get_attr_type l0 s)) l); intuition.
+          * rewrite Bool.andb_true_iff in E2. apply double_incl_NoDup_Permuted; intuition.
+            apply leb_complete. repeat rewrite map_length. auto.
+          * rewrite H2. apply StronglySorted_record_type_sort.
       - admit.
       - admit.
       - admit.
@@ -1603,85 +1684,7 @@ Section WithMap.
       - easy.
       - simpl. inversion HL; subst. constructor; auto.
     Qed.
-
-    Theorem typechecker_sound' : forall e Gstore Genv store env t e',
-        tenv_env_agree Gstore store ->
-        tenv_env_agree Genv env ->
-        (synthesize_expr Gstore Genv e = Success (t, e') ->
-        has_type (interp_expr store env e) t) /\
-        (analyze_expr Gstore Genv t e = Success e' ->
-        has_type (interp_expr store env e) t).
-    Proof.
-      induction e; intros Gstore Genv store env t e'.
-      - (* EVar *)
-        simpl; split; intros H _ Henv; unfold get_local;
-        destruct (map.get Genv x) eqn:G; try discriminate; apply Henv in G;
-          destruct (map.get env x); intuition;
-          try (injection H; intros; subst; auto);
-          destruct_type_eqb; auto.
-      - (* ELoc *)
-        simpl; split; intros H Hstore _; unfold get_local;
-        destruct (map.get Gstore x) eqn:G; try discriminate; apply Hstore in G;
-          destruct (map.get store x); intuition;
-          try (injection H; intros; subst; auto);
-          destruct_type_eqb; auto.
-      - (* EAtom *)
-        simpl; split; intros H _ _.
-        + destruct (synthesize_atom a) eqn:Hsyn; try discriminate.
-          pose proof atom_type_safe' as Hatom. destruct a0.
-          apply Hatom in Hsyn. injection H; intros; subst; auto.
-        + destruct (analyze_atom t a) eqn:Halz; try discriminate.
-          pose proof atom_type_safe' as Hatom.
-          apply Hatom in Halz; auto.
-      - (* EUnop *)
-        split; intros H Hstore Henv.
-        + destruct o; simpl in *;
-            try (match goal with
-                 | H: e' <- ?x;; _ = _ |- _ => destruct x eqn:H'
-                 end; try discriminate; eapply IHe in H'; eauto;
-                 inversion H'; inversion H; constructor).
-          * destruct (synthesize_expr Gstore Genv e) eqn:H'; try discriminate. destruct a; eapply IHe in H'; eauto.
-            destruct t0; try discriminate. inversion H'; inversion H; simpl; constructor.
-          * destruct (synthesize_expr Gstore Genv e) eqn:H'; try discriminate. destruct a. eapply IHe in H'; eauto. inversion H; simpl; constructor; auto.
-        + destruct o; simpl in *;
-            try (simpl in H; destruct_type_eqb; eapply IHe in H; eauto; inversion H; constructor).
-          * destruct (synthesize_expr Gstore Genv e) eqn:H'; try discriminate.
-            destruct a; eapply IHe in H'; eauto. destruct t0; try discriminate.
-            inversion H'; simpl; destruct_type_eqb; constructor.
-          * destruct t; try discriminate. constructor. eapply IHe; eauto.
-      - (* EBinop *)
-        split; intros H Hstore Henv.
-        + destruct o; simpl in *;
-            try (repeat (match goal with
-                       | H: e' <- ?x;; _ = _ |- _ =>
-                           let H' := fresh H' in
-                           destruct x eqn:H'
-                       end; try discriminate);
-               eapply IHe1 in H'; eauto; eapply IHe2 in H'0; eauto;
-               inversion H'; inversion H'0; inversion H; constructor).
-          * destruct (synthesize_expr Gstore Genv e1) eqn:H1'.
-            -- destruct a. destruct t0; try discriminate. destruct (analyze_expr Gstore Genv (TList t0) e2) eqn:H2'; try discriminate. eapply IHe1 in H1'; eapply IHe2 in H2'; eauto. inversion H; inversion H1'; inversion H2'; constructor; auto.
-               ++ fold (app l nil). rewrite app_nil_r. auto.
-               ++ fold (app l (v0 :: l0)). apply app_has_type; intuition; constructor; auto.
-            -- destruct (synthesize_expr Gstore Genv e2) eqn:H2'; try discriminate.
-               destruct a. destruct t0; try discriminate.
-               destruct (analyze_expr Gstore Genv (TList t0) e1) eqn:H1''; try discriminate.
-               eapply IHe2 in H2'; eapply IHe1 in H1''; eauto.
-
-    Theorem type_annotation_sound : forall e Gstore Genv store env t e',
-        synthesize_expr Gstore Genv e = Success (t, e') ->
-        tenv_env_agree Gstore store ->
-        tenv_env_agree Genv env ->
-        interp_expr store env e = interp_expr store env e'.
-    Proof.
-      intros e Gstore Genv store env t e' H_syn Hstore Henv. induction e; simpl in *.
-      - destruct (map.get Genv x); try discriminate.
-        injection H_syn; intros; subst; reflexivity.
-      - destruct (map.get Gstore x);  try discriminate.
-        injection H_syn; intros; subst; reflexivity.
-      - destruct a; simpl in *; try (injection H_syn; intros; subst; reflexivity);
-        destruct t0; try discriminate; injection H_syn; intros; subst; reflexivity.
-      Admitted.*)
+*)
   End WithWord.
 End WithMap.
 
