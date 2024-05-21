@@ -1659,6 +1659,49 @@ Section WithMap.
     Qed.
     End __.
 
+    Lemma proj_record_type_sound : forall l s t, proj_record_type l s = Success t -> In (s, t) l.
+    Proof.
+      induction l; simpl in *; try discriminate. intros.
+      destruct a. destruct_match; auto.
+      rewrite String.eqb_eq in E. invert_result. auto.
+    Qed.
+
+    Lemma dict_from'_sound : forall l,
+        Forall (fun p =>
+                  (forall (Gstore Genv : tenv) (t : type) (e' : expr),
+                      (synthesize_expr Gstore Genv (fst p) = Success (t, e') -> type_of Gstore Genv (fst p) t) /\
+                        (analyze_expr Gstore Genv t (fst p) = Success e' -> type_of Gstore Genv (fst p) t)) /\
+                    (forall (Gstore Genv : tenv) (t : type) (e' : expr),
+                        (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+                          (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t))) l ->
+        forall Gstore Genv kt vt l',
+          dict_from' (List.map (fun '(k, v) => k' <- analyze_expr Gstore Genv kt k;; v' <- analyze_expr Gstore Genv vt v;; Success (k', v')) l) = Success l' -> Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l.
+    Proof.
+      induction l; simpl; intros.
+      - apply Forall_nil.
+      - repeat destruct_match. invert_result. inversion H; subst; simpl in *.
+        constructor.
+        + split; simpl.
+          * apply H2 in E3. apply E3.
+          * apply H2 in E4. apply E4.
+        + eapply IHl; eauto.
+    Qed.
+
+    Lemma analyze_dict_body_sound : forall l,
+        Forall (fun p =>
+                  (forall (Gstore Genv : tenv) (t : type) (e' : expr),
+                      (synthesize_expr Gstore Genv (fst p) = Success (t, e') -> type_of Gstore Genv (fst p) t) /\
+                        (analyze_expr Gstore Genv t (fst p) = Success e' -> type_of Gstore Genv (fst p) t)) /\
+                    (forall (Gstore Genv : tenv) (t : type) (e' : expr),
+                        (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
+                          (analyze_expr Gstore Genv t (snd p) = Success e' -> type_of Gstore Genv (snd p) t))) l ->
+        forall Gstore Genv kt vt e',
+          analyze_dict_body analyze_expr Gstore Genv kt vt l = Success e' -> Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l.
+    Proof.
+      unfold analyze_dict_body, dict_from. intros.
+      destruct_match. invert_result. eapply dict_from'_sound; eauto.
+    Qed.
+
     Lemma typechecker_sound : forall e Gstore Genv t e',
         (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
           (analyze_expr Gstore Genv t e = Success e' -> type_of Gstore Genv e t).
@@ -1700,15 +1743,18 @@ Section WithMap.
           * rewrite Bool.andb_true_iff in E2. apply double_incl_NoDup_Permuted; intuition.
             apply leb_complete. repeat rewrite map_length. auto.
           * rewrite H2. apply StronglySorted_record_type_sort.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto;
+          auto using proj_record_type_sound.
+      - split; intros; repeat destruct_match; try invert_result; constructor;
+        eapply analyze_dict_body_sound; eauto.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; constructor; auto.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; constructor; auto.
       - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
       - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
       - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
-    Admitted.
+      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+    Qed.
+
 (*
     Lemma app_has_type : forall l r t, has_type (VList l) t /\ has_type (VList r) t -> has_type (VList (l ++ r)) t.
     Proof.
