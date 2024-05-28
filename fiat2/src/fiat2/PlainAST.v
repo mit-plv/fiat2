@@ -1707,6 +1707,64 @@ Section WithMap.
           * symmetry. apply EXY.
     Qed.
 
+    Section EnvGenvRelation. (*env-genv relation definitions and related proofs 
+                              for possible use in filter/join conversions (not currently used)*)
+    Definition sub_domain1 (env: locals) (Genv: tenv) : Prop := (* in env -> in Genv *)
+      forall (k: string),
+        (exists v: value, map.get env k = Some v) -> (exists t: type, map.get Genv k = Some t).
+
+    Definition sub_domain2 (env: locals) (Genv: tenv) : Prop := (* in Genv -> in env *)
+      forall (k: string),
+        (exists t: type, map.get Genv k = Some t) -> (exists v: value, map.get env k = Some v).
+
+    Definition same_domain2 (env: locals) (Genv: tenv) : Prop :=
+      sub_domain1 env Genv /\ sub_domain2 env Genv.
+                                                
+    Definition env_genv_relation (env: locals) (Genv: tenv) : Prop :=
+      same_domain2 env Genv /\
+      forall (k: string) (v: value) (t: type),
+        (map.get env k = Some v) -> (map.get Genv k = Some t) -> has_type v t.
+    
+    Lemma same_domain_inductive : forall (env: locals) (Genv: tenv) (x: string) (a: value) (tx: type),
+        same_domain2 env Genv ->
+        same_domain2 (set_local env x a) (map.put Genv x tx).
+      intros env Genv x a tx [EG1 EG2]. split.
+      - unfold sub_domain1. intros k [v EV]. unfold set_local in EV. destruct (eqb k x) eqn:KX.
+        + rewrite String.eqb_eq in KX. rewrite KX. exists tx. apply map.get_put_same.
+        + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
+          * apply EG1. rewrite map.get_put_diff in EV.
+            -- exists v. apply EV.
+            -- apply KX.
+          * apply KX.
+      - unfold sub_domain2. intros k [t EV]. unfold set_local. destruct (eqb k x) eqn:KX.
+        + rewrite String.eqb_eq in KX. rewrite KX. exists a. apply map.get_put_same.
+        + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
+          * apply EG2. rewrite map.get_put_diff in EV.
+            -- exists t. apply EV.
+            -- apply KX.
+          * apply KX. Qed.
+    
+    Lemma env_genv_inductive: forall (env: locals) (Genv: tenv) (x: string) (a: value) (tx: type),
+      has_type a tx ->  
+      (forall (k : string) (v : value) (t : type),
+        map.get env k = Some v -> map.get Genv k = Some t -> has_type v t) ->
+      forall (k : string) (v : value) (t : type),
+        map.get (set_local env x a) k = Some v ->
+        map.get (map.put Genv x tx) k = Some t -> has_type v t.
+    intros env Genv x a tx T EG k v t KV KT. unfold set_local in KV. destruct (eqb k x) eqn:KX.
+    - rewrite String.eqb_eq in KX. rewrite KX in KV, KT.
+      rewrite map.get_put_same in KV. rewrite map.get_put_same in KT. inversion KV. inversion KT.
+      rewrite <- H0. rewrite <- H1. apply T.
+    - rewrite String.eqb_neq in KX. apply EG with k.
+      + rewrite map.get_put_diff in KV.
+        * apply KV.
+        * apply KX.
+      + rewrite map.get_put_diff in KT.
+        * apply KT.
+        * apply KX. Qed.  
+    End EnvGenvRelation.
+              
+
     Local Ltac destruct_match :=
       lazymatch goal with
       | H : (if type_eqb ?x ?y then _ else _) = _ |- _ =>
