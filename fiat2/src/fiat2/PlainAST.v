@@ -447,10 +447,76 @@ Section WithWord.
     apply compare_antisym__leb_total. exact value_compare_antisym.
   Qed.
 
+  Section SortRecord.
+    Context {A : Type}.
+    Definition record_entry_leb (p p' : (string * A)) : bool := String.leb (fst p) (fst p').
+    Definition record_sort := Sectioned.sort record_entry_leb.
+    Lemma record_entry_leb_total : is_total record_entry_leb.
+    Proof.
+      unfold is_total. intros p p'. destruct p as [s t], p' as [s' t'].
+      unfold record_entry_leb; simpl. destruct (String.leb s s') eqn:E; auto.
+      right. pose proof String.leb_total as H. destruct (H s s'); congruence.
+    Qed.
+    Lemma LocallySorted_record_sort : forall l, LocallySorted record_entry_leb (record_sort l).
+    Proof.
+      exact (Sectioned.LocallySorted_sort _ record_entry_leb record_entry_leb_total).
+    Qed.
+
+      Lemma string_compare_trans : forall s1 s2 s3,
+          String.compare s1 s2 = Lt -> String.compare s2 s3 = Lt -> String.compare s1 s3 = Lt.
+      Proof.
+        induction s1; destruct s2, s3; auto; simpl in *; try discriminate.
+        - intros. destruct (Ascii.compare a a0) eqn:E1, (Ascii.compare a0 a1) eqn:E2; try discriminate; auto.
+          + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. eapply IHs1; eauto.
+          + apply Ascii.compare_eq_iff in E1; subst. rewrite E2. auto.
+          + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. auto.
+          + unfold Ascii.compare in *. rewrite N.compare_lt_iff in E1, E2.
+            pose proof (N.lt_trans _ _ _ E1 E2). rewrite <-  N.compare_lt_iff in H1.
+            rewrite H1. easy.
+      Qed.
+
+      Lemma record_entry_leb_trans : RelationClasses.Transitive record_entry_leb.
+      Proof.
+        unfold RelationClasses.Transitive. destruct x, y, z. unfold record_entry_leb. simpl.
+        unfold String.leb. destruct (String.compare s s0) eqn:E1, (String.compare s0 s1) eqn:E2; intuition.
+        - apply compare_eq_iff in E2. subst. rewrite E1; easy.
+        - apply compare_eq_iff in E1. subst. rewrite E2; easy.
+        - apply compare_eq_iff in E2. subst. rewrite E1; easy.
+        - pose proof (string_compare_trans _ _ _ E1 E2). rewrite H1; easy.
+      Qed.
+
+      Lemma StronglySorted_record_sort : forall l, StronglySorted (record_entry_leb) (record_sort l).
+      Proof.
+        intros. apply Sectioned.StronglySorted_sort.
+        - apply record_entry_leb_total.
+        - apply record_entry_leb_trans.
+      Qed.
+
+      Lemma Permuted_record_sort : forall l, Permutation l (record_sort l).
+      Proof.
+        apply Sectioned.Permuted_sort.
+      Qed.
+
+  End SortRecord.
+
+  Definition dict_entry_leb (p p' : (value * value)) : bool := value_leb (fst p) (fst p').
+  Definition dict_sort := Sectioned.sort dict_entry_leb.
+  Lemma dict_entry_leb_total : is_total dict_entry_leb.
+  Proof.
+    unfold is_total. intros p p'. destruct p as [s t], p' as [s' t'].
+    unfold dict_entry_leb; simpl. apply value_leb_total.
+  Qed.
+  Lemma LocallySorted_dict_sort : forall l, LocallySorted dict_entry_leb (dict_sort l).
+  Proof.
+    exact (Sectioned.LocallySorted_sort _ dict_entry_leb dict_entry_leb_total).
+  Qed.
+(* ??? Necessary to compare each entry by both fields?
   Definition record_entry_compare := pair_compare String.compare value_compare.
   Definition record_entry_leb := leb_from_compare record_entry_compare.
   Definition record_sort := Sectioned.sort record_entry_leb.
-  Lemma record_entry_compare_antisym : is_antisym record_entry_compare.
+  Lemma record_entry_leb_total : is_total record_entry_leb.
+
+Lemma record_entry_compare_antisym : is_antisym record_entry_compare.
   Proof.
     apply antisym__pair_antisym.
     - exact String.compare_antisym.
@@ -480,19 +546,8 @@ Section WithWord.
   Proof.
     exact (Sectioned.LocallySorted_sort _ dict_entry_leb dict_entry_leb_total).
   Qed.
+ *)
 
-  Definition record_type_entry_leb (p p' : (string * type)) : bool := String.leb (fst p) (fst p').
-  Definition record_type_sort := Sectioned.sort record_type_entry_leb.
-  Lemma record_type_entry_leb_total : is_total record_type_entry_leb.
-  Proof.
-    unfold is_total. intros p p'. destruct p as [s t], p' as [s' t'].
-    unfold record_type_entry_leb; simpl. destruct (String.leb s s') eqn:E; auto.
-    right. pose proof String.leb_total as H. destruct (H s s'); congruence.
-  Qed.
-  Lemma LocallySorted_record_type_sort : forall l, LocallySorted record_type_entry_leb (record_type_sort l).
-  Proof.
-    exact (Sectioned.LocallySorted_sort _ record_type_entry_leb record_type_entry_leb_total).
-  Qed.
   (* ----- End of comparison ----- *)
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
@@ -583,9 +638,6 @@ Section WithWord.
       | None => VUnit
       end.
 
-    Definition set_local (l : locals) (x : string) (v : value) :
-      locals := map.put l x v.
-
     Fixpoint interp_expr (store env : locals) (e : expr) : value :=
       match e with
       | EVar x => get_local env x
@@ -597,10 +649,10 @@ Section WithWord.
                         | VBool b => if b then interp_expr store env e2 else interp_expr store env e3
                         | _ => VUnit
                         end
-      | ELet e1 x e2 => interp_expr store (set_local env x (interp_expr store env e1)) e2
+      | ELet e1 x e2 => interp_expr store (map.put env x (interp_expr store env e1)) e2
       | EFlatmap e1 x e2 =>
           match interp_expr store env e1 with
-          | VList l1 => VList (flat_map (fun v => match interp_expr store (set_local env x v) e2 with
+          | VList l1 => VList (flat_map (fun v => match interp_expr store (map.put env x v) e2 with
                                                   | VList l2 => l2
                                                   | _ => nil
                                                   end) l1)
@@ -609,7 +661,7 @@ Section WithWord.
       | EFold e1 e2 x y e3 =>
           match interp_expr store env e1 with
           | VList l1 => let a := interp_expr store env e2 in
-                        let f := fun v acc => interp_expr store (set_local (set_local env x v) y acc) e3 in
+                        let f := fun v acc => interp_expr store (map.put (map.put env x v) y acc) e3 in
                         fold_right f a l1
           | _ => VUnit
           end
@@ -640,7 +692,7 @@ Section WithWord.
           match interp_expr store env l with
           | VList l => VList (List.filter
                                 (fun v =>
-                                   let env' := set_local env x v in
+                                   let env' := map.put env x v in
                                    match interp_expr store env' p with
                                    | VBool b => b
                                    | _ => false
@@ -654,10 +706,10 @@ Section WithWord.
               | VList l2 => VList (flat_map
                                      (fun v1 =>
                                         List.map
-                                          (fun v2 => let env' := set_local (set_local env x v1) y v2 in
+                                          (fun v2 => let env' := map.put (map.put env x v1) y v2 in
                                                             interp_expr store env' r)
                                           (List.filter
-                                             (fun v2 => let env' := set_local (set_local env x v1) y v2 in
+                                             (fun v2 => let env' := map.put (map.put env x v1) y v2 in
                                                         match interp_expr store env' p with
                                                         | VBool b => b
                                                         | _ => false
@@ -670,7 +722,7 @@ Section WithWord.
           end
       | EProj l x r =>
           match interp_expr store env l with
-          | VList l => VList (List.map (fun v => interp_expr store (set_local env x v) r) l)
+          | VList l => VList (List.map (fun v => interp_expr store (map.put env x v) r) l)
           | _ => VUnit
           end
       end.
@@ -682,20 +734,20 @@ Section WithWord.
           let store' := interp_command store env c1 in
           interp_command store' env c2
       | CLet e x c =>
-          let env' := set_local env x (interp_expr store env e) in
+          let env' := map.put env x (interp_expr store env e) in
           interp_command store env' c
       | CLetMut e x c1 =>
-          let store' := set_local store x (interp_expr store env e) in
+          let store' := map.put store x (interp_expr store env e) in
           let store'' := interp_command store' env c1 in
           map.update store'' x (map.get store x)
-      | CAssign x e => set_local store x (interp_expr store env e)
+      | CAssign x e => map.put store x (interp_expr store env e)
       | CIf e c1 c2 => match interp_expr store env e with
                        | VBool b => if b then interp_command store env c1 else interp_command store env c2
                        | _ => store (* unreachable cases *)
                        end
       | CForeach e x c =>
           match interp_expr store env e with
-          | VList l => fold_left (fun store' v => interp_command store' (set_local env x v) c) l store
+          | VList l => fold_left (fun store' v => interp_command store' (map.put env x v) c) l store
           | _ => store (* unreachable cases *)
           end
       end.
@@ -918,7 +970,7 @@ Fixpoint record_type_from' (l : list (string * result (type * expr))) : result (
   end.
 
 Definition record_type_from (l : list (string * result (type * expr))) : result (type * expr) :=
-  '(tl, el) <- record_type_from' l ;; Success (TRecord (record_type_sort tl), ERecord el).
+  '(tl, el) <- record_type_from' l ;; Success (TRecord (record_sort tl), ERecord el).
 
 Fixpoint record_from' (l : list (string * result expr)) : result (list (string * expr)) :=
   match l with
@@ -1112,22 +1164,21 @@ Section WithMap.
     Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
     NoDup (List.map fst l) ->
     Permutation tl tl' ->
-    StronglySorted record_type_entry_leb tl' ->
+    StronglySorted record_entry_leb tl' ->
     type_of Gstore Genv (ERecord l) (TRecord tl')
   | TyEAccess e tl x t : type_of Gstore Genv e (TRecord tl) ->
                          In (x, t) tl ->
                          type_of Gstore Genv (EAccess e x) t
-  | TyEDict l kt vt : Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
+  | TyEDict l kt vt :  Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
                       type_of Gstore Genv (EDict l) (TDict kt vt)
-  (* ??? Why is this a non-strictly positive occurrence of type_of? Forall (fun '(k, v) => type_of Gstore Genv k kt /\ type_of Gstore Genv v vt) l -> type_of Gstore Genv (EDict l) (TDict kt vt). *)
-  | TyInsert d kt vt k v : type_of Gstore Genv d (TDict kt vt) ->
+  | TyEInsert d kt vt k v : type_of Gstore Genv d (TDict kt vt) ->
                            type_of Gstore Genv k kt ->
                            type_of Gstore Genv v vt ->
                            type_of Gstore Genv (EInsert d k v) (TDict kt vt)
-  | TyDelete d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
+  | TyEDelete d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
                            type_of Gstore Genv k kt ->
                            type_of Gstore Genv (EDelete d k) (TDict kt vt)
-  | TyLookup d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
+  | TyELookup d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
                          type_of Gstore Genv k kt ->
                          type_of Gstore Genv (ELookup d k) (TOption vt)
   | TyEFilter e t x p : type_of Gstore Genv e (TList t) ->
@@ -1141,6 +1192,127 @@ Section WithMap.
   | TyEProj e t1 x r t2 : type_of Gstore Genv e (TList t1) ->
                           type_of Gstore (map.put Genv x t1) r t2 ->
                           type_of Gstore Genv (EProj e x r) (TList t2).
+  (*  with Forall (Gstore Genv : tenv) : type -> type -> list (expr * expr) -> Prop :=
+  | Forall_nil kt vt : Forall Gstore Genv kt vt nil
+  | Forall_cons kt vt : forall (p : expr * expr) (l : list (expr * expr)),
+      type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt ->
+      Forall Gstore Genv kt vt l ->
+      Forall Gstore Genv kt vt (p :: l)
+    with Forall2 (Gstore Genv : tenv) : list expr -> list type -> Prop :=
+    | Forall2_nil : Forall2 Gstore Genv nil nil
+    | Forall2_cons : forall x y l l', type_of Gstore Genv x y -> Forall2 Gstore Genv l l' -> Forall2 Gstore Genv (x :: l) (y :: l').
+
+  Scheme type_of_ind2 := Minimality for type_of Sort Prop
+      with Forall_ind2 := Minimality for Forall Sort Prop
+      with Forall2_ind2 := Minimality for Forall2 Sort Prop.
+
+  Combined Scheme type_of_mutind from type_of_ind2, Forall_ind2, Forall2_ind2.
+*)
+  Section TypeOfIH.
+    Context (Gstore : tenv).
+    Context (P : tenv -> expr -> type -> Prop)
+    (*  (P0 : tenv -> type -> type -> list (expr * expr) -> Prop)
+      (P1 : tenv -> list expr -> list type -> Prop) *).
+
+    Hypothesis (f_var : forall Genv x t, map.get Genv x = Some t -> P Genv (EVar x) t).
+    Hypothesis (f_loc : forall Genv x t, map.get Gstore x = Some t -> P Genv (ELoc x) t).
+    Hypothesis (f_atom : forall Genv a t, type_of_atom a t -> P Genv (EAtom a) t).
+    Hypothesis (f_unop : forall Genv o e t1 t2, type_of_unop o t1 t2 -> type_of Gstore Genv e t1 -> P Genv e t1 -> P Genv (EUnop o e) t2).
+    Hypothesis (f_binop : forall Genv o e1 e2 t1 t2 t3, type_of_binop o t1 t2 t3 -> type_of Gstore Genv e1 t1 -> P Genv e1 t1 ->
+                                                        type_of Gstore Genv e2 t2 -> P Genv e2 t2 -> P Genv (EBinop o e1 e2) t3).
+    Hypothesis (f_if : forall Genv e1 e2 e3 t, type_of Gstore Genv e1 TBool -> P Genv e1 TBool ->
+                                               type_of Gstore Genv e2 t -> P Genv e2 t ->
+                                               type_of Gstore Genv e3 t -> P Genv e3 t ->
+                                               P Genv (EIf e1 e2 e3) t).
+    Hypothesis (f_let : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 t1 -> P Genv e1 t1 ->
+                                                   type_of Gstore (map.put Genv x t1) e2 t2 -> P (map.put Genv x t1) e2 t2 ->
+                                                   P Genv (ELet e1 x e2) t2).
+    Hypothesis (f_flatmap : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
+                                                       type_of Gstore (map.put Genv x t1) e2 (TList t2) -> P (map.put Genv x t1) e2 (TList t2) ->
+                                                       P Genv (EFlatmap e1 x e2) (TList t2)).
+    Hypothesis (f_fold : forall Genv e1 t1 e2 t2 x y e3,
+                   type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
+                   type_of Gstore Genv e2 t2 -> P Genv e2 t2 ->
+                   type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 -> P (map.put (map.put Genv x t1) y t2) e3 t2 ->
+                   P Genv (EFold e1 e2 x y e3) t2).
+    Hypothesis (f_record : forall Genv l tl tl', List.map fst l = List.map fst tl ->
+                                                 Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
+                                                 Forall2 (P Genv) (List.map snd l) (List.map snd tl) ->
+                                                 NoDup (List.map fst l) ->
+                                                 Permutation tl tl' ->
+                                                 StronglySorted (fun p p' : string * type => record_entry_leb p p') tl' ->
+                                                 P Genv (ERecord l) (TRecord tl')).
+    Hypothesis (f_access : forall Genv e tl x t, type_of Gstore Genv e (TRecord tl) -> P Genv e (TRecord tl) ->
+                                                 In (x, t) tl -> P Genv (EAccess e x) t).
+    Hypothesis (f_dict : forall Genv l kt vt, Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
+                                              Forall (fun p => P Genv (fst p) kt /\ P Genv (snd p) vt) l -> P Genv (EDict l) (TDict kt vt)).
+    Hypothesis (f_insert : forall Genv d kt vt k v, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
+                                                    type_of Gstore Genv k kt -> P Genv k kt -> type_of Gstore Genv v vt -> P Genv v vt ->
+                                                    P Genv (EInsert d k v) (TDict kt vt)).
+    Hypothesis (f_delete : forall Genv d kt vt k, type_of Gstore Genv d (TDict kt vt) ->
+                                                  P Genv d (TDict kt vt) -> type_of Gstore Genv k kt -> P Genv k kt ->
+                                                  P Genv (EDelete d k) (TDict kt vt)).
+    Hypothesis (f_lookup : forall Genv d kt vt k, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
+                                                  type_of Gstore Genv k kt -> P Genv k kt -> P Genv (ELookup d k) (TOption vt)).
+    Hypothesis (f_filter : forall Genv e t x p, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
+                                                type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
+                                                P Genv (EFilter e x p) (TList t)).
+    Hypothesis (f_join : forall Genv e1 t1 e2 t2 x y p r t3,
+                   type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
+                   type_of Gstore Genv e2 (TList t2) -> P Genv e2 (TList t2) ->
+                   type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool -> P (map.put (map.put Genv x t1) y t2) p TBool ->
+                   type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 -> P (map.put (map.put Genv x t1) y t2) r t3 ->
+                   P Genv (EJoin e1 e2 x y p r) (TList t3)).
+    Hypothesis (f_proj : forall Genv e t1 x r t2, type_of Gstore Genv e (TList t1) -> P Genv e (TList t1) ->
+                                                  type_of Gstore (map.put Genv x t1) r t2 -> P (map.put Genv x t1) r t2 ->
+                                                  P Genv (EProj e x r) (TList t2)).
+
+    (* Context (tmp_P0 : forall Genv kt vt l, P0 Genv kt vt l).
+    Context (tmp_P1 : forall Genv l tl, P1 Genv l tl). *)
+
+    Section __.
+      Context (type_of_IH : forall Genv e t, type_of Gstore Genv e t -> P Genv e t).
+
+      Fixpoint dict_type_of_IH Genv kt vt l (H : Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l) : Forall (fun p => P Genv (fst p) kt /\ P Genv (snd p) vt) l :=
+        match H with
+        | Forall_nil _ => Forall_nil _
+        | @Forall_cons _ _ p l Hp Hl =>
+            match Hp with
+            | conj Hfst Hsnd =>
+                @Forall_cons _ _ p l (conj (type_of_IH _ _ _ Hfst) (type_of_IH _ _ _ Hsnd)) (dict_type_of_IH Genv kt vt l Hl)
+            end
+        end.
+
+      Fixpoint record_type_of_IH Genv (l : list expr) (tl : list type) (H : Forall2 (type_of Gstore Genv) l tl) : Forall2 (P Genv) l tl :=
+        match H with
+        | Forall2_nil _ => Forall2_nil _
+        | @Forall2_cons _ _ _ e t l tl He Hl => @Forall2_cons _ _ _ e t l tl (type_of_IH _ _ _ He) (record_type_of_IH Genv l tl Hl)
+        end.
+    End __.
+
+    Fixpoint type_of_IH Genv e t (H : type_of Gstore Genv e t) : P Genv e t :=
+      match H with
+      | TyEVar _ _ x t Hvar => f_var Genv x t Hvar
+      | TyELoc _ _ x t Hloc => f_loc Genv x t Hloc
+      | TyEAtom _ _ a t Hatom => f_atom Genv a t Hatom
+      | TyEUnop _ _ o e t1 t2 Ho He => f_unop Genv o e t1 t2 Ho He (type_of_IH Genv e t1 He)
+      | TyEBinop _ _ o e1 e2 t1 t2 t3 Ho He1 He2 => f_binop Genv o e1 e2 t1 t2 t3 Ho He1 (type_of_IH Genv e1 t1 He1) He2 (type_of_IH Genv e2 t2 He2)
+      | TyEIf _ _ e1 e2 e3 t He1 He2 He3 => f_if Genv e1 e2 e3 t He1 (type_of_IH Genv e1 TBool He1) He2 (type_of_IH Genv e2 t He2) He3 (type_of_IH Genv e3 t He3)
+      | TyELet _ _ e1 t1 x e2 t2 He1 He2 => f_let Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 t1 He1) He2 (type_of_IH (map.put Genv x t1) e2 t2 He2)
+      | TyEFlatmap _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TList t2) He2)
+      | TyEFold _ _ e1 t1 e2 t2 x y e3 He1 He2 He3 => f_fold Genv e1 t1 e2 t2 x y e3 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 t2 He2) He3 (type_of_IH (map.put (map.put Genv x t1) y t2) e3 t2 He3)
+      | TyERecord _ _ l tl tl' Hname Hfield Hnodup Hpermu Hsort => f_record Genv l tl tl' Hname Hfield (record_type_of_IH type_of_IH Genv (List.map snd l) (List.map snd tl) Hfield) Hnodup Hpermu Hsort
+      | TyEAccess _ _ e tl x t He Hin => f_access Genv e tl x t He (type_of_IH Genv e (TRecord tl) He) Hin
+      | TyEDict _ _ l kt vt Hl => f_dict Genv l kt vt Hl (dict_type_of_IH type_of_IH Genv kt vt l Hl)
+      | TyEInsert _ _ d kt vt k v Hd Hk Hv => f_insert Genv d kt vt k v Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk) Hv (type_of_IH Genv v vt Hv)
+      | TyEDelete _ _ d kt vt k Hd Hk => f_delete Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
+      | TyELookup _ _ d kt vt k Hd Hk => f_lookup Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
+      | TyEFilter _ _ e t x p He Hp => f_filter Genv e t x p He (type_of_IH Genv e (TList t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
+      | TyEJoin _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join Genv e1 t1 e2 t2 x y p r t3 He1
+                   (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 (TList t2) He2) Hp (type_of_IH (map.put (map.put Genv x t1) y t2) p TBool Hp) Hr (type_of_IH (map.put (map.put Genv x t1) y t2) r t3 Hr)
+      | TyEProj _ _ e t1 x r t2 He Hr => f_proj Genv e t1 x r t2 He (type_of_IH Genv e (TList t1) He) Hr (type_of_IH (map.put Genv x t1) r t2 Hr)
+      end.
+  End TypeOfIH.
 
   Section __.
     Context (analyze_expr : tenv -> tenv -> type -> expr -> result expr).
@@ -1242,7 +1414,7 @@ Section WithMap.
                             end
     | ERecord l => match expected with
                    | TRecord tl =>
-                       if type_eqb (TRecord tl) (TRecord (record_type_sort tl))
+                       if type_eqb (TRecord tl) (TRecord (record_sort tl))
                        then
                          if leb (length tl) (length l)
                          then
@@ -1472,35 +1644,31 @@ Section WithMap.
     Local Notation value := (value (word := word)).
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-    Inductive has_type : value -> type -> Prop :=
-    | TyVWord w : has_type (VWord w) TWord
-    | TyVInt n : has_type (VInt n) TInt
-    | TyVBool b : has_type (VBool b) TBool
-    | TyVString s : has_type (VString s) TString
-    | TyVOptionNone t : has_type (VOption None) (TOption t)
-    | TyVOptionSome v t : has_type v t ->
-                          has_type (VOption (Some v)) (TOption t)
-    | TyVList l t : Forall (fun v => has_type v t) l -> has_type (VList l) (TList t)
-    | TyVRecordNil : has_type (VRecord nil) (TRecord nil)
-    | TyVRecordCons s v l tv tl : has_type v tv ->
-                                  has_type (VRecord l) (TRecord tl) ->
-                                  has_type (VRecord ((s, v) :: l)) (TRecord ((s, tv) :: tl))
-    | TyVDictNil tk tv : has_type (VDict nil) (TDict tk tv)
-    | TyVDictCons k v l tk tv : has_type k tk ->
-                                has_type v tv ->
-                                has_type (VDict l) (TDict tk tv) ->
-                                has_type (VDict ((k, v) :: l)) (TDict tk tv)
-    | TyVUnit : has_type VUnit TUnit.
+    Inductive type_of_value : value -> type -> Prop :=
+    | TyVWord w : type_of_value (VWord w) TWord
+    | TyVInt n : type_of_value (VInt n) TInt
+    | TyVBool b : type_of_value (VBool b) TBool
+    | TyVString s : type_of_value (VString s) TString
+    | TyVOptionNone t : type_of_value (VOption None) (TOption t)
+    | TyVOptionSome v t : type_of_value v t ->
+                          type_of_value (VOption (Some v)) (TOption t)
+    | TyVList l t : Forall (fun v => type_of_value v t) l -> type_of_value (VList l) (TList t)
+    | TyVRecord l tl : NoDup (List.map fst l) -> StronglySorted record_entry_leb l ->
+                       Forall2 (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) l tl ->
+                       type_of_value (VRecord l) (TRecord tl)
+    | TyVDict l tk tv : Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l ->
+                        type_of_value (VDict l) (TDict tk tv)
+    | TyVUnit : type_of_value VUnit TUnit.
 
-    Definition tenv_env_agree (G : tenv) (E : locals) :=
+    Definition well_formed_locals (G : tenv) (E : locals) :=
       forall x t, map.get G x = Some t ->
                   match map.get E x with
-                  | Some v => has_type v t
+                  | Some v => type_of_value v t
                   | _ => False
                   end.
 
-    Lemma typeof_to_hastype : forall (store env: locals) (Gstore Genv: tenv) (e: expr) (t: type),
-      type_of Gstore Genv e t -> has_type (interp_expr store env e) t.
+    Lemma typeof_to_typeofvalue : forall (store env: locals) (Gstore Genv: tenv) (e: expr) (t: type),
+      type_of Gstore Genv e t -> type_of_value (interp_expr store env e) t.
     Admitted.
 
     Theorem filter_into_join : forall (store env: locals) (Gstore Genv: tenv) (db1 db2 pj rj pf: expr) (xj yj xf: string) (t tx ty: type),
@@ -1515,18 +1683,18 @@ Section WithMap.
       rewrite filter_flat_map. apply flat_map_ext. intros a.
       rewrite filter_map_commute. f_equal.
       rewrite filter_filter. apply filter_ext. intros b.
-      apply typeof_to_hastype with store (set_local (set_local env xj a) yj b) Gstore (map.put (map.put Genv xj tx) yj ty) pj (TList t) in H.
+      apply typeof_to_typeofvalue with store (map.put (map.put env xj a) yj b) Gstore (map.put (map.put Genv xj tx) yj ty) pj (TList t) in H.
       inversion H. rewrite Bool.andb_false_r. simpl. reflexivity.
     Qed.
 
     Lemma interp_invariant : forall (store env: locals) (Gstore Genv: tenv) (db: expr) (k: string) (v: value) (t: type),
       type_of Gstore Genv db t -> map.get Genv k = None ->
-      interp_expr store env db = interp_expr store (set_local env k v) db.
+      interp_expr store env db = interp_expr store (map.put env k v) db.
     Proof.
       intros store env0 Gstore Genv db k v t T K.
       generalize env0 as env.
       induction T; intros env; simpl; try reflexivity.
-      - unfold get_local, set_local. destruct (eqb k x) eqn:KX.
+      - unfold get_local. destruct (eqb k x) eqn:KX.
         + exfalso. rewrite String.eqb_eq in KX. rewrite KX in K. rewrite K in H. discriminate H.
         + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
           * reflexivity.
@@ -1548,10 +1716,10 @@ Section WithMap.
         + apply K.
       - rewrite <- IHT1.
         + destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX. unfold set_local.
+          * rewrite String.eqb_eq in KX. rewrite KX.
             rewrite Properties.map.put_put_same. reflexivity.
           * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- unfold set_local. rewrite Properties.map.put_comm.
+            -- rewrite Properties.map.put_comm.
                ++ reflexivity.
                ++ symmetry. apply KX.
             -- rewrite map.get_put_diff.
@@ -1561,10 +1729,10 @@ Section WithMap.
       - rewrite <- IHT1.
         + destruct (interp_expr store env e1) eqn:H; try reflexivity.
           f_equal. apply flat_map_ext. intros a. destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX. unfold set_local.
+          * rewrite String.eqb_eq in KX. rewrite KX.
             rewrite Properties.map.put_put_same. reflexivity.
           * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- unfold set_local. rewrite Properties.map.put_comm.
+            -- rewrite Properties.map.put_comm.
                ++ reflexivity.
                ++ symmetry. apply KX.
             -- rewrite map.get_put_diff.
@@ -1580,7 +1748,7 @@ Section WithMap.
             -- rewrite String.eqb_neq in KY. destruct (eqb x k) eqn:KX.
                ++ admit.
                ++ rewrite String.eqb_neq in KX. rewrite IHT3.
-                  ** unfold set_local. rewrite Properties.map.put_comm.
+                  ** rewrite Properties.map.put_comm.
                      --- rewrite Properties.map.put_comm with (k1:=x) (k2:=k).
                          +++ reflexivity.
                          +++ apply KX.
@@ -1616,10 +1784,10 @@ Section WithMap.
       - rewrite <- IHT1.
         + destruct (interp_expr store env e) eqn:H; try reflexivity.
           f_equal. apply filter_ext. intros a. destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX. unfold set_local.
+          * rewrite String.eqb_eq in KX. rewrite KX.
             rewrite Properties.map.put_put_same. reflexivity.
           * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- unfold set_local. rewrite Properties.map.put_comm.
+            -- rewrite Properties.map.put_comm.
                ++ reflexivity.
                ++ symmetry. apply KX.
             -- rewrite map.get_put_diff.
@@ -1635,12 +1803,12 @@ Section WithMap.
                ++ admit.
                ++ rewrite String.eqb_neq in KX. f_equal.
                   ** apply FunctionalExtensionality.functional_extensionality. intros b. rewrite IHT4.
-                     --- unfold set_local. rewrite Properties.map.put_comm.
+                     --- rewrite Properties.map.put_comm.
                          +++ rewrite Properties.map.put_comm with (k1:=k) (k2:=x); congruence.
                          +++ congruence.
                      --- rewrite !map.get_put_diff; assumption.
                   ** apply filter_ext. intros b. rewrite IHT3.
-                     --- unfold set_local. rewrite Properties.map.put_comm.
+                     --- rewrite Properties.map.put_comm.
                          +++ rewrite Properties.map.put_comm with (k1:=k) (k2:=x); congruence.
                          +++ congruence.
                      --- rewrite !map.get_put_diff; assumption.
@@ -1648,11 +1816,11 @@ Section WithMap.
         + apply K.
       - rewrite <- IHT1.
         + destruct (interp_expr store env e) eqn:H; try reflexivity. f_equal. f_equal.
-          apply FunctionalExtensionality.functional_extensionality. intros a. unfold set_local.
+          apply FunctionalExtensionality.functional_extensionality. intros a.
           destruct (eqb k x) eqn:KX.
           * rewrite String.eqb_eq in KX. rewrite KX. rewrite Properties.map.put_put_same. reflexivity.
           * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- unfold set_local. rewrite Properties.map.put_comm.
+            -- rewrite Properties.map.put_comm.
                ++ reflexivity.
                ++ symmetry. apply KX.
             -- rewrite map.get_put_diff; assumption.
@@ -1674,18 +1842,18 @@ Section WithMap.
       destruct (interp_expr store env db1) eqn: DB1; try reflexivity.
       destruct (interp_expr store env db2) eqn: DB2; try reflexivity. f_equal.
       rewrite flat_map_filter. apply flat_map_ext. intros a.
-      apply typeof_to_hastype with store (set_local env x a) Gstore (map.put Genv x tx) p1 TBool in T1 as T1'.
+      apply typeof_to_typeofvalue with store (map.put env x a) Gstore (map.put Genv x tx) p1 TBool in T1 as T1'.
       inversion T1'. symmetry in H0. destruct b.
       - f_equal. rewrite filter_filter. apply filter_ext_in. intros b HB.
-        (*apply typeof_to_hastype with (store:=store) (env:=set_local env x a) in TJ as TJ'.*)
-        apply typeof_to_hastype with store (set_local (set_local env x a) y b) Gstore (map.put (map.put Genv x tx) y ty) pj TBool in TJ as TJ'.
+        (*apply typeof_to_typeofvalue with (store:=store) (env:=set_local env x a) in TJ as TJ'.*)
+        apply typeof_to_typeofvalue with store (map.put (map.put env x a) y b) Gstore (map.put (map.put Genv x tx) y ty) pj TBool in TJ as TJ'.
         inversion TJ'. symmetry in H1. simpl.
-        rewrite interp_invariant with store (set_local env x a) Gstore (map.put Genv x tx) p1 y b TBool in H0.
+        rewrite interp_invariant with store (map.put env x a) Gstore (map.put Genv x tx) p1 y b TBool in H0.
         + rewrite H0. simpl.
-          apply typeof_to_hastype with store (set_local env y b) Gstore (map.put Genv y ty) p2 TBool in T2 as T2'.
-          inversion T2'. symmetry in H2. unfold set_local. rewrite Properties.map.put_comm.
-          * rewrite interp_invariant with store (set_local env y b) Gstore (map.put Genv y ty) p2 x a TBool in H2.
-            -- unfold set_local in H2. rewrite H2. reflexivity.
+          apply typeof_to_typeofvalue with store (map.put env y b) Gstore (map.put Genv y ty) p2 TBool in T2 as T2'.
+          inversion T2'. symmetry in H2. rewrite Properties.map.put_comm.
+          * rewrite interp_invariant with store (map.put env y b) Gstore (map.put Genv y ty) p2 x a TBool in H2.
+            -- rewrite H2. reflexivity.
             -- apply T2.
             -- rewrite map.get_put_diff.
                ++ apply EX.
@@ -1696,10 +1864,10 @@ Section WithMap.
           * apply EY.
           * symmetry. apply EXY.
       - symmetry. apply map_nil. apply filter_nil. intros b HB. unfold apply_bool_binop.
-        destruct (interp_expr store (set_local (set_local env x a) y b) pj) eqn:H4; try reflexivity.
-        rewrite interp_invariant with store (set_local env x a) Gstore (map.put Genv x tx) p1 y b TBool in H0.
+        destruct (interp_expr store (map.put (map.put env x a) y b) pj) eqn:H4; try reflexivity.
+        rewrite interp_invariant with store (map.put env x a) Gstore (map.put Genv x tx) p1 y b TBool in H0.
         + rewrite H0.
-          destruct (interp_expr store (set_local (set_local env x a) y b) p2) eqn:H5; try reflexivity.
+          destruct (interp_expr store (map.put (map.put env x a) y b) p2) eqn:H5; try reflexivity.
           apply Bool.andb_false_r.
         + apply T1.
         + rewrite map.get_put_diff.
@@ -1707,7 +1875,7 @@ Section WithMap.
           * symmetry. apply EXY.
     Qed.
 
-    Section EnvGenvRelation. (*env-genv relation definitions and related proofs 
+    Section EnvGenvRelation. (*env-genv relation definitions and related proofs
                               for possible use in filter/join conversions (not currently used)*)
     Definition sub_domain1 (env: locals) (Genv: tenv) : Prop := (* in env -> in Genv *)
       forall (k: string),
@@ -1719,39 +1887,39 @@ Section WithMap.
 
     Definition same_domain2 (env: locals) (Genv: tenv) : Prop :=
       sub_domain1 env Genv /\ sub_domain2 env Genv.
-                                                
+
     Definition env_genv_relation (env: locals) (Genv: tenv) : Prop :=
       same_domain2 env Genv /\
       forall (k: string) (v: value) (t: type),
-        (map.get env k = Some v) -> (map.get Genv k = Some t) -> has_type v t.
-    
+        (map.get env k = Some v) -> (map.get Genv k = Some t) -> type_of_value v t.
+
     Lemma same_domain_inductive : forall (env: locals) (Genv: tenv) (x: string) (a: value) (tx: type),
         same_domain2 env Genv ->
-        same_domain2 (set_local env x a) (map.put Genv x tx).
+        same_domain2 (map.put env x a) (map.put Genv x tx).
       intros env Genv x a tx [EG1 EG2]. split.
-      - unfold sub_domain1. intros k [v EV]. unfold set_local in EV. destruct (eqb k x) eqn:KX.
+      - unfold sub_domain1. intros k [v EV]. destruct (eqb k x) eqn:KX.
         + rewrite String.eqb_eq in KX. rewrite KX. exists tx. apply map.get_put_same.
         + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
           * apply EG1. rewrite map.get_put_diff in EV.
             -- exists v. apply EV.
             -- apply KX.
           * apply KX.
-      - unfold sub_domain2. intros k [t EV]. unfold set_local. destruct (eqb k x) eqn:KX.
+      - unfold sub_domain2. intros k [t EV]. destruct (eqb k x) eqn:KX.
         + rewrite String.eqb_eq in KX. rewrite KX. exists a. apply map.get_put_same.
         + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
           * apply EG2. rewrite map.get_put_diff in EV.
             -- exists t. apply EV.
             -- apply KX.
           * apply KX. Qed.
-    
+
     Lemma env_genv_inductive: forall (env: locals) (Genv: tenv) (x: string) (a: value) (tx: type),
-      has_type a tx ->  
+      type_of_value a tx ->
       (forall (k : string) (v : value) (t : type),
-        map.get env k = Some v -> map.get Genv k = Some t -> has_type v t) ->
+        map.get env k = Some v -> map.get Genv k = Some t -> type_of_value v t) ->
       forall (k : string) (v : value) (t : type),
-        map.get (set_local env x a) k = Some v ->
-        map.get (map.put Genv x tx) k = Some t -> has_type v t.
-    intros env Genv x a tx T EG k v t KV KT. unfold set_local in KV. destruct (eqb k x) eqn:KX.
+        map.get (map.put env x a) k = Some v ->
+        map.get (map.put Genv x tx) k = Some t -> type_of_value v t.
+    intros env Genv x a tx T EG k v t KV KT. destruct (eqb k x) eqn:KX.
     - rewrite String.eqb_eq in KX. rewrite KX in KV, KT.
       rewrite map.get_put_same in KV. rewrite map.get_put_same in KT. inversion KV. inversion KT.
       rewrite <- H0. rewrite <- H1. apply T.
@@ -1761,9 +1929,22 @@ Section WithMap.
         * apply KX.
       + rewrite map.get_put_diff in KT.
         * apply KT.
-        * apply KX. Qed.  
+        * apply KX. Qed.
     End EnvGenvRelation.
-              
+
+    Lemma well_formed_locals_step : forall G E,
+        well_formed_locals G E ->
+        forall x t v,
+          type_of_value v t ->
+          well_formed_locals (map.put G x t) (map.put E x v).
+    Proof.
+      unfold well_formed_locals; intros.
+      destruct (String.eqb x0 x) eqn:E_x.
+      - rewrite String.eqb_eq in E_x. rewrite E_x in *.
+        rewrite map.get_put_same. rewrite map.get_put_same in H1. congruence.
+      - rewrite String.eqb_neq in E_x. rewrite map.get_put_diff; auto.
+        rewrite map.get_put_diff in H1; auto. apply H. auto.
+    Qed.
 
     Local Ltac destruct_match :=
       lazymatch goal with
@@ -1791,7 +1972,7 @@ Section WithMap.
         repeat (try destruct_compare_types; try destruct_match; try invert_result; try constructor).
     Qed.
 
-    Lemma atom_type_sound : forall a t, type_of_atom a t -> has_type (interp_atom a) t.
+    Lemma atom_type_sound : forall a t, type_of_atom a t -> type_of_value (interp_atom a) t.
     Proof.
       intros a t H. inversion H; subst; repeat constructor.
     Qed.
@@ -1805,41 +1986,6 @@ Section WithMap.
        end.
 
     Section __.
-      Lemma string_compare_trans : forall s1 s2 s3,
-          String.compare s1 s2 = Lt -> String.compare s2 s3 = Lt -> String.compare s1 s3 = Lt.
-      Proof.
-        induction s1; destruct s2, s3; auto; simpl in *; try discriminate.
-        - intros. destruct (Ascii.compare a a0) eqn:E1, (Ascii.compare a0 a1) eqn:E2; try discriminate; auto.
-          + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. eapply IHs1; eauto.
-          + apply Ascii.compare_eq_iff in E1; subst. rewrite E2. auto.
-          + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. auto.
-          + unfold Ascii.compare in *. rewrite N.compare_lt_iff in E1, E2.
-            pose proof (N.lt_trans _ _ _ E1 E2). rewrite <-  N.compare_lt_iff in H1.
-            rewrite H1. easy.
-      Qed.
-
-      Lemma record_type_entry_leb_trans : RelationClasses.Transitive record_type_entry_leb.
-      Proof.
-        unfold RelationClasses.Transitive. destruct x, y, z. unfold record_type_entry_leb. simpl.
-        unfold String.leb. destruct (String.compare s s0) eqn:E1, (String.compare s0 s1) eqn:E2; intuition.
-        - apply compare_eq_iff in E2. subst. rewrite E1; easy.
-        - apply compare_eq_iff in E1. subst. rewrite E2; easy.
-        - apply compare_eq_iff in E2. subst. rewrite E1; easy.
-        - pose proof (string_compare_trans _ _ _ E1 E2). rewrite H1; easy.
-      Qed.
-
-      Lemma StronglySorted_record_type_sort : forall l, StronglySorted (record_type_entry_leb) (record_type_sort l).
-      Proof.
-        intros. apply Sectioned.StronglySorted_sort.
-        - apply record_type_entry_leb_total.
-        - apply record_type_entry_leb_trans.
-      Qed.
-
-      Lemma Permuted_record_type_sort : forall l, Permutation l (record_type_sort l).
-      Proof.
-        apply Sectioned.Permuted_sort.
-      Qed.
-
     Lemma fst_map_fst : forall (A B C : Type) (l : list (A * B)) (f : A -> B -> C),
         List.map fst (List.map (fun '(a, b) => (a, f a b)) l) = List.map fst l.
     Proof.
@@ -1921,6 +2067,16 @@ Section WithMap.
           eapply IHl; eauto.
     Qed.
 
+    Lemma In_Permuted : forall A (x : A) l', In x l' -> exists l, Permutation (x :: l) l'.
+    Proof.
+      clear. induction l'; intros.
+      - apply in_nil in H; intuition.
+      - inversion H.
+        + exists l'; subst; auto.
+        + apply IHl' in H0 as [l Hl]. exists (a :: l). eapply perm_trans; try apply perm_swap.
+          constructor; assumption.
+    Qed.
+
     Lemma double_incl_NoDup_Permuted : forall (l : list (string * expr)) (tl' : list (string * type)),
         inclb String.eqb (List.map fst l) (List.map fst tl') = true ->
         inclb String.eqb (List.map fst tl') (List.map fst l) = true ->
@@ -1941,15 +2097,7 @@ Section WithMap.
           - destruct a; simpl in *. destruct (String.eqb s0 s) eqn:E.
             + rewrite String.eqb_eq in E; subst; auto.
             + rewrite String.eqb_neq in E. right. apply IHtl'. intuition. }
-        apply H5 in H.
-        assert (forall A (x : A) l', In x l' -> exists l, Permutation (x :: l) l').
-        { clear. induction l'; intros.
-          - apply in_nil in H; intuition.
-          - inversion H.
-            + exists l'; subst; auto.
-            + apply IHl' in H0 as [l Hl]. exists (a :: l). eapply perm_trans; try apply perm_swap.
-              constructor; assumption. }
-        apply H6 in H. destruct H as [tl Htl].
+        apply H5, In_Permuted in H. destruct H as [tl Htl].
         eapply Permutation_trans; [| apply Htl].
         subst; apply perm_skip.
         assert (forall (l : list (string * expr)) tl tl' s t,
@@ -1969,11 +2117,11 @@ Section WithMap.
           * inversion H1. auto.
           * apply Permutation_sym in Htl. apply inclb_complete. apply inclb_correct in H4. auto.
             apply Permutation_map with (f := fst) in Htl. apply Permutation_incl in Htl. unfold incl; intros.
-            apply H4 in H7 as H8. apply Htl in H8. inversion H8; auto. simpl in *; subst. inversion H1; intuition.
+            apply H4 in H6 as H8. apply Htl in H8. inversion H8; auto. simpl in *; subst. inversion H1; intuition.
           * apply inclb_complete. apply inclb_correct in H0.
             apply Permutation_map with (f := fst) in Htl. apply Permutation_sym in Htl. apply (Permutation_NoDup Htl) in H3.
             apply Permutation_sym in Htl. apply Permutation_incl in Htl.
-            unfold incl; intros. simpl in *. apply incl_cons_inv in Htl. apply Htl in H7 as H8. apply H0 in H8. inversion H8; auto.
+            unfold incl; intros. simpl in *. apply incl_cons_inv in Htl. apply Htl in H6 as H8. apply H0 in H8. inversion H8; auto.
             subst. inversion H3; intuition.
           * apply Permutation_map with (f := fst) in Htl; apply Permutation_length in Htl. simpl in Htl.
             rewrite <- Htl in H2. apply le_S_n in H2. auto.
@@ -2060,34 +2208,218 @@ Section WithMap.
         + unfold record_type_from in *. repeat destruct_match. invert_result.
           pose proof record_type_from'_sound. eapply H0 in H; eauto.
           apply TyERecord with (tl := l0); intuition;
-          [ apply Permuted_record_type_sort | apply StronglySorted_record_type_sort ].
-        + assert (type_eqb (TRecord l0) (TRecord (record_type_sort l0))); auto.
+          [ apply Permuted_record_sort | apply StronglySorted_record_sort ].
+        + assert (type_eqb (TRecord l0) (TRecord (record_sort l0))); auto.
           apply type_eqb_eq in H1. injection H1; intro. unfold record_from in *. destruct_match. invert_result.
           pose proof record_from'_sound. eapply H0 in H; eauto.
           apply TyERecord with (tl := List.map (fun '(s, e) => (s, get_attr_type l0 s)) l); intuition.
           * rewrite Bool.andb_true_iff in E2. apply double_incl_NoDup_Permuted; intuition.
             apply leb_complete. repeat rewrite map_length. auto.
-          * rewrite H2. apply StronglySorted_record_type_sort.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto;
+          * rewrite H2. apply StronglySorted_record_sort.
+      - (* EAccess *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto;
           auto using proj_record_type_sound.
-      - split; intros; repeat destruct_match; try invert_result; constructor;
+      - (* EDict *)
+        split; intros; repeat destruct_match; try invert_result; constructor;
         eapply analyze_dict_body_sound; eauto.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; constructor; auto.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; constructor; auto.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
-      - split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* EInsert *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; constructor; auto.
+      - (* EDelete *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; constructor; auto.
+      - (* ELookup *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* EFilter *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* EJoin *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
+      - (* EProj *)
+        split; intros; repeat destruct_match; repeat apply_typechecker_IH; invert_result; econstructor; eauto.
     Qed.
 
-(*
-    Lemma app_has_type : forall l r t, has_type (VList l) t /\ has_type (VList r) t -> has_type (VList (l ++ r)) t.
+    Local Ltac apply_type_sound_IH :=
+      lazymatch goal with
+      | H : (forall store env, well_formed_locals ?Gstore store ->
+                               well_formed_locals ?Genv env -> _),
+          H1: well_formed_locals ?Gstore _,
+            H2: well_formed_locals ?Genv _ |- _ =>
+          let H' := fresh "H'" in
+          pose proof (H _ _ H1 H2) as H'; clear H; inversion H'; subst
+      | H : (forall _ _, _ -> _ -> type_of_value (interp_expr _ _ ?e) ?t) |- type_of_value (interp_expr _ _ ?e) ?t =>
+          apply H; try apply well_formed_locals_step
+      end.
+
+    Local Ltac apply_well_formed_locals :=
+      match goal with
+      | H : well_formed_locals ?G ?E, H' : map.get ?G ?x = _ |- _ =>
+          apply H in H'; unfold get_local; destruct (map.get E x); intuition
+      end.
+
+    Local Ltac invert_Forall :=
+      match goal with
+      | H : Forall _ (_ :: _) |- _ => inversion H; subst
+      end.
+
+    Local Ltac destruct_exists :=
+      match goal with
+      | H: exists x, _ |- _ => destruct H as [x H]
+      end.
+
+    Lemma Forall2_In_Permuted : forall A B (R : A -> B -> Prop) l1 l2 a, Forall2 R l1 l2 -> In a l1 -> exists l1_0 b l2_0, Permutation l1 (a :: l1_0) /\ Permutation l2 (b :: l2_0) /\ R a b /\ Forall2 R l1_0 l2_0.
     Proof.
-      induction l; intros r t [HL HR].
-      - easy.
-      - simpl. inversion HL; subst. constructor; auto.
+      intros A B R l1 l2 a HR. induction HR; intros.
+      - apply in_nil in H; intuition.
+      - inversion H0.
+        + exists l, y, l'; subst. intuition.
+        + apply IHHR in H1. repeat destruct_exists.
+          exists (x :: l1_0), b, (y :: l2_0); intuition.
+          * apply Permutation_trans with (l' := x :: a :: l1_0); auto using perm_swap.
+          * apply Permutation_trans with (l' := y :: b :: l2_0); auto using perm_swap.
     Qed.
-*)
+
+    Lemma In_fst : forall A B x (l : list (A * B)), In x (List.map fst l) -> exists p, In p l /\ fst p = x.
+    Proof.
+      induction l; simpl; intros; intuition.
+      - exists a. intuition.
+      - destruct H as [p H]; exists p; intuition.
+    Qed.
+
+    Lemma Forall2_Permuted_StronglySorted : forall A B R (l1 : list (string * A)) (l2 : list (string * B)) l1' l2',
+        Forall2 R l1 l2 -> NoDup (List.map fst l1) -> (forall x y, R x y -> fst x = fst y) -> Permutation l1 l1' -> Permutation l2 l2' -> StronglySorted record_entry_leb l1' -> StronglySorted record_entry_leb l2' -> Forall2 R l1' l2'.
+    Proof.
+      intros A B R l1 l2 l1'; generalize dependent l2; generalize dependent l1; induction l1'; intros l1 l2 l2' HR Hnodup Hfst Hpermu1 Hpermu2 Hsorted1 Hsorted2.
+      - apply Permutation_sym, Permutation_nil in Hpermu1; subst. inversion HR; subst.
+        apply Permutation_nil in Hpermu2; subst; auto.
+      - assert (In a l1). { apply Permutation_in with (l := a :: l1'); auto using Permutation_sym. intuition. }
+        eapply Forall2_In_Permuted in H; eauto. repeat destruct_exists. intuition.
+        apply Permutation_sym in H. assert (Permutation (b :: l2_0) l2'). { eapply Permutation_trans; eauto. }
+        destruct l2' as [| b' l2'].
+        + apply Permutation_sym, Permutation_nil in H2. discriminate.
+        + apply Hfst in H1 as H1'. assert (b' = b).
+          { inversion Hsorted1; inversion Hsorted2; subst.
+            apply Permutation_in with (x := b) in H2; intuition. inversion H2; auto.
+            apply (List.Forall_In H11) in H4 as H4'. unfold record_entry_leb in H4'. (* fst b' <= fst b *)
+            apply Permutation_sym, Permutation_in with (x := b') in Hpermu2 as H5; intuition.
+            apply Permutation_map with (f := fst) in Hpermu1.
+            assert (List.map fst l1 = List.map fst l2).
+            { generalize dependent Hfst; generalize dependent HR. clear. intros HR Hfst.
+              induction HR; auto. simpl. apply Hfst in H. congruence. }
+            simpl in *. rewrite H8 in Hpermu1.
+            assert (forall A B (p : A * B) l, In p l -> In (fst p) (List.map fst l)). {
+              clear. intros. induction l; intuition.
+              inversion H; subst; simpl; intuition. }
+            apply H9 in H5. apply Permutation_in with (x := fst b') in Hpermu1; auto.
+            assert (String.leb (fst b) (fst b')).
+            { inversion Hpermu1.
+              - rewrite H1' in H12. rewrite H12. auto. unfold String.leb. rewrite string_compare_refl; auto.
+              - apply In_fst in H12 as [p [H12L H12R]]. apply (List.Forall_In H7) in H12L. unfold record_entry_leb in H12L.
+                rewrite H12R, H1' in H12L. assumption. } (* fst b <= fst b' *)
+            pose proof (leb_antisym _ _ H4' H12). (* fst b = fst b' *)
+            assert (NoDup (List.map fst (b' :: l2'))).
+            { rewrite H8 in Hnodup. apply Permutation_map with (f := fst) in Hpermu2. simpl in *.
+              apply Permutation_sym, Permutation_NoDup in Hpermu2; auto. }
+            inversion H14. apply H9 in H4. rewrite <- H13 in H4. intuition. }
+          subst.
+          assert (Permutation (a :: l1_0) (a :: l1')). { apply Permutation_sym in H0; eapply Permutation_trans; eauto. }
+          apply Permutation_cons_inv in H4, H2.
+          constructor; intuition; eapply IHl1'; eauto.
+          * apply Permutation_map with (f := fst), Permutation_NoDup in H0; auto.
+            simpl in *; inversion H0; auto.
+          * inversion Hsorted1; auto.
+          * inversion Hsorted2; auto.
+    Qed.
+
+    Lemma type_sound : forall Gstore Genv e t,
+        type_of Gstore Genv e t ->
+        forall store env,
+        well_formed_locals Gstore store ->
+        well_formed_locals Genv env ->
+        type_of_value (interp_expr store env e) t.
+    Proof.
+      intros Gstore Genv e t H. apply (type_of_IH Gstore) with
+        (P := fun Genv e t => forall store env,
+        well_formed_locals Gstore store ->
+        well_formed_locals Genv env ->
+        type_of_value (interp_expr store env e) t); simpl; intros; auto.
+      - apply_well_formed_locals.
+      - apply_well_formed_locals.
+      - match goal with H : type_of_atom _ _ |- _ => inversion H end; subst; constructor; apply Forall_nil.
+      - inversion H0; subst; apply_type_sound_IH;
+          simpl; repeat constructor; auto.
+      - inversion H0; subst; repeat apply_type_sound_IH;
+          simpl; repeat constructor; auto.
+        + apply Forall_app; auto.
+        + assert (forall A f (l : list A), Forall f l -> forall n, Forall f (concat (repeat l n))).
+          { clear. induction n; simpl; intros.
+            - apply Forall_nil.
+            - apply Forall_app; auto. }
+          auto.
+        + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).
+          { clear; induction len; simpl; intros.
+            - apply Forall_nil.
+            - repeat constructor; auto. }
+          auto.
+        + assert (forall len lo, Forall (fun v => type_of_value v TWord) (eval_range_word lo len)).
+          { clear; induction len; simpl; intros.
+            - apply Forall_nil.
+            - repeat constructor; auto. }
+          auto.
+      - repeat apply_type_sound_IH;
+        match goal with
+        | |- type_of_value (if ?b then _ else _) _ => destruct b; constructor; auto
+        end.
+      - repeat apply_type_sound_IH; auto; constructor; auto.
+      - repeat apply_type_sound_IH.
+        clear H1. constructor. induction l; simpl.
+        + apply Forall_nil.
+        + apply Forall_app; split.
+          * invert_Forall.
+            assert (type_of_value (interp_expr store (map.put env x a) e2) (TList t2)).
+            { apply_type_sound_IH; auto. }
+            inversion H1; auto.
+          * apply IHl. inversion H7. assumption.
+      - repeat apply_type_sound_IH;
+          try (match goal with
+               | H: VList ?l = _ |- _ => clear H
+               end; induction l; simpl; try constructor; auto; apply_type_sound_IH; auto;
+               match goal with
+               | H: Forall _ (_ :: _) |- _ => inversion H; subst
+               end;
+             repeat apply well_formed_locals_step; auto);
+          try (clear H1; induction l0; simpl; try constructor; auto;
+           apply_type_sound_IH; auto;
+           match goal with
+           | H: Forall _ (_ :: _) |- _ => inversion H; subst
+           end;
+           repeat apply well_formed_locals_step; auto).
+      - constructor.
+        + apply Permutation_NoDup with (l := List.map fst (List.map (fun '(s, e0) => (s, interp_expr store env e0)) l)).
+          * apply Permutation_map. apply Permuted_record_sort.
+          * rewrite fst_map_fst. auto.
+        + apply StronglySorted_record_sort.
+        + remember (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) as R.
+          assert (Forall2 R (List.map (fun '(s, e0) => (s, interp_expr store env e0)) l) tl).
+          { generalize dependent H0; generalize dependent H2; generalize dependent H6; generalize dependent H7; generalize dependent HeqR.
+            clear. intros H0 H1 H2 H3 H4. generalize dependent tl.
+            induction l; simpl; intros; destruct tl; try discriminate.
+            - intuition.
+            - destruct a, p; simpl in *; subst. constructor.
+              + simpl. split; try congruence. inversion H3; subst. apply H6; auto.
+              + apply IHl; inversion H3; inversion H4; intuition.
+          }
+          eapply Forall2_Permuted_StronglySorted; eauto.
+          * rewrite fst_map_fst; auto.
+          * subst; intuition.
+          * apply Permuted_record_sort.
+          * apply StronglySorted_record_sort.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+      - admit.
+        Admitted.
   End WithWord.
 End WithMap.
 
