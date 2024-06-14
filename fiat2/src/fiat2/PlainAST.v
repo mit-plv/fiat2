@@ -510,6 +510,11 @@ Section WithWord.
   Proof.
     exact (Sectioned.LocallySorted_sort _ dict_entry_leb dict_entry_leb_total).
   Qed.
+
+  Lemma Permuted_dict_sort : forall l, Permutation l (dict_sort l).
+  Proof.
+    apply Sectioned.Permuted_sort.
+  Qed.
 (* ??? Necessary to compare each entry by both fields?
   Definition record_entry_compare := pair_compare String.compare value_compare.
   Definition record_entry_leb := leb_from_compare record_entry_compare.
@@ -613,9 +618,9 @@ Lemma record_entry_compare_antisym : is_antisym record_entry_compare.
   Fixpoint dict_insert (k v : value) (l : list (value * value)) : list (value * value) :=
     match l with
     | nil => (k, v) :: nil
-    | (k', v) :: l => if value_ltb k k' then (k, v) :: (k', v) :: l
+    | (k', v') :: l => if value_ltb k k' then (k, v) :: (k', v') :: l
                       else if value_eqb k k' then (k, v) :: l
-                           else (k', v) :: dict_insert k v l
+                           else (k', v') :: dict_insert k v l
     end.
 
   Fixpoint dict_delete (k : value) (l : list (value * value)) : list (value * value) :=
@@ -2328,6 +2333,117 @@ Section WithMap.
           * inversion Hsorted2; auto.
     Qed.
 
+    Lemma Forall2_split : forall A B (l : list A) (l' : list B) f g, Forall2 (fun p p' => f p p' /\ g p p') l l' -> Forall2 f l l' /\ Forall2 g l l'.
+    Proof.
+      intros. induction H; intuition.
+    Qed.
+
+    Lemma Forall2_fst_eq : forall A B (l : list (string * A)) (l' : list (string * B)),
+        Forall2 (fun p p' => fst p = fst p') l l' <->
+        List.map fst l = List.map fst l'.
+    Proof.
+      intros. split; intro H.
+      - induction H; intuition. simpl; congruence.
+      - generalize dependent l'. induction l; destruct l'; try discriminate; intuition.
+        simpl in *. inversion H. constructor; auto.
+    Qed.
+
+    Lemma TyVList_def : forall l t, Forall (fun v => type_of_value v t) l <-> type_of_value (VList l) (TList t).
+    Proof.
+      split; intros.
+      - constructor; auto.
+      - inversion H; intuition.
+    Qed.
+
+    Lemma TyVDict_def : forall l tk tv, Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l <-> type_of_value (VDict l) (TDict tk tv).
+    Proof.
+      split; intros.
+      - constructor; auto.
+      - inversion H; intuition.
+    Qed.
+
+    Lemma record_proj_sound : forall l, NoDup (List.map fst l) ->
+                                        forall tl, Forall2 (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) l tl ->
+                                                   forall x t, In (x, t) tl ->
+                                                               type_of_value (record_proj (width := width) x l) t.
+    Proof.
+      intros l Hnodup tl Hvt x t Hin. generalize dependent tl. induction l; intros; simpl in *.
+      - inversion Hvt; subst. apply in_nil in Hin. intuition.
+      - inversion Hvt; subst. destruct a. inversion Hin; subst.
+        + destruct H1. simpl in *. subst. rewrite eqb_refl. auto.
+        + simpl in *; inversion Hnodup; subst. assert (String.eqb x s = false).
+          { apply in_map with (f := fst) in H; simpl in H. apply Forall2_split in H3 as [HL HR]. apply Forall2_fst_eq in HL.
+            rewrite eqb_neq. intro contra; subst. rewrite HL in H4. intuition. }
+          rewrite H0. eapply IHl; eauto.
+    Qed.
+
+    Lemma dict_insert_sound : forall l kt vt k v,
+        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value k kt ->
+        type_of_value v vt ->
+        type_of_value (VDict (dict_insert k v l)) (TDict kt vt).
+    Proof.
+      intros. induction l; constructor; simpl.
+      - constructor; intuition.
+      - destruct a as [k' v']. destruct (value_ltb k k'); [| destruct(value_eqb k k')]; inversion H.
+        + auto.
+        + inversion H4; auto.
+        + inversion H4; subst; constructor; intuition.
+          rewrite TyVDict_def. apply IHl. constructor. inversion H. intuition.
+    Qed.
+
+    Lemma dict_delete_sound : forall l kt vt k,
+        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value k kt ->
+        type_of_value (VDict (dict_delete k l)) (TDict kt vt).
+    Proof.
+      intros; induction l; constructor; simpl.
+      - constructor.
+      - destruct a as [k' v']. destruct (value_eqb k k'); inversion H; inversion H3.
+        + auto.
+        + constructor; auto. try rewrite TyVDict_def in *. apply IHl; auto.
+    Qed.
+
+    Lemma dict_lookup_sound : forall l kt vt k,
+        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value k kt ->
+        type_of_value (VOption (dict_lookup k l)) (TOption vt).
+    Proof.
+      intros; induction l.
+      - constructor.
+      - simpl. destruct a as [k' v']. destruct (value_eqb k k').
+        + constructor. inversion H; inversion H3. intuition.
+        + apply IHl. constructor. inversion H; inversion H3. auto.
+    Qed.
+
+    Lemma Forall_Forall_filter : forall A P (l : list A), Forall P l -> forall f, Forall P (filter f l).
+    Proof.
+      induction l; simpl; intros.
+      - constructor.
+      - destruct (f a).
+        + constructor; inversion H; intuition.
+        + apply IHl; inversion H; intuition.
+    Qed.
+
+    Lemma flat_map_type_sound : forall l t, type_of_value (VList l) (TList t) ->
+                                        forall f t', (forall v, type_of_value v t -> type_of_value (VList (f v)) (TList t')) ->
+                                                     type_of_value (VList (flat_map f l)) (TList t').
+    Proof.
+      induction l; simpl; intros; repeat constructor.
+      apply Forall_app. inversion H; inversion H3; subst. split.
+      - rewrite TyVList_def. apply H0; auto.
+      - try rewrite TyVList_def in *. eapply IHl; eauto.
+    Qed.
+
+    Lemma map_type_sound : forall l t, type_of_value (VList l) (TList t) ->
+                                       forall f t', (forall v, type_of_value v t -> type_of_value (f v) t') ->
+                                                    type_of_value (VList (List.map f l)) (TList t').
+    Proof.
+      induction l; simpl; intros; repeat constructor; inversion H; inversion H3.
+      - intuition.
+      - rewrite TyVList_def. eapply IHl; eauto. constructor. auto.
+    Qed.
+
     Lemma type_sound : forall Gstore Genv e t,
         type_of Gstore Genv e t ->
         forall store env,
@@ -2411,15 +2527,31 @@ Section WithMap.
           * subst; intuition.
           * apply Permuted_record_sort.
           * apply StronglySorted_record_sort.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
-      - admit.
-        Admitted.
+      - repeat apply_type_sound_IH. eapply record_proj_sound; eauto.
+      - constructor. rewrite Forall_forall in *.
+
+        assert (forall p, In p (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l) -> type_of_value (fst p) kt /\ type_of_value (snd p) vt).
+         { induction l; intros; simpl in *; try now (exfalso; auto).
+           inversion H4.
+           - pose proof (H1 a). intuition; destruct a; subst; simpl in *;
+               try apply H4; try apply H9; auto.
+           - apply IHl; auto. }
+        intros. apply H4. pose proof (Permuted_dict_sort (width:=width)).
+        eapply Permutation_in; [ apply Permutation_sym |]; eauto.
+      - repeat apply_type_sound_IH; apply dict_insert_sound; constructor; auto.
+      - repeat apply_type_sound_IH; apply dict_delete_sound; constructor; auto.
+      - repeat apply_type_sound_IH; eapply dict_lookup_sound; econstructor; eauto.
+      - repeat apply_type_sound_IH. constructor. apply Forall_Forall_filter. auto.
+      - repeat apply_type_sound_IH.
+        rewrite <- H1 in H'0. eapply flat_map_type_sound; eauto. intros.
+        apply map_type_sound with (t := t2).
+        + constructor; apply Forall_Forall_filter; auto.
+        + intuition. repeat apply_type_sound_IH; repeat apply well_formed_locals_step; auto.
+      - repeat apply_type_sound_IH.
+        apply map_type_sound with (t := t1).
+        + constructor. auto.
+        + intros; repeat apply_type_sound_IH; repeat apply well_formed_locals_step; auto.
+    Qed.
   End WithWord.
 End WithMap.
 
