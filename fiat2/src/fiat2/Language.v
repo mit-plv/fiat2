@@ -1,170 +1,181 @@
-Require Export String.
-Require Export ZArith.
-Require Export List.
-Require Export coqutil.Map.Interface coqutil.Map.SortedListString.
-Require Export coqutil.Byte coqutil.Word.Interface coqutil.Word.Bitwidth.
+Require Import String ZArith List.
 
-(* Casts one type to another, provided that they are equal
-   https://stackoverflow.com/a/52518299 *)
-Definition cast {T : Type} {T1 T2 : T} (H : T1 = T2) (f: T -> Type) (x : f T1) :
-  f T2 :=
-  eq_rect T1 f x T2 H.
-
-(* Add TWord, make TInt a ~bit array *)
+(* Fiat2 types *)
 Inductive type : Type :=
-  | TWord
-  | TInt
-  | TBool
-  | TString
-  | TPair (s : string) (t1 t2 : type) (* s = label of t1 in a record *)
-  | TEmpty (* "Empty" type: its only value should be the empty tuple () *)
-  | TList (t : type).
+| TWord
+| TInt
+| TBool
+| TString
+| TUnit
+| TOption (t : type)
+| TList (t : type)
+| TRecord (l : list (string * type))
+| TDict (kt vt : type).
 
-(* Types whose values can be compared *)
-Definition can_eq (t : type) : bool :=
-  match t with
-  | TWord | TInt | TBool | TString | TEmpty => true
-  | _ => false
-  end.
-
-Definition type_eq_dec (t1 t2 : type) : {t1 = t2} + {t1 <> t2}.
-decide equality.
-apply string_dec.
-Defined.
+Section TypeIH.
+  Context (P : type -> Prop).
+    Hypothesis (f_word : P TWord) (f_int : P TInt) (f_bool : P TBool) (f_string : P TString) (f_unit : P TUnit)
+      (f_option : forall t : type, P t -> P (TOption t)) (f_list : forall t : type, P t -> P (TList t))
+      (f_record : forall l : list (string * type), Forall (fun p => P (snd p)) l -> P (TRecord l))
+      (f_dict : forall tk tv : type, P tk -> P tv -> P (TDict tk tv)).
+    Section __.
+      Context (type_IH : forall t, P t).
+      Fixpoint record_type_IH (l : list (string * type)) : Forall (fun p => P (snd p)) l :=
+        match l as l0 return Forall (fun p => P (snd p)) l0 with
+        | nil => Forall_nil (fun p => P (snd p))
+        | p :: l' => Forall_cons p (type_IH (snd p)) (record_type_IH l')
+        end.
+    End __.
+    Fixpoint type_IH (t : type) : P t :=
+      match t with
+      | TWord => f_word
+      | TInt => f_int
+      | TBool => f_bool
+      | TString => f_string
+      | TUnit => f_unit
+      | TOption t => f_option t (type_IH t)
+      | TList t => f_list t (type_IH t)
+      | TRecord l => f_record l (record_type_IH type_IH l)
+      | TDict tk tv => f_dict tk tv (type_IH tk) (type_IH tv)
+       end.
+End TypeIH.
 
 Scheme Boolean Equality for type. (* creates type_beq *)
 
 Declare Scope fiat2_scope. Local Open Scope fiat2_scope.
 Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
 
-(* Primitive literals (untyped) *)
-Inductive patom : Type :=
-  | PAWord (n : Z)
-  | PAInt (n : Z)
-  | PABool (b : bool)
-  | PAString (s : string)
-  | PANil (t : type).
+(* Abstract syntax tree *)
 
-(* Primitive literals (typed) *)
-Inductive atom : type -> Type :=
-  | AWord (n : Z) : atom TWord
-  | AInt (n : Z) : atom TInt
-  | ABool (b : bool) : atom TBool
-  | AString (s : string) : atom TString
-  | ANil (t : type) : atom (TList t)
-  | AEmpty : atom TEmpty.
+(* Literals *)
+Inductive atom : Type :=
+| AWord (n : Z)
+| AInt (n : Z)
+| ABool (b : bool)
+| AString (s : string)
+| ANil (t : option type)
+| ANone (t : option type)
+| AUnit.
 
-(* Unary operators (untyped) *)
-Inductive punop : Type :=
-  | PONeg
-  | PONot
-  | POLength
-  | POIntToString.
+(* Unary operators *)
+Inductive unop : Type :=
+| OWNeg
+| ONeg
+| ONot
+| OLength
+| OLengthString
+| OIntToString
+| OSome.
 
-(* Unary operators (typed) *)
-Inductive unop : type -> type -> Type :=
-  | OWNeg : unop TWord TWord
-  | ONeg : unop TInt TInt
-  | ONot : unop TBool TBool
-  | OLength : forall t, unop (TList t) TInt
-  | OLengthString : unop TString TInt
-  | OFst : forall s t1 t2, unop (TPair s t1 t2) t1
-  | OSnd : forall s t1 t2, unop (TPair s t1 t2) t2
-  | OIntToString : unop TInt TString.
+(* Binary operators *)
+Inductive binop : Type :=
+| OWPlus
+| OPlus
+| OWMinus
+| OMinus
+| OWTimes
+| OTimes
+| OWDivU
+| OWDivS
+| ODiv
+| OWModU
+| OWModS
+| OMod
+| OAnd
+| OOr
+| OConcat
+| OConcatString
+| OWLessU
+| OWLessS
+| OLess
+| OEq
+| ORepeat
+| OCons
+| ORange
+| OWRange.
 
-(* Binary operators (untyped) *)
-Inductive pbinop : Type :=
-  | POPlus
-  | POMinus
-  | POTimes
-  | PODivU
-  | PODiv
-  | POModU
-  | POMod
-  | POAnd
-  | POOr
-  | POConcat
-  | POLessU
-  | POLess
-  | POEq
-  | PORepeat
-  | POPair
-  | POCons
-  | PORange.
+(* Expressions *)
+Inductive expr : Type :=
+| EVar (x : string)
+| ELoc (x : string)
+| EAtom (a : atom)
+| EUnop (o : unop) (e : expr)
+| EBinop (o : binop) (e1 e2: expr)
+| EIf (e1 : expr) (e2 e3 : expr)
+| ELet (e1 : expr) (x : string) (e2 : expr)
+| EFlatmap (e1 : expr) (x : string) (e2 : expr)
+| EFold (e1 e2 : expr) (x y : string) (e3 : expr)
+| ERecord (l : list (string * expr))
+| EAccess (r : expr) (s : string)
+| EDict (l : list (expr * expr))
+| EInsert (d k v : expr)
+| EDelete (d k : expr)
+| ELookup (d k : expr)
+(* relational algebra *)
+| EFilter (l : expr) (x : string) (p : expr) (* Select a subset of rows from table *)
+| EJoin (l1 l2 : expr) (x y : string) (p r : expr) (* Join two tables *)
+| EProj (l : expr) (x : string) (r : expr) (* Generalized projection *).
 
-(* Binary operators (typed) *)
-Inductive binop : type -> type -> type -> Type :=
-  | OWPlus : binop TWord TWord TWord
-  | OPlus : binop TInt TInt TInt
-  | OWMinus : binop TWord TWord TWord
-  | OMinus : binop TInt TInt TInt
-  | OWTimes : binop TWord TWord TWord
-  | OTimes : binop TInt TInt TInt
-  | OWDivU : binop TWord TWord TWord
-  | OWDivS : binop TWord TWord TWord
-  | ODiv : binop TInt TInt TInt (* TODO: support option types? *)
-  | OWModU : binop TWord TWord TWord
-  | OWModS : binop TWord TWord TWord
-  | OMod : binop TInt TInt TInt
-  | OAnd : binop TBool TBool TBool
-  | OOr : binop TBool TBool TBool
-  | OConcat : forall t, binop (TList t) (TList t) (TList t)
-  | OConcatString : binop TString TString TString
-  | OWLessU : binop TWord TWord TBool
-  | OWLessS : binop TWord TWord TBool
-  | OLess : binop TInt TInt TBool
-  | OEq : forall t, can_eq t = true -> binop t t TBool
-  | ORepeat : forall t, binop (TList t) TInt (TList t)
-  | OPair : forall s t1 t2, binop t1 t2 (TPair s t1 t2)
-  | OCons : forall t, binop t (TList t) (TList t)
-  | ORange : binop TInt TInt (TList TInt)
-  | OWRange : binop TWord TWord (TList TWord).
+Section ExprIH.
+  Context (P : expr -> Prop).
+  Hypothesis (f_var : forall x, P (EVar x)) (f_loc : forall x, P (ELoc x)) (f_atom : forall a, P (EAtom a))
+    (f_unop : forall o e, P e -> P (EUnop o e)) (f_binop : forall o e1 e2, P e1 -> P e2 -> P (EBinop o e1 e2))
+    (f_if : forall e1 e2 e3, P e1 -> P e2 -> P e3 -> P (EIf e1 e2 e3))
+    (f_let : forall e1 x e2, P e1 -> P e2 -> P (ELet e1 x e2))
+    (f_flatmap : forall e1 x e2, P e1 -> P e2 -> P (EFlatmap e1 x e2))
+    (f_fold : forall e1 e2 x y e3, P e1 -> P e2 -> P e3 -> P (EFold e1 e2 x y e3))
+    (f_record : forall l, Forall (fun p => P (snd p)) l -> P (ERecord l))
+    (f_access : forall r s, P r -> P (EAccess r s))
+    (f_dict : forall l, Forall (fun p => P (fst p) /\ P (snd p)) l -> P (EDict l))
+    (f_insert : forall d k v, P d -> P k -> P v -> P (EInsert d k v))
+    (f_delete : forall d k, P d -> P k -> P (EDelete d k))
+    (f_lookup : forall d k, P d -> P k -> P (ELookup d k))
+    (f_filter : forall l x p, P l -> P p -> P (EFilter l x p))
+    (f_join : forall l1 l2 x y p r, P l1 -> P l2 -> P p -> P r -> P (EJoin l1 l2 x y p r))
+    (f_proj : forall l x r, P l -> P r -> P (EProj l x r)).
+    Section __.
+      Context (expr_IH : forall e, P e).
+      Fixpoint record_expr_IH (l : list (string * expr)) : Forall (fun p => P (snd p)) l :=
+        match l as l0 return Forall (fun p => P (snd p)) l0 with
+        | nil => Forall_nil (fun p => P (snd p))
+        | p :: l' => Forall_cons p (expr_IH (snd p)) (record_expr_IH l')
+        end.
+      Fixpoint dict_expr_IH (l : list (expr * expr)) : Forall (fun v => P (fst v) /\ P (snd v)) l :=
+        match l as l0 return Forall (fun v => P (fst v) /\ P (snd v)) l0 with
+        | nil => Forall_nil (fun v => P (fst v) /\ P (snd v))
+        | v :: l' => Forall_cons v (conj (expr_IH (fst v)) (expr_IH (snd v)))(dict_expr_IH l')
+        end.
+    End __.
 
-(* Typed expressions. Most of the type checking is enforced in the GADT itself
-   via Coq's type system, but some of it needs to be done in the `elaborate`
-   function below *)
-Inductive expr : type -> Type :=
-  | EVar (t : type) (x : string) : expr t
-  | ELoc (t : type) (x : string) : expr t
-  | EAtom {t : type} (a : atom t) : expr t
-  | EUnop {t1 t2 : type} (o : unop t1 t2) (e : expr t1) : expr t2
-  | EBinop {t1 t2 t3 : type} (o : binop t1 t2 t3) (e1 : expr t1) (e2: expr t2) : expr t3
-  | EFlatmap {t1 t2 : type} (e1 : expr (TList t1)) (x : string) (e2 : expr (TList t2))
-      : expr (TList t2)
-  | EFold {t1 t2 : type} (e1 : expr (TList t1)) (e2 : expr t2) (x y : string) (e3 : expr t2) : expr t2
-  | EIf {t : type} (e1 : expr TBool) (e2 e3 : expr t) : expr t
-  | ELet {t1 t2 : type} (x : string) (e1 : expr t1) (e2 : expr t2) : expr t2.
+    Fixpoint expr_IH (e : expr) : P e :=
+      match e with
+      | EVar x => f_var x
+      | ELoc x => f_loc x
+      | EAtom a => f_atom a
+      | EUnop o e => f_unop o e (expr_IH e)
+      | EBinop o e1 e2 => f_binop o e1 e2 (expr_IH e1) (expr_IH e2)
+      | EIf e1 e2 e3 => f_if e1 e2 e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
+      | ELet e1 x e2 => f_let e1 x e2 (expr_IH e1) (expr_IH e2)
+      | EFlatmap e1 x e2 => f_flatmap e1 x e2 (expr_IH e1) (expr_IH e2)
+      | EFold e1 e2 x y e3 => f_fold e1 e2 x y e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
+      | ERecord l => f_record l (record_expr_IH expr_IH l)
+      | EAccess r s => f_access r s (expr_IH r)
+      | EDict l => f_dict l (dict_expr_IH expr_IH l)
+      | EInsert d k v => f_insert d k v (expr_IH d) (expr_IH k) (expr_IH v)
+      | EDelete d k => f_delete d k (expr_IH d) (expr_IH k)
+      | ELookup d k => f_lookup d k (expr_IH d) (expr_IH k)
+      | EFilter l x p => f_filter l x p (expr_IH l) (expr_IH p)
+      | EJoin l1 l2 x y p r => f_join l1 l2 x y p r (expr_IH l1) (expr_IH l2) (expr_IH p) (expr_IH r)
+      | EProj l x r => f_proj l x r (expr_IH l) (expr_IH r)
+      end.
+End ExprIH.
 
-(* "Pre-expression": untyped expressions from surface-level parsing. *)
-Inductive pexpr : Type :=
-  | PEVar (x : string)
-  | PEAtom (pa : patom)
-  | PESingleton (p : pexpr)
-  | PEUnop (po : punop) (p : pexpr)
-  | PEBinop (po : pbinop) (p1 p2 : pexpr)
-  | PEFlatmap (p1 : pexpr) (x : string) (p2 : pexpr)
-  | PEFold (p1 : pexpr) (p2 : pexpr) (x : string) (y : string) (p2 : pexpr)
-  | PEIf (p1 p2 p3 : pexpr)
-  | PELet (x : string) (p1 p2 : pexpr)
-  | PERecord (xs : list (string * pexpr))
-  | PEProj (p : pexpr) (s : string)
-  | PEElaborated (t' : type) (e' : expr t').
-
+(* Commands *)
 Inductive command : Type :=
-  | CSkip
-  | CSeq (c1 c2 : command)
-  | CLet {t : type} (x : string) (e : expr t) (c : command)
-  | CLetMut {t : type} (x : string) (e : expr t) (c : command)
-  | CGets {t : type} (x : string) (e : expr t)
-  | CIf (e : expr TBool) (c1 c2 : command)
-  | CForeach {t : type} (x : string) (e : expr (TList t)) (c : command).
-
-Inductive pcommand : Type :=
-  | PCSkip
-  | PCSeq (pc1 pc2 : pcommand)
-  | PCLet (x : string) (p : pexpr) (pc : pcommand)
-  | PCLetMut (x : string) (p : pexpr) (pc : pcommand)
-  | PCGets (x : string) (p : pexpr)
-  | PCIf (p : pexpr) (pc1 pc2 : pcommand)
-  | PCForeach (x : string) (p : pexpr) (pc : pcommand).
-  (* | PCElaborated (c : command). *)
+| CSkip
+| CSeq (c1 c2 : command)
+| CLet (e : expr) (x : string) (c : command)
+| CLetMut (e : expr) (x : string) (c : command)
+| CAssign(x : string) (e : expr)
+| CIf (e : expr) (c1 c2 : command)
+| CForeach (e : expr) (x : string) (c : command).
