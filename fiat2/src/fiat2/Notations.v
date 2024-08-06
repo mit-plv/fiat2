@@ -220,7 +220,6 @@ Local Open Scope string_scope.
 
    Local Close Scope Z_scope.
    Local Close Scope nat_scope.
-   Print Scopes.
    Goal <{ let "x" = 3 + 4 in set "y" := "x" + 1; set "z" := 5 + "x" }> =
       (CLet (EBinop OPlus 3 4) "x"
          (CSeq (CAssign "y" (EBinop OPlus "x" 1))

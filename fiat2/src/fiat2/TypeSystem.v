@@ -3,26 +3,159 @@ Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 Import ResultMonadNotations.
 Require Import String List Permutation Sorted.
 
+(* Whether a is in l *)
+Fixpoint inb {A : Type} (A_eqb : A -> A -> bool) (a : A) (l : list A) : bool :=
+  match l with
+  | nil => false
+  | h :: l => if A_eqb h a then true else inb A_eqb a l
+  end.
+
+Lemma inb_false_iff : forall s l, inb eqb s l = false <-> ~ In s l.
+Proof.
+  induction l; simpl; intros.
+  - intuition.
+  - destruct (String.eqb a s) eqn:E; intuition.
+    + rewrite String.eqb_eq in E; intuition.
+    + rewrite String.eqb_neq in E; intuition.
+Qed.
+
+Lemma inb_true_iff : forall s l, inb eqb s l = true <-> In s l.
+Proof.
+  induction l; simpl; intros.
+  - split; intuition.
+  - destruct (String.eqb a s) eqn:E; intuition.
+    + rewrite String.eqb_eq in E; intuition.
+    + rewrite String.eqb_neq in E; intuition.
+Qed.
+
+(* Whether l is included in m *)
+Definition inclb {A : Type} (A_eqb : A -> A -> bool) (l m : list A) : bool :=
+  forallb (fun a => inb A_eqb a m) l.
+
+Lemma inclb_correct : forall l l', inclb String.eqb l l' = true -> incl l l'.
+Proof.
+  induction l; simpl; intros.
+  - apply incl_nil_l.
+  - rewrite Bool.andb_true_iff in H. destruct H as [HL HR].
+    apply IHl in HR. rewrite inb_true_iff in HL.
+    unfold incl. intros. inversion H; subst; intuition.
+Qed.
+
+Lemma inclb_complete : forall l l', incl l l' -> inclb String.eqb l l' = true.
+Proof.
+  intros l l' H. unfold inclb. rewrite forallb_forall; intros.
+  rewrite inb_true_iff. intuition.
+Qed.
+
+Fixpoint NoDup_comp {A : Type} (A_eqb : A -> A -> bool) (l : list A) : bool :=
+  match l with
+  | nil => true
+  | x :: l => if inb A_eqb x l then false else NoDup_comp A_eqb l
+  end.
+
+Lemma NoDup_comp_true_iff : forall l, NoDup_comp String.eqb l = true <-> NoDup l.
+Proof.
+  induction l; simpl in *; intuition.
+  - apply NoDup_nil.
+  - destruct (inb eqb a l) eqn:E; try discriminate. constructor; auto.
+    apply inb_false_iff; auto.
+  - inversion H1; subst. apply inb_false_iff in H4; rewrite H4. auto.
+Qed.
+
+Fixpoint StronglySorted_comp {A : Type} (R : A -> A -> bool) (l : list A) : bool :=
+  match l with
+  | nil => true
+  | a :: l => forallb (R a) l && StronglySorted_comp R l
+  end.
+
+Local Coercion is_true : bool >-> Sortclass.
+
+Lemma StronglySorted_comp_true_iff : forall A (l : list (string * A)),
+    StronglySorted_comp record_entry_leb l = true <-> StronglySorted record_entry_leb l.
+Proof.
+  induction l.
+  - intuition. constructor.
+  - simpl. split; intros.
+    + apply Bool.andb_true_iff in H as [HL HR]. rewrite forallb_forall in HL. constructor.
+      * apply IHl; auto.
+      * apply Forall_forall; auto.
+    + inversion H; subst. apply Bool.andb_true_iff. split.
+      * rewrite Forall_forall in H3. rewrite forallb_forall. auto.
+      * apply IHl; auto.
+Qed.
+
+(* ??? remove?
+Definition sorted_params := SortedList.parameters.Build_parameters String.string type String.ltb.
+Local Notation sorted := (sorted (p := sorted_params)).
+ *)
+
+Inductive type_wf : type -> Prop :=
+| WFTWord : type_wf TWord
+| WFTInt : type_wf TInt
+| WFTBool : type_wf TBool
+| WFTString : type_wf TString
+| WFTUnit : type_wf TUnit
+| WFTOption t : type_wf t ->
+                type_wf (TOption t)
+| WFTList t : type_wf t ->
+              type_wf (TList t)
+| WFTRecord l : NoDup (List.map fst l) ->
+                StronglySorted record_entry_leb l ->
+                Forall type_wf (List.map snd l) ->
+                type_wf (TRecord l)
+| WFTDict kt vt : type_wf kt ->
+                  type_wf vt ->
+                  type_wf (TDict kt vt).
+
+Fixpoint type_wf_comp (t : type) : bool :=
+  match t with
+  | TWord | TInt | TBool | TString | TUnit => true
+  | TOption t | TList t => type_wf_comp t
+  | TRecord tl => NoDup_comp String.eqb (List.map fst tl) &&
+                    StronglySorted_comp record_entry_leb tl &&
+                    (fix forall_snd (tl : list (string * type)) :=
+                       match tl with
+                       | nil => true
+                       | (_, t) :: tl => (type_wf_comp t && forall_snd tl)%bool
+                       end) tl
+  | TDict kt vt => type_wf_comp kt && type_wf_comp vt
+  end.
+
+Lemma type_wf_comp_sound : forall t, type_wf_comp t = true -> type_wf t.
+Proof.
+  intros t H; induction t using type_IH; simpl in *; constructor; auto;
+    repeat rewrite Bool.andb_true_iff in *; intuition.
+  - apply NoDup_comp_true_iff; auto.
+  - apply StronglySorted_comp_true_iff; auto.
+  - clear H H3. induction l; auto. destruct a; simpl in *.
+    inversion H0; subst. constructor;
+      try apply IHl; auto; rewrite Bool.andb_true_iff in *; intuition.
+Qed.
+
 (* Inductive typing relation *)
 Inductive type_of_atom : atom -> type -> Prop :=
 | TyAWord n : type_of_atom (AWord n) TWord
 | TyAInt n : type_of_atom (AInt n) TInt
 | TyABool b : type_of_atom (ABool b) TBool
 | TyAString s : type_of_atom (AString s) TString
-| TyANil' t : type_of_atom (ANil None) (TList t)
-| TyANil t : type_of_atom (ANil (Some t)) (TList t)
-| TyANone' t : type_of_atom (ANone None) (TOption t)
-| TyANone t : type_of_atom (ANone (Some t)) (TOption t)
+| TyANil' t : type_wf t ->
+              type_of_atom (ANil None) (TList t)
+| TyANil t : type_wf t ->
+             type_of_atom (ANil (Some t)) (TList t)
+| TyANone' t : type_wf t ->
+               type_of_atom (ANone None) (TOption t)
+| TyANone t : type_wf t ->
+              type_of_atom (ANone (Some t)) (TOption t)
 | TyAUnit : type_of_atom AUnit TUnit.
 
 Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyOWNeg : type_of_unop OWNeg TWord TWord
 | TyONeg : type_of_unop ONeg TInt TInt
 | TyONot : type_of_unop ONot TBool TBool
-| TyOLength t : type_of_unop OLength (TList t) TInt
+| TyOLength t : type_wf t -> type_of_unop OLength (TList t) TInt
 | TyOLengthString : type_of_unop OLengthString TString TInt
 | TyOIntToString : type_of_unop OIntToString TInt TString
-| TyOSome t : type_of_unop OSome t (TOption t).
+| TyOSome t : type_wf t -> type_of_unop OSome t (TOption t).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOWPlus : type_of_binop OWPlus TWord TWord TWord
@@ -39,22 +172,32 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOMod : type_of_binop OMod TInt TInt TInt
 | TyOAnd : type_of_binop OAnd TBool TBool TBool
 | TyOOr : type_of_binop OOr TBool TBool TBool
-| TyOConcat t : type_of_binop OConcat (TList t) (TList t) (TList t)
+| TyOConcat t : type_wf t ->
+                type_of_binop OConcat (TList t) (TList t) (TList t)
 | TyOConcatString : type_of_binop OConcatString TString TString TString
 | TyOWLessU : type_of_binop OWLessU TWord TWord TBool
 | TyOWLessS : type_of_binop OWLessS TWord TWord TBool
 | TyOLess : type_of_binop OLess TInt TInt TBool
-| TyOEq t : type_of_binop OEq t t TBool
-| TyORepeat t : type_of_binop ORepeat (TList t) TInt (TList t)
-| TyOCons t :  type_of_binop OCons t (TList t) (TList t)
+| TyOEq t : type_wf t ->
+            type_of_binop OEq t t TBool
+| TyORepeat t : type_wf t ->
+                type_of_binop ORepeat (TList t) TInt (TList t)
+| TyOCons t : type_wf t ->
+              type_of_binop OCons t (TList t) (TList t)
 | TyORange : type_of_binop ORange TInt TInt (TList TInt)
 | TyOWRange : type_of_binop OWRange TWord TWord (TList TWord).
 
+Fixpoint access_record {A : Type} (l : list (string * A)) (s : string) : result A :=
+  match l with
+  | nil => error:("Attribute" s "not found in record" l)
+  | (s0, a) :: l => if String.eqb s s0 then Success a else access_record l s
+  end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 
-  Local Coercion is_true : bool >-> Sortclass.
+  (* ??? Move to soundness *)
+  Definition tenv_wf (G : tenv) := forall x t, map.get G x = Some t -> type_wf t.
 
   Inductive type_of (Gstore Genv : tenv) : expr -> type -> Prop :=
   | TyEVar x t : map.get Genv x = Some t -> type_of Gstore Genv (EVar x) t
@@ -84,14 +227,15 @@ Section WithMap.
   | TyERecord (l : list (string * expr)) (tl tl' : list (string * type)) :
     List.map fst l = List.map fst tl ->
     Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
-    NoDup (List.map fst l) ->
     Permutation tl tl' ->
+    NoDup (List.map fst tl) ->
     StronglySorted record_entry_leb tl' ->
     type_of Gstore Genv (ERecord l) (TRecord tl')
   | TyEAccess e tl x t : type_of Gstore Genv e (TRecord tl) ->
-                         In (x, t) tl ->
+                         access_record tl x = Success t ->
                          type_of Gstore Genv (EAccess e x) t
-  | TyEDict l kt vt :  Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
+  | TyEDict l kt vt : type_wf kt -> type_wf vt -> (* needed in case l = nil*)
+                      Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
                       type_of Gstore Genv (EDict l) (TDict kt vt)
   | TyEInsert d kt vt k v : type_of Gstore Genv d (TDict kt vt) ->
                            type_of Gstore Genv k kt ->
@@ -103,6 +247,10 @@ Section WithMap.
   | TyELookup d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
                          type_of Gstore Genv k kt ->
                          type_of Gstore Genv (ELookup d k) (TOption vt)
+  | TyEOptmatch e t1 e_none x e_some t2 : type_of Gstore Genv e (TOption t1) ->
+                                    type_of Gstore Genv e_none t2 ->
+                                    type_of Gstore (map.put Genv x t1) e_some t2 ->
+                                    type_of Gstore Genv (EOptmatch e e_none x e_some) t2
   | TyEFilter e t x p : type_of Gstore Genv e (TList t) ->
                         type_of Gstore (map.put Genv x t) p TBool ->
                         type_of Gstore Genv (EFilter e x p) (TList t)
@@ -142,13 +290,15 @@ Section WithMap.
     Hypothesis (f_record : forall Genv l tl tl', List.map fst l = List.map fst tl ->
                                                  Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
                                                  Forall2 (P Genv) (List.map snd l) (List.map snd tl) ->
-                                                 NoDup (List.map fst l) ->
                                                  Permutation tl tl' ->
-                                                 StronglySorted (fun p p' : string * type => record_entry_leb p p') tl' ->
+                                                 NoDup (List.map fst tl) ->
+                                                 StronglySorted record_entry_leb tl' ->
                                                  P Genv (ERecord l) (TRecord tl')).
     Hypothesis (f_access : forall Genv e tl x t, type_of Gstore Genv e (TRecord tl) -> P Genv e (TRecord tl) ->
-                                                 In (x, t) tl -> P Genv (EAccess e x) t).
-    Hypothesis (f_dict : forall Genv l kt vt, Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
+                                                 access_record tl x = Success t ->
+                                                 P Genv (EAccess e x) t).
+    Hypothesis (f_dict : forall Genv l kt vt, type_wf kt -> type_wf vt ->
+                                              Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l ->
                                               Forall (fun p => P Genv (fst p) kt /\ P Genv (snd p) vt) l -> P Genv (EDict l) (TDict kt vt)).
     Hypothesis (f_insert : forall Genv d kt vt k v, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
                                                     type_of Gstore Genv k kt -> P Genv k kt -> type_of Gstore Genv v vt -> P Genv v vt ->
@@ -158,6 +308,10 @@ Section WithMap.
                                                   P Genv (EDelete d k) (TDict kt vt)).
     Hypothesis (f_lookup : forall Genv d kt vt k, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
                                                   type_of Gstore Genv k kt -> P Genv k kt -> P Genv (ELookup d k) (TOption vt)).
+    Hypothesis (f_optmatch : forall Genv e t1 e_none x e_some t2, type_of Gstore Genv e (TOption t1) -> P Genv e (TOption t1) ->
+                                                                  type_of Gstore Genv e_none t2 -> P Genv e_none t2 ->
+                                                                  type_of Gstore (map.put Genv x t1) e_some t2 -> P (map.put Genv x t1) e_some t2 ->
+                                                                  P Genv (EOptmatch e e_none x e_some) t2).
     Hypothesis (f_filter : forall Genv e t x p, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
                                                 type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
                                                 P Genv (EFilter e x p) (TList t)).
@@ -201,22 +355,71 @@ Section WithMap.
       | TyELet _ _ e1 t1 x e2 t2 He1 He2 => f_let Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 t1 He1) He2 (type_of_IH (map.put Genv x t1) e2 t2 He2)
       | TyEFlatmap _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TList t2) He2)
       | TyEFold _ _ e1 t1 e2 t2 x y e3 He1 He2 He3 => f_fold Genv e1 t1 e2 t2 x y e3 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 t2 He2) He3 (type_of_IH (map.put (map.put Genv x t1) y t2) e3 t2 He3)
-      | TyERecord _ _ l tl tl' Hname Hfield Hnodup Hpermu Hsort => f_record Genv l tl tl' Hname Hfield (record_type_of_IH type_of_IH Genv (List.map snd l) (List.map snd tl) Hfield) Hnodup Hpermu Hsort
+      | TyERecord _ _ l tl tl' Hname Hfield Hpermu Hnodup Hsort => f_record Genv l tl tl' Hname Hfield (record_type_of_IH type_of_IH Genv (List.map snd l) (List.map snd tl) Hfield) Hpermu Hnodup Hsort
       | TyEAccess _ _ e tl x t He Hin => f_access Genv e tl x t He (type_of_IH Genv e (TRecord tl) He) Hin
-      | TyEDict _ _ l kt vt Hl => f_dict Genv l kt vt Hl (dict_type_of_IH type_of_IH Genv kt vt l Hl)
+      | TyEDict _ _ l kt vt Hkt Hvt Hl => f_dict Genv l kt vt Hkt Hvt Hl (dict_type_of_IH type_of_IH Genv kt vt l Hl)
       | TyEInsert _ _ d kt vt k v Hd Hk Hv => f_insert Genv d kt vt k v Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk) Hv (type_of_IH Genv v vt Hv)
       | TyEDelete _ _ d kt vt k Hd Hk => f_delete Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
+      | TyEOptmatch _ _ e t1 e_none x e_some t2 He He_none He_some => f_optmatch Genv e t1 e_none x e_some t2 He (type_of_IH Genv e (TOption t1) He) He_none (type_of_IH Genv e_none t2 He_none) He_some (type_of_IH (map.put Genv x t1) e_some t2 He_some)
       | TyELookup _ _ d kt vt k Hd Hk => f_lookup Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
       | TyEFilter _ _ e t x p He Hp => f_filter Genv e t x p He (type_of_IH Genv e (TList t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
       | TyEJoin _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join Genv e1 t1 e2 t2 x y p r t3 He1
                    (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 (TList t2) He2) Hp (type_of_IH (map.put (map.put Genv x t1) y t2) p TBool Hp) Hr (type_of_IH (map.put (map.put Genv x t1) y t2) r t3 Hr)
       | TyEProj _ _ e t1 x r t2 He Hr => f_proj Genv e t1 x r t2 He (type_of_IH Genv e (TList t1) He) Hr (type_of_IH (map.put Genv x t1) r t2 Hr)
       end.
-  End TypeOfIH.
+    End TypeOfIH.
+
+    Lemma tenv_wf_step : forall G t, tenv_wf G -> type_wf t -> forall x, tenv_wf (map.put G x t).
+    Proof.
+      unfold tenv_wf; intros. destruct (String.eqb x x0) eqn:E.
+      - rewrite eqb_eq in *; subst. rewrite map.get_put_same in *.
+        injection H1; intro; subst; auto.
+      - rewrite eqb_neq in *. rewrite map.get_put_diff in *; eauto.
+    Qed.
+
+    Lemma Forall_access_record : forall A P l k (v : A),
+        Forall P (List.map snd l) -> access_record l k = Success v -> P v.
+    Proof.
+      induction l; simpl; intros; try discriminate.
+      - inversion H; subst. destruct a; simpl in *.
+        destruct (String.eqb k s).
+        + injection H0; intros; subst; auto.
+        + eapply IHl; eauto.
+    Qed.
+
+    Lemma type_of__type_wf : forall Gstore Genv e t,
+        tenv_wf Gstore ->
+        tenv_wf Genv ->
+        type_of Gstore Genv e t ->
+        type_wf t.
+    Proof.
+      intros Gstore Genv e t H_store H_env H. induction H using type_of_IH; eauto.
+      - inversion H; constructor; auto.
+      - inversion H; constructor; auto.
+      - inversion H; repeat constructor; auto.
+      - auto using tenv_wf_step.
+      - apply IHtype_of2. apply tenv_wf_step; auto.
+        apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
+      - constructor; auto.
+        + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
+        + apply Permutation_map with (f := snd), Permutation_sym in H2.
+          rewrite Forall_forall; intros t H_in. eapply Permutation_in in H_in; eauto.
+          remember (List.map snd tl) as tl2. revert H_env H1 H_in; clear; intros.
+          induction H1; try apply in_nil in H_in; intuition.
+          inversion H_in; subst; auto.
+      - apply IHtype_of in H_env as H_wf. inversion H_wf; subst.
+        eapply Forall_access_record; eauto.
+      - constructor; auto.
+      - apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; constructor; auto.
+      - constructor; apply IHtype_of4. repeat apply tenv_wf_step; auto.
+        + apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
+        + apply IHtype_of2 in H_env as H_wf2. inversion H_wf2; auto.
+      - constructor; apply IHtype_of2, tenv_wf_step; auto.
+        apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
+    Qed.
 End WithMap.
 
 (* Bidirectional type checking *)
-
 Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   match t, t' with
   | TWord, TWord
@@ -279,11 +482,15 @@ Definition synthesize_atom (a : atom) : result (type * atom) :=
   | ABool b => Success (TBool, a)
   | AString s => Success (TString, a)
   | ANone t => match t with
-               | Some t => Success (TOption t, a)
+               | Some t => if type_wf_comp t
+                           then Success (TOption t, a)
+                           else error:("Malformed type" t)
                | None => error:("Insufficient type information for" a)
                end
   | ANil t => match t with
-              | Some t => Success (TList t, a)
+              | Some t => if type_wf_comp t
+                          then Success (TList t, a)
+                          else error:("Malformed type" t)
               | None => error:("Insufficient type information for" a)
               end
   | AUnit => Success (TUnit, a)
@@ -312,28 +519,11 @@ Definition binop_types (o : binop) : (type * type * type) :=
   | _ => (TUnit, TUnit, TUnit) (* unused *)
   end.
 
-(* Whether a is in l *)
-Fixpoint inb {A : Type} (A_eqb : A -> A -> bool) (l : list A) (a : A) : bool :=
-  match l with
-  | nil => false
-  | h :: l => if A_eqb h a then true else inb A_eqb l a
-  end.
-
-(* Whether l is included in m *)
-Definition inclb {A : Type} (A_eqb : A -> A -> bool) (l m : list A) : bool :=
-  forallb (inb A_eqb m) l.
-
-Fixpoint get_attr_type (tl : list (string * type)) (s : string) : type :=
-  match tl with
-  | nil => TUnit
-  | (s', t) :: tl => if String.eqb s' s then t else get_attr_type tl s
-  end.
-
 Fixpoint record_type_from' (l : list (string * result (type * expr))) : result (list (string * type) * list (string * expr)) :=
   match l with
   | nil => Success (nil, nil)
   | (s, Success (t, e)) :: l => '(tl, el) <- record_type_from' l ;;
-                                if inb (String.eqb) (List.map fst l) s then error:("Duplicate record key" s)
+                                if inb (String.eqb) s (List.map fst l) then error:("Duplicate record key" s)
                                 else Success ((s, t) :: tl, (s, e) :: el)
   | (_, Failure err) :: _ => Failure err
   end.
@@ -345,7 +535,7 @@ Fixpoint record_from' (l : list (string * result expr)) : result (list (string *
   match l with
   | nil => Success nil
   | (s, Success e) :: l => l' <- record_from' l ;;
-                           if inb (String.eqb) (List.map fst l) s then error:("Duplicate record key" s)
+                           if inb (String.eqb) s (List.map fst l) then error:("Duplicate record key" s)
                            else Success ((s, e) :: l')
   | (_, Failure err) :: _ => Failure err
   end.
@@ -353,6 +543,7 @@ Fixpoint record_from' (l : list (string * result expr)) : result (list (string *
 Definition record_from (l : list (string * result expr)) : result expr :=
   l' <- record_from' l ;; Success (ERecord l').
 
+(* ??? remove?
 Fixpoint proj_record_type (l : list (string * type)) (s : string) : result type :=
   match l with
   | nil => error:("Attribute" s "not found in record")
@@ -364,12 +555,28 @@ Fixpoint proj_record_field' (l : list (string * expr)) (s : string) : result exp
   | nil => error:("Attribute" s "not found in record")
   | (s0, e) :: l => if String.eqb s s0 then Success e else proj_record_field' l s
   end.
+*)
 
-Definition proj_record_field (e : expr) (s : string) : result expr :=
+Definition access_record_field (e : expr) (s : string) : result expr :=
   match e with
-  | ERecord l => proj_record_field' l s
+  | ERecord l => access_record l s
   | _ => error:(e "is not a record")
   end.
+
+Definition get_attr_type (tl : list (string * type)) (s : string) : type :=
+  match access_record tl s with
+  | Success t => t
+  | Failure _ => TUnit
+  end.
+
+(*
+(* ??? use access_record instead? *)
+Fixpoint get_attr_type (tl : list (string * type)) (s : string) : type :=
+  match tl with
+  | nil => TUnit
+  | (s', t) :: tl => if String.eqb s' s then t else get_attr_type tl s
+  end.
+ *)
 
 Fixpoint first_success (l : list (result (type * expr))) :  result type :=
   match l with
@@ -401,43 +608,6 @@ Fixpoint dict_from' (l : list (result (expr * expr))) : result (list (expr * exp
 Definition dict_from (l : list (result (expr * expr))) : result expr :=
   l' <- dict_from' l ;; Success (EDict l').
 
-Lemma NoDup_In_get_attr_type : forall tl,  NoDup (List.map fst tl) -> forall s t, In (s, t) tl -> get_attr_type tl s = t.
-Proof.
-  clear. induction tl; simpl; intros.
-  - intuition.
-  - destruct a. destruct (String.eqb s0 s) eqn:E.
-    + intuition; try congruence. rewrite String.eqb_eq in E; inversion H; subst.
-      assert (In s (List.map fst tl)).
-      { clear H H3 H4 IHtl. induction tl; auto. destruct a; inversion H1; subst; simpl.
-        - left; congruence.
-        - right; auto. }
-      intuition.
-    + inversion H; subst. apply IHtl; auto. destruct H0; auto.
-      rewrite String.eqb_neq in E; inversion H0; congruence.
-Qed.
-
-Lemma Permutation_NoDup_In_get_attr_type : forall tl tl',
-    Permutation tl tl' -> NoDup (List.map fst tl') ->
-    forall s, In s (List.map fst tl') -> get_attr_type tl s = get_attr_type tl' s.
-Proof.
-  intros.
-  assert (exists t, In (s, t) tl').
-  { clear H H0. induction tl'; simpl in *; intuition.
-    - exists (snd a). left; subst. apply surjective_pairing.
-    - destruct H0 as [t Ht]. firstorder. }
-  assert (NoDup (List.map fst tl)).
-  { apply Permutation_map with (f := fst) in H. apply Permutation_sym in H.
-    eapply Permutation_NoDup; eauto. }
-  destruct H2 as [t Ht]. repeat rewrite NoDup_In_get_attr_type with (t := t); auto.
-  apply Permutation_sym in H. eapply Permutation_in; eauto.
-Qed.
-
-Lemma Permutation_incl : forall A (l l' : list A), Permutation l l' -> incl l l'.
-Proof.
-  intros. unfold incl; intros.
-  eapply Permutation_in; eauto.
-Qed.
-
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 
@@ -467,7 +637,7 @@ Section WithMap.
     | EUnop o e1 => match o with
                     | OLength => '(t, e') <- synthesize_expr Gstore Genv e1 ;;
                                  match t with
-                                 | TList _ => if type_eqb expected TInt then Success (EUnop o e')
+                                 | TList t => if type_eqb expected TInt then Success (EUnop o e')
                                               else error:(e "has type" TInt "but expected" expected)
                                  | _ => error:(e1 "has type" t "but expected a list")
                                  end
@@ -495,14 +665,14 @@ Section WithMap.
                         | ORepeat =>
                             match expected with
                             | TList t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;; e2' <- analyze_expr Gstore Genv TInt e2 ;;
-                                         Success (EBinop o e1' e2')
+                                              Success (EBinop o e1' e2')
                             | _ => error:(e "is a list but expected" expected)
                             end
                         | OEq =>
                             match expected with
                             | TBool => match synthesize_expr Gstore Genv e1 with
                                        | Success (t, e1') => e2' <- analyze_expr Gstore Genv t e2 ;;
-                                                              Success (EBinop OEq e1' e2')
+                                                             Success (EBinop OEq e1' e2')
                                        | Failure err => '(t, e2') <- synthesize_expr Gstore Genv e2 ;;
                                                         e1' <- analyze_expr Gstore Genv t e1 ;;
                                                         Success (EBinop OEq e1' e2')
@@ -542,25 +712,24 @@ Section WithMap.
                             end
     | ERecord l => match expected with
                    | TRecord tl =>
-                       if type_eqb (TRecord tl) (TRecord (record_sort tl))
+                       (* ??? remove? if type_eqb (TRecord tl) (TRecord (record_sort tl)) *)
+                       if Nat.leb (length tl) (length l)
                        then
-                         if Nat.leb (length tl) (length l)
-                         then
-                           if inclb String.eqb (List.map fst l) (List.map fst tl) &&
-                                inclb String.eqb (List.map fst tl) (List.map fst l)
-                           then record_from (List.map
-                                               (fun '(s, e) => (s, analyze_expr Gstore Genv(get_attr_type tl s) e))
-                                               l)
-                           else error:(e "does not have all expected attributes" tl)
-                         else error:("Record type" tl "has more fields than record" l)
-                       else error:("Record type" tl "not sorted by record entry names")
+                         if inclb String.eqb (List.map fst l) (List.map fst tl) &&
+                              inclb String.eqb (List.map fst tl) (List.map fst l)
+                         then record_from (List.map
+                                             (fun '(s, e) => (s, analyze_expr Gstore Genv (get_attr_type tl s) e))
+                                             l)
+                         else error:(e "does not have all expected attributes" tl)
+                       else error:("Record type" tl "has more attributes than record" l)
                    | _ => error:(e "is a record but expected" expected)
                    end
     | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
                      match t with
-                     | TRecord l => t <- proj_record_type l s ;;
-                                    if type_eqb expected t then Success (EAccess e' s)
-                                    else error:("Attribute" s "has type" t "but expected" expected)
+                     | TRecord l =>
+                         t <- access_record l s ;;
+                              if type_eqb expected t then Success (EAccess e' s)
+                              else error:("Attribute" s "has type" t "but expected" expected)
                      | t => error:(e "has type" t "but expected a record")
                      end
     | EDict l => match expected with
@@ -590,6 +759,15 @@ Section WithMap.
                                       else error:(e "has type" (TOption vt) "but expected" expected)
                      | t => error:(e "has type" t "but expected a record")
                      end
+    | EOptmatch e e_none x e_some =>
+        e_none' <- analyze_expr Gstore Genv expected e_none ;;
+        '(t, e') <- synthesize_expr Gstore Genv e ;;
+        match t with
+        | TOption t =>
+            e_some' <- analyze_expr Gstore (map.put Genv x t) expected e_some ;;
+            Success (EOptmatch e' e_none' x e_some')
+        | t => error:(e "has type" t "but expected an option")
+        end
     | EFilter l x p => match expected with
                        | TList t => l' <- analyze_expr Gstore Genv expected l ;;
                                     p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
@@ -710,7 +888,8 @@ Section WithMap.
          | ERecord l => record_type_from (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)
          | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
                           match t with
-                          | TRecord l => t <- proj_record_type l s ;; Success (t, EAccess e' s)
+                          | TRecord l =>
+                              t <- access_record l s ;; Success (t, EAccess e' s)
                           | t => error:(e "has type" t "but expected a record")
                           end
          | EDict l => let kl := List.map (fun '(k, _) => synthesize_expr Gstore Genv k) l in
@@ -738,6 +917,21 @@ Section WithMap.
                                            Success (TOption vt, ELookup d' k')
                           | t => error:(e "has type" t "but expected a record")
                           end
+         | EOptmatch e e_none x e_some =>
+             '(t1, e') <- synthesize_expr Gstore Genv e ;;
+             match t1 with
+             | TOption t1 =>
+                 match synthesize_expr Gstore Genv e_none with
+                 | Success (t2, e_none') =>
+                     e_some' <- analyze_expr Gstore (map.put Genv x t1) t2 e_some ;;
+                     Success (t2, EOptmatch e' e_none' x e_some')
+                 | Failure _ =>
+                     '(t2, e_some') <- synthesize_expr Gstore (map.put Genv x t1) e_some ;;
+                     e_none' <- analyze_expr Gstore Genv t2 e_none ;;
+                     Success (t2, EOptmatch e' e_none' x e_some')
+                 end
+             | t1 => error:(e "has type" t1 "but expected an option")
+             end
          | EFilter l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
                               match t with
                               | TList t => p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;

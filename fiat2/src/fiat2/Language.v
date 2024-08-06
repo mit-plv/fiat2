@@ -111,6 +111,7 @@ Inductive expr : Type :=
 | EInsert (d k v : expr)
 | EDelete (d k : expr)
 | ELookup (d k : expr)
+| EOptmatch (e : expr) (e_none : expr) (x : string) (e_some : expr)
 (* relational algebra *)
 | EFilter (l : expr) (x : string) (p : expr) (* Select a subset of rows from table *)
 | EJoin (l1 l2 : expr) (x y : string) (p r : expr) (* Join two tables *)
@@ -130,6 +131,7 @@ Section ExprIH.
     (f_insert : forall d k v, P d -> P k -> P v -> P (EInsert d k v))
     (f_delete : forall d k, P d -> P k -> P (EDelete d k))
     (f_lookup : forall d k, P d -> P k -> P (ELookup d k))
+    (f_optmatch : forall e e_none x e_some, P e -> P e_none -> P e_some -> P (EOptmatch e e_none x e_some))
     (f_filter : forall l x p, P l -> P p -> P (EFilter l x p))
     (f_join : forall l1 l2 x y p r, P l1 -> P l2 -> P p -> P r -> P (EJoin l1 l2 x y p r))
     (f_proj : forall l x r, P l -> P r -> P (EProj l x r)).
@@ -164,6 +166,7 @@ Section ExprIH.
       | EInsert d k v => f_insert d k v (expr_IH d) (expr_IH k) (expr_IH v)
       | EDelete d k => f_delete d k (expr_IH d) (expr_IH k)
       | ELookup d k => f_lookup d k (expr_IH d) (expr_IH k)
+      | EOptmatch e e_none x e_some => f_optmatch e e_none x e_some (expr_IH e) (expr_IH e_none) (expr_IH e_some)
       | EFilter l x p => f_filter l x p (expr_IH l) (expr_IH p)
       | EJoin l1 l2 x y p r => f_join l1 l2 x y p r (expr_IH l1) (expr_IH l2) (expr_IH p) (expr_IH r)
       | EProj l x r => f_proj l x r (expr_IH l) (expr_IH r)

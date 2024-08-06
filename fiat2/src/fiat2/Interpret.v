@@ -220,6 +220,12 @@ Section WithWord.
           | VDict l => VOption (dict_lookup (interp_expr store env k) l)
           | _ => VUnit
           end
+      | EOptmatch e e_none x e_some =>
+          match interp_expr store env e with
+          | VOption None => interp_expr store env e_none
+          | VOption (Some v) => interp_expr store (map.put env x v) e_some
+          | _ => VUnit
+          end
       | EFilter l x p =>
           match interp_expr store env l with
           | VList l => VList (List.filter
