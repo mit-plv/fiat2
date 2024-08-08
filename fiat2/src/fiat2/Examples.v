@@ -25,7 +25,8 @@ Section fold_expr.
       | EInsert d k v => EInsert (fold_expr d) (fold_expr k) (fold_expr v)
       | EDelete d k => EDelete (fold_expr d) (fold_expr k)
       | ELookup d k => ELookup (fold_expr d) (fold_expr k)
-      | EOptmatch e e_none x e_some => EOptmatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
+      | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
+      | EDictFold d e0 k v acc e => EDictFold (fold_expr d) (fold_expr e0) k v acc (fold_expr e)
       | EFilter e x p => EFilter (fold_expr e) x (fold_expr p)
       | EJoin e1 e2 x y p r => EJoin (fold_expr e1) (fold_expr e2) x y (fold_expr p) (fold_expr r)
       | EProj e x r => EProj (fold_expr e) x (fold_expr r)
@@ -89,7 +90,10 @@ Section Examples.
     | EDict l => existsb (fun '(e1, e2) => orb (free_immut_in x e1) (free_immut_in x e2)) l
     | EInsert d k v => free_immut_in x d || free_immut_in x k || free_immut_in x v
     | EDelete d k | ELookup d k => free_immut_in x d || free_immut_in x k
-    | EOptmatch e e_none y e_some => free_immut_in x e || free_immut_in x e_none || (negb (String.eqb x y) && free_immut_in x e_some)
+    | EOptMatch e e_none y e_some => free_immut_in x e || free_immut_in x e_none || (negb (String.eqb x y) && free_immut_in x e_some)
+    | EDictFold d e0 k v acc e => free_immut_in x d || free_immut_in x e0 ||
+                                    (negb (String.eqb x k) && negb (String.eqb x v) && negb (String.eqb x acc) &&
+                                       free_immut_in x e)
     | EFilter e y p => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x p)
     | EJoin e1 e2 x1 x2 p r => free_immut_in x e1 || free_immut_in x e2 ||
                                  (negb (String.eqb x x1) && negb (String.eqb x x2) && (free_immut_in x p || free_immut_in x r))
@@ -296,6 +300,19 @@ Section Examples.
           * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
           * apply IHe3; intuition.
             rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
+      - inversion H0; subst; econstructor.
+        + apply IHe1; eauto; intuition.
+        + apply IHe2; intuition.
+        + destruct (x =? k) eqn:Ek.
+          * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
+          * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
+            destruct (x =? v) eqn:Ev.
+            -- rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
+            -- rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
+               destruct (x =? acc) eqn:Eacc.
+               ++ rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
+               ++ apply IHe3; intuition.
+                  rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
       - inversion H0; subst. constructor.
         + apply IHe1; auto; intuition.
         + destruct (x =? x0) eqn:Ex.
@@ -374,6 +391,17 @@ Section Examples.
           * rewrite eqb_eq in *; subst.
             rewrite Properties.map.put_put_same. auto.
           * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition.
+      - rewrite <- IHe1; intuition. destruct_one_match; auto. rewrite <- IHe2; auto.
+        apply In_fold_right_ext with (P := fun _ => True); auto.
+        intros. destruct (x =? k) eqn:Ek;
+          try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
+        rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition.
+        destruct (x =? v) eqn:Ev;
+          try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
+        rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition.
+        destruct (x =? acc) eqn:Eacc;
+          try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
+        rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition.
       - rewrite <- IHe1; intuition. destruct_one_match; auto.
         f_equal. clear E. induction l; auto. simpl.
          destruct (x0 =? x) eqn:E'.
@@ -599,6 +627,8 @@ Section Examples.
         + inversion H0; inversion H7; apply IHl; auto.
           inversion H3; subst. constructor; auto.
       - apply IHe3; auto. apply tenv_wf_step; auto. apply_type_of__type_wf; try invert_type_wf; auto.
+      - apply IHe3; auto. repeat apply tenv_wf_step; auto.
+        all: apply type_of__type_wf in H10, H11; try invert_type_wf; auto.
       - apply IHe3; auto. repeat apply tenv_wf_step; auto;
           apply_type_of__type_wf; try invert_type_wf; auto.
       - apply IHe4; auto. repeat apply tenv_wf_step; auto;
@@ -632,6 +662,8 @@ Section Examples.
           E : interp_expr _ _ ?e = Value.VList ?l
       |- type_of_value ?v ?t =>
         eapply type_sound in H; eauto; rewrite E in H; inversion H; subst
+    | H:type_of _ _ ?e (TDict ?kt ?vt), H1:In ?v ?l, E:interp_expr _ _ ?e = Value.VDict ?l
+      |- type_of_value (_ ?v) _ => eapply type_sound in H; eauto; rewrite E in H; inversion H; subst
     end.
 
     Theorem fold_expr_preserve_sem : forall f, preserve_ty f -> preserve_sem f -> preserve_sem (fold_expr f).
@@ -722,6 +754,26 @@ Section Examples.
           * apply_type_sound; auto.
         + econstructor; apply fold_expr_preserve_ty; eauto. apply tenv_wf_step; auto.
           apply_type_of__type_wf; auto; invert_type_wf; auto.
+      - invert_type_of. erewrite <- H_sem with (Gstore := Gstore); simpl; repeat apply_fold_expr_IH; eauto.
+        + destruct_one_match; auto. apply_fold_expr_IH' e2; eauto.
+          apply In_fold_right_ext with (P := fun v => type_of_value v t); intros; try apply_type_sound.
+          erewrite <- IHe3. 4: eassumption. all: intuition.
+          * apply_type_sound; repeat apply locals_wf_step; repeat apply tenv_wf_step; auto.
+            4,5: apply_type_sound; eapply List.Forall_In in H14; intuition; eauto.
+            -- apply_type_of__type_wf; auto. invert_type_wf; auto.
+            -- apply type_of__type_wf in H11; try invert_type_wf; auto.
+            -- apply type_of__type_wf in H12; auto. (* ??? How to prioritize H12 over H13 in Ltac? *)
+          * repeat apply tenv_wf_step; auto.
+            -- apply_type_of__type_wf; auto. invert_type_wf; auto.
+            -- apply type_of__type_wf in H11; try invert_type_wf; auto.
+            -- apply type_of__type_wf in H12; auto.
+          * repeat apply locals_wf_step; auto;
+              apply_type_sound; eapply List.Forall_In in H14; intuition; eauto.
+        + try (econstructor; apply fold_expr_preserve_ty; eauto).
+          repeat apply tenv_wf_step; auto.
+            -- apply_type_of__type_wf; auto. invert_type_wf; auto.
+            -- apply type_of__type_wf in H11; try invert_type_wf; auto.
+            -- apply type_of__type_wf in H12; auto.
       - invert_type_of. erewrite <- H_sem with (Gstore := Gstore); simpl; eauto; try apply_fold_expr_IH.
         + destruct_one_match; auto. f_equal.
           apply In_filter_ext. intros x0 H_in.

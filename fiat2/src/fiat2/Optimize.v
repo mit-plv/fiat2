@@ -187,6 +187,7 @@ Section WithWord.
         + destruct (interp_expr store env d) eqn:H; try reflexivity.  intuition congruence.
         + apply K.
       - admit.
+      - admit.
       - rewrite <- IHT1.
         + destruct (interp_expr store env e) eqn:H; try reflexivity.
           f_equal. apply filter_ext. intros a. destruct (eqb k x) eqn:KX.

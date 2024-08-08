@@ -220,10 +220,15 @@ Section WithWord.
           | VDict l => VOption (dict_lookup (interp_expr store env k) l)
           | _ => VUnit
           end
-      | EOptmatch e e_none x e_some =>
+      | EOptMatch e e_none x e_some =>
           match interp_expr store env e with
           | VOption None => interp_expr store env e_none
           | VOption (Some v) => interp_expr store (map.put env x v) e_some
+          | _ => VUnit
+          end
+      | EDictFold d e0 x y z e =>
+          match interp_expr store env d with
+          | VDict l => fold_right (fun v acc => interp_expr store (map.put (map.put (map.put env x (fst v)) y (snd v)) z acc) e) (interp_expr store env e0) l
           | _ => VUnit
           end
       | EFilter l x p =>

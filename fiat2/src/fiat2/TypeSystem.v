@@ -247,10 +247,14 @@ Section WithMap.
   | TyELookup d kt vt k : type_of Gstore Genv d (TDict kt vt) ->
                          type_of Gstore Genv k kt ->
                          type_of Gstore Genv (ELookup d k) (TOption vt)
-  | TyEOptmatch e t1 e_none x e_some t2 : type_of Gstore Genv e (TOption t1) ->
+  | TyEOptMatch e t1 e_none t2 x e_some : type_of Gstore Genv e (TOption t1) ->
                                     type_of Gstore Genv e_none t2 ->
                                     type_of Gstore (map.put Genv x t1) e_some t2 ->
-                                    type_of Gstore Genv (EOptmatch e e_none x e_some) t2
+                                    type_of Gstore Genv (EOptMatch e e_none x e_some) t2
+  | TyEDictFold d kt vt e0 t k v acc e : type_of Gstore Genv d (TDict kt vt) ->
+                                         type_of Gstore Genv e0 t ->
+                                         type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
+                                         type_of Gstore Genv (EDictFold d e0 k v acc e) t
   | TyEFilter e t x p : type_of Gstore Genv e (TList t) ->
                         type_of Gstore (map.put Genv x t) p TBool ->
                         type_of Gstore Genv (EFilter e x p) (TList t)
@@ -262,7 +266,8 @@ Section WithMap.
   | TyEProj e t1 x r t2 : type_of Gstore Genv e (TList t1) ->
                           type_of Gstore (map.put Genv x t1) r t2 ->
                           type_of Gstore Genv (EProj e x r) (TList t2).
-    Section TypeOfIH.
+
+  Section TypeOfIH.
     Context (Gstore : tenv).
     Context (P : tenv -> expr -> type -> Prop).
 
@@ -308,10 +313,14 @@ Section WithMap.
                                                   P Genv (EDelete d k) (TDict kt vt)).
     Hypothesis (f_lookup : forall Genv d kt vt k, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
                                                   type_of Gstore Genv k kt -> P Genv k kt -> P Genv (ELookup d k) (TOption vt)).
-    Hypothesis (f_optmatch : forall Genv e t1 e_none x e_some t2, type_of Gstore Genv e (TOption t1) -> P Genv e (TOption t1) ->
+    Hypothesis (f_optmatch : forall Genv e t1 e_none t2 x e_some, type_of Gstore Genv e (TOption t1) -> P Genv e (TOption t1) ->
                                                                   type_of Gstore Genv e_none t2 -> P Genv e_none t2 ->
                                                                   type_of Gstore (map.put Genv x t1) e_some t2 -> P (map.put Genv x t1) e_some t2 ->
-                                                                  P Genv (EOptmatch e e_none x e_some) t2).
+                                                                  P Genv (EOptMatch e e_none x e_some) t2).
+    Hypothesis (f_dictfold : forall Genv d kt vt e0 t k v acc e, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
+                                                                  type_of Gstore Genv e0 t -> P Genv e0 t ->
+                                                                  type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t -> P (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
+                                                                  P Genv (EDictFold d e0 k v acc e) t).
     Hypothesis (f_filter : forall Genv e t x p, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
                                                 type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
                                                 P Genv (EFilter e x p) (TList t)).
@@ -360,7 +369,8 @@ Section WithMap.
       | TyEDict _ _ l kt vt Hkt Hvt Hl => f_dict Genv l kt vt Hkt Hvt Hl (dict_type_of_IH type_of_IH Genv kt vt l Hl)
       | TyEInsert _ _ d kt vt k v Hd Hk Hv => f_insert Genv d kt vt k v Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk) Hv (type_of_IH Genv v vt Hv)
       | TyEDelete _ _ d kt vt k Hd Hk => f_delete Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
-      | TyEOptmatch _ _ e t1 e_none x e_some t2 He He_none He_some => f_optmatch Genv e t1 e_none x e_some t2 He (type_of_IH Genv e (TOption t1) He) He_none (type_of_IH Genv e_none t2 He_none) He_some (type_of_IH (map.put Genv x t1) e_some t2 He_some)
+      | TyEOptMatch _ _ e t1 e_none t2 x e_some He He_none He_some => f_optmatch Genv e t1 e_none t2 x e_some He (type_of_IH Genv e (TOption t1) He) He_none (type_of_IH Genv e_none t2 He_none) He_some (type_of_IH (map.put Genv x t1) e_some t2 He_some)
+      | TyEDictFold _ _ d kt vt e0 t k v acc e Hd He0 He => f_dictfold Genv d kt vt e0 t k v acc e Hd (type_of_IH Genv d (TDict kt vt) Hd) He0 (type_of_IH Genv e0 t He0)  He (type_of_IH (map.put (map.put (map.put Genv k kt) v vt) acc t) e t He)
       | TyELookup _ _ d kt vt k Hd Hk => f_lookup Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
       | TyEFilter _ _ e t x p He Hp => f_filter Genv e t x p He (type_of_IH Genv e (TList t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
       | TyEJoin _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join Genv e1 t1 e2 t2 x y p r t3 He1
@@ -759,14 +769,22 @@ Section WithMap.
                                       else error:(e "has type" (TOption vt) "but expected" expected)
                      | t => error:(e "has type" t "but expected a record")
                      end
-    | EOptmatch e e_none x e_some =>
+    | EOptMatch e e_none x e_some =>
         e_none' <- analyze_expr Gstore Genv expected e_none ;;
         '(t, e') <- synthesize_expr Gstore Genv e ;;
         match t with
         | TOption t =>
             e_some' <- analyze_expr Gstore (map.put Genv x t) expected e_some ;;
-            Success (EOptmatch e' e_none' x e_some')
+            Success (EOptMatch e' e_none' x e_some')
         | t => error:(e "has type" t "but expected an option")
+        end
+    | EDictFold d e0 k v acc e =>
+        '(t, d') <- synthesize_expr Gstore Genv d ;;
+        match t with
+        | TDict kt vt => e0' <- analyze_expr Gstore Genv expected e0 ;;
+                         e' <- analyze_expr Gstore (map.put (map.put (map.put Genv k kt) v vt) acc expected) expected e ;;
+                         Success (EDictFold d' e0' k v acc e')
+        | t => error:(d "has type" t "but expected a dictionary")
         end
     | EFilter l x p => match expected with
                        | TList t => l' <- analyze_expr Gstore Genv expected l ;;
@@ -917,20 +935,29 @@ Section WithMap.
                                            Success (TOption vt, ELookup d' k')
                           | t => error:(e "has type" t "but expected a record")
                           end
-         | EOptmatch e e_none x e_some =>
+         | EOptMatch e e_none x e_some =>
              '(t1, e') <- synthesize_expr Gstore Genv e ;;
              match t1 with
              | TOption t1 =>
                  match synthesize_expr Gstore Genv e_none with
                  | Success (t2, e_none') =>
                      e_some' <- analyze_expr Gstore (map.put Genv x t1) t2 e_some ;;
-                     Success (t2, EOptmatch e' e_none' x e_some')
+                     Success (t2, EOptMatch e' e_none' x e_some')
                  | Failure _ =>
                      '(t2, e_some') <- synthesize_expr Gstore (map.put Genv x t1) e_some ;;
                      e_none' <- analyze_expr Gstore Genv t2 e_none ;;
-                     Success (t2, EOptmatch e' e_none' x e_some')
+                     Success (t2, EOptMatch e' e_none' x e_some')
                  end
              | t1 => error:(e "has type" t1 "but expected an option")
+             end
+         | EDictFold d e0 k v acc e =>
+             '(t, d') <- synthesize_expr Gstore Genv d ;;
+             match t with
+             | TDict kt vt =>
+                 '(t, e0') <- synthesize_expr Gstore Genv e0 ;;
+                 e' <- analyze_expr Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) t e ;;
+                 Success (t, EDictFold d' e0' k v acc e')
+             | t => error:(d "has type" t "but expected a dictionary")
              end
          | EFilter l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
                               match t with
