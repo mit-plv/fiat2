@@ -30,6 +30,7 @@ Section WithWord.
                        type_of_value (VRecord l) (TRecord tl)
     | TyVDict l tk tv : type_wf tk -> type_wf tv ->
                         Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l ->
+                        NoDup (List.map fst l) -> StronglySorted dict_entry_leb l ->
                         type_of_value (VDict l) (TDict tk tv)
     | TyVUnit : type_of_value VUnit TUnit.
 
@@ -393,7 +394,7 @@ Section WithWord.
         H: analyze_expr _ _ ?t ?e = Success _ |- context[?t] => eapply IH in H; eauto
     end.
 
-  Set Ltac Profiling.
+(*  Set Ltac Profiling. *)
     Lemma typechecker_sound : forall e Gstore Genv t e',
         tenv_wf Gstore -> tenv_wf Genv ->
         (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
@@ -494,6 +495,11 @@ Section WithWord.
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
                   try apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
+      - (* ESort *)
+        split; intros; unfold_fold_typechecker; repeat destruct_match;
+          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
+                  try apply tenv_wf_step; try invert_type_wf; auto;
+                  try invert_type_wf; auto; try econstructor; eauto).
       - (* EFilter *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
@@ -511,7 +517,7 @@ Section WithWord.
                   try repeat apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
     Qed.
-    Show Ltac Profile.
+(*  Show Ltac Profile. *)
 
     Local Ltac apply_type_sound_IH :=
       lazymatch goal with
@@ -629,11 +635,13 @@ Section WithWord.
     Qed.
 
     Lemma TyVDict_def : forall l kt vt, type_wf kt -> type_wf vt ->
+                                        NoDup (map fst l) ->
+                                        StronglySorted (fun p p' : value * value => dict_entry_leb p p') l ->
                                         Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) l <-> type_of_value (VDict l) (TDict kt vt).
     Proof.
       split; intros.
       - constructor; auto.
-      - inversion H1; intuition.
+      - inversion H3; intuition.
     Qed.
 
     Lemma record_proj_sound : forall l, NoDup (List.map fst l) ->
@@ -651,6 +659,51 @@ Section WithWord.
           rewrite H0. eapply IHl; eauto.
     Qed.
 
+    Lemma dict_insert_preserve_NoDup : forall k k' v l,
+        ~ In k (map fst l) ->
+        k <> k' ->
+        ~ In k (map fst (dict_insert (word := word) k' v l)).
+    Proof.
+      induction l; intros.
+      - simpl; intuition.
+      - simpl in H. apply Decidable.not_or in H as [HL HR].
+        pose proof IHl HR H0; auto.
+        simpl. destruct a. unfold value_ltb, value_eqb.
+        destruct (value_compare k' v0); simpl; intuition.
+    Qed.
+
+    Lemma dict_insert_incl : forall k v l, incl (dict_insert (word:=word) k v l) ((k, v) :: l).
+    Proof.
+      induction l; simpl; intuition.
+      unfold value_ltb, value_eqb; destruct value_compare eqn:E; intuition.
+      apply incl_cons; intuition.
+      unfold incl in *; intros. apply IHl in H.
+      inversion H; intuition. constructor; congruence.
+    Qed.
+
+    Local Ltac destruct_value_compare :=
+      lazymatch goal with
+      | H: context[value_compare ?x ?y] |- _ =>
+          let E := fresh "E" in
+          destruct (value_compare x y) eqn: E
+      | |- context[value_compare ?x ?y] =>
+          let E := fresh "E" in
+          destruct (value_compare x y) eqn: E
+      end.
+
+    Local Ltac invert_SSorted :=
+      lazymatch goal with
+      | H: StronglySorted _ (_ :: _) |- _ => inversion H; subst
+      end.
+
+    Local Ltac invert_NoDup :=
+      lazymatch goal with
+      | H: NoDup (_ :: _) |- _ => inversion H; subst
+      end.
+
+    Local Ltac invert_In :=
+      lazymatch goal with H: In _ (_ :: _) |- _ => inversion H end.
+
     Lemma dict_insert_sound : forall l kt vt k v,
         type_wf kt -> type_wf vt ->
         type_of_value (VDict l) (TDict kt vt) ->
@@ -659,13 +712,65 @@ Section WithWord.
         type_of_value (VDict (dict_insert k v l)) (TDict kt vt).
     Proof.
       intros. induction l; constructor; simpl; auto.
-      destruct a as [k' v']. destruct (value_ltb k k'); [| destruct(value_eqb k k')];
-        match goal with
-        | H: type_of_value (VDict (_ :: _)) _ |- _ => inversion H; subst
-        end; auto.
-        + invert_Forall; auto.
-        + invert_Forall; subst; constructor; intuition.
-          rewrite TyVDict_def; auto. apply IHl. constructor; auto.
+      1-2: constructor; intuition.
+      1: apply NoDup_nil. 1: apply SSorted_nil.
+      1-3: destruct a as [k' v']; inversion H1; subst;
+      assert (Hl: type_of_value (VDict l) (TDict kt vt));
+      [ lazymatch goal with
+         | H1: Forall _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
+             inversion H1; inversion H2; inversion H3
+         end; constructor; auto | ];
+      apply IHl in Hl.
+      - unfold value_ltb, value_eqb; destruct_value_compare.
+        + invert_Forall; constructor; auto.
+        + constructor; auto.
+        + invert_Forall; constructor; auto. inversion Hl; auto.
+      - unfold value_ltb, value_eqb; destruct_value_compare; simpl in *.
+        + apply value_compare_Eq_eq in E. subst; auto.
+        + constructor; auto. intro contra. invert_SSorted.
+          inversion contra.
+          * symmetry in H4. apply eq_value_compare_Eq in H4. congruence.
+          * rewrite Forall_forall in H12. apply In_fst in H4 as [[k'' v''] [HL HR]].
+            apply H12 in HL. unfold dict_entry_leb in HL; simpl in *; subst.
+            unfold value_leb in HL. unfold leb_from_compare in HL. rewrite value_compare_antisym in E.
+            simpl in E. destruct_value_compare; discriminate.
+        + inversion Hl; subst.
+          constructor; auto. invert_NoDup.
+          apply dict_insert_preserve_NoDup; auto. intro contra.
+          symmetry in contra; apply eq_value_compare_Eq in contra; congruence.
+      - unfold value_ltb, value_eqb; destruct_value_compare; simpl in *.
+        + apply value_compare_Eq_eq in E; subst; auto.
+          invert_SSorted; constructor; auto.
+        + constructor; auto. rewrite Forall_forall; intros. destruct x; simpl.
+          unfold dict_entry_leb, value_leb, leb_from_compare. simpl. invert_In.
+          * invert_pair; subst. rewrite E; auto.
+          * invert_SSorted; subst. eapply List.Forall_In in H14; eauto.
+            unfold dict_entry_leb, value_leb, leb_from_compare in *. simpl in *.
+            destruct_value_compare.
+            1:{ apply value_compare_Eq_eq in E0; subst. rewrite E; trivial. }
+            1: erewrite value_compare_trans; eauto.
+            1: intuition.
+        + inversion Hl; subst. constructor; auto.
+          rewrite Forall_forall. intros. apply dict_insert_incl in H4.
+          unfold dict_entry_leb, value_leb, leb_from_compare; simpl.
+          invert_In; subst; simpl.
+          * rewrite value_compare_antisym. rewrite E; auto.
+          * invert_SSorted; subst. eapply List.Forall_In in H19; eauto.
+    Qed.
+
+    Lemma dict_delete_preserve_NoDup : forall k k' l,
+        ~ In k (map fst l) -> ~ In k (map fst (dict_delete (word:=word) k' l)).
+    Proof.
+      induction l; simpl; auto; intros.
+      repeat lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
+        simpl; intuition.
+    Qed.
+
+    Lemma dict_delete_incl : forall k l, incl (dict_delete (word:=word) k l) l.
+    Proof.
+      induction l; simpl; intuition.
+      lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
+      intuition.
     Qed.
 
     Lemma dict_delete_sound : forall l kt vt k,
@@ -674,12 +779,27 @@ Section WithWord.
         type_of_value k kt ->
         type_of_value (VDict (dict_delete k l)) (TDict kt vt).
     Proof.
-      intros; induction l; constructor; simpl; auto.
-      destruct a as [k' v']. destruct (value_eqb k k');
-       match goal with
-        | H: type_of_value (VDict (_ :: _)) _ |- _ => inversion H; subst
-        end; invert_Forall; auto.
-      constructor; auto. try rewrite TyVDict_def in *; auto.
+      intros; induction l; constructor; simpl; auto using NoDup_nil, SSorted_nil.
+      all: destruct a as [k' v']; inversion H1; subst;
+        assert (Hl: type_of_value (VDict l) (TDict kt vt));
+        [ lazymatch goal with
+          | H1: Forall _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
+              inversion H1; inversion H2; inversion H3
+          end; constructor; auto | ];
+        apply IHl in Hl; simpl in *.
+      - destruct (value_eqb k k').
+        + invert_Forall; auto.
+        + inversion Hl; subst. invert_Forall. constructor; auto.
+      - destruct (value_eqb k k').
+        + invert_NoDup; auto.
+        + inversion Hl; subst. simpl. constructor; auto.
+          apply dict_delete_preserve_NoDup; invert_NoDup; auto.
+      - destruct (value_eqb k k').
+        + invert_SSorted; auto.
+        + inversion Hl; subst. constructor; auto.
+          rewrite Forall_forall; intros.
+          invert_SSorted. eapply List.Forall_In in H17; eauto.
+          apply dict_delete_incl in H3; auto.
     Qed.
 
     Lemma dict_lookup_sound : forall l kt vt k,
@@ -695,7 +815,8 @@ Section WithWord.
           | H: type_of_value (VDict (_ :: _)) _ |- _ => inversion H; subst
           end; invert_Forall; auto.
         + constructor. intuition.
-        + apply IHl. constructor; auto.
+        + apply IHl. constructor; auto;
+            simpl in *; invert_NoDup; invert_SSorted; auto.
     Qed.
 
     Lemma Forall_Forall_filter : forall A P (l : list A), Forall P l -> forall f, Forall P (filter f l).
@@ -725,6 +846,28 @@ Section WithWord.
       - intuition.
       - rewrite TyVList_def. eapply IHl; eauto. constructor. auto.
     Qed.
+
+  Lemma NoDup_dedup_fst : forall A B P_eqb (l : list (A * B)),
+      (forall x y, P_eqb x y = true <-> fst x = fst y) -> NoDup (List.map fst (List.dedup P_eqb l)).
+  Proof.
+    intros. induction l; simpl; auto using NoDup_nil.
+    destruct (find (P_eqb a) l) eqn:E; auto.
+    simpl; constructor; auto. intro contra.
+    pose proof (find_none _ _ E).
+    assert (exists x, In x l /\ fst a = fst x).
+    { revert H contra. clear. intros; induction l; simpl in *; intuition.
+      destruct (find (P_eqb a0) l) eqn:E.
+      - apply IHl in contra; firstorder.
+      - simpl in *. firstorder. exists a0; intuition. }
+    destruct H1 as [x [HL HR]]. apply H0 in HL. apply H in HR. congruence.
+  Qed.
+
+  Lemma dedup_In : forall A (x : A) f l, In x (List.dedup f l) -> In x l.
+  Proof.
+    induction l; simpl; auto.
+    lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end; intuition.
+    inversion H; auto.
+  Qed.
 
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
@@ -818,16 +961,26 @@ Section WithWord.
           rewrite E; auto.
         + apply access_record_sound; auto.
       - (* TyEDict *)
-        constructor; auto. rewrite Forall_forall in *.
-        assert (forall p, In p (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l) -> type_of_value (fst p) kt /\ type_of_value (snd p) vt).
-        { induction l; intros; simpl in *; try now (exfalso; auto).
-          destruct H3.
-          - pose proof (H1 a); intuition; destruct a; subst; simpl in *.
-            + change e with (fst (e, e0)). apply H2; auto.
-            + change e0 with (snd (e, e0)). apply H2; auto.
-           - apply IHl; auto. }
-        intros. apply H3. pose proof (Permuted_dict_sort (width:=width)).
-        eapply Permutation_in; [ apply Permutation_sym |]; eauto.
+        constructor; auto.
+        + rewrite Forall_forall in *.
+          assert (forall p, In p (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l) -> type_of_value (fst p) kt /\ type_of_value (snd p) vt).
+          { induction l; intros; simpl in *; try now (exfalso; auto).
+            destruct H3.
+            - pose proof (H1 a); intuition; destruct a; subst; simpl in *.
+              + change e with (fst (e, e0)). apply H2; auto.
+              + change e0 with (snd (e, e0)). apply H2; auto.
+            - apply IHl; auto. }
+          intros. apply H3. eapply dedup_In. pose proof (Permuted_dict_sort (width:=width)).
+          eapply Permutation_in; [ apply Permutation_sym |]; eauto.
+        + assert (Permutation_NoDup_fst : forall A B (l0 l' : list (A * B)), NoDup (List.map fst l0) -> Permutation l0 l' -> NoDup (List.map fst l')).
+          { intros A B l0 l' H_NoDup H_Permu. eapply Permutation_map in H_Permu. eapply Permutation_NoDup; eauto. }
+          eapply Permutation_NoDup_fst.
+          2: eapply Permuted_dict_sort.
+          apply NoDup_dedup_fst. unfold value_eqb. split.
+          * destruct (value_compare (fst x) (fst y)) eqn:E; try discriminate. intros.
+            apply value_compare_Eq_eq. auto.
+          * intros. rewrite H3. rewrite value_compare_refl. auto.
+        + apply StronglySorted_dict_sort.
       - (* TyEInsert *)
         repeat apply_type_sound_IH; apply dict_insert_sound; constructor; try invert_type_wf; auto.
       - (* TyEDelete *)
@@ -842,19 +995,29 @@ Section WithWord.
         repeat apply_type_sound_IH; auto; try constructor;
           try apply_type_of__type_wf; try invert_type_wf; auto.
       - (* TyEDictFold *)
-        repeat apply_type_sound_IH;
-          try (match goal with
-               | H: VDict ?l = _ |- _ => clear H
-               end; induction l; simpl; try constructor; auto; apply_type_sound_IH; auto;
-               invert_Forall);
-               repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-          try apply_type_of__type_wf; try invert_type_wf; intuition.
-        all: match goal with
-             | H: VDict ?l = _ |- type_of_value (fold_right _ _ ?l) _ => clear H; induction l end;
-          simpl; try constructor; auto; apply_type_sound_IH; auto;
-          invert_Forall;
-          repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-          try apply_type_of__type_wf; try invert_type_wf; intuition.
+        repeat apply_type_sound_IH.
+        all: try (lazymatch goal with
+                  | H: VDict ?l = _ |- _ => clear H
+                  end; induction l; simpl; try constructor; auto; apply_type_sound_IH; auto;
+                  invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
+                  try apply_type_of__type_wf; try invert_type_wf; intuition;
+                  lazymatch goal with
+                  | H: _ -> _ -> ?P |- ?P => apply H
+                  end;
+                  simpl in *; invert_NoDup; invert_SSorted; intuition).
+        all: try (lazymatch goal with
+                  | H: VDict ?l = _ |- type_of_value (fold_right _ _ ?l) _ => clear H; induction l
+                  end;
+                  simpl; try constructor; auto; apply_type_sound_IH; auto;
+                  invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
+                  try apply_type_of__type_wf; try invert_type_wf; intuition;
+                  lazymatch goal with
+                  | H: _ -> _ -> ?P |- ?P => apply H
+                  end; simpl in *; invert_NoDup; invert_SSorted; intuition).
+      - (* TyESort *)
+        repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros.
+        eapply List.Forall_In in H2; eauto. eapply Permutation_in.
+        1: apply Permutation_sym, Permuted_value_sort. auto.
       - (* TyEFilter *)
         repeat apply_type_sound_IH. constructor. apply Forall_Forall_filter. auto.
       - (* TyEJoin *)

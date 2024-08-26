@@ -204,7 +204,8 @@ Section WithWord.
                        | _ => VUnit
                        end
       | EDict l => VDict (dict_sort
-                            (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l))
+                            (List.dedup (fun p p' => value_eqb (fst p) (fst p'))
+                               (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l)))
       | EInsert d k v =>
           match interp_expr store env d with
           | VDict l => VDict (dict_insert (interp_expr store env k) (interp_expr store env v) l)
@@ -229,6 +230,11 @@ Section WithWord.
       | EDictFold d e0 x y z e =>
           match interp_expr store env d with
           | VDict l => fold_right (fun v acc => interp_expr store (map.put (map.put (map.put env x (fst v)) y (snd v)) z acc) e) (interp_expr store env e0) l
+          | _ => VUnit
+          end
+      | ESort l =>
+          match interp_expr store env l with
+          | VList l => VList (value_sort l)
           | _ => VUnit
           end
       | EFilter l x p =>

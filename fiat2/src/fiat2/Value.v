@@ -1,5 +1,5 @@
 Require Import ZArith String List.
-Require Import coqutil.Word.Interface coqutil.Word.Properties.
+Require Import coqutil.Word.Interface coqutil.Word.Properties coqutil.Datatypes.List.
 Require Import Std.Sorting.Mergesort Sorted Permutation.
 
 Section WithWord.
@@ -104,7 +104,7 @@ Section WithWord.
         String.compare a b (* if String.eqb a b then Eq else if String.ltb a b then Lt else Gt *)
     | VOption a, VOption b =>
         match a with
-        |None => match b with None => Eq | _ => Lt end
+        | None => match b with None => Eq | _ => Lt end
         | Some a => match b with None => Gt | Some b => value_compare a b end
         end
     | VList a, VList b => list_compare value_compare a b
@@ -141,7 +141,7 @@ Section WithWord.
 
   Definition value_leb := leb_from_compare value_compare.
 
-    Definition is_antisym {A : Type} (cmp : A -> A -> comparison) := forall x y : A, cmp x y = CompOpp (cmp y x).
+  Definition is_antisym {A : Type} (cmp : A -> A -> comparison) := forall x y : A, cmp x y = CompOpp (cmp y x).
 
   Lemma antisym__pair_antisym : forall (A B : Type) (A_cmp : A -> A -> comparison) (B_cmp : B -> B -> comparison),
       is_antisym A_cmp -> is_antisym B_cmp -> is_antisym (pair_compare A_cmp B_cmp).
@@ -166,7 +166,7 @@ Section WithWord.
   Qed.
 
   Lemma value_compare_refl : forall v : value, value_compare v v = Eq.
-    apply value_IH; auto; intros; simpl.
+    induction v using value_IH; auto; intros; simpl.
     - rewrite word.eqb_eq; trivial.
     - apply Z.compare_refl.
     - destruct b; trivial.
@@ -212,6 +212,171 @@ Section WithWord.
       simpl in *. rewrite H2L, H2R. destruct (value_compare kb ka), (value_compare vb va); simpl; auto.
   Qed.
 
+  Local Ltac destruct_match :=
+    lazymatch goal with
+    | H: context[match ?x with _ => _ end] |- _ =>
+        let E := fresh "E" in
+        destruct x eqn:E
+    end.
+
+  Lemma list_compare_Eq_eq : forall A A_compare (l l' : list A),
+      Forall (fun v => forall v', A_compare v v' = Eq -> v = v') l ->
+      list_compare A_compare l l' = Eq -> l = l'.
+  Proof.
+    intros. generalize dependent l'.
+    induction H; simpl; intros; destruct l'; try discriminate; auto.
+    destruct_match; try discriminate. apply H in E.
+    subst. f_equal. auto.
+  Qed.
+
+  Lemma pair_compare_Eq_eq : forall A B A_compare B_compare (p p' : A * B),
+      (forall a, A_compare (fst p) a = Eq -> fst p = a) ->
+      (forall b, B_compare (snd p) b = Eq -> snd p = b) ->
+      pair_compare A_compare B_compare p p' = Eq -> p = p'.
+  Proof.
+    intros A B A_compare B_compare p p' HA HB H. destruct p, p'; simpl in *.
+    destruct_match; try discriminate. apply HA in E; apply HB in H.
+    congruence.
+  Qed.
+
+  Lemma record_compare_Eq_eq : forall value_compare l l',
+      Forall (fun v =>
+                forall v', value_compare (snd v) v' = Eq -> snd v = v') l ->
+      record_compare value_compare l l' = Eq ->
+      l = l'.
+  Proof.
+    intros. generalize dependent l'.
+    induction H; simpl; intros; destruct l'; try discriminate; auto.
+    destruct_match; try discriminate. erewrite IHForall; eauto.
+    f_equal. eapply pair_compare_Eq_eq; eauto.
+    apply compare_eq_iff.
+  Qed.
+
+  Lemma value_compare_Eq_eq : forall v v', value_compare v v' = Eq -> v = v'.
+  Proof.
+    intros. generalize dependent v'. induction v using value_IH; intros;
+      destruct v'; simpl in *; try discriminate;
+      repeat destruct_match; try discriminate; auto; f_equal.
+      - apply word.eqb_true; auto.
+      - apply Z.compare_eq; auto.
+      - destruct b, b0; try discriminate; auto.
+      - apply compare_eq_iff; auto.
+      - f_equal; auto.
+      - eapply list_compare_Eq_eq; eauto.
+      - eapply record_compare_Eq_eq; eauto.
+      - unfold dict_compare in *. eapply list_compare_Eq_eq; eauto.
+        rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto.
+        eapply pair_compare_Eq_eq; eauto; intuition.
+  Qed.
+
+  Lemma eq_value_compare_Eq : forall v v', v = v' -> value_compare v v' = Eq.
+  Proof.
+    intros; subst; apply value_compare_refl.
+  Qed.
+
+  Definition trans_at {A} (compare : A -> A -> comparison) (a a' a'' : A) :=
+    compare a a' = Lt -> compare a' a'' = Lt -> compare a a'' = Lt.
+
+  Lemma string_compare_trans : forall s1 s2 s3,
+      trans_at String.compare s1 s2 s3.
+  Proof.
+    unfold trans_at.
+    induction s1; destruct s2, s3; auto; simpl in *; try discriminate.
+    - intros. destruct (Ascii.compare a a0) eqn:E1, (Ascii.compare a0 a1) eqn:E2; try discriminate; auto.
+      + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. eapply IHs1; eauto.
+      + apply Ascii.compare_eq_iff in E1; subst. rewrite E2. auto.
+      + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. auto.
+      + unfold Ascii.compare in *. rewrite N.compare_lt_iff in E1, E2.
+        pose proof (N.lt_trans _ _ _ E1 E2). rewrite <-  N.compare_lt_iff in H1.
+        rewrite H1. easy.
+  Qed.
+
+  Lemma list_compare_trans : forall A A_compare (l l' l'' : list A),
+      (forall v, A_compare v v = Eq) ->
+      (forall v v', A_compare v v' = Eq -> v = v') ->
+      Forall (fun v => forall v' v'', trans_at A_compare v v' v'') l ->
+      list_compare A_compare l l' = Lt ->
+      list_compare A_compare l' l'' = Lt ->
+      list_compare A_compare l l'' = Lt.
+  Proof.
+    induction l; destruct l', l''; try discriminate; auto.
+    intros H_refl H_Eq_eq H_trans H1 H2; simpl in *.
+    repeat destruct_match; try discriminate;
+      try apply H_Eq_eq in E0; try apply H_Eq_eq in E; subst.
+    - rewrite H_refl. inversion H_trans; eapply IHl; eauto.
+    - rewrite E0; auto.
+    - rewrite E; auto.
+    - inversion H_trans; subst. erewrite H3; eauto.
+  Qed.
+
+  Lemma pair_compare_refl : forall A B A_compare B_compare (p : A * B),
+      (forall a, A_compare a a = Eq) ->
+      (forall b, B_compare b b = Eq) ->
+      pair_compare A_compare B_compare p p = Eq.
+  Proof.
+    intros. destruct p. simpl. rewrite H, H0; auto.
+  Qed.
+
+  Lemma pair_compare_trans : forall A B A_compare B_compare (p p' p'' : A * B),
+      (forall v, A_compare v v = Eq) ->
+      (forall v v', A_compare v v' = Eq -> v = v') ->
+      trans_at A_compare (fst p) (fst p') (fst p'') ->
+      trans_at B_compare (snd p) (snd p') (snd p'') ->
+      trans_at (pair_compare A_compare B_compare) p p' p''.
+  Proof.
+    unfold trans_at; destruct p, p', p''; simpl; intros H_refl H_Eq_eq HA HB H1 H2.
+    repeat destruct_match; try discriminate.
+    all: try apply H_Eq_eq in E; try apply H_Eq_eq in E0; subst.
+    - rewrite H_refl. auto.
+    - rewrite E0; auto.
+    - rewrite E; auto.
+    - rewrite HA; auto.
+  Qed.
+
+  Lemma record_compare_trans : forall value_compare l l' l'',
+      (forall v, value_compare v v = Eq) ->
+      (forall v v', value_compare v v' = Eq -> v = v') ->
+      Forall (fun v => forall v' v'', trans_at value_compare (snd v) v' v'') l ->
+      record_compare value_compare l l' = Lt ->
+      record_compare value_compare l' l'' = Lt ->
+      record_compare value_compare l l'' = Lt.
+  Proof.
+    induction l; destruct l', l''; try discriminate; simpl; auto.
+    intros H_refl H_Eq_eq H_trans H1 H2. repeat destruct_match; try discriminate.
+    all: try apply pair_compare_Eq_eq in E0; try apply pair_compare_Eq_eq in E;
+      auto using compare_eq_iff; subst.
+    - rewrite pair_compare_refl; auto using string_compare_refl.
+      inversion H_trans; eauto.
+    - rewrite E0; auto.
+    - rewrite E; auto.
+    - erewrite pair_compare_trans; eauto using string_compare_refl, compare_eq_iff, string_compare_trans.
+      inversion H_trans; auto.
+  Qed.
+
+  Lemma value_compare_trans : forall v v' v'', value_compare v v' = Lt -> value_compare v' v'' = Lt ->
+                                               value_compare v v'' = Lt.
+    induction v using value_IH.
+    all: destruct v', v''; simpl in *; intros; try discriminate; auto.
+    - repeat destruct_match; try discriminate.
+      rewrite word.unsigned_ltu in *. unfold Z.ltb in *.
+      repeat destruct_match; try discriminate. eapply Zcompare_Lt_trans in E3; eauto.
+      rewrite E3. destruct (word.eqb w w1) eqn:E'; try discriminate; auto.
+      apply word.eqb_true in E'; subst. rewrite Z.compare_refl in E3. discriminate.
+    - eapply Zcompare_Lt_trans; eauto.
+    - destruct b, b0, b1; try discriminate; auto.
+    - eapply string_compare_trans; eauto.
+    - destruct m, m0, m1; try discriminate; auto. eapply H; eauto.
+    - eapply list_compare_trans; eauto using value_compare_Eq_eq, value_compare_refl.
+    - eapply record_compare_trans; eauto using value_compare_Eq_eq, value_compare_refl.
+    - unfold dict_compare. eapply list_compare_trans; eauto.
+      + intros; apply pair_compare_refl; auto using value_compare_refl.
+      + intros; eapply pair_compare_Eq_eq; eauto using value_compare_Eq_eq, value_compare_refl.
+      + rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto; intuition.
+        apply pair_compare_trans; simpl; auto using value_compare_Eq_eq, value_compare_refl.
+        * unfold trans_at; apply H3.
+        * unfold trans_at; apply H4.
+  Qed.
+
   Local Coercion is_true : bool >-> Sortclass.
 
   Lemma value_leb_total : is_total value_leb.
@@ -234,6 +399,18 @@ Section WithWord.
                       /\ dict_wf l'
     end.
 
+  Definition value_sort := Sectioned.sort value_leb.
+
+  Lemma LocallySorted_value_sort : forall l, LocallySorted value_leb (value_sort l).
+  Proof.
+    exact (Sectioned.LocallySorted_sort _ value_leb value_leb_total).
+  Qed.
+
+  Lemma Permuted_value_sort : forall l, Permutation l (value_sort l).
+  Proof.
+    apply Sectioned.Permuted_sort.
+  Qed.
+
   Section SortRecord.
     Context {A : Type}.
     Definition record_entry_leb (p p' : (string * A)) : bool := String.leb (fst p) (fst p').
@@ -249,19 +426,6 @@ Section WithWord.
     Lemma LocallySorted_record_sort : forall l, LocallySorted record_entry_leb (record_sort l).
     Proof.
       exact (Sectioned.LocallySorted_sort _ record_entry_leb record_entry_leb_total).
-    Qed.
-
-    Lemma string_compare_trans : forall s1 s2 s3,
-        String.compare s1 s2 = Lt -> String.compare s2 s3 = Lt -> String.compare s1 s3 = Lt.
-    Proof.
-      induction s1; destruct s2, s3; auto; simpl in *; try discriminate.
-      - intros. destruct (Ascii.compare a a0) eqn:E1, (Ascii.compare a0 a1) eqn:E2; try discriminate; auto.
-        + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. eapply IHs1; eauto.
-        + apply Ascii.compare_eq_iff in E1; subst. rewrite E2. auto.
-        + apply Ascii.compare_eq_iff in E2; subst. rewrite E1. auto.
-        + unfold Ascii.compare in *. rewrite N.compare_lt_iff in E1, E2.
-          pose proof (N.lt_trans _ _ _ E1 E2). rewrite <-  N.compare_lt_iff in H1.
-          rewrite H1. easy.
     Qed.
 
     Lemma record_entry_leb_trans : RelationClasses.Transitive record_entry_leb.
@@ -306,4 +470,26 @@ Section WithWord.
   Proof.
     apply Sectioned.Permuted_sort.
   Qed.
+
+  Lemma dict_entry_leb_trans : RelationClasses.Transitive dict_entry_leb.
+  Proof.
+    unfold RelationClasses.Transitive. destruct x, y, z. unfold dict_entry_leb. simpl.
+    unfold value_leb, leb_from_compare.
+    repeat lazymatch goal with
+           | |- context[match ?x with _ => _ end] =>
+               let E := fresh "E" in
+               destruct x eqn:E
+           end; intuition.
+    all: try apply value_compare_Eq_eq in E; try apply value_compare_Eq_eq in E0; subst;
+      try congruence.
+    - rewrite value_compare_refl in E1. discriminate.
+    - erewrite value_compare_trans in E1; eauto. discriminate.
+  Qed.
+
+  Lemma StronglySorted_dict_sort : forall l, StronglySorted (dict_entry_leb) (dict_sort l).
+    Proof.
+      intros. apply Sectioned.StronglySorted_sort.
+      - apply dict_entry_leb_total.
+      - apply dict_entry_leb_trans.
+    Qed.
 End WithWord.

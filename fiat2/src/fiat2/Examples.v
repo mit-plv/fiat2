@@ -27,6 +27,7 @@ Section fold_expr.
       | ELookup d k => ELookup (fold_expr d) (fold_expr k)
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
       | EDictFold d e0 k v acc e => EDictFold (fold_expr d) (fold_expr e0) k v acc (fold_expr e)
+      | ESort l => ESort (fold_expr l)
       | EFilter e x p => EFilter (fold_expr e) x (fold_expr p)
       | EJoin e1 e2 x y p r => EJoin (fold_expr e1) (fold_expr e2) x y (fold_expr p) (fold_expr r)
       | EProj e x r => EProj (fold_expr e) x (fold_expr r)
@@ -94,6 +95,7 @@ Section Examples.
     | EDictFold d e0 k v acc e => free_immut_in x d || free_immut_in x e0 ||
                                     (negb (String.eqb x k) && negb (String.eqb x v) && negb (String.eqb x acc) &&
                                        free_immut_in x e)
+    | ESort l => free_immut_in x l
     | EFilter e y p => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x p)
     | EJoin e1 e2 x1 x2 p r => free_immut_in x e1 || free_immut_in x e2 ||
                                  (negb (String.eqb x x1) && negb (String.eqb x x2) && (free_immut_in x p || free_immut_in x r))
@@ -378,7 +380,7 @@ Section Examples.
         destruct a; intuition. f_equal.
         + f_equal. inversion H; subst. apply H4; intuition.
         + inversion H; apply IHl; intuition.
-      - do 2 f_equal. induction l; auto. simpl in *. rewrite Bool.orb_false_iff in *.
+      - do 3 f_equal. induction l; auto. simpl in *. rewrite Bool.orb_false_iff in *.
         destruct a; intuition. f_equal.
         + f_equal; inversion H; subst; rewrite Bool.orb_false_iff in *;
             apply H4; intuition.
@@ -725,7 +727,7 @@ Section Examples.
       - invert_type_of. erewrite <- H_sem with (Gstore := Gstore); simpl; eauto; try apply_fold_expr_IH r.
         econstructor; eauto. apply fold_expr_preserve_ty; auto.
       - invert_type_of. erewrite <- H_sem with (Gstore := Gstore); simpl; eauto.
-        + do 2 f_equal. rewrite map_map; apply map_ext_Forall; rewrite Forall_forall.
+        + do 3 f_equal. rewrite map_map; apply map_ext_Forall; rewrite Forall_forall.
           intros x H_in; destruct x eqn:E.
           apply Forall_and_inv in H. intuition. rewrite Forall_forall in *.
           f_equal; [ pose proof (H5 x) | pose proof (H9 x) ]; subst; simpl in *; eapply H with (Gstore := Gstore); eauto;
@@ -774,6 +776,8 @@ Section Examples.
             -- apply_type_of__type_wf; auto. invert_type_wf; auto.
             -- apply type_of__type_wf in H11; try invert_type_wf; auto.
             -- apply type_of__type_wf in H12; auto.
+      - invert_type_of. erewrite <- H_sem with (Gstore := Gstore); simpl; eauto; try apply_fold_expr_IH.
+        constructor. apply fold_expr_preserve_ty; eauto.
       - invert_type_of. erewrite <- H_sem with (Gstore := Gstore); simpl; eauto; try apply_fold_expr_IH.
         + destruct_one_match; auto. f_equal.
           apply In_filter_ext. intros x0 H_in.

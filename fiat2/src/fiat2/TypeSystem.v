@@ -84,11 +84,6 @@ Proof.
       * apply IHl; auto.
 Qed.
 
-(* ??? remove?
-Definition sorted_params := SortedList.parameters.Build_parameters String.string type String.ltb.
-Local Notation sorted := (sorted (p := sorted_params)).
- *)
-
 Inductive type_wf : type -> Prop :=
 | WFTWord : type_wf TWord
 | WFTInt : type_wf TInt
@@ -255,6 +250,8 @@ Section WithMap.
                                          type_of Gstore Genv e0 t ->
                                          type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
                                          type_of Gstore Genv (EDictFold d e0 k v acc e) t
+  | TyESort l t : type_of Gstore Genv l (TList t) ->
+                  type_of Gstore Genv (ESort l) (TList t)
   | TyEFilter e t x p : type_of Gstore Genv e (TList t) ->
                         type_of Gstore (map.put Genv x t) p TBool ->
                         type_of Gstore Genv (EFilter e x p) (TList t)
@@ -321,6 +318,8 @@ Section WithMap.
                                                                   type_of Gstore Genv e0 t -> P Genv e0 t ->
                                                                   type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t -> P (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
                                                                   P Genv (EDictFold d e0 k v acc e) t).
+    Hypothesis (f_sort : forall Genv l t, type_of Gstore Genv l (TList t) -> P Genv l (TList t) ->
+                                          P Genv (ESort l) (TList t)).
     Hypothesis (f_filter : forall Genv e t x p, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
                                                 type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
                                                 P Genv (EFilter e x p) (TList t)).
@@ -369,9 +368,10 @@ Section WithMap.
       | TyEDict _ _ l kt vt Hkt Hvt Hl => f_dict Genv l kt vt Hkt Hvt Hl (dict_type_of_IH type_of_IH Genv kt vt l Hl)
       | TyEInsert _ _ d kt vt k v Hd Hk Hv => f_insert Genv d kt vt k v Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk) Hv (type_of_IH Genv v vt Hv)
       | TyEDelete _ _ d kt vt k Hd Hk => f_delete Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
+      | TyELookup _ _ d kt vt k Hd Hk => f_lookup Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
       | TyEOptMatch _ _ e t1 e_none t2 x e_some He He_none He_some => f_optmatch Genv e t1 e_none t2 x e_some He (type_of_IH Genv e (TOption t1) He) He_none (type_of_IH Genv e_none t2 He_none) He_some (type_of_IH (map.put Genv x t1) e_some t2 He_some)
       | TyEDictFold _ _ d kt vt e0 t k v acc e Hd He0 He => f_dictfold Genv d kt vt e0 t k v acc e Hd (type_of_IH Genv d (TDict kt vt) Hd) He0 (type_of_IH Genv e0 t He0)  He (type_of_IH (map.put (map.put (map.put Genv k kt) v vt) acc t) e t He)
-      | TyELookup _ _ d kt vt k Hd Hk => f_lookup Genv d kt vt k Hd (type_of_IH Genv d (TDict kt vt) Hd) Hk (type_of_IH Genv k kt Hk)
+      | TyESort _ _ l t Hl => f_sort Genv l t Hl (type_of_IH Genv l (TList t) Hl)
       | TyEFilter _ _ e t x p He Hp => f_filter Genv e t x p He (type_of_IH Genv e (TList t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
       | TyEJoin _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join Genv e1 t1 e2 t2 x y p r t3 He1
                    (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 (TList t2) He2) Hp (type_of_IH (map.put (map.put Genv x t1) y t2) p TBool Hp) Hr (type_of_IH (map.put (map.put Genv x t1) y t2) r t3 Hr)
@@ -553,20 +553,6 @@ Fixpoint record_from' (l : list (string * result expr)) : result (list (string *
 Definition record_from (l : list (string * result expr)) : result expr :=
   l' <- record_from' l ;; Success (ERecord l').
 
-(* ??? remove?
-Fixpoint proj_record_type (l : list (string * type)) (s : string) : result type :=
-  match l with
-  | nil => error:("Attribute" s "not found in record")
-  | (s0, t) :: l => if String.eqb s s0 then Success t else proj_record_type l s
-  end.
-
-Fixpoint proj_record_field' (l : list (string * expr)) (s : string) : result expr :=
-  match l with
-  | nil => error:("Attribute" s "not found in record")
-  | (s0, e) :: l => if String.eqb s s0 then Success e else proj_record_field' l s
-  end.
-*)
-
 Definition access_record_field (e : expr) (s : string) : result expr :=
   match e with
   | ERecord l => access_record l s
@@ -578,15 +564,6 @@ Definition get_attr_type (tl : list (string * type)) (s : string) : type :=
   | Success t => t
   | Failure _ => TUnit
   end.
-
-(*
-(* ??? use access_record instead? *)
-Fixpoint get_attr_type (tl : list (string * type)) (s : string) : type :=
-  match tl with
-  | nil => TUnit
-  | (s', t) :: tl => if String.eqb s' s then t else get_attr_type tl s
-  end.
- *)
 
 Fixpoint first_success (l : list (result (type * expr))) :  result type :=
   match l with
@@ -722,7 +699,6 @@ Section WithMap.
                             end
     | ERecord l => match expected with
                    | TRecord tl =>
-                       (* ??? remove? if type_eqb (TRecord tl) (TRecord (record_sort tl)) *)
                        if Nat.leb (length tl) (length l)
                        then
                          if inclb String.eqb (List.map fst l) (List.map fst tl) &&
@@ -786,6 +762,10 @@ Section WithMap.
                          Success (EDictFold d' e0' k v acc e')
         | t => error:(d "has type" t "but expected a dictionary")
         end
+    | ESort l => match expected with
+                 | TList t => analyze_expr Gstore Genv (TList t) l
+                 | _ => error:(l "is a list but expected" expected)
+                 end
     | EFilter l x p => match expected with
                        | TList t => l' <- analyze_expr Gstore Genv expected l ;;
                                     p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
@@ -958,6 +938,12 @@ Section WithMap.
                  e' <- analyze_expr Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) t e ;;
                  Success (t, EDictFold d' e0' k v acc e')
              | t => error:(d "has type" t "but expected a dictionary")
+             end
+         | ESort l =>
+             '(t, l') <- synthesize_expr Gstore Genv l ;;
+             match t with
+             | TList t => Success (TList t, ESort l')
+             | t => error:(l "has type" t "but expected a list")
              end
          | EFilter l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
                               match t with

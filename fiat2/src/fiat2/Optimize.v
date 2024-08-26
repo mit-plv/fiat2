@@ -171,8 +171,7 @@ Section WithWord.
       - rewrite IHT.
         + reflexivity.
         + apply K.
-      - f_equal. f_equal. f_equal. apply FunctionalExtensionality.functional_extensionality.
-        intros x. admit. (*EDict, nested induction*)
+      - f_equal. f_equal. f_equal. admit. (*EDict, nested induction*)
       - rewrite <- IHT1.
         + destruct (interp_expr store env d) eqn:H; try reflexivity. rewrite <- IHT2.
           * rewrite <- IHT3.
@@ -186,6 +185,7 @@ Section WithWord.
       - rewrite <- IHT1.
         + destruct (interp_expr store env d) eqn:H; try reflexivity.  intuition congruence.
         + apply K.
+      - admit.
       - admit.
       - admit.
       - rewrite <- IHT1.
