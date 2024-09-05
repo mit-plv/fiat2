@@ -1034,5 +1034,78 @@ Section WithWord.
         + intros; repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
             try apply_type_of__type_wf; try invert_type_wf; auto.
     Qed.
+
+    Local Ltac apply_cmd_tc_sound_IH :=
+      lazymatch goal with
+      | IH: context[well_typed _ _ ?c] |- well_typed _ _ ?c =>
+          eapply IH; eauto
+      end.
+
+    Lemma command_typchecker_sound : forall Gstore Genv c c',
+        tenv_wf Gstore -> tenv_wf Genv ->
+        typecheck Gstore Genv c = Success c' -> well_typed Gstore Genv c.
+    Proof.
+      intros Gstore Genv c; revert Gstore Genv.
+      induction c; simpl; intros Gstore Genv c' H_str H_env H.
+      all: repeat destruct_match.
+      1,2: try constructor; try apply_cmd_tc_sound_IH.
+      1,2,5: lazymatch goal with
+           | H: synthesize_expr _ _ _ = Success _ |- _ =>
+               let H_wf := fresh "H_wf" in
+               apply typechecker_sound in H; auto;
+               apply type_of__type_wf in H as H_wf; auto
+           end;
+      econstructor; eauto; apply_cmd_tc_sound_IH; apply tenv_wf_step;
+      try invert_type_wf; auto.
+      - econstructor; eauto. eapply typechecker_sound; eauto.
+      - constructor; try apply_cmd_tc_sound_IH.
+        eapply typechecker_sound; eauto. constructor.
+    Qed.
+
+    Lemma locals_wf_restored : forall Gstore store store' x t,
+        locals_wf Gstore store ->
+        locals_wf (map.put Gstore x t) store' ->
+        locals_wf Gstore (map.update store' x (map.get store x)).
+    Proof.
+      unfold locals_wf; intros Gstore store store' x t H_str H_str' x' t' H.
+      destruct (String.eqb x x') eqn:E.
+      + rewrite eqb_eq in E; subst. rewrite Properties.map.get_update_same.
+        apply H_str; auto.
+      + rewrite eqb_neq in E. rewrite Properties.map.get_update_diff; try congruence.
+        apply H_str'. rewrite map.get_put_diff; congruence.
+    Qed.
+
+    Lemma command_type_sound : forall Gstore Genv c,
+      well_typed Gstore Genv c ->
+      tenv_wf Gstore -> tenv_wf Genv ->
+      forall store env,
+        locals_wf Gstore store -> locals_wf Genv env ->
+        locals_wf Gstore (interp_command store env c).
+    Proof.
+      intros Gstore Genv c H. induction H; simpl;
+        intros H_Gstr H_Genv store env H_str H_env; auto.
+      - apply IHwell_typed; auto.
+        + apply tenv_wf_step; auto. apply type_of__type_wf in H; auto.
+        + apply locals_wf_step; auto. eapply type_sound; eauto.
+      - eapply locals_wf_restored; auto. apply IHwell_typed; auto.
+        + apply tenv_wf_step; auto. apply type_of__type_wf in H; auto.
+        + apply locals_wf_step; auto. eapply type_sound; eauto.
+      - unfold locals_wf. intros x0 t' H'.
+        destruct (String.eqb x x0) eqn:E;
+          [ rewrite eqb_eq in E; subst; rewrite map.get_put_same
+          | rewrite eqb_neq in E; rewrite map.get_put_diff; try congruence ].
+        + rewrite H' in H; injection H as H; subst.
+          eapply type_sound; eauto.
+        + apply H_str; auto.
+      - repeat match goal with |- context[match ?x with _ => _ end] => destruct x end; auto.
+      - match goal with |- context[match ?x with _ => _ end] => destruct x eqn:E end; auto.
+        apply type_of__type_wf in H as H_wf; auto.
+        eapply type_sound in H; eauto. rewrite E in H. inversion H; subst. clear E H.
+        generalize dependent store. induction l; simpl; auto; intros.
+        apply IHl; try invert_Forall; intuition. apply H; auto.
+        + apply tenv_wf_step; auto. invert_type_wf; auto.
+        + apply locals_wf_step; auto.
+    Qed.
+
   End WithMap.
 End WithWord.

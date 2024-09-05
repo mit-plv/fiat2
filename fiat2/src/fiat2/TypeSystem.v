@@ -264,6 +264,26 @@ Section WithMap.
                           type_of Gstore (map.put Genv x t1) r t2 ->
                           type_of Gstore Genv (EProj e x r) (TList t2).
 
+  Inductive well_typed (Gstore Genv : tenv) : command -> Prop :=
+  | WTCSkip : well_typed Gstore Genv CSkip
+  | WTCSeq c1 c2 : well_typed Gstore Genv c1 -> well_typed Gstore Genv c2 ->
+                   well_typed Gstore Genv (CSeq c1 c2)
+  | WTCLet e t x c : type_of Gstore Genv e t ->
+                     well_typed Gstore (map.put Genv x t) c ->
+                     well_typed Gstore Genv (CLet e x c)
+  | WTCLetMut e t x c : type_of Gstore Genv e t ->
+                        well_typed (map.put Gstore x t) Genv c ->
+                        well_typed Gstore Genv (CLetMut e x c)
+  | WTCAssign x t e : map.get Gstore x = Some t ->
+                    type_of Gstore Genv e t ->
+                    well_typed Gstore Genv (CAssign x e)
+  | WTCIf e c1 c2 : type_of Gstore Genv e TBool ->
+                    well_typed Gstore Genv c1 -> well_typed Gstore Genv c2 ->
+                    well_typed Gstore Genv (CIf e c1 c2)
+  | WTCForeach e t x c : type_of Gstore Genv e (TList t) ->
+                       well_typed Gstore (map.put Genv x t) c ->
+                       well_typed Gstore Genv (CForeach e x c).
+
   Section TypeOfIH.
     Context (Gstore : tenv).
     Context (P : tenv -> expr -> type -> Prop).

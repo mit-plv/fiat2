@@ -384,6 +384,27 @@ Section WithWord.
     apply compare_antisym__leb_total. exact value_compare_antisym.
   Qed.
 
+  Lemma value_leb_trans : RelationClasses.Transitive value_leb.
+  Proof.
+    unfold RelationClasses.Transitive. unfold value_leb, leb_from_compare.
+    intros x y z.
+    destruct (value_compare x y) eqn:E1, (value_compare y z) eqn:E2, (value_compare x z) eqn:E3; intuition.
+    all: repeat match goal with H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H end; subst.
+    all: try congruence.
+    - rewrite value_compare_refl in E3; discriminate.
+    - erewrite value_compare_trans in E3; eauto. discriminate.
+  Qed.
+
+  Lemma value_leb_antisym : forall x y, value_leb x y -> value_leb y x -> x = y.
+  Proof.
+    intros. unfold value_leb, leb_from_compare in *.
+    destruct (value_compare x y) eqn:E, (value_compare y x) eqn:E';
+      try discriminate.
+    all: repeat match goal with H: _ = Eq |- _ => apply value_compare_Eq_eq in H end; auto.
+    assert (value_compare x x = Lt). { eapply value_compare_trans; eauto. }
+    rewrite value_compare_refl in *. discriminate.
+  Qed.
+
   (* ===== Order of entries in record and dict ===== *)
   Fixpoint record_wf (l : list (string * value)) : Prop :=
     match l with
@@ -410,6 +431,13 @@ Section WithWord.
   Proof.
     apply Sectioned.Permuted_sort.
   Qed.
+
+  Lemma StronglySorted_value_sort : forall l, StronglySorted (value_leb) (value_sort l).
+    Proof.
+      intros. apply Sectioned.StronglySorted_sort.
+      - apply value_leb_total.
+      - apply value_leb_trans.
+    Qed.
 
   Section SortRecord.
     Context {A : Type}.
