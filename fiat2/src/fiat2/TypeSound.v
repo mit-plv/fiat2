@@ -1041,7 +1041,7 @@ Section WithWord.
           eapply IH; eauto
       end.
 
-    Lemma command_typchecker_sound : forall Gstore Genv c c',
+    Lemma command_typechecker_sound : forall Gstore Genv c c',
         tenv_wf Gstore -> tenv_wf Genv ->
         typecheck Gstore Genv c = Success c' -> well_typed Gstore Genv c.
     Proof.
