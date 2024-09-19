@@ -2,6 +2,25 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.Examples fiat2.T
 Require Import List String ZArith Permutation.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Import ResultMonadNotations.
+Require Import Sorted.
+Require Import coqutil.Map.SortedListString.
+Require Import Ltac2.Ltac2 Ltac2.Control Ltac2.Constr.
+
+Set Default Proof Mode "Classic".
+
+Local Ltac iter_hyps tac :=
+  let iter := ltac2:(tac |- List.iter (fun (h, _ , t) =>
+                             ltac1:(h t tac|- tac h t)
+                                     (Ltac1.of_constr (Unsafe.make (Unsafe.Var h)))
+                                     (Ltac1.of_constr t)
+                                     tac)
+                              (hyps ())) in
+  iter tac.
+
+Local Ltac rewrite_hyp_l h t :=
+  try lazymatch t with
+    | _ = _ => rewrite <- h in *
+    end.
 
 Section fold_command.
   Context (f : command -> command).
@@ -146,8 +165,6 @@ Section WithWord.
       | VList l' :: l => app l' (concat_VList l)
       | _ => nil
       end.
-
-    Require Import Sorted.
 
     Local Coercion is_true : bool >-> Sortclass.
 
@@ -475,6 +492,108 @@ Section WithWord.
       | _ => c
       end.
 
+    Create HintDb fiat2_hints.
+
+    Local Ltac invert_type_wf :=
+      lazymatch goal with
+      | H: type_wf (TList ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
+      end.
+
+    Lemma invert_TList_wf: forall t, type_wf (TList t) -> type_wf t.
+    Proof.
+      intros. invert_type_wf; auto.
+    Qed.
+
+    Lemma invert_TOption_wf: forall t, type_wf (TOption t) -> type_wf t.
+    Proof.
+      intros. invert_type_wf; auto.
+    Qed.
+
+    Lemma invert_TDict_wf_l: forall kt vt, type_wf (TDict kt vt) -> type_wf kt.
+    Proof.
+      intros. invert_type_wf; auto.
+    Qed.
+
+    Lemma invert_TDict_wf_r: forall kt vt, type_wf (TDict kt vt) -> type_wf vt.
+    Proof.
+      intros. invert_type_wf; auto.
+    Qed.
+
+    Lemma invert_TRecord_wf: forall tl, type_wf (TRecord tl) -> Forall type_wf (List.map snd tl).
+    Proof.
+      intros. invert_type_wf; auto.
+    Qed.
+
+    Hint Resolve invert_TList_wf : fiat2_hints.
+    Hint Resolve invert_TOption_wf : fiat2_hints.
+    Hint Resolve invert_TDict_wf_l : fiat2_hints.
+    Hint Resolve invert_TDict_wf_r : fiat2_hints.
+    Hint Resolve invert_TRecord_wf : fiat2_hints.
+(*
+    Local Ltac apply_type_of__type_wf :=
+      lazymatch goal with
+      | H: type_of _ _ _ ?t |- type_wf ?t =>
+          let H' := fresh "H'" in
+          apply type_of__type_wf in H as H'
+      | H: type_of _ _ _ (TList ?t) |- type_wf ?t =>
+          let H' := fresh "H'" in
+          apply type_of__type_wf in H as H'
+      | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
+          let H' := fresh "H'" in
+          apply type_of__type_wf in H as H'
+      | H:  type_of _ _ _ (TDict ?t _) |- type_wf ?t =>
+          let H' := fresh "H'" in
+          apply type_of__type_wf in H as H'
+      | H:  type_of _ _ _ (TDict _ ?t) |- type_wf ?t =>
+          let H' := fresh "H'" in
+          apply type_of__type_wf in H as H'
+      | H:  type_of _ _ _ (TRecord ?tl) |- context[?tl] =>
+          let H' := fresh "H'" in
+          apply type_of__type_wf in H as H'
+      end.
+
+    Lemma type_of_TList__type_wf : forall Gstore Genv e t,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        type_of Gstore Genv e (TList t) -> type_wf t.
+    Proof.
+      intros; apply_type_of__type_wf; auto with fiat2_hints.
+    Qed.
+
+    Lemma type_of_TOption__type_wf : forall Gstore Genv e t,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        type_of Gstore Genv e (TOption t) -> type_wf t.
+    Proof.
+      intros; apply_type_of__type_wf; auto with fiat2_hints.
+    Qed.
+
+    Lemma type_of_TDict__type_wf_l : forall Gstore Genv e kt vt,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        type_of Gstore Genv e (TDict kt vt) -> type_wf kt.
+    Proof.
+      intros; apply_type_of__type_wf; eauto with fiat2_hints.
+    Qed.
+
+    Lemma type_of_TDict__type_wf_r : forall Gstore Genv e kt vt,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        type_of Gstore Genv e (TDict kt vt) -> type_wf vt.
+    Proof.
+      intros; apply_type_of__type_wf; eauto with fiat2_hints.
+    Qed.
+
+    Lemma type_of_TRecord__type_wf : forall Gstore Genv e tl,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        type_of Gstore Genv e (TRecord tl) -> Forall type_wf (List.map snd tl).
+    Proof.
+      intros. apply_type_of__type_wf. auto with fiat2_hints.
+    Qed.
+*)
+    Hint Resolve type_of__type_wf : fiat2_hints.
+
+
     Local Ltac destruct_match :=
       match goal with
       | H: context[match ?x with _ => _ end] |- _ =>
@@ -580,6 +699,10 @@ Section WithWord.
       - constructor.
     Qed.
 
+    Hint Resolve get_attr_type_ty_wf : fiat2_hints.
+    Hint Resolve tenv_wf_step : fiat2_hints.
+    Hint Resolve locals_wf_step : fiat2_hints.
+
     Definition tenv_equiv_at (x attr : string) (rt : list (string * type)) (Gstore : tenv) :=
       map.put Gstore x (TDict (get_attr_type rt attr) (TList (TRecord rt))).
 
@@ -593,8 +716,8 @@ Section WithWord.
         locals_wf (tenv_equiv_at x attr rt Gstore') store.
     Proof.
       intros * H_wf H_Gstr' H_equiv H_except H_x H_in. unfold tenv_equiv_at.
-      unfold locals_wf; intros y t. destruct (String.eqb x y) eqn:E.
-      - rewrite eqb_eq in E; subst. rewrite map.get_put_same. intro H_t; injection H_t as H_t; subst.
+      unfold locals_wf; intros y t. get_put_same_diff x y.
+      - intro H_t; injection H_t as H_t; subst.
         unfold locals_equiv_idx_list_at in H_equiv. repeat destruct_match; intuition.
         apply H_wf in H_x as H'. rewrite E1 in H'. subst.
         assert (interp_expr store' map.empty (ELoc y) = VList l0). { simpl; unfold get_local. rewrite E1; auto. }
@@ -607,50 +730,24 @@ Section WithWord.
         1: eapply type_sound with (env:=map.empty) in H1; eauto.
         2-4: unfold tenv_wf, locals_wf; intros; repeat rewrite map.get_empty in *; discriminate.
         rewrite H0 in H1. auto.
-      - rewrite eqb_neq in E. rewrite map.get_put_diff; try congruence. intro H_y.
-        apply H_wf in H_y. destruct_match; intuition. rewrite H_except; auto. rewrite E0; auto.
+      - intro H_y. apply H_wf in H_y. destruct_match; intuition. rewrite H_except; auto. rewrite E0; auto.
     Qed.
-
-
-  Local Ltac apply_type_of__type_wf :=
-    lazymatch goal with
-    | H: type_of _ _ _ ?t |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H: type_of _ _ _ (TList ?t) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict ?t _) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict _ ?t) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TRecord ?tl) |- context[?tl] =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    end.
-
-  Local Ltac invert_type_wf :=
-    lazymatch goal with
-    | H: type_wf (TList ?t) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
-    end.
 
     Lemma tenv_equiv_at_wf : forall tbl attr rt Gstore,
         tenv_wf Gstore -> map.get Gstore tbl = Some (TList (TRecord rt)) ->
         tenv_wf (tenv_equiv_at tbl attr rt Gstore).
     Proof.
       intros * H_Gstr H_tbl_ty. apply tenv_wf_step; auto. constructor.
-      all: apply H_Gstr in H_tbl_ty; auto.
-      apply get_attr_type_ty_wf. invert_type_wf; auto.
+      all: apply H_Gstr in H_tbl_ty; auto with fiat2_hints.
     Qed.
+
+    Hint Resolve tenv_equiv_at_wf : fiat2_hints.
+    Hint Resolve locals_equiv_locals_wf : fiat2_hints.
+    Hint Resolve locals_eq_except_put : fiat2_hints.
+    Hint Resolve locals_equiv_idx_list_at_put : fiat2_hints.
+    Hint Resolve locals_eq_except_put0 : fiat2_hints.
+    Hint Resolve locals_equiv_idx_list_at_put0 : fiat2_hints.
+    Hint Resolve type_sound : fiat2_hints.
 
     Lemma transf_read_preserve_ty : forall Gstore Genv x attr rt e t,
         tenv_wf Gstore -> tenv_wf Genv ->
@@ -662,17 +759,14 @@ Section WithWord.
       induction e using expr_IH; simpl; intros.
       all: inversion H_ty; subst.
       all: try now (econstructor; eauto).
-      - destruct (String.eqb x x0) eqn:E.
-        + rewrite eqb_eq in E; subst. rewrite H0 in H_x; injection H_x as H_x; subst.
-          eapply idx_to_list_preserve_ty; eauto.
-          1: apply tenv_equiv_at_wf; auto.
-          1:{ constructor. rewrite map.get_put_same. eauto. }
-        + rewrite eqb_neq in E. constructor. rewrite map.get_put_diff; congruence.
-      - econstructor; eauto. apply IHe2; auto. apply tenv_wf_step; auto. apply_type_of__type_wf; auto.
-      - econstructor; eauto. apply IHe2; auto. apply tenv_wf_step; auto. apply_type_of__type_wf; auto. invert_type_wf; auto.
-      - econstructor; eauto. apply IHe3; auto. repeat apply tenv_wf_step; auto.
-        1: apply_type_of__type_wf; auto; invert_type_wf; auto.
-        1: apply type_of__type_wf in H6; auto.
+      - get_put_same_diff x x0.
+        + rewrite H0 in H_x; injection H_x as H_x; subst.
+          eapply idx_to_list_preserve_ty; eauto with fiat2_hints.
+          constructor. rewrite map.get_put_same. eauto.
+        + constructor. rewrite map.get_put_diff; congruence.
+      - econstructor; eauto. apply IHe2; eauto with fiat2_hints.
+      - econstructor; eauto. apply IHe2; auto. eauto with fiat2_hints.
+      - econstructor; eauto. apply IHe3; auto. repeat apply tenv_wf_step; eauto with fiat2_hints.
       - econstructor; eauto.
         + rewrite fst_map_fst; auto.
         + clear H_ty H1 H3 H4 H5. generalize dependent tl. induction l; simpl; intros.
@@ -683,18 +777,13 @@ Section WithWord.
       - econstructor; eauto. clear H_ty. induction H3; intuition. constructor; inversion H; subst.
         1: destruct x0; simpl in *; split; apply H7; auto.
         1: apply IHForall; auto.
-      - econstructor; eauto. apply IHe3; auto. apply tenv_wf_step; auto.
-        apply_type_of__type_wf; auto; invert_type_wf; auto.
-      - econstructor; eauto. apply IHe3; auto. repeat apply tenv_wf_step; auto.
-        1,2: apply_type_of__type_wf; auto. 3: apply type_of__type_wf in H7.
-        all: try invert_type_wf; auto.
-      - constructor; auto. apply IHe2; auto. apply tenv_wf_step; auto.
-        apply_type_of__type_wf; auto. invert_type_wf; auto.
+      - econstructor; eauto. apply IHe3; eauto with fiat2_hints.
+      - econstructor; eauto. apply IHe3; auto. repeat apply tenv_wf_step; eauto with fiat2_hints.
+      - constructor; auto. apply IHe2; eauto with fiat2_hints.
       - econstructor; eauto.
-        1: apply IHe3; auto. 2: apply IHe4; auto.
-        all: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-      - econstructor; eauto. apply IHe2; auto. apply tenv_wf_step; auto.
-        apply_type_of__type_wf; auto. invert_type_wf; auto.
+        1: apply IHe3; auto. 2: apply IHe4; eauto with fiat2_hints.
+        all: repeat apply tenv_wf_step; eauto with fiat2_hints.
+      - econstructor; eauto. apply IHe2; eauto with fiat2_hints.
     Qed.
 
     Local Ltac invert_unop_binop_atom_ty :=
@@ -729,7 +818,7 @@ Section WithWord.
       | H1: Forall _ ?l, H2: In _ ?l |- _ => eapply List.Forall_In in H1; eauto
       end.
 
-    Local Ltac rewrite_expr_value:=
+    Local Ltac rewrite_expr_value :=
       lazymatch goal with
       | E: VList _ = ?e |- context[?e] => rewrite <- E
       | E: VList _ = ?e, H: context[?e] |- _ => rewrite <- E in H
@@ -791,11 +880,14 @@ Section WithWord.
       lazymatch goal with
       | H: type_of _ _ e _ |- _ =>
           let H_transf_ty := fresh "H_transf_ty" in
-          eapply transf_read_preserve_ty with (attr:=attr) in H as H_transf_ty; eauto;
+          eapply transf_read_preserve_ty with (attr:=attr) in H as H_transf_ty; eauto with fiat2_hints;
           apply_type_sound e;
-          eapply type_sound in H_transf_ty; eauto using tenv_equiv_at_wf, locals_equiv_locals_wf;
+          eapply type_sound in H_transf_ty; eauto with fiat2_hints;
           inversion H_transf_ty; subst
       end.
+
+    Lemma imp_pre_true : forall A B, A -> (A -> B) -> A /\ B.
+    Proof. intuition. Qed.
 
     Lemma transf_read_write_sound'' : forall tbl attr rt e Gstore' Genv t store store' env,
         type_of Gstore' Genv e t ->
@@ -831,11 +923,9 @@ Section WithWord.
           * (* x = tbl *) rewrite eqb_eq in E; subst.
             inversion H_ty; subst. rewrite H0 in H_tbl_ty. injection H_tbl_ty; intros; subst.
             apply_type_sound (ELoc tbl).
-            erewrite fiat2_gallina_idx_to_list with (Gstore:=tenv_equiv_at tbl attr rt Gstore'); simpl; eauto.
+            erewrite fiat2_gallina_idx_to_list with (Gstore:=tenv_equiv_at tbl attr rt Gstore'); simpl; eauto with fiat2_hints.
             1: eapply gallina_list_to_idx_to_list; eauto.
             1:{ constructor. unfold tenv_equiv_at. rewrite map.get_put_same. eauto. }
-            1: apply tenv_equiv_at_wf; auto.
-            1: eapply locals_equiv_locals_wf; eauto.
             1:{ unfold get_local. unfold locals_equiv_idx_list_at in H_equiv; repeat destruct_match; intuition.
                 subst. unfold get_local in *. rewrite E1 in H. injection H; congruence. }
           * (* x <> tbl *) rewrite eqb_neq in E. destruct t; simpl.
@@ -876,30 +966,26 @@ Section WithWord.
         inversion H_ty; subst. split; intro H_can.
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
         all: repeat apply_transf_read_write_sound''_IH Gstore';
-          repeat rewrite_interp_fold_expr; auto.
-        3: apply IH'0.
-        1,3: apply tenv_wf_step; auto; apply_type_of__type_wf; auto.
-        1,2: apply locals_wf_step; auto; eapply type_sound; eauto.
+          repeat rewrite_interp_fold_expr; eauto with fiat2_hints.
       - (* EFlatmap *)
         inversion H_ty; subst. split; intro H_can.
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
         all: revert IHe2; apply_transf_read_write_sound''_IH Gstore'; intros.
         + rewrite_interp_fold_expr; auto. apply_type_sound e1. f_equal.
-          apply In_flat_map_ext. intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; try rewrite_interp_fold_expr; auto.
-          1: apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
+          apply In_flat_map_ext. intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; try rewrite_interp_fold_expr; eauto with fiat2_hints.
           1: apply locals_wf_step; auto; apply_Forall_In.
         + eapply locals_equiv_locals_wf in H_equiv as H_wf; eauto.
           apply_transf_read_preserve_ty e1 attr. repeat rewrite_expr_value.
           apply Permutation_flat_map; auto.
-          intros v H_v_in. apply_Forall_In. apply_transf_read_write_sound''_IH Gstore'.
-          1:(* ??? apply_transf_read_preserve_ty e2 attr. *) eapply transf_read_preserve_ty with (attr := attr) in H4 as H_transf_ty';
-            eauto.
-          1: apply_type_sound e2; eapply type_sound in H_transf_ty'; eauto using tenv_equiv_at_wf; inversion H_transf_ty'; subst.
-          1: (* ??? rewrite using Ltac? *) rewrite <- H6, <- H8 in *; auto.
-          all: try (apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto).
-          all: apply locals_wf_step; eauto.
+          intros v H_v_in. apply_Forall_In.
+          apply_transf_read_write_sound''_IH Gstore'; eauto with fiat2_hints.
+          1: apply_transf_read_preserve_ty e2 attr.
+          1: iter_hyps rewrite_hyp_l; auto.
       - (* EFold *)
-        inversion H_ty; subst. split; intro H_can.
+        inversion H_ty; subst.
+        apply imp_pre_true.
+        1: intro H_can.
+        2: intros HA H_can; specialize (HA H_can).
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
         all: revert IHe3; repeat apply_transf_read_write_sound''_IH Gstore'; intros.
         + repeat rewrite_interp_fold_expr. apply_type_sound e1.
@@ -907,40 +993,14 @@ Section WithWord.
           eapply In_fold_right_ext with (P:=fun a => type_of_value a t); auto.
           intros * P H_b_in. intuition.
           1:{ apply_transf_read_write_sound''_IH Gstore'; eauto.
-          1: repeat apply tenv_wf_step; auto.
-          1: apply_type_of__type_wf; auto; invert_type_wf; auto.
-          1: apply type_of__type_wf in H6; auto.
-          (* ??? Is there a way to find a hypothesis with the shape type_of _ ?env _ _ whose env has the smallest size? *)
-          1: repeat apply locals_wf_step; auto; apply_Forall_In; auto. }
-          1:{ apply_transf_read_write_sound''_IH Gstore'; eauto.
+              1: repeat apply tenv_wf_step; eauto with fiat2_hints.
+              1: repeat apply locals_wf_step; eauto with fiat2_hints; apply_Forall_In. }
+          1:{ apply_transf_read_write_sound''_IH Gstore'; auto.
               1: rewrite_interp_fold_expr; eapply type_sound; eauto.
-              1,3: repeat apply tenv_wf_step; auto;
-              try now (apply_type_of__type_wf; auto; invert_type_wf; auto).
-              1,2: apply type_of__type_wf in H6; auto.
-              1,2: repeat apply locals_wf_step; auto; apply_Forall_In; auto. }
-        + (* ??? How to structure this? *)
-          assert (E: interp_expr store env (fold_expr (idx_read_to_list_read tbl) (EFold e1 e2 x y e3)) =
-                    interp_expr store' env (EFold e1 e2 x y e3)).
-          { simpl.
-            repeat rewrite_interp_fold_expr. apply_type_sound e1.
-          eapply type_sound in H6 as H2'; eauto.
-          eapply In_fold_right_ext with (P:=fun a => type_of_value a t); auto.
-          intros * P H_b_in. intuition.
-          1:{ apply_transf_read_write_sound''_IH Gstore'; eauto.
-          1: repeat apply tenv_wf_step; auto.
-          1: apply_type_of__type_wf; auto; invert_type_wf; auto.
-          1: apply type_of__type_wf in H6; auto.
-          (* ??? Is there a way to find a hypothesis with the shape type_of _ ?env _ _ whose env has the smallest size? *)
-          1: repeat apply locals_wf_step; auto; apply_Forall_In; auto. }
-          1:{ apply_transf_read_write_sound''_IH Gstore'; eauto.
-              1: rewrite_interp_fold_expr; eapply type_sound; eauto.
-              1,3: repeat apply tenv_wf_step; auto;
-              try now (apply_type_of__type_wf; auto; invert_type_wf; auto).
-              1,2: apply type_of__type_wf in H6; auto.
-              1,2: repeat apply locals_wf_step; auto; apply_Forall_In; auto. } }
-          destruct t; auto.
+              1,3: repeat apply tenv_wf_step; eauto with fiat2_hints.
+              1,2: repeat apply locals_wf_step; eauto with fiat2_hints; apply_Forall_In. }
+        + rewrite HA. destruct t; auto.
           apply_type_sound (EFold e1 e2 x y e3).
-          simpl in E; rewrite <- E in H. rewrite_expr_value. auto.
       - (* ERecord *)
         inversion H_ty; subst. split; intro H_can.
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
@@ -983,40 +1043,24 @@ Section WithWord.
         all: revert IHe2 IHe3; apply_transf_read_write_sound''_IH Gstore'; intros.
         all: rewrite_interp_fold_expr; apply_type_sound e1.
         all: try now (revert IHe3; apply_transf_read_write_sound''_IH Gstore'; eauto).
-        all: try (revert IHe2; apply_transf_read_write_sound''_IH Gstore'; eauto).
-        all: try (apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto).
-        all: apply locals_wf_step; auto.
+        all: revert IHe2; apply_transf_read_write_sound''_IH Gstore'; eauto with fiat2_hints.
       - (* EDictFold *)
-        inversion H_ty; subst. split; intro H_can.
+        inversion H_ty; subst. apply imp_pre_true.
+        1: intro H_can.
+        2: intros HA H_can; specialize (HA H_can).
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
         all: revert IHe3; repeat apply_transf_read_write_sound''_IH Gstore'; intros.
         + repeat rewrite_interp_fold_expr; apply_type_sound e1.
           apply In_fold_right_ext with (P := fun a => type_of_value a t).
           2:{ intros. apply_transf_read_write_sound''_IH Gstore'.
-              1: rewrite_interp_fold_expr; auto.
-              2: repeat apply tenv_wf_step; auto; apply type_of__type_wf in H7; auto.
+              1: rewrite_interp_fold_expr.
+              2: repeat apply tenv_wf_step; eauto with fiat2_hints.
               2: repeat apply locals_wf_step; auto; apply_Forall_In; intuition.
-              1: intuition. apply_type_sound e3.
-              1: repeat apply tenv_wf_step; auto; apply type_of__type_wf in H7; auto.
+              1: intuition. apply_type_sound e3; eauto with fiat2_hints.
               1: repeat apply locals_wf_step; auto; apply_Forall_In; intuition. }
           apply_type_sound e2; eauto.
-        + (* ??? restructure *)
-          assert (E: interp_expr store env (fold_expr (idx_read_to_list_read tbl) (EDictFold e1 e2 k v acc e3)) =
-                       interp_expr store' env (EDictFold e1 e2 k v acc e3)).
-          { simpl.
-            revert IHe3; repeat apply_transf_read_write_sound''_IH Gstore'; intros.
-            repeat rewrite_interp_fold_expr; apply_type_sound e1.
-            apply In_fold_right_ext with (P := fun a => type_of_value a t).
-            2:{ intros. apply_transf_read_write_sound''_IH Gstore'.
-                1: rewrite_interp_fold_expr; auto.
-                2: repeat apply tenv_wf_step; auto; apply type_of__type_wf in H7; auto.
-                2: repeat apply locals_wf_step; auto; apply_Forall_In; intuition.
-                1: intuition. apply_type_sound e3.
-                1: repeat apply tenv_wf_step; auto; apply type_of__type_wf in H7; auto.
-                1: repeat apply locals_wf_step; auto; apply_Forall_In; intuition. }
-            apply_type_sound e2; eauto. }
-            simpl in E; rewrite E; destruct t; auto.
-            eapply type_sound in H_ty; eauto; inversion H_ty; subst. auto.
+        + rewrite HA. destruct t; auto.
+          apply_type_sound (EDictFold e1 e2 k v acc e3).
       - (* ESort *)
         inversion H_ty; subst. split; intro H_can.
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
@@ -1033,9 +1077,8 @@ Section WithWord.
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
         all: revert IHe2; apply_transf_read_write_sound''_IH Gstore'; intros.
         + rewrite_interp_fold_expr. apply_type_sound e1. f_equal.
-          apply filter_ext_in; intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'.
+          apply filter_ext_in; intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; eauto with fiat2_hints.
           1: rewrite_interp_fold_expr; auto.
-          1: apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
           1: apply locals_wf_step; auto; apply_Forall_In.
         + eapply locals_equiv_locals_wf in H_equiv as H_wf; eauto.
           apply_transf_read_preserve_ty e1 attr. repeat rewrite_expr_value.
@@ -1044,10 +1087,9 @@ Section WithWord.
                                  | VBool b => b
                                  | _ => false
                                  end).
-          2:{ intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'.
+          2:{ intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; eauto with fiat2_hints.
               1: rewrite_interp_fold_expr; auto.
-              1: apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-              1: apply locals_wf_step; auto. apply_Forall_In. }
+              1: apply locals_wf_step; auto; apply_Forall_In. }
           apply Permutation_filter; auto.
       - (* EJoin *)
         inversion H_ty; subst. split; intro H_can.
@@ -1062,14 +1104,13 @@ Section WithWord.
                                   | _ => false
                                   end).
           1: apply In_map_ext; intros b H_b_in; revert IHe3; repeat apply_transf_read_write_sound''_IH Gstore'; auto.
-          1: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-          1: repeat apply locals_wf_step; auto.
-          1,2: rewrite filter_In in H_b_in; intuition; repeat apply_Forall_In; auto.
+          1: repeat apply tenv_wf_step; eauto with fiat2_hints.
+          1: repeat apply locals_wf_step; eauto with fiat2_hints.
+          1,2: rewrite filter_In in H_b_in; intuition; repeat apply_Forall_In.
           intros c H_c_in. revert IHe4; apply_transf_read_write_sound''_IH Gstore'; intros.
           1: rewrite_interp_fold_expr; auto.
-          1: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-          1: repeat apply locals_wf_step; auto.
-          1,2: repeat apply_Forall_In; auto.
+          1: repeat apply tenv_wf_step; eauto with fiat2_hints.
+          1: repeat apply locals_wf_step; repeat apply_Forall_In.
         + eapply locals_equiv_locals_wf in H_equiv as H_wf; eauto.
           apply_transf_read_preserve_ty e1 attr.
           apply_transf_read_preserve_ty e2 attr. repeat rewrite_expr_value.
@@ -1084,12 +1125,11 @@ Section WithWord.
           1:{ apply Permutation_filter; auto. }
           1:{ intros b H_b_in. revert IHe4; apply_transf_read_write_sound''_IH Gstore'; intros.
               1: rewrite_interp_fold_expr; auto.
-              1: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-              1: repeat apply locals_wf_step; auto.
-              1,2: repeat apply_Forall_In. }
+              1: repeat apply tenv_wf_step; eauto with fiat2_hints.
+              1: repeat apply locals_wf_step; repeat apply_Forall_In. }
           1:{ intros b H_b_in. revert IHe3; apply_transf_read_write_sound''_IH Gstore'; intros.
               1: rewrite_interp_fold_expr; auto.
-              1: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
+              1: repeat apply tenv_wf_step; eauto with fiat2_hints.
               1: repeat apply locals_wf_step; auto.
               1,2: apply filter_In in H_b_in; intuition; repeat apply_Forall_In. }
       - (* EProj *)
@@ -1097,15 +1137,13 @@ Section WithWord.
         all: unfold is_true in H_can; repeat rewrite Bool.andb_true_iff in H_can; intuition.
         all: revert IHe2; apply_transf_read_write_sound''_IH Gstore'; intros.
         + rewrite_interp_fold_expr. apply_type_sound e1. f_equal. apply In_map_ext.
-          intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; eauto.
-          1: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-          1: repeat apply locals_wf_step; auto; apply_Forall_In.
+          intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; eauto with fiat2_hints.
+          repeat apply locals_wf_step; apply_Forall_In.
         + eapply locals_equiv_locals_wf in H_equiv as H_wf; eauto.
           apply_transf_read_preserve_ty e1 attr.
           rewrite In_map_ext with (g:=(fun v : value => interp_expr store' (map.put env x v) e2)).
-          2:{ intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; eauto.
-              1: repeat apply tenv_wf_step; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-              1: repeat apply locals_wf_step; auto; apply_Forall_In. }
+          2:{ intros a H_a_in. apply_transf_read_write_sound''_IH Gstore'; eauto with fiat2_hints.
+              repeat apply locals_wf_step; apply_Forall_In. }
           repeat rewrite_expr_value. apply Permutation_map; auto.
     Qed.
 
@@ -1130,45 +1168,39 @@ Section WithWord.
         eapply command_type_sound; eauto.
       - destruct H_can.
         eapply transf_read_write_sound'' with (Gstore':=Gstore') in H as H'; eauto. rewrite H'.
-        eapply IHc; eauto; [ apply tenv_wf_step | apply locals_wf_step ]; auto.
-        1: lazymatch goal with H: type_of _ _ _ ?t |- type_wf ?t => apply type_of__type_wf in H; auto end.
-        1: lazymatch goal with H: type_of _ _ _ ?t |- type_of_value _ ?t => eapply type_sound in H; eauto end.
+        eapply IHc; eauto; [ apply tenv_wf_step | apply locals_wf_step ]; eauto with fiat2_hints.
       - rewrite Bool.negb_true_iff, eqb_neq in *.
         assert (E: map.get store x = map.get store' x). { apply H_except; intuition. } rewrite E.
         repeat lazymatch goal with H: _ /\ _ |- _ => destruct H end.
         eapply transf_read_write_sound'' with (Gstore':=Gstore') in H2 as H'; eauto. rewrite H'.
         split. 1: apply locals_eq_except_update. 2: apply locals_equiv_idx_list_at_update. 3: congruence.
-        1,2: eapply IHc; eauto using locals_eq_except_put, locals_equiv_idx_list_at_put. 1,4: rewrite map.get_put_diff; auto.
-        1,3: apply tenv_wf_step; auto; lazymatch goal with H: type_of _ _ _ ?t |- type_wf ?t => apply type_of__type_wf in H; auto end.
-        1,2: apply locals_wf_step; auto; lazymatch goal with H: type_of _ _ _ ?t |- type_of_value _ ?t => eapply type_sound in H; eauto end.
+        1,2: eapply IHc; eauto with fiat2_hints. all: rewrite map.get_put_diff; auto.
       - cbn. eapply transf_read_write_sound'' with (Gstore':=Gstore') in H_can; eauto.
         destruct (String.eqb tbl x) eqn:E.
         + unfold fold_command. unfold interp_command.
           rewrite eqb_eq in *; subst. rewrite H_tbl_ty in H1. injection H1; intros; subst.
-          eapply type_sound in H2 as H2'; eauto. inversion H2'; subst.
-          split. 1: apply locals_eq_except_put0; auto. eapply locals_equiv_idx_list_at_put0; eauto.
+          apply_type_sound e.
+          split; eauto with fiat2_hints. eapply locals_equiv_idx_list_at_put0; eauto.
           remember (map.put Gstore' x (TDict (get_attr_type rt attr) (TList (TRecord rt)))) as Gstore.
           eapply fiat2_gallina_list_to_idx with (Gstore:=Gstore); eauto.
           1: subst; apply transf_read_preserve_ty; auto.
-          1:{ subst. apply tenv_wf_step; auto. apply type_of__type_wf in H2; auto. constructor; auto. inversion H2; subst.
-              auto using get_attr_type_ty_wf. }
+          1:{ subst. apply tenv_wf_step; auto. apply type_of__type_wf in H2; auto. constructor; eauto with fiat2_hints. }
           1: subst; eapply locals_equiv_locals_wf; eauto.
           1: rewrite H_can; auto.
         + simpl. rewrite H_can.
-          rewrite eqb_neq in *. split; auto using locals_eq_except_put, locals_equiv_idx_list_at_put.
+          rewrite eqb_neq in *. split; auto with fiat2_hints.
       - repeat lazymatch goal with H: _ /\ _ |- _ => destruct H end.
         eapply transf_read_write_sound'' with (Gstore':=Gstore') in H; eauto. rewrite H.
-        eapply type_sound in H2; eauto. inversion H2; subst.
-        destruct b; [ eapply IHc1 | eapply IHc2 ]; eauto.
+        apply_type_sound e. destruct b; eauto.
       - repeat lazymatch goal with H: _ /\ _ |- _ => destruct H end.
         eapply transf_read_write_sound'' with (Gstore':=Gstore') in H; eauto. rewrite H.
-        eapply type_sound in H1 as H1'; eauto. inversion H1'; subst.
+        apply_type_sound e.
         destruct (interp_expr store' env e) eqn:E; try now (exfalso; auto).
         clear E H H2. generalize dependent store; generalize dependent store'. induction l; simpl; auto. intros.
         lazymatch goal with H: Forall _ (_ :: _) |- _ => inversion H; subst end. apply IHl; auto.
         1: eapply command_type_sound; eauto.
-        3,4: eapply IHc; eauto. 1,3,5: apply tenv_wf_step; auto; apply type_of__type_wf in H1; inversion H1; auto.
-        all: apply locals_wf_step; auto.
+        3,4: eapply IHc.
+        all: eauto with fiat2_hints.
     Qed.
 
     Lemma transf_read_write_sound : forall (Gstore Genv : tenv) (store env : locals) tbl attr c,
@@ -1184,22 +1216,22 @@ Section WithWord.
       repeat rewrite Bool.andb_true_iff in H; intuition.
       apply eqb_eq in H; subst; simpl. apply locals_eq_update. intros.
       inversion H_ty; subst. inversion H4; subst. inversion H3; subst.
-      eapply transf_read_write_sound'; cbn; eauto.
+      eapply transf_read_write_sound'; cbn; eauto with fiat2_hints.
       - rewrite map.get_put_same; eauto.
       - rewrite inb_true_iff in *; auto.
-      - apply tenv_wf_step; auto. constructor; auto.
       - apply locals_wf_step; auto. repeat constructor.
       - unfold locals_eq_except; intros. repeat rewrite map.get_put_diff; congruence.
       - unfold locals_equiv_idx_list_at. repeat rewrite map.get_put_same; trivial.
     Qed.
 
-    Definition list_eq_filter_to_idx_lookup (tbl attr : string) (e : expr) :=
+    Definition eq_filter_to_lookup_head (tbl attr : string) (e : expr) :=
       match e with
       | EFilter
-          (EDictFold (ELoc tbl') (EAtom (ANil None)) _ v acc (EBinop OConcat (EVar v') (EVar acc')))
+          (EDictFold (ELoc tbl') (EAtom (ANil None)) k v acc (EBinop OConcat (EVar v') (EVar acc')))
           x
           (EBinop OEq (EAccess (EVar y) attr') e') =>
-          if (String.eqb v v' && String.eqb acc acc' && String.eqb tbl' tbl && String.eqb attr' attr && String.eqb x y && negb (free_immut_in x e'))%bool
+          if (String.eqb k "k" && String.eqb v "v" && String.eqb v v' && String.eqb acc "acc" && String.eqb acc acc' && String.eqb tbl' tbl && String.eqb attr' attr && String.eqb x y &&
+                negb (String.eqb v' acc') && negb (free_immut_in x e'))%bool
           then EOptMatch (ELookup (ELoc tbl) e')
                  (EAtom (ANil None))
                  "x" (EVar "x")
@@ -1207,12 +1239,96 @@ Section WithWord.
       | _ => e
       end.
 
-    (* ??? TODO: prove list_eq_filter_to_idx_lookup sound *)
+    Lemma eq_filter_to_lookup_head_preserve_ty : forall tbl attr e rt t (Gstore Genv : tenv),
+        tenv_wf Gstore -> tenv_wf Genv ->
+        map.get Gstore tbl = Some (TDict (get_attr_type rt attr) (TList (TRecord rt))) ->
+        type_of Gstore Genv e t ->
+        type_of Gstore Genv (eq_filter_to_lookup_head tbl attr e) t.
+    Proof.
+      intros * H_Gstr H_Genv H_tbl_ty H.
+      destruct e; auto. destruct e1; auto. destruct e1_1; auto. destruct e1_2; auto.
+      destruct a; auto. destruct t0; auto. destruct e1_3; auto. destruct o; auto.
+      destruct e1_3_1; auto. destruct e1_3_2; auto. destruct e2; auto. destruct o; auto.
+      destruct e2_1; auto. destruct e2_1; auto. simpl.
+      lazymatch goal with |- context[if ?x then _ else _] => destruct x eqn:E end; auto.
+      repeat rewrite Bool.andb_true_iff in E; intuition. rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+      inversion H; subst. subst. inversion H6; subst. inversion H7; subst. inversion H11; subst.
+      inversion H12; subst. inversion H13; subst. inversion H5; subst. inversion H9; subst.
+      inversion H15; subst. inversion H17; subst. inversion H18; subst. inversion H16; subst.
+      repeat econstructor; eauto.
+      1:{ rewrite H2 in H_tbl_ty. injection H_tbl_ty; intros; subst.
+          rewrite map.get_put_same in *. rewrite map.get_put_diff in *; try congruence.
+          rewrite map.get_put_same in *. injection H19; intros. injection H22; intros; subst.
+          injection H23; intros; subst.
+          unfold get_attr_type. rewrite H20. eapply not_free_immut_put_ty; eauto. }
+      1:{ rewrite map.get_put_diff in H19; try congruence. rewrite map.get_put_same in *; auto. }
+    Qed.
+
+    Definition index_wf (attr : string) (l : list (value * value)) :=
+      Forall (fun p => match snd p with
+                       | VList l =>
+                           Forall (fun r => match r with
+                                            | VRecord r => access_record r attr = Success (fst p)
+                                            | _ => False
+                                            end) l
+                       | _ => False
+                       end) l.
+
+    Lemma interp_EFilter : forall (store env : locals) e x p,
+        interp_expr store env (EFilter e x p) =
+          match interp_expr store env e with
+          | VList l =>
+              VList
+                (filter
+                   (fun v =>
+                      match interp_expr store (map.put env x v) p with
+                      | VBool b => b
+                      | _ => false
+                      end) l)
+          | _ => VUnit
+          end.
+    Proof. reflexivity. Qed.
+
+    Definition VList_app (l1 l2 : value) := match l1 with
+                                  | VList l1 =>
+                                      match l2 with
+                                      | VList l2 =>
+                                          VList (l1 ++ l2)
+                                      | _ => VUnit
+                                      end
+                                  | _ => VUnit
+                                  end.
+
+    Lemma eq_filter_to_lookup_head_preserve_sem : forall tbl attr e (Gstore Genv : tenv) (store env : locals) rt t idx,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        map.get Gstore tbl = Some (TDict (get_attr_type rt attr) (TList (TRecord rt))) ->
+        In attr (List.map fst rt) ->
+        type_of Gstore Genv e t ->
+        locals_wf Gstore store -> locals_wf Genv env ->
+        map.get store tbl = Some (VDict idx) ->
+        index_wf attr idx ->
+        interp_expr store env e = interp_expr store env (eq_filter_to_lookup_head tbl attr e).
+    Proof.
+      intros * H_Gstr H_Genv H_tbl_ty H_in H_ty H_str H_env H_tbl_v H_index_wf.
+      destruct e; auto. destruct e1; auto. destruct e1_1; auto. destruct e1_2; auto.
+      destruct a; auto. destruct t0; auto. destruct e1_3; auto. destruct o; auto.
+      destruct e1_3_1; auto. destruct e1_3_2; auto. destruct e2; auto. destruct o; auto.
+      destruct e2_1; auto. destruct e2_1; auto.
+      unfold eq_filter_to_lookup_head.
+      lazymatch goal with |- context[if ?x then _ else _] => destruct x eqn:E end; auto.
+      repeat rewrite Bool.andb_true_iff in E; intuition. rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+      fold (idx_to_list (ELoc tbl)).
+      rewrite interp_EFilter.
+      erewrite fiat2_gallina_idx_to_list with (Gstore:=Gstore); simpl; eauto.
+      2: econstructor; eauto.
+      all: simpl; unfold get_local; rewrite H_tbl_v; eauto.
+      eapply TyELoc in H_tbl_ty. apply_type_sound (ELoc tbl). unfold get_local in H.
+      rewrite H_tbl_v in H. injection H as H; subst.
+      Admitted.
   End WithMap.
 
-  (* ??? to be moved *)
+  (* ??? TODO: to be moved *)
   Section ConcreteExample.
-    Require Import coqutil.Map.SortedListString.
     Local Open Scope string.
 
     Definition ex1 := CLetMut (EAtom (ANil (Some (TRecord (("id", TInt) :: ("name", TString) :: nil))))) "persons"
