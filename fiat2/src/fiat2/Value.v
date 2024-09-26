@@ -1,5 +1,5 @@
 Require Import ZArith String List.
-Require Import coqutil.Word.Interface coqutil.Word.Properties coqutil.Datatypes.List.
+Require Import coqutil.Word.Interface coqutil.Word.Properties coqutil.Datatypes.List coqutil.Datatypes.Result.
 Require Import Std.Sorting.Mergesort Sorted Permutation.
 
 Section WithWord.
@@ -56,6 +56,12 @@ Section WithWord.
       | VUnit => f_unit
       end.
   End ValueIH.
+
+  Fixpoint access_record {A : Type} (l : list (string * A)) (s : string) : result A :=
+    match l with
+    | nil => error:("Attribute" s "not found in record" l)
+    | (s0, a) :: l => if String.eqb s s0 then Success a else access_record l s
+    end.
 
   (* ===== Comparison ===== *)
   Scheme Equality for list.
@@ -272,6 +278,19 @@ Section WithWord.
   Lemma eq_value_compare_Eq : forall v v', v = v' -> value_compare v v' = Eq.
   Proof.
     intros; subst; apply value_compare_refl.
+  Qed.
+
+  Lemma value_eqb_sym : forall x y, value_eqb x y = value_eqb y x.
+  Proof.
+    intros. unfold value_eqb. rewrite value_compare_antisym. destruct (value_compare y x); auto.
+  Qed.
+
+  Lemma value_eqb_eq : forall x y, value_eqb x y = true -> x = y.
+  Proof.
+    intros * H. unfold value_eqb in H.
+    lazymatch goal with H: context [value_compare ?x ?y] |- _ => destruct (value_compare x y) eqn:E end.
+    2-3: discriminate.
+    apply value_compare_Eq_eq; auto.
   Qed.
 
   Definition trans_at {A} (compare : A -> A -> comparison) (a a' a'' : A) :=

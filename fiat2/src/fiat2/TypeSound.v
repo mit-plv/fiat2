@@ -652,11 +652,11 @@ Section WithWord.
       intros l Hnodup tl Hvt x t Hin. generalize dependent tl. induction l; intros; simpl in *.
       - inversion Hvt; subst. apply in_nil in Hin. intuition.
       - inversion Hvt; subst. destruct a. inversion Hin; subst.
-        + destruct H1. simpl in *. subst. rewrite eqb_refl. auto.
+        + destruct H1. simpl in *. subst. unfold record_proj. simpl. rewrite eqb_refl. auto.
         + simpl in *; inversion Hnodup; subst. assert (String.eqb x s = false).
           { apply in_map with (f := fst) in H; simpl in H. apply Forall2_split in H3 as [HL HR]. apply Forall2_fst_eq in HL.
             rewrite eqb_neq. intro contra; subst. rewrite HL in H4. intuition. }
-          rewrite H0. eapply IHl; eauto.
+          unfold record_proj; simpl. rewrite H0. eapply IHl; eauto.
     Qed.
 
     Lemma dict_insert_preserve_NoDup : forall k k' v l,
