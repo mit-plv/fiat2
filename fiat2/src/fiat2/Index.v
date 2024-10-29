@@ -504,6 +504,65 @@ Section WithWord.
     Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
+    (* ??? move *)
+    Local Ltac use_not_free_immut_put_ty_IH :=
+      lazymatch goal with
+      | H: context[type_of _ (map.put _ _ _) ?e _ <-> type_of _ _ ?e _],
+        _: type_of _ (map.put ?Genv _ _) ?e _|- type_of _ ?Genv ?e _ => rewrite <- H
+      | H: context[type_of _ (map.put _ _ _) ?e _ <-> type_of _ _ ?e _] |- type_of _ _ ?e _ => rewrite H
+      end.
+
+    Local Ltac swap_map_puts :=
+      lazymatch goal with
+      | IH: context[type_of _ (map.put _ ?x _) _ _ <-> _],
+          H: context[map.put (map.put _ ?x _) ?y _] |- context[map.put _ ?y _] =>
+          let E := fresh "E" in
+          destruct (String.eqb x y) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst;
+          [ rewrite Properties.map.put_put_same in *
+          | rewrite Properties.map.put_put_diff with (k1:=x) in * ]; auto
+      |  IH: context[type_of _ (map.put _ ?x _) _ _ <-> _],
+          H: context[map.put _ ?y _] |- context[map.put (map.put _ ?x _) ?y _] =>
+           let E := fresh "E" in
+           destruct (String.eqb x y) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst;
+           [ rewrite Properties.map.put_put_same in *
+           | rewrite Properties.map.put_put_diff with (k1:=x) in * ]; auto
+      end.
+
+    Lemma not_free_immut_put_ty_iff: forall x e Gstore Genv t t',
+        free_immut_in x e = false ->
+        type_of Gstore (map.put Genv x t') e t <->
+        type_of Gstore Genv e t.
+    Proof.
+      intros. generalize dependent Genv. revert t t'. induction e using expr_IH;
+        intros; simpl in *; repeat rewrite Bool.orb_false_iff in *.
+      all: try now ( split; intro H'; inversion H'; subst; econstructor; eauto; intuition;
+                     repeat (try use_not_free_immut_put_ty_IH; eauto; swap_map_puts;
+                  simpl in *; repeat rewrite Bool.orb_false_iff in *; intuition)).
+      1:{ (* EVar *)
+        split; intro H'; inversion H'; subst; constructor.
+        all: rewrite eqb_neq, map.get_put_diff in *; auto. }
+      1:{ (* ERecord *)
+        split; intro H'; inversion H'; subst; econstructor; eauto.
+        all: lazymatch goal with
+             | H1: context[Permutation.Permutation], H2: context[Sorted.StronglySorted],
+                   H3: context[NoDup], H4: type_of _ _ _ _ |- _ => clear H1 H2 H3 H4
+             end.
+        all: generalize dependent tl; induction l; simpl in *; intros;
+          destruct tl; simpl in *; try congruence; auto; constructor; auto.
+        1,3: invert_Forall2; invert_Forall; subst; use_not_free_immut_put_ty_IH;
+        eauto; rewrite Bool.orb_false_iff in *; destruct a; intuition.
+        all: apply IHl; invert_Forall2; invert_Forall; injection H2; rewrite Bool.orb_false_iff in *; intuition. }
+      1:{ (* EDict *)
+        split; intro H'; inversion H'; subst; econstructor; eauto.
+        all: lazymatch goal with
+             | H: type_of _ _ _ _ |- _ => clear H
+             end.
+        all: induction H4; simpl in *; auto; constructor.
+        1,3: invert_Forall; destruct_match; simpl in *;
+        repeat rewrite Bool.orb_false_iff in *; intuition; use_not_free_immut_put_ty_IH; eauto.
+        all: invert_Forall; rewrite Bool.orb_false_iff in *; apply IHForall; intuition. }
+    Qed.
+
     Definition gallina_list_to_idx attr (l : list value) :=
       fold_right
         (fun v acc => match v with
@@ -1571,22 +1630,6 @@ Section WithWord.
         | _ => e
         end.
 
-(*
-      Definition neq_filter_to_delete_head (tbl attr : string) (e : expr) :=
-        (* list_to_idx (filter (idx_to_list idx) (fun row => row.attr != e)) = delete idx e *)
-        match e with
-        | (EFold
-             (EFilter
-                (EDictFold (ELoc tbl0) (EAtom (ANil None)) k0 v0 acc0 (EBinop OConcat (EAccess (EVar v1) "0") (EBinop OCons (EAccess (EVar v2) s1_0) (EVar acc1))))
-                y0 (EUnop ONot (EBinop OEq (EAccess (EVar y1) attr0) k')))
-             (EDict []) tup0 acc2
-             (EInsert (EVar acc3) (EAccess (EVar tup1) attr1) (EOptMatch (ELookup (EVar acc4) (EAccess (EVar tup2) attr2)) (ERecord [(s0_1, EAtom (ANil None)); (s1_1, EVar tup3)]) x0 (ERecord [(s0_2, EBinop OCons (EVar tup4) (EAccess (EVar x1) s0_3)); (s1_2, EAccess (EVar x2) s1_3)] ))))
-             => if (all_eqb [(tbl, [tbl0]); (k,[k0]); (v,[v0; v1; v2]); (acc, [acc0; acc1; acc2; acc3; acc4]); (y0, [y1]); (tup, [tup0; tup1; tup2; tup3; tup4]); (attr, [attr0; attr1; attr2]); (x, [x0; x1; x2]); ("0", [s0_1; s0_2; s0_3]); ("1", [s1_0; s1_1; s1_2; s1_3])] && negb (free_immut_in y0 k'))%bool
-             then EDelete (ELoc tbl) k'
-             else e
-        | _ => e
-        end.
-*)
     Definition gallina_filter_access_neq (s : string) (v0 : value) (l : list value) :=
       filter (fun v => negb (value_eqb match v with
                          | VRecord r => record_proj s r
@@ -1815,19 +1858,6 @@ Section WithWord.
         | _ => e
         end.
 
-      Lemma not_free_immut_put_ty_inv : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
-          free_immut_in x e = false -> type_of Gstore Genv e t -> type_of Gstore (map.put Genv x t') e t.
-      Proof.
-        intros * H_free H. induction H using @type_of_IH.
-        - (* EVar *)
-          constructor; simpl in *; rewrite_map_get_put_goal. symmetry. apply eqb_neq; auto.
-        - (* ELoc *)
-          constructor; auto.
-        - (* EAtom *)
-          constructor; auto.
-        - (* EUnop *) admit.
-          Admitted.
-
       Lemma cons_to_insert_head_preserve_ty : forall tbl attr (e : expr) rt t (Gstore Genv : tenv),
           is_NoDup [tup; acc; v; x] ->
           tenv_wf Gstore ->
@@ -1897,7 +1927,7 @@ Section WithWord.
                    end. repeat (try clear_refl; repeat do_injection).
             repeat (econstructor; eauto).
             2,3: rewrite_map_get_put_goal; auto.
-            apply not_free_immut_put_ty_inv; auto. }
+            apply not_free_immut_put_ty_iff; auto. }
       Qed.
 
       Lemma cons_to_insert_head_preserve_sem : forall tbl attr e (Gstore Genv : tenv) (store env : locals) rt t idx,
