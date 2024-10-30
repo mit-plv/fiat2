@@ -1931,6 +1931,7 @@ Section WithWord.
       Qed.
 
       Lemma cons_to_insert_head_preserve_sem : forall tbl attr e (Gstore Genv : tenv) (store env : locals) rt t idx,
+          is_NoDup [tup; acc; x; v] ->
           tenv_wf Gstore -> tenv_wf Genv ->
           map.get Gstore tbl = Some (index_type (get_attr_type rt attr) rt) ->
           In attr (List.map fst rt) ->
@@ -1939,27 +1940,44 @@ Section WithWord.
           map.get store tbl = Some (VDict idx) ->
           index_wf attr idx ->
           interp_expr store env e = interp_expr store env (cons_to_insert_head tbl attr e).
-      Admitted.
+      Proof.
+        intros. repeat destruct_subexpr. unfold cons_to_insert_head. destruct_match_goal; auto.
+        simpl in E. repeat rewrite Bool.andb_true_r in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition. rewrite eqb_eq, Bool.negb_true_iff in *; subst.
+        repeat invert_type_of. repeat rewrite_map_get_put_hyp. repeat (clear_refl; repeat do_injection).
+        rewrite fold_list_to_idx, fold_idx_to_list. erewrite fiat2_gallina_list_to_idx with (Gstore:=Gstore); eauto.
+        2: simpl in *; intuition.
+        2:{ repeat (econstructor; eauto).
+            2-4: repeat rewrite_map_get_put_goal; reflexivity.
+            lazymatch goal with
+              H: ?x = _, H': ?x = _ |- _ => rewrite H in H'
+            end. do_injection. simpl in *. do_injection. constructor; auto. }
+        2:{ assert(E_cons: forall e1 e2, interp_expr store env (EBinop OCons e1 e2) =
+                                   interp_binop OCons (interp_expr store env e1) (interp_expr store env e2)).
+            { reflexivity. }
+            rewrite E_cons. erewrite fiat2_gallina_idx_to_list with (Gstore:=Gstore); eauto.
+            2: simpl in *; intuition.
+            2: constructor; eauto.
+            2: simpl; unfold get_local; rewrite_l_to_r; eauto.
+            simpl; eauto. }
+        simpl. unfold get_local; rewrite_l_to_r. f_equal.
+        apply_type_sound e1_1.
+        f_equal. 1: erewrite gallina_idx_to_list_to_idx; eauto.
+        3: eapply gallina_idx_to_list_to_idx; eauto.
+        2,3: lazymatch goal with
+             | H: locals_wf ?Gstore ?store,
+                 H_ty: map.get ?Gstore _ = Some (index_type _ _),
+                   H_v: map.get ?store _ = _ |- _ =>
+                 let H_tbl := fresh "H_tbl" in
+                 apply H in H_ty as H_tbl; rewrite H_v in H_tbl
+             end; eauto.
+        destruct_match_goal; auto.
+        unfold vcons_to_fst. f_equal. rewrite_map_get_put_goal.
+        repeat destruct_match_goal; try reflexivity.
+        rewrite <- not_free_immut_put_sem; auto.
+        lazymatch goal with H: VRecord _ = ?e |- context[?e] => rewrite <- H end; auto.
+      Qed.
     End cons_to_insert.
-
-
-(***??? in construction ???***)
-
-    Lemma ESort_Permutation_inv : forall (store env : locals) l l' vl vl',
-        interp_expr store env l = VList vl ->
-        interp_expr store env l' = VList vl' ->
-        Permutation vl vl' ->
-        interp_expr store env (ESort l) = interp_expr store env (ESort l').
-    Proof.
-      intros store env l l' vl vl' E E' H. simpl.
-      rewrite E, E'. f_equal.
-      apply Permutation_SSorted_eq.
-      2,3: apply StronglySorted_value_sort.
-      eapply perm_trans. 2:apply Permuted_value_sort.
-      eapply perm_trans. 2:apply H.
-      apply Permutation_sym, Permuted_value_sort.
-    Qed.
-
   End WithMap.
 
   (* ??? TODO: to be moved *)
