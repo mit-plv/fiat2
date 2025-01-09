@@ -182,12 +182,6 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyORange : type_of_binop ORange TInt TInt (TList TInt)
 | TyOWRange : type_of_binop OWRange TWord TWord (TList TWord).
 
-Fixpoint access_record {A : Type} (l : list (string * A)) (s : string) : result A :=
-  match l with
-  | nil => error:("Attribute" s "not found in record" l)
-  | (s0, a) :: l => if String.eqb s s0 then Success a else access_record l s
-  end.
-
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 

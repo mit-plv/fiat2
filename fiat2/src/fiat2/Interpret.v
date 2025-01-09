@@ -1,7 +1,6 @@
 Require Import ZArith String List DecimalString.
 Require Import fiat2.Language fiat2.Value.
-Require Import coqutil.Word.Interface.
-Require Import coqutil.Map.Interface.
+Require Import coqutil.Word.Interface coqutil.Map.Interface coqutil.Datatypes.Result.
 
 Local Open Scope Z_scope.
 
@@ -136,11 +135,16 @@ Section WithWord.
                  end
     end.
 
-  Fixpoint record_proj (s : string) (l : list (string * value)) : value :=
-    match l with
-    | nil => VUnit
-    | (s', v) :: l => if String.eqb s s' then v else record_proj s l
+  Definition record_proj (s : string) (l : list (string * value)) : value :=
+    match access_record l s with
+    | Success v => v
+    | _ => VUnit
     end.
+
+  Lemma access_record__record_proj : forall l x v, access_record l x = Success v -> record_proj x l = v.
+  Proof.
+    intros * H. unfold record_proj; rewrite H. reflexivity.
+  Qed.
 
   Fixpoint dict_insert (k v : value) (l : list (value * value)) : list (value * value) :=
     match l with
