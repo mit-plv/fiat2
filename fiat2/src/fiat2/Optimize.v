@@ -159,8 +159,7 @@ Section WithWord.
       intros store env Gstore Genv t1 t2 p r rp x y xp XY XPX XPY HX HY. simpl.
       destruct (interp_expr store env t1) eqn:T1; try reflexivity.
       destruct (interp_expr store env t2) eqn:T2; try reflexivity. f_equal.
-      rewrite map_flat_map. apply flat_map_ext. intros a. rewrite map_map. f_equal.
-      apply FunctionalExtensionality.functional_extensionality. intros b.
+      rewrite map_flat_map. apply flat_map_ext. intros a. rewrite map_map. apply map_ext. intros b.
       rewrite not_free_immut_put_sem with (x:=x) (v:=a) (e:=rp).
       - rewrite not_free_immut_put_sem with (x:=y) (v:=b) (e:=rp).
         + rewrite Properties.map.put_put_diff with (k1:=xp).
@@ -309,14 +308,10 @@ Section WithWord.
         cols x e = Some ecols -> incl ecols (map fst f1)) in H1; try eauto. generalize dependent ecols. induction l; intros; simpl in *.
         + injection H5 as H5. rewrite <- H5. apply incl_nil_l.
         + destruct a. simpl in *. destruct (cols x e) eqn:C; try congruence. apply Forall_inv_tail in H1 as H. apply Forall_inv in H1.
-          apply H1 with (ecols:=l0) in T as H2; try assumption. clear H1. destruct (fold_right
-           (fun (val : string * expr) (acc : option (list string)) =>
+          apply H1 with (ecols:=l0) in T as H2; try assumption. clear H1.
+          destruct (fold_right (fun (val : string * expr) (acc : option (list string)) =>
             match cols x (snd val) with
-            | Some l1 =>
-                match acc with
-                | Some l2 => Some (dedup eqb (l1 ++ l2))
-                | None => None
-                end
+            | Some l1 => match acc with | Some l2 => Some (dedup eqb (l1 ++ l2)) | None => None end
             | None => None
             end) (Some nil) l);try congruence. injection H5 as H5. rewrite <- H5. apply IHl with (ecols:=l1) in H; try reflexivity.
           unfold incl in *. intros. apply dedup_In in H0. apply in_app_or in H0. destruct H0; auto.
@@ -330,23 +325,14 @@ Section WithWord.
         + destruct a. simpl in *. destruct (cols x e0) eqn:C0; try congruence. destruct (cols x e) eqn:C; try congruence.
           apply Forall_inv_tail in H2 as H1. apply Forall_inv in H2. simpl in *. destruct H2. remember T as T1. clear HeqT1.
           apply H0 with (ecols:=l0) in T; try assumption. apply H with (ecols:=l1) in T1; try assumption.
-            destruct (fold_right
-           (fun (val : expr * expr) (acc : option (list string)) =>
+            destruct (fold_right (fun (val : expr * expr) (acc : option (list string)) =>
             match
               match cols x (snd val) with
-              | Some l1 =>
-                  match cols x (fst val) with
-                  | Some l2 => Some (dedup eqb (l1 ++ l2))
-                  | None => None
-                  end
+              | Some l1 => match cols x (fst val) with | Some l2 => Some (dedup eqb (l1 ++ l2)) | None => None end
               | None => None
               end
             with
-            | Some l1 =>
-                match acc with
-                | Some l2 => Some (dedup eqb (l1 ++ l2))
-                | None => None
-                end
+            | Some l1 => match acc with | Some l2 => Some (dedup eqb (l1 ++ l2)) | None => None end
             | None => None
             end) (Some nil) l); try congruence. injection H3 as H3. rewrite <- H3. apply IHl with (ecols:=l2) in H1; try reflexivity.
             unfold incl in *. intros. apply dedup_In in H2. apply in_app_or in H2. destruct H2; auto. apply dedup_In in H2.
@@ -422,25 +408,19 @@ Section WithWord.
             apply Forall2_fst_eq in H2. rewrite <- H2 in H8. assert (S1: record_proj s0 l = v).
             * clear IHe H H0 H1 H3 H4 H8 H2 H7 H6'. induction l.
               -- simpl in H6. contradiction.
-              -- simpl. destruct a eqn:A. simpl in H6. destruct H6 eqn: S.
-                 ++ subst. destruct (s0 =? s)%string eqn:HS.
-                    ** inversion e. reflexivity.
-                    ** inversion e. subst. rewrite eqb_refl in HS. congruence.
-                 ++ subst. destruct (s0 =? s)%string eqn:HS.
-                    ** apply eqb_eq in HS. subst. rewrite map_cons in H5. simpl in H5. apply invert_NoDup_cons in H5. destruct H5.
-                       apply In_map_fst in i. contradiction.
-                    ** rewrite map_cons in H5. simpl in H5. apply invert_NoDup_cons in H5. destruct H5. apply IHl; assumption.
+              -- simpl in *. apply invert_NoDup_cons in H5. destruct H5. unfold record_proj. simpl. destruct H6.
+                 ++ destruct a. simpl in *. inversion H1. clear H1. rewrite eqb_refl. auto.
+                 ++ apply IHl in H0 as H2; auto. destruct a. simpl in *. apply In_map_fst in H1. destruct ((s0 =? s)%string) eqn:S.
+                    ** rewrite String.eqb_eq in S. subst. contradiction.
+                    ** unfold record_proj in H2. apply H2.
             * assert (S2: record_proj s0 l0 = v).
               -- clear IHe H H0 H1 H3 H4 H5 H3 H2 H7 H6. induction l0.
                  ++ simpl in H6'. contradiction.
-                 ++ simpl. destruct a eqn:A. simpl in H6'. destruct H6' eqn:S.
-                    ** subst. destruct (s0 =? s)%string eqn:HS.
-                       --- inversion e. reflexivity.
-                       --- inversion e. subst. rewrite eqb_refl in HS. congruence.
-                    ** subst. destruct (s0 =? s)%string eqn:HS.
-                       --- apply eqb_eq in HS. subst. rewrite map_cons in H8. simpl in H8. apply invert_NoDup_cons in H8. destruct H8.
-                           apply In_map_fst in i. contradiction.
-                       --- rewrite map_cons in H8. simpl in H8. apply invert_NoDup_cons in H8. destruct H8. apply IHl0; assumption.
+                 ++ simpl in *. apply invert_NoDup_cons in H8. destruct H8. unfold record_proj. simpl. destruct H6'; destruct a.
+                    ** simpl in *. inversion H1. clear H1. rewrite eqb_refl. auto.
+                    ** apply IHl0 in H0 as H2; auto. simpl in *. apply In_map_fst in H1. destruct ((s0 =? s)%string) eqn:S.
+                       --- rewrite String.eqb_eq in S. subst. contradiction.
+                       --- unfold record_proj in H2. auto.
               -- rewrite S1. rewrite S2. reflexivity.
           + unfold get_local. rewrite !map.get_put_diff; try assumption. reflexivity.
         }        
@@ -478,24 +458,19 @@ Section WithWord.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
         destruct (Sumbool.sumbool_or (x=x0)(x<>x0)(x=y)(x<>y)
         (string_dec x x0)(string_dec x y)) as [b1|b2].
-        + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
-          destruct HC. erewrite IHe1; eauto. 
-          * destruct_match_goal; try reflexivity. f_equal.
-            -- repeat (apply FunctionalExtensionality.functional_extensionality; intros). destruct b1.
-               ++ subst. rewrite !Properties.map.put_put_same. reflexivity.
-               ++ subst. destruct (string_dec y x0).
-                  ** subst. rewrite !Properties.map.put_put_same. reflexivity.
-                  ** rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption. rewrite !Properties.map.put_put_same.
-                     reflexivity.
-            -- eapply IHe2; eauto. eapply rel_step; eauto.
+        + dcols e1 x. dcols e2 x. injection HC as HC. apply dedup_incl in HC. destruct HC. erewrite <- IHe1; eauto.
+          * destruct_match_goal; try reflexivity. erewrite IHe2; eauto. 2: {eapply rel_step; eauto.}.
+            apply In_fold_right_ext with (P:= fun x => True); auto. split; auto. destruct b1.
+            -- subst. rewrite !Properties.map.put_put_same. reflexivity.
+            -- subst. destruct (string_dec y x0).
+               ** subst. rewrite !Properties.map.put_put_same. reflexivity.
+               ** rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption. rewrite !Properties.map.put_put_same. auto.
           * eapply rel_step; eauto.
         + destruct (cols x e3); try congruence. destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. destruct b2.
           injection HC as HC. apply dedup_incl in HC. destruct HC. apply incl_dedup in H2. destruct H2. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. f_equal.
-            -- repeat (apply FunctionalExtensionality.functional_extensionality; intros).
-               rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption.
-               rewrite !Properties.map.put_put_diff with (k1:=x); try assumption. eapply IHe3; eauto. eapply rel_step; eauto.
-            -- eapply IHe2; eauto. eapply rel_step; eauto.
+          * destruct_match_goal; try reflexivity. erewrite IHe2; eauto. 2: {eapply rel_step; eauto.}.
+            apply In_fold_right_ext with (P:= fun x => True); auto. split; auto. rewrite !Properties.map.put_put_diff with (k2:=x0); auto.
+            rewrite !Properties.map.put_put_diff with (k1:=x); auto. eapply IHe3; eauto. eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. f_equal. f_equal. apply map_ext_in. intros [s e] LA. f_equal.
         apply Forall_In with (x:=(s,e)) in H; try assumption. simpl in *. eapply subcols_record in HC; eauto. destruct HC.
@@ -538,29 +513,25 @@ Section WithWord.
         (string_dec x v) (string_dec x acc)) (string_dec x k)) as [b1|b2].
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. f_equal.
-            -- repeat (apply FunctionalExtensionality.functional_extensionality; intros). destruct x0. simpl. destruct b1.
-               ++ destruct H1; subst.
-                  ** destruct (string_dec v k).
+          * destruct_match_goal; try reflexivity. erewrite <- IHe2; eauto. 2: {eapply rel_step; eauto.}.
+            apply In_fold_right_ext with (P:=fun x => True); auto. split; auto. destruct b1.
+            -- destruct H3; subst.
+               ++ destruct (string_dec v k).
+                  ** subst. rewrite !Properties.map.put_put_same. reflexivity.
+                  ** rewrite !Properties.map.put_put_diff with (k2:=k); auto. rewrite !Properties.map.put_put_same. auto.
+               ++ destruct (string_dec acc k).
+                  ** subst. rewrite !Properties.map.put_put_same. reflexivity.
+                  ** rewrite !Properties.map.put_put_diff with (k2:=k); try assumption. destruct (string_dec acc v).
                      --- subst. rewrite !Properties.map.put_put_same. reflexivity.
-                     --- rewrite !Properties.map.put_put_diff with (k2:=k); try assumption. rewrite !Properties.map.put_put_same.
-                         reflexivity.
-                  ** destruct (string_dec acc k).
-                     --- subst. rewrite !Properties.map.put_put_same. reflexivity.
-                     --- rewrite !Properties.map.put_put_diff with (k2:=k); try assumption. destruct (string_dec acc v).
-                         +++ subst. rewrite !Properties.map.put_put_same. reflexivity.
-                         +++ rewrite !Properties.map.put_put_diff with (k1:=acc)(k2:=v); try assumption.
-                             rewrite !Properties.map.put_put_same. reflexivity.
-               ++ subst. rewrite !Properties.map.put_put_same. reflexivity.
-            -- eapply IHe2; eauto. eapply rel_step; eauto.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=acc)(k2:=v); auto. rewrite !Properties.map.put_put_same. auto.
+            -- subst. rewrite !Properties.map.put_put_same. reflexivity.
           * eapply rel_step; eauto.
         + destruct (cols x e3); try congruence. destruct (cols x e1); try congruence. destruct (cols x e2); try congruence.
           destruct b2 as [b2 b4]. destruct b2 as [b2 b3]. injection HC as HC. apply dedup_incl in HC. destruct HC.
           apply incl_dedup in H0. destruct H0. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. f_equal.
-            -- repeat (apply FunctionalExtensionality.functional_extensionality; intros). destruct x0. simpl.
-               rewrite !Properties.map.put_put_diff with (k1:=x); try assumption. erewrite IHe3; eauto. eapply rel_step; eauto.
-            -- eapply IHe2; eauto. eapply rel_step; eauto.
+          * destruct_match_goal; try reflexivity. erewrite <- IHe2; eauto. 2: {eapply rel_step; eauto.}.
+            apply In_fold_right_ext with (P:=fun x => True); auto. split; auto. rewrite !Properties.map.put_put_diff with (k1:=x); auto.
+            erewrite IHe3; eauto. eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. erewrite IHe; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0).
@@ -576,30 +547,28 @@ Section WithWord.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
           * destruct_match_goal; try reflexivity. erewrite IHe2; eauto.
-            -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. f_equal.
-               ++ apply FunctionalExtensionality.functional_extensionality. intros. destruct b1; subst.
-                  ** rewrite !Properties.map.put_put_same. reflexivity.
-                  ** destruct (string_dec x0 y); subst.
-                     --- rewrite !Properties.map.put_put_same. reflexivity.
-                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); try assumption. rewrite !Properties.map.put_put_same.
-                         reflexivity.
+            -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
                ++ apply In_filter_ext. intros. destruct b1; subst.
                   ** rewrite !Properties.map.put_put_same. reflexivity.
                   ** destruct (string_dec x0 y); subst.
                      --- rewrite !Properties.map.put_put_same. reflexivity.
-                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); try assumption. rewrite !Properties.map.put_put_same.
-                         reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+               ++ intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
             -- eapply rel_step; eauto.
           * eapply rel_step; eauto.
         + destruct (cols x e4); try congruence. destruct (cols x e3); try congruence. destruct (cols x e1); try congruence.
           destruct (cols x e2); try congruence. destruct b2 as [b1 b2]. injection HC as HC. apply dedup_incl in HC. destruct HC.
           apply incl_dedup in H0. destruct H0. apply incl_dedup in H1. destruct H1. erewrite IHe1; eauto.
           * destruct_match_goal; try reflexivity. erewrite IHe2; eauto.
-            -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. f_equal.
-               ++ apply FunctionalExtensionality.functional_extensionality. intros.
-                  rewrite !Properties.map.put_put_diff with (k1:=x); try assumption. eapply IHe4; eauto. eapply rel_step; eauto.
-               ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption. erewrite IHe3; eauto.
-                  eapply rel_step; eauto.
+            -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  erewrite IHe3; eauto. eapply rel_step; eauto.
+               ++ intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  eapply IHe4; eauto. eapply rel_step; eauto.
             -- eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0); subst.
@@ -615,17 +584,17 @@ Section WithWord.
       induction l.
       - intros. simpl in H. contradiction.
       - intros. destruct H.
-        + left. subst. destruct a eqn:A. f_equal. simpl. rewrite eqb_refl. reflexivity.
-        + simpl. destruct a eqn:A. destruct (x =? s)%string eqn:S.
-          * subst. auto. apply eqb_eq in S. subst. left. reflexivity. 
-          * right. eauto.
+        + left. destruct a. simpl in H. subst. f_equal. unfold record_proj. simpl. rewrite eqb_refl. auto.
+        + simpl. destruct a. destruct (x =? s)%string eqn:S.
+          * rewrite String.eqb_eq in S. subst. left. f_equal. unfold record_proj. simpl. rewrite eqb_refl. auto.
+          * right. unfold record_proj. simpl. rewrite S.  apply IHl in H. unfold record_proj in H. apply H.
     Qed.
 
     Lemma record_proj_skip: forall (x s : string) (v : value) (l1 : list (string * value)),
        x <> s -> record_proj x ((s,v)::l1) = record_proj x l1.
       intros. simpl. destruct (x =? s)%string eqn:XS.
       - rewrite String.eqb_eq in XS. contradiction.
-      - reflexivity.
+      - unfold record_proj. simpl. rewrite XS. reflexivity.
     Qed.
  
     Lemma map_record_proj_skip: forall (s : string) (v : value) (l1 : list (string * value)) (l2 : list string),
@@ -692,8 +661,10 @@ Section WithWord.
                (map
                   (fun x0 : string =>
                    (x0,
-                    interp_expr store (map.put env xp a) (EAccess (EVar xp) x0)))
-                  (dedup eqb (pcols ++ rcols)))) ->
+                    match a with
+                    | VRecord l1 => record_proj x0 l1
+                    | _ => VUnit
+                    end)) (dedup eqb (pcols ++ rcols)))) ->
       f1' =
            record_sort
              (map
@@ -717,22 +688,25 @@ Section WithWord.
       - induction (dedup eqb (pcols ++ rcols)).
         {1: simpl. unfold record_sort. unfold Mergesort.Sectioned.sort. simpl. apply Forall2_nil.}
         apply incl_cons_inv in HI3. destruct HI3. apply invert_NoDup_cons in HD. destruct HD. apply IHl0 in H2 as H6; auto. clear IHl0.
-        apply Forall2_Permuted_StronglySorted with (l1:=(map (fun x0 : string =>
-         (x0, interp_expr store (map.put env xp (VRecord l)) (EAccess (EVar xp) x0))) (a :: l0))) (l2:=(map (fun x0 : string =>
-         match find (fun '(s, _) => (x0 =? s)%string) f1 with | Some (s, t0) => (s, t0) | None => (x0, TUnit) end) (a :: l0))).
-        + simpl. unfold get_local in *. rewrite map.get_put_same in *. apply Forall2_cons; simpl in *.
+        apply Forall2_Permuted_StronglySorted with (l1:=(map (fun x0 : string => (x0, record_proj x0 l)) (a :: l0)))
+                                                   (l2:=(map (fun x0 : string => match find (fun '(s, _) => (x0 =? s)%string) f1 with
+                                                    | Some (s, t0) => (s, t0) | None => (x0, TUnit) end) (a :: l0))).
+        + simpl. apply Forall2_cons; simpl in *.
           * split; try apply map_fst_a0. clear H1 HI1 HI2 HT. induction H3; simpl; try apply TyVUnit. destruct y. simpl in *. destruct H.
-            -- destruct x. simpl in H1. destruct H1. subst. rewrite eqb_refl. simpl. auto.
+            -- destruct x. simpl in H1. destruct H1. subst. rewrite eqb_refl. simpl. unfold record_proj. simpl. rewrite eqb_refl. auto.
             -- apply invert_NoDup_cons in H0. destruct H0. destruct ((a =? s)%string) eqn:AS.
                ++ rewrite String.eqb_eq in AS. subst. simpl. destruct x. simpl in H1. destruct H1.
-                  destruct ((s =? s0)%string) eqn:SS; auto. rewrite String.eqb_neq in SS. subst. contradiction.
-               ++ destruct x. simpl in H1. destruct H1. subst. rewrite AS. rewrite String.eqb_neq in AS. destruct (in_dec string_dec s l0).
+                  destruct ((s =? s0)%string) eqn:SS.
+                  {1: rewrite String.eqb_eq in SS. subst s0. unfold record_proj. simpl. rewrite eqb_refl. auto. }.
+                  rewrite String.eqb_neq in SS. subst. contradiction.
+               ++ destruct x. simpl in H1. destruct H1. subst. unfold record_proj. simpl. rewrite AS. rewrite String.eqb_neq in AS.
+                  destruct (in_dec string_dec s l0).
                   ** clear IHForall2 H6. apply record_proj_sound with (l:=l)(tl:=l'); auto.
                      --- apply Forall2_split in H3. destruct H3. apply Forall2_fst_eq in H1. rewrite H1. auto.
                      --- apply map_snd_a0. auto. 
                   ** assert (HL: incl l0 (map fst l')).
                      {1: unfold incl in *. intros. apply H2 in H1 as H9. destruct H9; try auto. subst. contradiction.}
-                      apply IHForall2 in H; clear IHForall2; auto. unfold get_local in H6. rewrite map.get_put_same in H6.
+                      apply IHForall2 in H; clear IHForall2; auto.
                       rewrite map_record_proj_skip in H6. 2: { intros. unfold incl in HL. apply HL in H1. intro. subst. contradiction. }
                       assert (HM: (record_sort (map (fun x0 : string => match (if (x0 =? s)%string then Some (s, t) else
                              find (fun '(s, _) => (x0 =? s)%string) l') with | Some (s, t) => (s, t) | None => (x0, TUnit) end) l0))
@@ -740,9 +714,8 @@ Section WithWord.
                               | Some (s, t) => (s, t) | None => (x0, TUnit) end) l0))).
                       --- f_equal. apply map_ext_in. intros. destruct (a0 =? s)%string eqn:AS0; auto. rewrite String.eqb_eq in AS0.
                           subst. contradiction.
-                      --- rewrite HM in H6. unfold get_local. rewrite map.get_put_same. auto.
-          * unfold get_local in *. rewrite map.get_put_same in *. clear H H4. induction l0; simpl; try apply Forall2_nil.
-            apply Forall2_cons; simpl.
+                      --- rewrite HM in H6. auto.
+          * clear H H4. induction l0; simpl; try apply Forall2_nil. apply Forall2_cons; simpl.
             -- split; try apply map_fst_a0. apply incl_cons_inv in H2. destruct H2. apply record_proj_sound with (l:=l)(tl:=f1); auto.
                ++ apply Forall2_split in H3. destruct H3. apply Forall2_fst_eq in H3. rewrite H3. auto.
                ++ apply map_snd_a0. auto.
@@ -794,7 +767,6 @@ Section WithWord.
       type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) p TBool ->
       type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) r t ->
       type_of Gstore Genv tb1 (TList (TRecord f1)) ->
-      type_of Gstore Genv tb2 (TList (TRecord f2)) ->
       x <> y ->
       cols x p = Some pcols ->
       cols x r = Some rcols ->
@@ -803,53 +775,111 @@ Section WithWord.
       interp_expr store env (EJoin tb1 tb2 x y p r) =
       interp_expr store env (EJoin (EProj tb1 xp rp) tb2 x y p r).
     Proof.
-      intros store env Gstore Genv tb1 tb2 p r x y xp pcols rcols f1 f2 t WF1 WF2 L1 L2 TP TR T1 T2 XY HP HR. simpl.
-      destruct (interp_expr store env tb1) eqn:H1; try reflexivity.
-      destruct (interp_expr store env tb2) eqn:H2; try reflexivity. f_equal.
-      rewrite flat_map_map. apply In_flat_map_ext. intros a LA. rewrite map_map.
+      intros store env Gstore Genv tb1 tb2 p r x y xp pcols rcols f1 f2 t WF1 WF2 L1 L2 TP TR T XY HP HR. simpl.
+      destruct (interp_expr store env tb1) eqn:H; auto. destruct (interp_expr store env tb2); auto. f_equal.
+      rewrite flat_map_map. apply In_flat_map_ext. intros a LA. rewrite map_map. simpl. unfold get_local. rewrite map.get_put_same.
+      eapply type_sound in T; eauto. inversion T. rewrite H in H0. injection H0 as H0. subst l1 t0.
       assert (HI1: incl pcols (map fst f1)).
       {1: eapply cols_in_record with (e:=p); eauto. rewrite Properties.map.put_put_diff; auto. rewrite map.get_put_same. auto.}
       assert (HI2: incl rcols (map fst f1)).
       {1: eapply cols_in_record with (e:=r); eauto. rewrite Properties.map.put_put_diff; auto. rewrite map.get_put_same. auto.}
-      assert (HT: type_of_value a (TRecord f1)).
-      {1: eapply type_sound in T1; eauto. rewrite H1 in T1. rewrite <- TyVList_def in T1. eapply Forall_In in T1; eauto.}
+      assert (HT: type_of_value a (TRecord f1)) by (eapply Forall_In in H2; eauto).
       remember (record_sort (map (fun x0 : string => match find (fun '(s,_) => (x0 =? s)%string) f1 with
                                                      | Some (s,t) => (s,t)
                                                      | None => (x0, TUnit) end) (dedup eqb (pcols ++ rcols)))) as f1'.
-      remember (VRecord (record_sort (map (fun x0 : string => (x0, interp_expr store (map.put env xp a) (EAccess (EVar xp) x0)))
+      remember (VRecord (record_sort (map (fun x0 : string => (x0, match a with | VRecord l1 => record_proj x0 l1 | _ => VUnit end))
                                         (dedup eqb (pcols ++ rcols))))) as a'.
       assert (HT': type_of_value a' (TRecord f1')) by (eapply record_type_a'; eauto). apply map_ext_in_eq.
-      - apply In_filter_ext. intros b LB.
-        repeat (rewrite Properties.map.put_put_diff with (k2:=y); try apply XY).
-        rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=pcols); try reflexivity; try assumption; unfold relation.
-        rewrite Heqa'. simpl. apply type_sound with (store:=store) (env:=env) in T1; try assumption.
-        inversion T1. symmetry in H. rewrite H in H1. injection H1 as H1. rewrite <- H1 in LA.
-        apply Forall_In with (x:=a) in H3; try assumption. destruct a; try inversion H3. subst. unfold incl. split.
-        + intros. rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. rewrite <- H0.
-          unfold get_local. rewrite map.get_put_same. apply record_proj_lemma. apply dedup_preserves_In in H1.
-          apply in_app_or in H1. apply Forall2_split in H8. destruct H8. apply Forall2_fst_eq in H4. rewrite H4. destruct H1.
-          * unfold incl in HI1. apply HI1. assumption.
-          * unfold incl in HI2. apply HI2. assumption.
-        + intros. rewrite in_map_iff. exists ((a,record_proj a l2)). simpl. split; try reflexivity.
-          rewrite <- Permuted_record_sort. apply in_map_iff. exists a. split.
-          * f_equal. unfold get_local. rewrite map.get_put_same. reflexivity.
-          * rewrite <- dedup_preserves_In. apply in_or_app. left. assumption.
-      - intros b LB.
-        repeat (rewrite Properties.map.put_put_diff with (k2:=y); try apply XY).
-        rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=rcols); try reflexivity; try assumption. unfold relation.
-        rewrite Heqa'. simpl. apply type_sound with (store:=store) (env:=env) in T1; try assumption.
-        inversion T1. symmetry in H. rewrite H in H1. injection H1 as H1. rewrite <- H1 in LA.
-        apply Forall_In with (x:=a) in H3; try assumption. destruct a; try inversion H3. subst. unfold incl. split.
-        + intros. rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. rewrite <- H0.
-          unfold get_local. rewrite map.get_put_same. apply record_proj_lemma. apply dedup_preserves_In in H1.
-          apply in_app_or in H1. apply Forall2_split in H8. destruct H8. apply Forall2_fst_eq in H4. rewrite H4. destruct H1.
-          * unfold incl in HI1. apply HI1. assumption.
-          * unfold incl in HI2. apply HI2. assumption.
-        + intros. rewrite in_map_iff. exists ((a, record_proj a l2)). simpl. split; try reflexivity.
-          rewrite <- Permuted_record_sort. apply in_map_iff. exists a. split.
-          * f_equal. unfold get_local. rewrite map.get_put_same. reflexivity.
-          * rewrite <- dedup_preserves_In. apply in_or_app. right. assumption.
+      - apply filter_ext. intros. rewrite !Properties.map.put_put_diff with (k2:=y); auto.
+        rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=pcols); auto. unfold relation.
+        destruct a; try inversion HT. subst. unfold incl. split; intros.
+        + rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a.
+          apply record_proj_lemma. apply dedup_preserves_In in H1. apply in_app_or in H1.
+          apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0. destruct H1.
+          * unfold incl in HI1. apply HI1. auto.
+          * unfold incl in HI2. apply HI2. auto.
+        + rewrite in_map_iff. exists ((a,record_proj a l1)). simpl. split; auto. rewrite <- Permuted_record_sort.
+          apply in_map_iff. exists a. split; auto. rewrite <- dedup_preserves_In. apply in_or_app. left. auto.
+      - intros b LB. rewrite !Properties.map.put_put_diff with (k2:=y); auto.
+        rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=rcols); auto. unfold relation.
+        destruct a; try inversion HT. subst. unfold incl. split; intros.
+        + rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a.
+          apply record_proj_lemma. apply dedup_preserves_In in H1. apply in_app_or in H1.
+          apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0. destruct H1.
+          * unfold incl in HI1. apply HI1. auto.
+          * unfold incl in HI2. apply HI2. auto.
+        + rewrite in_map_iff. exists ((a, record_proj a l1)). simpl. split; auto. rewrite <- Permuted_record_sort.
+          apply in_map_iff. exists a. split; auto. rewrite <- dedup_preserves_In. apply in_or_app. right. auto.
     Qed. Print Assumptions proj_pushdown_left.
+
+    Lemma map_filter_ext: forall {A B : Type} (p : A -> bool) (f : A -> B) (g : A -> A) (l : list A),
+        (forall x, In x l -> p x = p (g x)) ->
+        (forall x, In x l -> p x = true -> f x = f (g x)) ->
+        map f (filter p l) = map f (filter p (map g l)).
+      intros. induction l; auto. simpl. rewrite <- H.
+      - destruct (p a) eqn:PA.
+        + simpl. rewrite <- H0; auto.
+          * f_equal. apply IHl; auto.
+            -- intros. apply H. simpl. right. auto.
+            -- intros. apply H0; auto. simpl. right. auto.
+          * simpl. left. auto.
+        + apply IHl.
+          * intros. apply H. simpl. right. auto.
+          * intros. apply H0; auto. simpl. right. auto.
+      - simpl. left. auto.
+    Qed.
+
+    Theorem proj_pushdown_right: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r: expr) (x y xp: string) (pcols rcols: list string) (f1 f2: list (string * type)) (t: type),
+      tenv_wf Gstore -> tenv_wf Genv ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) p TBool ->
+      type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) r t ->
+      type_of Gstore Genv tb2 (TList (TRecord f2)) ->
+      x <> y ->
+      cols y p = Some pcols ->
+      cols y r = Some rcols ->
+      let columns := dedup String.eqb (pcols ++ rcols) in
+      let rp := make_record xp columns in
+      interp_expr store env (EJoin tb1 tb2 x y p r) =
+      interp_expr store env (EJoin tb1 (EProj tb2 xp rp) x y p r).
+    Proof.
+      intros store env Gstore Genv tb1 tb2 p r x y xp pcols rcols f1 f2 t WF1 WF2 L1 L2 TP TR T XY HP HR. simpl.
+      destruct (interp_expr store env tb1); auto. destruct (interp_expr store env tb2) eqn:H; auto. f_equal.
+      apply flat_map_ext. intros a.
+      eapply type_sound in T; eauto. inversion T. rewrite H in H0. injection H0 as H0. subst l1 t0.
+      assert (HI1: incl pcols (map fst f2)).
+      {1: eapply cols_in_record with (e:=p); eauto. rewrite map.get_put_same. auto.}
+      assert (HI2: incl rcols (map fst f2)).
+      {1: eapply cols_in_record with (e:=r); eauto. rewrite map.get_put_same. auto.}
+      apply map_filter_ext; intros b LB;
+      assert (HT: type_of_value b (TRecord f2)) by (eapply Forall_In in H2; eauto);
+      remember (record_sort (map (fun x0 : string => match find (fun '(s,_) => (x0 =? s)%string) f2 with
+                                                     | Some (s,t) => (s,t)
+                                                     | None => (x0, TUnit) end) (dedup eqb (pcols ++ rcols)))) as f2';
+      remember (VRecord (record_sort (map (fun x0 : string => (x0, match b with | VRecord l1 => record_proj x0 l1 | _ => VUnit end))
+                                        (dedup eqb (pcols ++ rcols))))) as b';
+      assert (HT': type_of_value b' (TRecord f2')) by (eapply record_type_a'; eauto).
+      - rewrite map_map. simpl. unfold get_local. rewrite map.get_put_same. rewrite <- Heqb'.
+        rewrite rel_lemma with (tl:=f2')(tl':=f2)(a:=b')(a':=b)(columns:=pcols); auto. unfold relation.
+        destruct b; try inversion HT. subst. unfold incl. split; intros.
+        + rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a0.
+          apply record_proj_lemma. apply dedup_preserves_In in H1. apply in_app_or in H1.
+          apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0. destruct H1.
+          * unfold incl in HI1. apply HI1. auto.
+          * unfold incl in HI2. apply HI2. auto.
+        + rewrite in_map_iff. exists ((a0,record_proj a0 l1)). simpl. split; auto. rewrite <- Permuted_record_sort.
+          apply in_map_iff. exists a0. split; auto. rewrite <- dedup_preserves_In. apply in_or_app. left. auto.
+      - intros. clear H0. rewrite map_map. simpl. unfold get_local. rewrite map.get_put_same. rewrite <- Heqb'.
+        rewrite rel_lemma with (tl:=f2')(tl':=f2)(a:=b')(a':=b)(columns:=rcols); auto. unfold relation.
+        destruct b; try inversion HT. subst. unfold incl. split; intros.
+        + rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a0.
+          apply record_proj_lemma. apply dedup_preserves_In in H1. apply in_app_or in H1.
+          apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0. destruct H1.
+          * unfold incl in HI1. apply HI1. auto.
+          * unfold incl in HI2. apply HI2. auto.
+        + rewrite in_map_iff. exists ((a0,record_proj a0 l1)). simpl. split; auto. rewrite <- Permuted_record_sort.
+          apply in_map_iff. exists a0. split; auto. rewrite <- dedup_preserves_In. apply in_or_app. right. auto.
+    Qed. Print Assumptions proj_pushdown_right.
 
 
     (* TODO: finish proofs below *)
