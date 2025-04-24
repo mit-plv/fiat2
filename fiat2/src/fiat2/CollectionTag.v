@@ -4,6 +4,7 @@ Require Import coqutil.Map.Interface.
 Require Import ZArith Permutation.
 Require Import coqutil.Word.Interface fiat2.IndexInterface fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Interpret.
 Require Import fiat2.Examples.
+Require Import Morphisms.
 
 (* What an expr with a list type can be interpreted to *)
 Inductive collection_tag := LikeSet | LikeBag | LikeList.
@@ -85,12 +86,13 @@ Section WithMap.
 
   Section __.
     Context (tag_req : collection_tag -> (aenv * aenv)).
-    Fixpoint tag_req_times (x : string) (i : collection_tag) (n : nat) : aenv * aenv :=
-      let '(istr, ienv) := tag_req i in
+    Fixpoint tag_req_times (x : string) (i : collection_tag) (n : nat) : collection_tag :=
       match n with
-      | O => (istr, ienv)
-      | S n => if collection_tag_leb (get_collection_tag ienv x) i then (istr, ienv)
-               else tag_req_times x (get_collection_tag ienv x) n
+      | O => i
+      | S n =>
+          let '(istr, ienv) := tag_req i in
+          if collection_tag_leb (get_collection_tag ienv x) i then i
+          else tag_req_times x (get_collection_tag ienv x) n
       end.
   End __.
 
@@ -121,7 +123,8 @@ Section WithMap.
         (lub_merge istr1 istr2, map.update (lub_merge ienv1 ienv2) x (map.get ienv1 x))
     | EFold e1 e2 x y e3 =>
         let '(istr1, ienv1) := tag_req LikeList e1 in
-        let '(istr3, ienv3) := tag_req_times (fun i => tag_req i e3) y i 2 in
+        let i' :=  tag_req_times (fun i => tag_req i e3) y i 3 in
+        let '(istr3, ienv3) := tag_req i' e3 in
         let '(istr2, ienv2) := tag_req (collection_tag_lub i (get_collection_tag ienv3 y)) e2 in
         let ienv := lub_merge ienv1 ienv2 in
         (lub_merge (lub_merge istr1 istr2) istr3,
@@ -165,9 +168,10 @@ Section WithMap.
         (lub_merge (lub_merge istr1 istr2) istr3,
           map.update (lub_merge ienv ienv3) x (map.get ienv x))
     | EDictFold d e0 k v acc e =>
+        (* ??? Not using fixedpoint for this construct for now? *)
         let '(istr1, ienv1) := tag_req LikeList d in
-        let '(istr3, ienv3) := tag_req_times (fun i => tag_req i e) acc i 2 in
-        let '(istr2, ienv2) := tag_req (collection_tag_lub i (get_collection_tag ienv3 acc)) e0 in
+        let '(istr3, ienv3) := tag_req LikeList e in
+        let '(istr2, ienv2) := tag_req LikeList e0 in
         let ienv := lub_merge ienv1 ienv2 in
         (lub_merge (lub_merge istr1 istr2) istr3,
           map.update (map.update (map.update (lub_merge ienv ienv3) k (map.get ienv k))
@@ -190,6 +194,15 @@ Section WithMap.
                      let '(istr2, ienv2) := tag_req LikeList r in
                      (lub_merge istr1 istr2, map.update (lub_merge ienv1 ienv2) x (map.get ienv1 x))
     end.
+
+  Ltac invert_type_of :=
+    lazymatch goal with
+    | H: type_of _ _ (_ _) _ |- _ => inversion H; subst end.
+
+  Ltac invert_well_typed :=
+    lazymatch goal with
+    | H: well_typed _ _ (_ _) |- _ => inversion H; subst
+    | H: well_typed _ _ _ |- _ => inversion H; subst end.
 
   Ltac rewrite_map_get_put_hyp :=
     multimatch goal with
@@ -249,6 +262,14 @@ Section WithMap.
         repeat rewrite_map_get_put_hyp
     end.
 
+  Ltac destruct_get_update_strings :=
+    lazymatch goal with
+    | |- context[map.get(map.update _ ?x _) ?y] =>
+        destruct_String_eqb x y;
+        [ rewrite Properties.map.get_update_same
+        | rewrite Properties.map.get_update_diff]; auto
+    end.
+
   Ltac do_injection :=
     lazymatch goal with
       H: ?c _ = ?c _ |- _ => injection H; intros; subst
@@ -299,13 +320,13 @@ Section WithMap.
   Section __.
     Context (command_tag_req : aenv -> analysis_res).
 
-    Fixpoint command_tag_req_times (istr0 : aenv) (n : nat) : analysis_res :=
-      let (istr, ienv, inv) := command_tag_req istr0 in
+    Fixpoint command_tag_req_times (istr0 : aenv) (n : nat) : aenv :=
       match n with
-      | O => mk_res istr ienv inv
+      | O => istr0
       | S n =>
-          if aenv_leb istr istr0 then mk_res istr ienv inv
-          else command_tag_req_times istr n
+          let (istr, ienv, inv) := command_tag_req istr0 in
+          if aenv_leb istr istr0 then istr0
+          else command_tag_req_times (lub_merge istr istr0) n
       end.
   End __.
 
@@ -326,12 +347,12 @@ Section WithMap.
           let '(istr1, ienv1) := tag_req (get_collection_tag ienv2 x) e in
           mk_res (lub_merge istr1 istr2) (map.update (lub_merge ienv1 ienv2) x (map.get ienv1 x)) (lub_merge inv2 istr1)
       | CLetMut e x c =>
-          let (istr2, ienv2, inv2) := command_tag_req (map.update istr x None) c in
+          let (istr2, ienv2, inv2) := command_tag_req (map.put istr x LikeSet) c in
           let '(istr1, ienv1) := tag_req (get_collection_tag istr2 x) e in
           mk_res (lub_merge istr1 (map.update istr2 x (map.get istr x))) (lub_merge ienv1 ienv2) (lub_merge istr1 (map.update inv2 x (map.get istr x)))
       | CAssign x e =>
           let '(istr1, ienv1) := tag_req (get_collection_tag istr x) e in
-          let istr01 := lub_merge (map.update istr x None) istr1 in
+          let istr01 := lub_merge (map.put istr x LikeSet) istr1 in
           mk_res istr01 ienv1 istr01
       | CIf e c1 c2 =>
           let '(istr1, ienv1) := tag_req LikeList e in
@@ -342,7 +363,8 @@ Section WithMap.
             (lub_merge istr1 (lub_merge inv2 inv3))
       | CForeach e x c =>
           let '(istr1, ienv1) := tag_req LikeList e in
-          let (istr2, ienv2, inv2) := command_tag_req_times (fun istr => command_tag_req istr c) istr (Nat.mul 2 (size_of_map istr)) in
+          let istr' := command_tag_req_times (fun istr => command_tag_req istr c) istr (Nat.mul 2 (size_of_map istr) + 1) in
+          let (istr2, ienv2, inv2) := command_tag_req istr' c in
           mk_res (lub_merge istr (lub_merge istr1 istr2))
             (map.update (lub_merge ienv1 ienv2) x (map.get ienv1 x))
             (lub_merge istr (lub_merge istr1 inv2))
@@ -431,7 +453,7 @@ Section WithMap.
                                   well_tagged istr ienv inv (CLet e x c) istr_expect
   | WTACLetMut e x c i i' istr_expect: aenv_le istr inv ->
                                        tag_of istr ienv e i ->
-                                       well_tagged (map.put istr x i) ienv (map.put inv x i') c (map.update istr_expect x None) ->
+                                       well_tagged (map.put istr x i) ienv (map.put inv x i') c (map.put istr_expect x LikeSet) ->
                                        aenv_le_at x istr_expect istr ->
                                        well_tagged istr ienv inv (CLetMut e x c) istr_expect
   | WTACAssign x e istr_expect : aenv_le istr inv ->
@@ -449,21 +471,8 @@ Section WithMap.
                                           well_tagged istr' (map.put ienv x LikeList) inv c istr' ->
                                           well_tagged istr ienv inv (CForeach l x c) istr_expect.
 
-  Lemma tag_req_sound : forall i e istr ienv,
-      tag_req i e = (istr, ienv) ->
-      tag_of istr ienv e i.
-  Admitted.
-
-  Lemma tag_req_strengthen : forall i e istr ienv istr' ienv',
-      tag_of istr ienv e i ->
-      aenv_le istr istr' -> aenv_le ienv ienv' ->
-      tag_of istr' ienv' e i.
-  Admitted.
-
-  Lemma lub_merge__aenv_le : forall ienv1 ienv2 ienv3,
-      lub_merge ienv1 ienv2 = ienv3 -> aenv_le ienv1 ienv3 /\ aenv_le ienv2 ienv3.
-  Proof.
-  Admitted.
+  Ltac invert_tag_of :=
+    lazymatch goal with H: tag_of _ _ _ _ |- _ => inversion H; subst end.
 
   Ltac destruct_match_hyp :=
     lazymatch goal with
@@ -471,13 +480,1244 @@ Section WithMap.
         let E := fresh "E" in
         destruct x eqn:E end.
 
-  Lemma command_tag_req_sound : forall c istr_expect istr ienv inv,
+  Lemma collection_tag_leb_refl : forall i, collection_tag_leb i i = true.
+  Proof.
+    destruct i; auto.
+  Qed.
+
+  Lemma aenv_le_at_refl : forall x iG, aenv_le_at x iG iG.
+  Proof.
+    unfold aenv_le_at; intros.
+    case_match; auto using collection_tag_leb_refl.
+  Qed.
+
+  Lemma aenv_le_refl : forall iG, aenv_le iG iG.
+  Proof.
+    unfold aenv_le; auto using aenv_le_at_refl.
+  Qed.
+
+  Lemma collection_tag_leb_tran : forall i1 i2 i3,
+      collection_tag_leb i1 i2 = true ->
+      collection_tag_leb i2 i3 = true ->
+      collection_tag_leb i1 i3 = true.
+  Proof.
+    destruct i1, i2, i3; auto.
+  Qed.
+
+  Lemma collection_tag_leb_antisym : forall i1 i2,
+      collection_tag_leb i1 i2 = true ->
+      collection_tag_leb i2 i1 = true ->
+      i1 = i2.
+  Proof.
+    destruct i1, i2; simpl; intros; congruence.
+  Qed.
+
+  Lemma collection_tag_leb_neg : forall i1 i2,
+      collection_tag_leb i1 i2 = false ->
+      collection_tag_leb i2 i1 = true.
+  Proof.
+    destruct i1, i2; simpl; auto.
+  Qed.
+
+  Lemma aenv_le_at_tran : forall iG1 iG2 iG3 x,
+      aenv_le_at x iG1 iG2 ->
+      aenv_le_at x iG2 iG3 ->
+      aenv_le_at x iG1 iG3.
+  Proof.
+    unfold aenv_le_at; intros.
+    repeat destruct_match_hyp; intuition idtac.
+    eapply collection_tag_leb_tran; eauto.
+  Qed.
+
+  Lemma aenv_le_tran : forall iG1 iG2 iG3,
+      aenv_le iG1 iG2 ->
+      aenv_le iG2 iG3 ->
+      aenv_le iG1 iG3.
+  Proof.
+    intros * H1 H2. unfold aenv_le; intros; auto.
+    specialize (H1 x); specialize (H2 x).
+    eapply aenv_le_at_tran; eauto.
+  Qed.
+
+  Ltac invert_pair :=
+    lazymatch goal with
+      H: _ = (_, _) |- _ => inversion H; subst; clear H
+    end.
+
+  Lemma binop_collection_tag_increasing : forall o i i' i1 i1' i2 i2',
+      collection_tag_leb i i' = true ->
+      binop_collection_tag i o = (i1, i2) ->
+      binop_collection_tag i' o = (i1', i2') ->
+      collection_tag_leb i1 i1' = true /\ collection_tag_leb i2 i2' = true.
+  Proof.
+    destruct o; simpl; intros; repeat invert_pair; auto.
+  Qed.
+
+  Lemma glb_increasing : forall i1 i1' i2 i2',
+      collection_tag_leb i1 i1' = true ->
+      collection_tag_leb i2 i2' = true ->
+      collection_tag_leb (glb i1 i2) (glb i1' i2') = true.
+  Proof.
+    destruct i1, i1', i2, i2'; auto.
+  Qed.
+
+  Lemma tag_of_weaken : forall (e : expr) (istr ienv : aenv) (i i' : collection_tag),
+      collection_tag_leb i i' = true ->
+      tag_of istr ienv e i' ->
+      tag_of istr ienv e i.
+  Proof.
+    induction e; simpl; intros.
+    all: invert_tag_of;
+      try now (econstructor; eauto using collection_tag_leb_tran).
+    1:{ destruct (binop_collection_tag i o) eqn:E.
+        eapply binop_collection_tag_increasing in H; eauto.
+        econstructor; intuition eauto. }
+    1:{ econstructor; [ | | | | eauto ]; eauto using collection_tag_leb_tran. }
+    1:{ constructor. eapply IHe; eauto. apply glb_increasing; auto. }
+  Qed.
+
+  Lemma aenv_le_step : forall iG iG' x i i',
+      aenv_le iG iG' ->
+      collection_tag_leb i i' = true ->
+      aenv_le (map.put iG x i) (map.put iG' x i').
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    destruct_get_put_strings; auto.
+    apply H.
+  Qed.
+
+  Lemma aenv_le_update_step : forall iG iG' x i,
+      aenv_le iG iG' ->
+      aenv_le (map.update iG x i) (map.update iG' x i).
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    specialize (H x0).
+    repeat destruct_get_update_strings; auto.
+    all: repeat destruct_match_hyp; intuition auto.
+    all: case_match; auto using collection_tag_leb_refl.
+  Qed.
+
+  Lemma aenv_le_at__collection_tag_leb : forall x ienv ienv',
+      aenv_le_at x ienv ienv' ->
+      collection_tag_leb (get_collection_tag ienv x) (get_collection_tag ienv' x) = true.
+    intros. unfold aenv_le_at in *.
+    unfold get_collection_tag.
+    repeat destruct_match_hyp; intuition auto.
+  Qed.
+
+  Lemma aenv_le__collection_tag_leb : forall ienv ienv',
+      aenv_le ienv ienv' ->
+      forall x, collection_tag_leb (get_collection_tag ienv x) (get_collection_tag ienv' x) = true.
+    auto using aenv_le_at__collection_tag_leb.
+  Qed.
+
+  Ltac invert_well_tagged :=
+    lazymatch goal with
+      H: well_tagged _ _ _ _ _ |- _ => inversion H; subst end.
+
+  Lemma well_tagged_weaken : forall c (istr ienv inv istr_expect istr_expect' : aenv),
+      aenv_le istr_expect istr_expect' ->
+      well_tagged istr ienv inv c istr_expect' ->
+      well_tagged istr ienv inv c istr_expect.
+  Proof.
+    induction c; intros.
+    all: invert_well_tagged.
+    7:{ econstructor. 5: eauto. all: eauto using aenv_le_tran. }
+    all: econstructor; eauto using aenv_le_tran, aenv_le_at_tran, aenv_le_step,
+      tag_of_weaken, aenv_le__collection_tag_leb.
+  Qed.
+
+  Lemma put_update_same : forall vt (mt : map.map string vt) {mt_ok : map.ok mt}
+                                 (m : mt) k v v',
+      map.put (map.update m k v) k v' = map.put m k v'.
+  Proof.
+    intros; apply map.map_ext; intro x.
+    destruct_get_put_strings; auto.
+    destruct_get_update_strings; intuition idtac.
+  Qed.
+
+  Lemma aenv_le_empty : forall iG, aenv_le map.empty iG.
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    rewrite map.get_empty; trivial.
+  Qed.
+
+  Lemma ordered_update_sound : forall iG x i k,
+     map.get (ordered_update collection_tag_leb iG x i) k =
+       if andb (String.eqb x k)
+            match map.get iG k with
+            | Some i' => collection_tag_leb i' i
+            | None => true
+            end
+       then Some i else map.get iG k.
+  Proof.
+    intros. repeat case_match; unfold ordered_update;
+      try rewrite Bool.andb_true_iff, eqb_eq in *; intuition idtac; subst.
+    1,3: repeat rewrite_l_to_r; rewrite_map_get_put_goal; auto.
+    1,2: rewrite Bool.andb_false_iff, eqb_neq in *;
+    destruct (String.eqb x k) eqn:E_xk; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+    1,3: intuition idtac; try discriminate; repeat rewrite_l_to_r; auto.
+    1,2: repeat case_match; try rewrite_map_get_put_goal; auto.
+  Qed.
+
+  Lemma ordered_update_comm : forall (iG : aenv) x1 x2 i1 i2,
+      ordered_update collection_tag_leb (ordered_update collection_tag_leb iG x1 i1) x2 i2 =
+        ordered_update collection_tag_leb (ordered_update collection_tag_leb iG x2 i2) x1 i1.
+  Proof.
+    intros. apply map.map_ext; intros.
+    repeat rewrite ordered_update_sound.
+    repeat case_match; repeat rewrite Bool.andb_true_iff, eqb_eq in *; intuition idtac;
+      try now (f_equal; auto using collection_tag_leb_antisym).
+    all: rewrite Bool.andb_false_iff, eqb_neq in *; intuition idtac.
+    all: try lazymatch goal with
+             H: collection_tag_leb ?i1 ?i2 = true,
+               H': collection_tag_leb ?i2 ?i3 = true |- _ =>
+          eapply collection_tag_leb_tran in H'; eauto end;
+      try congruence.
+    all: repeat lazymatch goal with
+             H: collection_tag_leb _ _ = false |- _ => apply collection_tag_leb_neg in H end;
+      f_equal; auto using collection_tag_leb_antisym.
+  Qed.
+
+  Lemma lub_merge_sound : forall iG iG' x,
+      map.get (lub_merge iG iG') x =
+        match map.get iG x with
+        | Some i => match map.get iG' x with
+                    | Some i' => Some (if (collection_tag_leb i' i) then i else i')
+                    | None => Some i
+                    end
+        | None => map.get iG' x
+        end.
+  Proof.
+    intros. unfold lub_merge. apply map.fold_spec.
+    1: rewrite map.get_empty; case_match; auto.
+    1:{ intros. rewrite ordered_update_sound.
+        destruct_String_eqb k x; simpl in *;
+          rewrite_map_get_put_goal.
+        rewrite H0. repeat case_match; f_equal;
+          auto using collection_tag_leb_antisym, collection_tag_leb_neg.
+        all: try lazymatch goal with
+                 H: collection_tag_leb ?i1 ?i2 = true,
+                   H': collection_tag_leb ?i2 ?i3 = true |- _ =>
+                   eapply collection_tag_leb_tran in H'; eauto end;
+          congruence. }
+  Qed.
+
+  Lemma lub_merge_put : forall iG iG' x i,
+      map.get iG x = None ->
+      lub_merge (map.put iG x i) iG' = ordered_update collection_tag_leb (lub_merge iG iG') x i.
+  Proof.
+    intros. unfold lub_merge. apply map.fold_spec.
+    1:{ simpl. rewrite Properties.map.fold_empty.
+        unfold ordered_update; rewrite_l_to_r; congruence. }
+    1:{ intros. rewrite Properties.map.fold_put; auto.
+        1: rewrite_l_to_r; auto.
+        all: auto using ordered_update_comm. }
+  Qed.
+
+  Lemma lub_merge_comm : forall iG iG',
+      lub_merge iG iG' = lub_merge iG' iG.
+  Proof.
+    intros. apply map.map_ext; intros.
+    rewrite !lub_merge_sound; repeat case_match; f_equal;
+      auto using collection_tag_leb_neg, collection_tag_leb_antisym.
+  Qed.
+
+  Lemma ordered_update_increasing : forall iG x i,
+      aenv_le iG (ordered_update collection_tag_leb iG x i).
+  Proof.
+    intros. unfold ordered_update. repeat case_match.
+    2: apply aenv_le_refl.
+    all: unfold aenv_le, aenv_le_at; intro;
+      destruct_get_put_strings; try rewrite_l_to_r; auto;
+      case_match; auto using collection_tag_leb_refl.
+  Qed.
+
+  Lemma lub_merge__aenv_le_l : forall iG iG',
+      aenv_le iG (lub_merge iG iG').
+  Proof.
+    unfold lub_merge. intros *. eapply map.fold_spec.
+    1: apply aenv_le_refl.
+    intros. eapply aenv_le_tran; eauto using ordered_update_increasing.
+  Qed.
+
+  Lemma lub_merge__aenv_le_r : forall iG iG',
+      aenv_le iG' (lub_merge iG iG').
+  Proof.
+    intros; rewrite lub_merge_comm.
+    apply lub_merge__aenv_le_l.
+  Qed.
+
+  Ltac invert_Forall :=
+    lazymatch goal with
+    | H: Forall _ (_ :: _) |- _ => inversion H; subst; clear H
+    end.
+
+  Ltac invert_Forall2 :=
+    lazymatch goal with
+    | H: Forall2 _ (_ :: _) _ |- _ => inversion H; subst; clear H
+    | H: Forall2 _ _ (_ :: _) |- _ => inversion H; subst; clear H
+    | H: Forall2 _ _ _ |- _ => inversion H; subst; clear H
+    end.
+
+  Ltac use_tag_of_strengthen_IH :=
+    lazymatch goal with
+      IH: context[_ -> tag_of _ _ ?e _] |- tag_of _ _ ?e _ =>
+        eapply IH end.
+
+  Lemma tag_of_strengthen : forall e (istr istr' ienv ienv' : aenv) i,
+      aenv_le istr istr' -> aenv_le ienv ienv' ->
+      tag_of istr ienv e i ->
+      tag_of istr' ienv' e i.
+  Proof.
+    induction e using expr_IH; intros; invert_tag_of.
+    all: try now (econstructor; eauto; use_tag_of_strengthen_IH;
+                  eauto using aenv_le_step, collection_tag_leb_refl).
+    1,2: [> specialize (H0 x) | specialize (H x) ];
+    unfold aenv_le_at in *; rewrite_l_to_r; destruct_match_hyp; intuition idtac;
+    econstructor; eauto using collection_tag_leb_tran.
+    1:{ econstructor; eauto. use_tag_of_strengthen_IH; eauto.
+        repeat apply aenv_le_step, collection_tag_leb_refl. auto. }
+    1,2: econstructor; lazymatch goal with H: tag_of _ _ _ _ |- _ => clear H end;
+        lazymatch goal with H: Forall _ _ |- _ => induction H end; auto;
+        invert_Forall; constructor; intuition eauto.
+  Qed.
+
+  Lemma aenv_le__istr_inv : forall istr ienv inv c istr_expect,
+      well_tagged istr ienv inv c istr_expect ->
+      aenv_le istr inv.
+  Proof.
+    induction 1; auto.
+  Qed.
+
+  Ltac use_well_tagged_strengthen_IH :=
+    lazymatch goal with
+    | |- tag_of _ _ _ _ => eapply tag_of_strengthen
+    | IH: context[_ -> well_tagged _ _ _ ?c _] |- well_tagged _ _ _ ?c _ =>
+        eapply IH
+    end.
+
+  Lemma well_tagged_strengthen : forall c (istr istr' ienv ienv' inv inv' istr_expect : aenv),
+      well_tagged istr ienv inv c istr_expect ->
+      aenv_le ienv ienv' -> aenv_le istr istr' ->
+      aenv_le inv inv' -> aenv_le istr' inv' ->
+      well_tagged istr' ienv' inv' c istr_expect.
+  Proof.
+    induction c; intros.
+    all: invert_well_tagged.
+    all: try now (econstructor; try use_well_tagged_strengthen_IH;
+                  eauto using aenv_le_step, aenv_le__istr_inv,
+                    collection_tag_leb_refl, aenv_le_refl, aenv_le_tran).
+    econstructor; eauto using aenv_le_at_tran;
+      use_well_tagged_strengthen_IH;
+      eauto using aenv_le_step, collection_tag_leb_refl, aenv_le_tran.
+    eapply aenv_le_step; eauto using aenv_le_tran.
+    lazymatch goal with
+      H: well_tagged _ _ _ _ _ |- _ => apply aenv_le__istr_inv in H; specialize (H x) end.
+    unfold aenv_le_at in *. repeat rewrite_map_get_put_hyp. auto.
+  Qed.
+
+  Ltac strengthen_tag_judgements :=
+    lazymatch goal with
+    | |- tag_of _ _ _ _ => eapply tag_of_strengthen
+    | |- well_tagged _ _ _ ?c _ => eapply well_tagged_strengthen
+    end.
+
+  Lemma aenv_le_update : forall iG iG' x,
+      aenv_le iG iG' ->
+      aenv_le iG (map.update iG' x (map.get iG x)).
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    destruct (String.eqb x0 x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+    1:{ rewrite Properties.map.get_update_same.
+        case_match; auto using collection_tag_leb_refl. }
+    1:{ specialize (H x0).
+        rewrite Properties.map.get_update_diff; auto. }
+  Qed.
+
+  Lemma aenv_le_put : forall iG iG' x i i',
+      aenv_le iG iG' -> collection_tag_leb i i' = true ->
+      aenv_le (map.put iG x i) (map.put iG' x i').
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    destruct_get_put_strings; auto.
+    specialize (H x0). repeat destruct_match_hyp; auto.
+  Qed.
+
+  Lemma aenv_le_put_back : forall iG iG' x,
+      aenv_le iG iG' ->
+      aenv_le iG (map.put iG' x (get_collection_tag iG x)).
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    destruct_get_put_strings.
+    1: unfold get_collection_tag;
+    case_match; auto using collection_tag_leb_refl.
+    1: specialize (H x0); case_match; auto.
+  Qed.
+
+  Lemma aenv_le_put_inv : forall iG iG' x i,
+      map.get iG x = None ->
+      aenv_le (map.put iG x i) iG' ->
+      aenv_le iG (map.update iG' x None) /\ match map.get iG' x with
+                        | Some i' => collection_tag_leb i i' = true
+                        | None => False
+                        end.
+  Proof.
+    unfold aenv_le, aenv_le_at; split; intros.
+    1:{ specialize (H0 x0); destruct_get_put_strings.
+        1: rewrite_l_to_r; auto.
+        1: rewrite Properties.map.get_update_diff; auto. }
+    1: specialize (H0 x); rewrite_map_get_put_hyp; auto.
+  Qed.
+
+  Lemma put_ordered_update_diff : forall iG (x x' : string) i i',
+      x <> x' ->
+      map.put (ordered_update collection_tag_leb iG x i) x' i' =
+        ordered_update collection_tag_leb (map.put iG x' i') x i.
+  Proof.
+    intros. unfold ordered_update. rewrite_map_get_put_goal.
+    repeat case_match; auto.
+    all: rewrite Properties.map.put_put_diff; auto.
+  Qed.
+
+  Lemma put_ordered_update_same : forall iG (x : string) i i',
+      map.put (ordered_update collection_tag_leb iG x i) x i' = map.put iG x i'.
+  Proof.
+    intros. unfold ordered_update.
+    repeat case_match; auto.
+    all: rewrite Properties.map.put_put_same; auto.
+  Qed.
+
+  Lemma put_lub_merge : forall iG iG' x i,
+      map.put (lub_merge iG iG') x i = lub_merge (map.put iG x i) (map.put iG' x i).
+  Proof.
+    intros. apply map.map_ext; intros.
+    rewrite lub_merge_sound.
+    destruct_get_put_strings.
+    1: case_match; auto.
+    rewrite lub_merge_sound; repeat case_match; auto.
+  Qed.
+
+  Lemma lub_merge_preserve_aenv_le : forall iG1 iG2 iG3,
+      aenv_le iG1 iG3 ->
+      aenv_le iG2 iG3 ->
+      aenv_le (lub_merge iG1 iG2) iG3.
+  Proof.
+    unfold aenv_le, aenv_le_at; intros * H1 H2 x.
+    rewrite lub_merge_sound. specialize (H1 x). specialize (H2 x).
+    repeat case_match; auto.
+  Qed.
+
+  Lemma aenv_le_at__aenv_le : forall iG1 iG2 iG3 x,
+      aenv_le_at x iG1 iG2 ->
+      aenv_le iG2 iG3 ->
+      aenv_le_at x iG1 iG3.
+  Proof.
+    unfold aenv_le; intros. eauto using aenv_le_at_tran.
+  Qed.
+
+  Lemma aenv_le__put_LikeList : forall iG x,
+      aenv_le iG (map.put iG x LikeList).
+  Proof.
+    unfold aenv_le, aenv_le_at; intros.
+    destruct_get_put_strings; case_match;
+      auto using collection_tag_leb_refl.
+    destruct c; auto.
+  Qed.
+
+  Lemma aenv_le__lub_merge : forall iG1 iG1' iG2 iG2',
+      aenv_le iG1 iG1' -> aenv_le iG2 iG2' ->
+      aenv_le (lub_merge iG1 iG2) (lub_merge iG1' iG2').
+  Proof.
+    eauto using lub_merge_preserve_aenv_le,
+      aenv_le_tran, lub_merge__aenv_le_l, lub_merge__aenv_le_r.
+  Qed.
+
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+
+  Definition collection_tag_metric (i : collection_tag) : nat :=
+    match i with
+    | LikeSet => 1
+    | LikeBag => 2
+    | LikeList => 3
+    end.
+
+  Definition aenv_metric : aenv -> nat :=
+    map.fold (fun s _ i =>
+                collection_tag_metric i + s) 0.
+
+  Lemma collection_tag_leb_metric : forall i i',
+      collection_tag_leb i i' = true ->
+      collection_tag_metric i <= collection_tag_metric i'.
+  Proof.
+    destruct i, i'; simpl; auto; congruence.
+  Qed.
+
+  Lemma collection_tag_gt_metric : forall i i',
+      collection_tag_leb i i' = false ->
+      S (collection_tag_metric i') <= collection_tag_metric i.
+  Proof.
+    destruct i, i'; simpl; auto; congruence.
+  Qed.
+
+  Lemma collection_tag_leb_lub : forall i i',
+      collection_tag_leb i (collection_tag_lub i i') = true.
+  Proof.
+    destruct i, i'; simpl; auto.
+  Qed.
+
+  Lemma collection_tag_lub_leb : forall i1 i2 i3,
+      collection_tag_leb i1 i3 = true ->
+      collection_tag_leb i2 i3 = true ->
+      collection_tag_leb (collection_tag_lub i1 i2) i3 = true.
+  Proof.
+    destruct i1, i2, i3; simpl; auto.
+  Qed.
+
+  Lemma tag_req_times_sound' : forall e x n i i' istr ienv,
+      tag_req_times (fun i => tag_req i e) x i n = i' ->
+      tag_req i' e = (istr, ienv) ->
+      collection_tag_leb i i' = true /\
+        (collection_tag_leb (get_collection_tag ienv x) i' = true \/
+          collection_tag_metric i + n <= collection_tag_metric i').
+  Proof.
+    induction n; simpl; intros.
+    1:{ subst. intuition auto using collection_tag_leb_refl.
+        right. destruct i'; simpl; auto. }
+    1:{ repeat destruct_match_hyp.
+        1:{ subst. rewrite_l_to_r; invert_pair.
+            intuition auto using collection_tag_leb_refl. }
+        1:{ eapply IHn in H; eauto. split;
+            intuition eauto using collection_tag_leb_neg, collection_tag_leb_tran.
+            right. apply collection_tag_gt_metric in E0.
+            rewrite <- Nat.add_succ_comm.
+            eauto using le_trans, Plus.plus_le_compat_r_stt. } }
+  Qed.
+
+  Lemma tag_req_times_sound : forall e x i i' istr ienv,
+      tag_req_times (fun i => tag_req i e) x i 3 = i' ->
+      tag_req i' e = (istr, ienv) ->
+      collection_tag_leb i i' = true /\
+        collection_tag_leb (get_collection_tag ienv x) i' = true.
+  Proof.
+    intros. eapply tag_req_times_sound' in H; intuition eauto.
+    destruct i, i'; simpl in *;
+      repeat lazymatch goal with
+          H: _ <= _ |- _ => inversion H; subst; clear H end.
+  Qed.
+
+  Lemma collection_tag_lub_comm : forall i i',
+      collection_tag_lub i i' = collection_tag_lub i' i.
+  Proof.
+    destruct i, i'; auto.
+  Qed.
+
+  Ltac use_tag_req_sound_IH :=
+    lazymatch goal with
+      IH: context[tag_of _ _ ?e _], H: tag_req _ ?e = _ |- _ =>
+        apply IH in H end.
+
+  Lemma tag_req_sound : forall e i istr ienv,
+      tag_req i e = (istr, ienv) ->
+      tag_of istr ienv e i.
+  Proof.
+    induction e using expr_IH.
+    9:{ cbn [tag_req]; intros.
+        repeat (destruct_match_hyp; []); invert_pair.
+        remember (tag_req_times
+                    (fun i : collection_tag => tag_req i e3) y i 3) as i'.
+        symmetry in Heqi'; eapply tag_req_times_sound in Heqi';
+          intuition eauto.
+        repeat use_tag_req_sound_IH.
+        econstructor; try strengthen_tag_judgements.
+        8: eauto.
+        10: eapply tag_of_weaken with (i:=(collection_tag_lub i (get_collection_tag r2 y))); [ | eauto ].
+        all: eauto using collection_tag_leb_refl, collection_tag_leb_lub, collection_tag_lub_leb.
+        all: eauto using  aenv_le_tran, lub_merge__aenv_le_l,
+            lub_merge__aenv_le_r, aenv_le_update.
+        destruct_String_eqb x y.
+        1:{ rewrite Properties.map.put_put_same, !put_update_same; auto.
+            eapply aenv_le_tran;
+              [ | eapply aenv_le_put;
+                  eauto using lub_merge__aenv_le_r;
+                  rewrite collection_tag_lub_comm;
+                  eapply collection_tag_leb_lub ].
+            apply aenv_le_put_back; auto using aenv_le_refl. }
+        1:{ repeat rewrite Properties.map.put_put_diff, put_update_same; auto.
+            eapply aenv_le_tran;
+              [ | eapply aenv_le_put;
+                  eauto using aenv_le__put_LikeList;
+                  rewrite collection_tag_lub_comm;
+                  eapply collection_tag_leb_lub ].
+            eauto using aenv_le_tran, aenv_le_put, lub_merge__aenv_le_r, collection_tag_leb_refl, aenv_le_put_back, aenv_le_refl. } }
+    all: simpl; intros.
+    all: try (invert_pair; econstructor; eauto using collection_tag_leb_refl;
+              rewrite_map_get_put_goal; auto).
+    all: repeat (destruct_match_hyp; []); invert_pair;
+      repeat use_tag_req_sound_IH.
+    all: try now (econstructor; try strengthen_tag_judgements; eauto;
+                  repeat rewrite put_update_same;
+                  eauto using aenv_le_update, aenv_le_put_back,
+                    aenv_le_tran, aenv_le__put_LikeList,
+                    lub_merge__aenv_le_l, lub_merge__aenv_le_r).
+    1:{ generalize dependent istr; generalize dependent ienv.
+        induction l; simpl in *.
+        1: constructor; auto.
+        repeat constructor; invert_Forall;
+          repeat (destruct_match_hyp; invert_pair); use_tag_req_sound_IH.
+        1:{ strengthen_tag_judgements; eauto; eauto using lub_merge__aenv_le_l. }
+        1:{ lazymatch goal with
+            IH: ?x -> _, H: ?x |- _ =>
+              eapply IH in H; eauto; inversion H; subst end.
+            rewrite Forall_forall; intros. apply_Forall_In.
+            eapply tag_of_strengthen; eauto; eauto using lub_merge__aenv_le_r. } }
+    1: constructor; auto.
+    1:{ generalize dependent istr; generalize dependent ienv.
+        induction l; simpl in *.
+        1: constructor; auto.
+        repeat constructor; invert_Forall;
+          repeat (destruct_match_hyp; invert_pair); repeat use_tag_req_sound_IH.
+        1:{ strengthen_tag_judgements; eauto; eauto using aenv_le_tran, lub_merge__aenv_le_l. }
+        all: repeat lazymatch goal with
+            IH: ?x -> _, H: ?x |- _ =>
+              eapply IH in H; eauto; inversion H; subst end.
+        2: rewrite Forall_forall; intros; apply_Forall_In; intuition idtac.
+        all: eapply tag_of_strengthen; eauto;
+          eauto using aenv_le_tran, lub_merge__aenv_le_l, lub_merge__aenv_le_r. }
+    1:{ econstructor; try strengthen_tag_judgements; eauto;
+                  eauto using aenv_le_update, aenv_le_tran,
+          lub_merge__aenv_le_l, lub_merge__aenv_le_r.
+        destruct_String_eqb k v; destruct_String_eqb v acc; try destruct_String_eqb k acc.
+        all: repeat (lazymatch goal with
+        | |- context[map.put (map.put _ ?x _) ?x _] => rewrite Properties.map.put_put_same
+        | |- context[map.put (map.update _ ?x _) ?x _] => rewrite put_update_same
+        | |- context[map.put (map.update _ ?x _) _ _] => rewrite Properties.map.put_put_diff with (k2:=x)
+        end; auto); eauto using aenv_le_tran, aenv_le__put_LikeList, lub_merge__aenv_le_r. }
+    1:{ constructor; try strengthen_tag_judgements; eauto.
+        all: eauto using aenv_le_update, aenv_le_tran,
+            lub_merge__aenv_le_l, lub_merge__aenv_le_r.
+        all: destruct_String_eqb x y;
+          [ rewrite Properties.map.put_put_same, !put_update_same
+          | repeat rewrite Properties.map.put_put_diff, put_update_same ]; eauto using aenv_le_tran, lub_merge__aenv_le_l, lub_merge__aenv_le_r, aenv_le__put_LikeList. }
+  Qed.
+
+  Lemma aenv_le__lub_merge_absorb : forall iG iG',
+      aenv_le iG iG' -> lub_merge iG iG' = iG'.
+  Proof.
+    intros. apply map.map_ext; intros.
+    rewrite lub_merge_sound. specialize (H k).
+    unfold aenv_le_at in *. repeat case_match; intuition idtac.
+    f_equal; auto using collection_tag_leb_antisym.
+  Qed.
+
+  Definition domain_incl {vt1 vt2 : Type} {m1 : map.map string vt1} {m2 : map.map string vt2}
+    (G1 : m1) (G2 : m2) :=
+    forall x, match map.get G1 x with
+              | Some _ => match map.get G2 x with
+                          | Some _ => True
+                          | None => False
+                          end
+              | None => True
+              end.
+
+  Definition domain_eq {vt1 vt2 : Type} {m1 : map.map string vt1} {m2 : map.map string vt2}
+    (G1 : m1) (G2 : m2) :=
+    domain_incl G1 G2 /\ domain_incl G2 G1.
+
+  Lemma domain_incl_refl : forall {vt : Type} {m : map.map string vt} (G : m),
+      domain_incl G G.
+  Proof.
+    unfold domain_incl; intros. case_match; auto.
+  Qed.
+
+  Lemma domain_incl_tran : forall {vt1 vt2 vt3: Type} {m1 : map.map string vt1}
+                                  {m2 : map.map string vt2} {m3 : map.map string vt3}
+                                  (G1 : m1) (G2 : m2) (G3 : m3),
+      domain_incl G1 G2 -> domain_incl G2 G3 ->
+      domain_incl G1 G3.
+  Proof.
+    unfold domain_incl; intros * H1 H2 x.
+    specialize (H1 x); specialize (H2 x).
+    repeat destruct_match_hyp; intuition idtac.
+  Qed.
+
+  Lemma domain_eq_refl : forall {vt : Type} {m : map.map string vt} (G : m),
+      domain_eq G G.
+  Proof.
+    unfold domain_eq; auto using domain_incl_refl.
+  Qed.
+
+  Lemma domain_eq_sym : forall {vt1 vt2 : Type} {m1 : map.map string vt1} {m2 : map.map string vt2}
+                               (G1 : m1) (G2 : m2),
+      domain_eq G1 G2 -> domain_eq G2 G1.
+  Proof.
+    unfold domain_eq; intuition auto.
+  Qed.
+
+  Lemma domain_eq_tran : forall {vt1 vt2 vt3: Type} {m1 : map.map string vt1}
+                                  {m2 : map.map string vt2} {m3 : map.map string vt3}
+                                  (G1 : m1) (G2 : m2) (G3 : m3),
+      domain_eq G1 G2 -> domain_eq G2 G3 ->
+      domain_eq G1 G3.
+  Proof.
+    unfold domain_eq; intuition eauto using domain_incl_tran.
+  Qed.
+
+  Lemma domain_incl_empty : forall {vt1 vt2 : Type} {m1 : map.map string vt1}
+                                   {m1_ok : map.ok m1}
+                                   {m2 : map.map string vt2} (G : m2),
+      domain_incl (map.empty (map:=m1)) G.
+  Proof.
+    unfold domain_incl; intros.
+    rewrite map.get_empty; auto.
+  Qed.
+
+  Ltac use_tag_req_domain_IH :=
+    lazymatch goal with
+      IH: context[type_of _ _ ?e _ -> _], H: type_of _ _ ?e _ |- _ =>
+        eapply IH in H; [ | eauto ] end.
+
+  Lemma lub_merge__domain_incl : forall {vt : Type} {m : map.map string vt}
+                                        iG iG' (G : m),
+      domain_incl iG G -> domain_incl iG' G ->
+      domain_incl (lub_merge iG iG') G.
+  Proof.
+    unfold domain_incl; intros.
+    specialize (H x). specialize (H0 x).
+    rewrite lub_merge_sound.
+    repeat destruct_match_hyp; intuition idtac.
+  Qed.
+
+  Ltac invert_pair2 :=
+    lazymatch goal with
+    | H: (_,_) = (_, _) |- _ => inversion H; subst; clear H
+    end.
+
+  Ltac invert_cons :=
+    lazymatch goal with H: _ :: _ = _ :: _ |- _ => inversion H; subst end.
+
+  Lemma tag_req_domain : forall e Gstore Genv t i istr ienv,
+                   type_of Gstore Genv e t -> tag_req i e = (istr, ienv) ->
+                   domain_incl istr Gstore.
+  Proof.
+    induction e using expr_IH; simpl; intros; invert_pair; invert_type_of.
+    1,3: try apply domain_incl_empty.
+    1:{ unfold domain_incl; intros.
+        destruct_get_put_strings;
+          [ rewrite_l_to_r | rewrite map.get_empty ]; auto. }
+    1: use_tag_req_domain_IH; auto.
+    all: try now (repeat destruct_match_hyp; repeat invert_pair2;
+                  repeat use_tag_req_domain_IH; auto using lub_merge__domain_incl).
+    1:{ lazymatch goal with
+        H1: type_of _ _ (ERecord _) _, H2: List.map fst _ = _,
+            H3: Permutation _ _, H4: NoDup _, H5: Sorted.StronglySorted _ _ |- _ =>
+          clear H1 H2 H3 H4 H5 end.
+        generalize dependent istr. generalize dependent ienv.
+        generalize dependent tl.
+        lazymatch goal with
+          H: Forall _ _ |- _ => induction H end;
+        simpl in *; intros.
+        1: invert_pair2; apply domain_incl_empty.
+        repeat destruct_match_hyp; repeat invert_pair2.
+        invert_Forall2.
+        destruct tl; try discriminate. simpl in *. invert_cons.
+        use_tag_req_domain_IH; auto.
+        lazymatch goal with
+          H: context[Forall2 _ _ _ -> _], H': Forall2 _ _ _ |- _ =>
+            eapply H in H' end; [ | eauto ].
+        auto using lub_merge__domain_incl. }
+    1:{ lazymatch goal with
+        H: type_of _ _ (EDict _) _ |- _ => clear H end.
+        generalize dependent istr. generalize dependent ienv.
+        lazymatch goal with
+        H: Forall _ _ |- _ => induction H end; simpl in *; intros.
+        1: invert_pair2; apply domain_incl_empty.
+        repeat destruct_match_hyp; repeat invert_pair2.
+        invert_Forall.
+        lazymatch goal with
+          H: context[Forall _ _ -> _], H': Forall _ _ |- _ =>
+            eapply H in H' end; [ | eauto ].
+        intuition idtac. repeat use_tag_req_domain_IH.
+        auto using lub_merge__domain_incl. }
+  Qed.
+
+  Lemma domain_incl__lub_merge_r : forall (G1 G2 : aenv),
+      domain_incl G2 (lub_merge G1 G2).
+  Proof.
+    unfold domain_incl; intros.
+    rewrite lub_merge_sound.
+    repeat case_match; auto.
+  Qed.
+
+  Lemma domain_incl__lub_merge_domain_eq : forall (G1 G2 : aenv),
+      domain_incl G1 G2 -> domain_eq G2 (lub_merge G1 G2).
+  Proof.
+    unfold domain_eq. split;
+      eauto using domain_incl__lub_merge_r,
+      domain_incl_refl, lub_merge__domain_incl.
+  Qed.
+
+  Lemma domain_eq__domain_incl_l : forall {vt1 vt2 : Type} {m1 : map.map string vt1}
+                                        {m2 : map.map string vt2} (G1 G1' : m1) (G2 : m2),
+      domain_eq G1 G1' -> domain_incl G1 G2 ->
+      domain_incl G1' G2.
+  Proof.
+    unfold domain_eq; intuition eauto using domain_incl_tran.
+  Qed.
+
+  Lemma domain_eq__domain_incl_r : forall {vt1 vt2 : Type} {m1 : map.map string vt1}
+                                        {m2 : map.map string vt2} (G1 : m1) (G2 G2' : m2),
+      domain_eq G2 G2' -> domain_incl G1 G2 ->
+      domain_incl G1 G2'.
+  Proof.
+    unfold domain_eq; intuition eauto using domain_incl_tran.
+  Qed.
+
+  Lemma domain_incl_step : forall (Gstore : tenv) (istr : aenv) y t i,
+      domain_incl Gstore istr -> domain_incl (map.put Gstore y t) (map.put istr y i).
+  Proof.
+    unfold domain_incl; intros.
+    specialize (H x). destruct_get_put_strings;
+      repeat rewrite_map_get_put_goal; trivial.
+  Qed.
+
+  Lemma domain_eq_put_update : forall {vt : Type} {m : map.map string vt}
+                                      {m_ok : map.ok m} (G G' : m) x i,
+      domain_eq (map.put G x i) G' ->
+                  domain_eq G (map.update G' x (map.get G x)).
+  Proof.
+    unfold domain_eq, domain_incl; intuition idtac.
+    all: [> specialize (H0 x0)
+         | specialize (H1 x0) ];
+      destruct_get_update_strings;
+      rewrite_map_get_put_hyp; case_match; auto.
+  Qed.
+
+  Lemma domain_incl_step_r : forall {vt : Type} {m : map.map string vt}
+                                   {m_ok : map.ok m} (G : m) x v,
+      domain_incl G (map.put G x v).
+  Proof.
+    unfold domain_incl; intros.
+    destruct_get_put_strings; case_match; auto.
+  Qed.
+
+  Lemma in_domain_eq : forall {vt : Type} {m : map.map string vt}
+                                   {m_ok : map.ok m} (G : m) x v,
+      match map.get G x with
+      | Some _ => True | None => False end ->
+      domain_eq G (map.put G x v).
+  Proof.
+    unfold domain_eq, domain_incl; intuition idtac.
+    all: destruct_get_put_strings; case_match; auto.
+  Qed.
+
+  Ltac specialize_forall_string :=
+    lazymatch goal with
+      H: forall _, _, x : string |- _ => specialize (H x) end.
+
+  Lemma domain_eq__lub_merge : forall (G1 G2 G3 : aenv),
+      domain_eq G1 G2 -> domain_eq G1 G3 ->
+      domain_eq G1 (lub_merge G2 G3).
+  Proof.
+    unfold domain_eq, domain_incl; intuition idtac; intros.
+    all: repeat specialize_forall_string.
+    all: rewrite lub_merge_sound; repeat case_match; auto.
+  Qed.
+
+  Ltac apply_tag_req_domain :=
+          lazymatch goal with
+            H: tag_req _ _ = _ |- _ =>
+              eapply tag_req_domain in H
+          end.
+
+  Ltac invert_res :=
+    lazymatch goal with
+      H: mk_res _ _ _ = mk_res _ _ _ |- _ => inversion H; subst end.
+
+  Ltac use_command_tag_req_preserve_domain_IH' c :=
+    lazymatch goal with
+          IH: context[command_tag_req _ c = _ -> _],
+            H: command_tag_req _ c = _ |- _ =>
+            eapply IH in H; [ | eauto .. ] end.
+
+  Ltac use_command_tag_req_preserve_domain_IH :=
+    lazymatch goal with
+      IH: context[command_tag_req _ ?c = _ -> _],
+        H: command_tag_req _ ?c = _ |- _ =>
+        use_command_tag_req_preserve_domain_IH' c end.
+
+  Lemma command_tag_req_times_preserve_domain' : forall Gstore Genv c n istr_expect istr,
+      well_typed Gstore Genv c ->
+      command_tag_req_times (fun istr => command_tag_req istr c) istr_expect n = istr ->
+      domain_incl Gstore istr_expect ->
+      (forall istr_expect res istr,
+          command_tag_req istr_expect c = res -> istr = istr_res res ->
+          domain_incl Gstore istr_expect -> domain_eq istr_expect istr) ->
+      domain_eq istr_expect istr.
+  Proof.
+    induction n; simpl; intros; subst.
+    1: apply domain_eq_refl.
+    repeat case_match; simpl; auto using domain_eq_refl.
+    eapply domain_eq_tran.
+    2: eapply IHn; eauto using domain_incl_tran, domain_incl__lub_merge_r.
+    eauto using domain_eq__lub_merge, domain_eq_refl.
+  Qed.
+
+  Lemma domain_eq__domain_incl : forall (G G' : aenv),
+      domain_eq G G' -> domain_incl G G'.
+  Proof.
+    unfold domain_eq; intuition idtac.
+  Qed.
+
+  Lemma command_tag_req_preserve_domain : forall c res Gstore Genv istr_expect istr,
+      well_typed Gstore Genv c ->
+      command_tag_req istr_expect c = res ->
+      istr = istr_res res ->
+      domain_incl Gstore istr_expect ->
+      domain_eq istr_expect istr.
+  Proof.
+    induction c; simpl; intros; subst; auto.
+    all: invert_well_typed.
+    all: repeat case_match; simpl.
+    1: unfold domain_eq; auto using domain_incl_refl.
+    1:{ use_command_tag_req_preserve_domain_IH' c2;
+          use_command_tag_req_preserve_domain_IH' c1;
+          unfold domain_eq in *; intuition eauto using domain_incl_tran. }
+    1:{ use_command_tag_req_preserve_domain_IH; simpl in *.
+        apply_tag_req_domain; eauto using domain_eq_tran,
+          domain_incl__lub_merge_domain_eq,
+          domain_eq__domain_incl_r, domain_incl_tran. }
+    1:{ use_command_tag_req_preserve_domain_IH; simpl in *;
+        auto using domain_incl_step.
+        apply_tag_req_domain; eauto.
+        eapply domain_eq_tran.
+        1: eapply domain_eq_put_update; eauto.
+        eapply domain_incl__lub_merge_domain_eq.
+        eapply domain_eq__domain_incl_r; eauto using domain_incl_tran.
+        eapply domain_eq_put_update; eauto. }
+    1:{ apply_tag_req_domain; eauto.
+        eapply domain_eq_tran.
+        1:{ specialize (H2 x). rewrite_l_to_r.
+            eapply in_domain_eq; eauto. }
+        1:{ rewrite lub_merge_comm. eapply domain_incl__lub_merge_domain_eq.
+            eapply domain_incl_tran; eauto.
+            eapply domain_incl_tran; eauto. eapply domain_incl_step_r. } }
+    1:{ repeat use_command_tag_req_preserve_domain_IH; simpl in *.
+        apply_tag_req_domain; eauto.
+        unfold domain_eq in *.
+        eapply domain_eq_tran.
+        2:{ apply domain_incl__lub_merge_domain_eq.
+            unfold domain_eq in *; intuition eauto using domain_incl_tran, domain_incl__lub_merge_r. }
+        auto using domain_eq__lub_merge. }
+    1:{ remember (command_tag_req_times
+                    (fun istr : aenv => command_tag_req istr c) istr_expect
+                    (size_of_map istr_expect + (size_of_map istr_expect + 0) + 1)) as istr'.
+        symmetry in Heqistr'.
+        eapply command_tag_req_times_preserve_domain' in Heqistr'; eauto.
+        use_command_tag_req_preserve_domain_IH; simpl in *;
+          [ | unfold domain_eq in *;
+              intuition eauto using domain_incl_tran,
+                domain_incl__lub_merge_r ].
+        apply domain_eq__lub_merge; eauto using domain_eq_refl.
+        eapply domain_eq_tran, domain_incl__lub_merge_domain_eq.
+        1: eauto using domain_eq_tran.
+        apply_tag_req_domain; eauto.
+        unfold domain_eq in *.
+        intuition eauto using domain_incl_tran,
+          domain_incl__lub_merge_r. }
+  Qed.
+
+  Lemma command_tag_req_times_preserve_domain : forall Gstore Genv c n istr_expect istr,
+      well_typed Gstore Genv c ->
+      command_tag_req_times (fun istr => command_tag_req istr c) istr_expect n = istr ->
+      domain_incl Gstore istr_expect ->
+      domain_eq istr_expect istr.
+  Proof.
+    intros. eapply command_tag_req_times_preserve_domain';
+      eauto using command_tag_req_preserve_domain.
+  Qed.
+
+  Lemma aenv_le_antisym : forall iG iG',
+      aenv_le iG iG' -> aenv_le iG' iG -> iG = iG'.
+  Proof.
+    unfold aenv_le, aenv_le_at; intros. apply map.map_ext; intros.
+    repeat specialize_forall_string.
+    repeat destruct_match_hyp; f_equal;
+      intuition auto using collection_tag_leb_antisym.
+  Qed.
+
+  Lemma aenv_metric__ge_size_of_map : forall (iG : aenv), aenv_metric iG >= size_of_map iG.
+  Proof.
+    unfold aenv_metric, collection_tag_metric, size_of_map; intros.
+    apply map.fold_spec; simpl; intros.
+    1: rewrite Properties.map.fold_empty; auto.
+    rewrite Properties.map.fold_put; simpl; auto.
+    destruct v; eauto using le_n_S, Nat.le_le_succ_r.
+  Qed.
+
+  Lemma aenv_metric__le_3_size_of_map : forall (iG : aenv), aenv_metric iG <= 3 * size_of_map iG.
+  Proof.
+    unfold aenv_metric, collection_tag_metric, size_of_map; intros.
+    apply map.fold_spec; simpl; intros.
+    1: rewrite Properties.map.fold_empty; auto.
+    rewrite Properties.map.fold_put; simpl; auto.
+    rewrite !Nat.add_succ_r.
+    lazymatch goal with
+      |- context[_ <= S (S (S ?n))] => change (S (S (S n))) with (3 + n) end.
+    apply Nat.add_le_mono; auto.
+    destruct v; auto.
+  Qed.
+
+  Lemma domain_incl_empty_r : forall (G : aenv),
+      domain_incl G (map.empty (map:=aenv)) -> G = map.empty.
+  Proof.
+    unfold domain_eq, domain_incl; intuition idtac.
+    apply map.map_ext; intros. specialize_forall_string.
+    rewrite map.get_empty in *. destruct_match_hyp; intuition idtac.
+  Qed.
+
+  Lemma aenv_le__domain_incl : forall G G',
+      aenv_le G G' -> domain_incl G G'.
+  Proof.
+    unfold aenv_le, aenv_le_at, domain_incl; intros.
+    specialize_forall_string.
+    repeat case_match; auto.
+  Qed.
+
+  Lemma domain_eq__size_of_map : forall (G G' : aenv),
+      domain_eq G G' -> size_of_map G = size_of_map G'.
+    unfold size_of_map; intro. apply map.fold_spec; intros.
+    1:{ unfold domain_eq in *; intuition idtac.
+        apply domain_incl_empty_r in H1; subst.
+        rewrite Properties.map.fold_empty; trivial. }
+    1:{ assert(exists v', map.get G' k = Some v').
+        { unfold domain_eq, domain_incl in *; intuition idtac.
+          repeat specialize_forall_string. repeat rewrite_map_get_put_hyp.
+          destruct_match_hyp; intuition eauto. }
+        lazymatch goal with H: exists _, _ |- _ => destruct H; subst end.
+      apply domain_eq_put_update, H0 in H1.
+        replace G' with (map.put (map.update G' k (map.get m k)) k x).
+        1:{ rewrite Properties.map.fold_put; auto.
+            rewrite Properties.map.get_update_same; auto. }
+        rewrite put_update_same; auto. apply Properties.map.put_noop; auto. }
+  Qed.
+
+  Lemma get_None__aenv_metric_put : forall iG x i,
+      map.get iG x = None ->
+      aenv_metric (map.put iG x i) = aenv_metric iG + collection_tag_metric i.
+  Proof.
+    unfold aenv_metric; intro; apply map.fold_spec; intros.
+    1: rewrite Properties.map.fold_singleton; apply Nat.add_comm.
+    destruct_get_put_strings; try congruence.
+    rewrite Properties.map.put_put_diff, Properties.map.fold_put; auto.
+    1: rewrite H0; auto using Nat.add_assoc.
+    1: auto using Nat.add_shuffle3.
+    1: rewrite_map_get_put_goal.
+  Qed.
+
+  Lemma collection_tag_gt_aenv_metric : forall iG x i i',
+      map.get iG x = Some i ->
+      collection_tag_leb i' i = false ->
+      S (aenv_metric iG) <= aenv_metric (map.put iG x i').
+  Proof.
+    intros.
+    replace iG with (map.put (map.update iG x None) x i).
+    2:{ rewrite put_update_same; auto.
+        apply Properties.map.put_noop; auto. }
+    rewrite Properties.map.put_put_same.
+    rewrite !get_None__aenv_metric_put.
+    2,3: rewrite Properties.map.get_update_same; reflexivity.
+    rewrite <- Nat.add_1_r, <- Nat.add_assoc.
+    apply Plus.plus_le_compat_l_stt.
+    destruct i, i'; simpl; try discriminate; auto.
+  Qed.
+
+  Ltac destruct_exists :=
+    lazymatch goal with
+      H: exists _, _ |- _ => destruct H end.
+
+  Lemma aenv_gtb_exists : forall iG iG',
+      aenv_leb iG iG' = false ->
+      exists x, ~ aenv_le_at x iG iG'.
+  Proof.
+    unfold aenv_leb; intros *; apply map.fold_spec; intros;
+      try congruence.
+    destruct_match_hyp.
+    1:{ destruct r; simpl in *.
+        1:{ exists k. unfold aenv_le_at. rewrite_map_get_put_goal.
+            rewrite E; congruence. }
+        1:{ intuition idtac. destruct_exists. exists x.
+            unfold aenv_le_at in *.
+            assert(x <> k).
+            { intro contra; subst. rewrite_l_to_r; intuition fail. }
+            rewrite_map_get_put_goal. } }
+    1:{ exists k. unfold aenv_le_at. rewrite_map_get_put_goal.
+        rewrite E; auto. }
+  Qed.
+
+  Lemma domain_incl__aenv_gt_exists : forall iG iG',
+      domain_incl iG iG' ->
+      ~ aenv_le iG iG' ->
+      exists x i i', map.get iG x = Some i /\
+                       map.get iG' x = Some i' /\
+                       collection_tag_leb i i' = false /\
+                       aenv_le (map.put iG' x i) (lub_merge iG iG').
+  Proof.
+    intros * H_incl H.
+    rewrite <- aenv_leb_le in H.
+    apply Bool.not_true_is_false, aenv_gtb_exists in H.
+    destruct_exists. specialize (H_incl x).
+    unfold aenv_le_at in *. repeat destruct_match_hyp; intuition idtac.
+    apply Bool.not_true_is_false in H.
+    repeat eexists; eauto.
+    replace (lub_merge iG iG') with (map.put (lub_merge iG iG') x c).
+    1: apply aenv_le_put; auto using collection_tag_leb_refl, lub_merge__aenv_le_r.
+    apply map.map_ext; intro. destruct_get_put_strings.
+    rewrite lub_merge_sound. repeat rewrite_l_to_r.
+    rewrite collection_tag_leb_neg; auto.
+  Qed.
+
+  Lemma aenv_le__aenv_metric : forall iG iG',
+      aenv_le iG iG' -> aenv_metric iG <= aenv_metric iG'.
+  Proof.
+    unfold aenv_metric; intro. apply map.fold_spec; intros.
+    1: apply Nat.le_0_l.
+    apply aenv_le_put_inv in H1; auto.
+    destruct_match_hyp; intuition idtac.
+    replace iG' with (map.put (map.update iG' k None) k c).
+    2: rewrite put_update_same, Properties.map.put_noop; auto.
+    rewrite Properties.map.fold_put; auto using Nat.add_shuffle3;
+      [ | rewrite Properties.map.get_update_same; auto ].
+    apply Nat.add_le_mono; auto using collection_tag_leb_metric.
+  Qed.
+
+  Lemma domain_incl__aenv_gt_metric : forall iG iG',
+      domain_incl iG iG' ->
+      ~ aenv_le iG iG' ->
+      S (aenv_metric iG') <= aenv_metric (lub_merge iG iG').
+  Proof.
+    intros. specialize (domain_incl__aenv_gt_exists _ _ H H0) as H_exists.
+    repeat destruct_exists; intuition idtac.
+    eapply le_trans.
+    2: apply aenv_le__aenv_metric; eauto.
+    eauto using collection_tag_gt_aenv_metric.
+  Qed.
+
+  Lemma command_tag_req_times_sound' : forall Gstore Genv c n istr_expect res istr',
+      well_typed Gstore Genv c ->
+      domain_incl Gstore istr_expect ->
+      command_tag_req_times (fun istr => command_tag_req istr c) istr_expect n = istr' ->
+      command_tag_req istr' c = res ->
+      aenv_le istr_expect istr' /\
+        (aenv_le (istr_res res) istr' \/
+           aenv_metric istr' >= n + aenv_metric istr_expect).
+  Proof.
+    induction n; simpl; intros; subst.
+    1: intuition auto using aenv_le_refl.
+    repeat case_match; simpl.
+    1:{ intuition auto using aenv_le_refl. rewrite_l_to_r; simpl.
+        left; apply aenv_leb_le; assumption. }
+    1:{ eapply IHn with (istr_expect:=lub_merge istr_res0 istr_expect) in H as H'.
+        3,4: reflexivity.
+        2: eauto using domain_incl_tran, domain_incl__lub_merge_r.
+        intuition eauto using aenv_le_tran, lub_merge__aenv_le_r.
+        right. eapply le_trans; [ | eauto ].
+        eapply command_tag_req_preserve_domain in E; eauto; simpl in *.
+        rewrite <- Nat.add_succ_r. apply Plus.plus_le_compat_l_stt.
+        eapply le_trans; [ apply Nat.le_refl | apply domain_incl__aenv_gt_metric ].
+        1: unfold domain_eq in *; intuition eauto.
+        1: intro contra; rewrite <- aenv_leb_le in *; congruence. }
+  Qed.
+
+  Lemma command_tag_req_times_sound : forall (Gstore Genv : tenv) istr_expect c istr' res,
+      well_typed Gstore Genv c ->
+      domain_incl Gstore istr_expect ->
+      command_tag_req_times (fun istr => command_tag_req istr c) istr_expect
+        (Nat.mul 2 (size_of_map istr_expect) + 1) = istr' ->
+      command_tag_req istr' c = res ->
+      aenv_le istr_expect istr' /\ aenv_le (istr_res res) istr'.
+  Proof.
+    intros.
+    eapply command_tag_req_times_preserve_domain in H1 as H_eq; eauto.
+    apply domain_eq__size_of_map in H_eq.
+    eapply command_tag_req_times_sound' in H1; intuition eauto.
+    specialize (aenv_metric__le_3_size_of_map istr') as H_ub.
+    eapply le_trans in H1;
+      [ | apply add_le_mono_l_proj_l2r, aenv_metric__ge_size_of_map ].
+    rewrite Nat.add_comm, Nat.add_assoc in H1.
+    eapply le_trans in H_ub; eauto.
+    repeat rewrite_l_to_r. rewrite Nat.add_1_r in H_ub.
+    simpl in *. apply Nat.nle_succ_diag_l in H_ub. intuition fail.
+  Qed.
+
+  Ltac use_command_tag_req_sound_IH :=
+    lazymatch goal with
+      | H: tag_req _ _ = _ |- _ => apply tag_req_sound in H
+      | IH: context[well_tagged _ _ _ ?c _], H: command_tag_req _ ?c = _ |- well_tagged _ _ _ _ _ =>
+        eapply IH in H
+    end.
+
+  Lemma command_tag_req_sound : forall c Gstore Genv istr_expect istr ienv inv,
+      well_typed Gstore Genv c ->
+      domain_incl Gstore istr_expect ->
       command_tag_req istr_expect c = mk_res istr ienv inv ->
       well_tagged istr ienv inv c istr_expect.
   Proof.
     induction c; simpl; intros.
-    1: constructor.
-  Admitted.
+    all: repeat destruct_match_hyp; invert_well_typed.
+    all: invert_res.
+    1: constructor; apply aenv_le_refl.
+    1:{ eapply command_tag_req_preserve_domain in E as H_dom; eauto; simpl in *.
+        repeat use_command_tag_req_sound_IH; eauto.
+        2: unfold domain_eq in *; intuition eauto using domain_incl_tran.
+        econstructor; strengthen_tag_judgements;
+    eauto using aenv_le_refl, aenv_le__istr_inv, aenv_le_tran,
+          lub_merge__aenv_le_l, lub_merge__aenv_le_r. }
+    1:{ repeat use_command_tag_req_sound_IH; eauto. econstructor; strengthen_tag_judgements; eauto.
+       all: eauto using aenv_le_refl, aenv_le__istr_inv, aenv_le_tran,
+           lub_merge__aenv_le_l, lub_merge__aenv_le_r, aenv_le_update,
+           lub_merge_preserve_aenv_le.
+       rewrite put_update_same; auto using aenv_le_put_back, lub_merge__aenv_le_r. }
+    1:{ repeat use_command_tag_req_sound_IH; eauto using domain_incl_step.
+        econstructor; try strengthen_tag_judgements; eauto.
+        all: eauto using aenv_le_refl, aenv_le__istr_inv, aenv_le_tran,
+            lub_merge__aenv_le_l, lub_merge__aenv_le_r,
+            lub_merge_preserve_aenv_le, aenv_le_update_step.
+        all: try rewrite !put_lub_merge, !put_update_same; auto.
+        1,2: eauto using lub_merge__aenv_le_r, aenv_le_tran, aenv_le_refl, aenv_le_put_back.
+        1: apply aenv_le__lub_merge; eauto using aenv_le_put,
+          aenv_le_refl, aenv_le__istr_inv, aenv_le__collection_tag_leb.
+        1:{ eapply aenv_le_at__aenv_le; eauto using lub_merge__aenv_le_r.
+            unfold aenv_le_at. rewrite Properties.map.get_update_same.
+            case_match; auto using collection_tag_leb_refl. } }
+    1:{ repeat use_command_tag_req_sound_IH; eauto.
+        constructor; try strengthen_tag_judgements; eauto.
+        all: eauto using aenv_le_refl, aenv_le__istr_inv, aenv_le_tran,
+      lub_merge__aenv_le_l, lub_merge__aenv_le_r.
+        rewrite put_lub_merge, Properties.map.put_put_same.
+        eauto using aenv_le_tran, lub_merge__aenv_le_l, aenv_le__put_LikeList. }
+    1:{ repeat use_command_tag_req_sound_IH; eauto.
+        constructor; strengthen_tag_judgements; eauto.
+        all: eauto using aenv_le_refl, aenv_le__istr_inv, aenv_le_tran,
+            lub_merge__aenv_le_l, lub_merge__aenv_le_r, aenv_le__lub_merge. }
+    1:{ eapply command_tag_req_times_sound in H6 as H_times; eauto.
+        simpl in *; remember (command_tag_req_times (fun istr : aenv => command_tag_req istr c) istr_expect
+            (size_of_map istr_expect + (size_of_map istr_expect + 0) + 1)) as istr'.
+        repeat use_command_tag_req_sound_IH; eauto.
+        2: eauto using domain_incl_tran, domain_eq__domain_incl,
+            command_tag_req_times_preserve_domain. clear_refl.
+        intuition idtac. eapply lub_merge_preserve_aenv_le in H1 as H_merge; eauto.
+        econstructor; try strengthen_tag_judgements.
+        7: eapply well_tagged_weaken; eauto.
+        all: eauto.
+        6: rewrite put_update_same; eauto using aenv_le_tran, lub_merge__aenv_le_r, aenv_le__put_LikeList.
+        all: eauto using aenv_le_refl, aenv_le__istr_inv, lub_merge__aenv_le_l,
+            lub_merge__aenv_le_r, aenv_le__lub_merge, aenv_le_update.
+        1,4: rewrite lub_merge_comm.
+        all: eauto using aenv_le_refl, aenv_le__istr_inv, aenv_le_tran,
+            lub_merge__aenv_le_l, lub_merge__aenv_le_r,
+            aenv_le__lub_merge, aenv_le_update. }
+  Qed.
 
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
 
@@ -504,25 +1744,26 @@ Section WithMap.
 
   Section LikeDictIndex.
     Notation value := (value (width:=width)).
-    Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
-    Context {idx : index} {idx_wf : value -> Prop} {idx_ok : ok LikeBag LikeList idx idx_wf consistent}.
+    Context {to_from_con from_to_con : collection_tag}.
+    Context {idx : index} {idx_wf : value -> Prop} {idx_ok : ok to_from_con from_to_con idx idx_wf consistent}.
+    (* ??? TODO: try generalizing to a consistency lattice structure *)
 
-    Definition can_transf_to_index' (istr0 : aenv) (tbl : string) (c : command) :=
+    Definition can_transf_to_index' (max_i : collection_tag) (istr0 : aenv) (tbl : string) (c : command) :=
       let (_, _, inv) := command_tag_req istr0 c in
       match map.get inv tbl with
-      | Some LikeList => false
+      | Some i => collection_tag_leb i max_i
       | _ => true
       end.
 
     Definition make_LikeList_aenv (G : tenv) : aenv :=
       map.fold (fun m x _ => map.put m x LikeList) map.empty G.
 
-    Definition can_transf_to_index (t : type) (istr : aenv) (c : command) :=
+    Definition can_transf_to_index (max_i : collection_tag) (t : type) (istr : aenv) (c : command) :=
       (* expect t to be the type of e, istr to map all free mut vars in c except tbl to LikeList *)
       match c with
       | CLetMut e tbl c' =>
-          (is_tbl_ty t && can_transf_to_index' istr tbl c')%bool
+          (is_tbl_ty t && can_transf_to_index' max_i (map.put istr tbl LikeSet) tbl c')%bool
       | _ => false
       end.
 
@@ -595,23 +1836,11 @@ Section WithMap.
       1,2: do_injection; apply Permutation_refl.
     Qed.
 
-    Ltac invert_tag_of :=
-      lazymatch goal with H: tag_of _ _ _ _ |- _ => inversion H; subst end.
-
-    Ltac invert_type_of :=
-      lazymatch goal with
-      | H: type_of _ _ (_ _) _ |- _ => inversion H; subst end.
-
     Ltac invert_type_of_op :=
       lazymatch goal with
       | H: type_of_unop _ _ _ |- _ => inversion H; subst
       | H: type_of_binop _ _ _ _ |- _ => inversion H; subst
       end.
-
-    Ltac invert_well_typed :=
-      lazymatch goal with
-      | H: well_typed _ _ (_ _) |- _ => inversion H; subst
-      | H: well_typed _ _ _ |- _ => inversion H; subst end.
 
     Ltac apply_type_sound e :=
       lazymatch goal with
@@ -624,18 +1853,6 @@ Section WithMap.
       lazymatch goal with
         H: type_of_value (_ _) _ |- _ =>
           inversion H; subst
-      end.
-
-    Ltac invert_Forall :=
-      lazymatch goal with
-      | H: Forall _ (_ :: _) |- _ => inversion H; subst; clear H
-      end.
-
-    Ltac invert_Forall2 :=
-      lazymatch goal with
-      | H: Forall2 _ (_ :: _) _ |- _ => inversion H; subst; clear H
-      | H: Forall2 _ _ (_ :: _) |- _ => inversion H; subst; clear H
-      | H: Forall2 _ _ _ |- _ => inversion H; subst; clear H
       end.
 
     Ltac invert_type_wf :=
@@ -681,6 +1898,7 @@ Section WithMap.
     Hint Resolve invert_TRecord_wf : fiat2_hints.
     Hint Resolve tenv_wf_step : fiat2_hints.
     Hint Resolve locals_wf_step : fiat2_hints.
+    Hint Resolve type_sound : fiat2_hints.
 
     Lemma get_free_vars_empty : get_free_vars (map.empty (map:=tenv)) = nil.
     Proof.
@@ -745,7 +1963,7 @@ Section WithMap.
       destruct_get_put_strings; auto.
     Qed.
 
-    Lemma stores_eq_excpet__update_eq : forall (store store' : locals) tbl v,
+    Lemma stores_eq_except__update_eq : forall (store store' : locals) tbl v,
         (forall x, x <> tbl -> map.get store x = map.get store' x) ->
         map.update store tbl v = map.update store' tbl v.
     Proof.
@@ -767,14 +1985,12 @@ Section WithMap.
       1:{ erewrite IHc2. 4: eauto. all: auto.
           2: eapply command_type_sound; eauto.
           eapply IHc1. 4: eauto. all: eauto. }
-      1:{ erewrite IHc. 4: eauto. all: eauto with fiat2_hints.
-          apply locals_wf_step; auto. eapply type_sound; eauto. }
+      1:{ erewrite IHc. 4: eauto. all: eauto with fiat2_hints. }
       1:{ destruct_String_eqb x0 x.
           1: rewrite Properties.map.get_update_same; reflexivity.
           1: rewrite Properties.map.get_update_diff; auto.
           erewrite IHc. 4: eauto. all: eauto with fiat2_hints.
-          1,3: rewrite_map_get_put_goal.
-          apply locals_wf_step; auto. eapply type_sound; eauto. }
+          all: rewrite_map_get_put_goal. }
       1:{ destruct_get_put_strings; try congruence. }
       1:{ case_match; auto. case_match; subst; eauto. }
       1:{ apply_type_sound e. invert_type_of_value.
@@ -839,8 +2055,7 @@ Section WithMap.
       1:{ revert IHe2. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; intros;
           eauto using locals_equiv_refl with fiat2_hints.
           use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ];
-            eauto using locals_equiv_refl with fiat2_hints.
-          1: apply locals_wf_step; auto; eapply type_sound; eauto. }
+            eauto using locals_equiv_refl with fiat2_hints. }
       1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
           apply_type_sound e1; invert_type_of_value. f_equal.
           apply In_flat_map_ext; intros; apply_Forall_In.
@@ -994,10 +2209,6 @@ Section WithMap.
       1:{ destruct (String.eqb x k) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
           all: rewrite_map_get_put_hyp; congruence. }
     Qed.
-
-    Ltac destruct_exists :=
-      lazymatch goal with
-        H: exists _, _ |- _ => destruct H end.
 
     Ltac destruct_In :=
       lazymatch goal with
@@ -1460,9 +2671,6 @@ Section WithMap.
         H: tenv_wf ?G, H': map.get ?G _ = Some ?t |- type_wf ?t =>
           apply H in H' end.
 
-    Ltac invert_cons :=
-      lazymatch goal with H: _ :: _ = _ :: _ |- _ => inversion H; subst end.
-
     Ltac apply_transf_to_idx_preserve_ty''_IH :=
       lazymatch goal with IH: context[type_of _ _ ?e _ ] |- type_of _ _ ?e _ => apply IH end.
 
@@ -1547,16 +2755,27 @@ Section WithMap.
           apply_incl_lemmas. }
     Qed.
 
+    Lemma transf_to_idx_preserve_ty'2 : forall tbl_ty tbl c (Gstore Gstore' Genv :tenv) free_vars,
+        tenv_wf Gstore -> tenv_wf Genv ->
+        map.get Gstore tbl = Some tbl_ty ->
+        is_tbl_ty tbl_ty = true ->
+        well_typed Gstore Genv c ->
+        incl (get_free_vars Genv) free_vars ->
+        Gstore' = map.put Gstore tbl (idx_ty tbl_ty) ->
+        well_typed Gstore' Genv (transf_to_idx' free_vars tbl c).
+    Proof.
+      intros; subst; apply transf_to_idx_preserve_ty'; auto.
+    Qed.
+
     Lemma transf_to_idx_preserve_ty : forall tbl_ty tbl e c free_vars Gstore Genv,
         tenv_wf Gstore -> tenv_wf Genv ->
         type_of Gstore Genv e tbl_ty ->
         well_typed (map.put Gstore tbl tbl_ty) Genv c ->
-        can_transf_to_index tbl_ty (map.update (make_LikeList_aenv Gstore) tbl None) (CLetMut e tbl c) = true ->
+        is_tbl_ty tbl_ty = true ->
         incl (get_free_vars Genv) free_vars ->
         well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl c)).
     Proof.
-      simpl; intros. subst.
-      rewrite Bool.andb_true_iff in *; intuition auto. econstructor.
+      simpl; intros. subst. econstructor.
       1:{ eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto using tenv_wf_empty, incl_refl with fiat2_hints.
           1: eapply type_of_strengthen; [ apply to_idx_ty; eauto | apply map_incl_empty | apply map_incl_refl ].
           1: eapply type_of__type_wf; [ | | eauto ]; auto.
@@ -1622,24 +2841,6 @@ Section WithMap.
       unfold sub_wf; intros; simpl.
       destruct (String.eqb x hole) eqn:E_x; rewrite ?eqb_eq, ?eqb_neq in *; subst.
       all: rewrite_map_get_put_hyp; try rewrite map.get_empty in *; congruence.
-    Qed.
-
-    Ltac invert_well_tagged :=
-      lazymatch goal with
-        H: well_tagged _ _ _ _ _ |- _ => inversion H; subst end.
-
-    Lemma aenv_le_at__collection_tag_leb : forall x ienv ienv',
-        aenv_le_at x ienv ienv' ->
-        collection_tag_leb (get_collection_tag ienv x) (get_collection_tag ienv' x) = true.
-      intros. unfold aenv_le_at in *.
-      unfold get_collection_tag.
-      repeat destruct_match_hyp; intuition auto.
-    Qed.
-
-    Lemma aenv_le__collection_tag_leb : forall ienv ienv',
-        aenv_le ienv ienv' ->
-        forall x, collection_tag_leb (get_collection_tag ienv x) (get_collection_tag ienv' x) = true.
-      auto using aenv_le_at__collection_tag_leb.
     Qed.
 
     Lemma consistent_refl : forall i v, consistent i v v.
@@ -1774,21 +2975,6 @@ Section WithMap.
         lazymatch goal with
           H: locals_related _ ?l _ |- context[map.get ?l ?x] => specialize (H x) end.
 
-      Lemma aenv_le__istr_inv : forall istr ienv inv c istr_expect,
-          well_tagged istr ienv inv c istr_expect ->
-          aenv_le istr inv.
-      Proof.
-        induction 1; auto.
-      Qed.
-
-      Lemma collection_tag_leb_tran : forall i1 i2 i3,
-          collection_tag_leb i1 i2 = true ->
-          collection_tag_leb i2 i3 = true ->
-          collection_tag_leb i1 i3 = true.
-      Proof.
-        destruct i1, i2, i3; auto.
-      Qed.
-
       Lemma get_mmap : forall vt vt' (mt : map.map string vt) (mt_ok : map.ok mt)
                               (mt' : map.map string vt') (mt'_ok : map.ok mt')
                               (m : mt) (f : vt -> vt') k,
@@ -1837,16 +3023,7 @@ Section WithMap.
         rewrite Properties.map.put_put_same; reflexivity.
       Qed.
 
-      Lemma put_update_same : forall vt (mt : map.map string vt) {mt_ok : map.ok mt}
-                                     (m : mt) k v v',
-          map.put (map.update m k v) k v' = map.put m k v'.
-      Proof.
-        intros; apply map.map_ext; intro x.
-        destruct_String_eqb k x; repeat rewrite_map_get_put_goal; auto.
-        rewrite Properties.map.get_update_diff; auto.
-      Qed.
-
-      Lemma put_consisteng_Renv_remove_same : forall istr x R,
+      Lemma put_consistent_Renv_remove_same : forall istr x R,
           map.put (consistent_Renv istr) x R = map.put (consistent_Renv (map.update istr x None)) x R.
       Proof.
         unfold consistent_Renv; intros.
@@ -1866,7 +3043,7 @@ Section WithMap.
       Qed.
 
       Lemma locals_related_lifted_step2 : forall Renv x l l' v v',
-          locals_related (map.update Renv x None) l l' ->
+          locals_related (map.put Renv x (consistent LikeSet)) l l' ->
           lifted_related (map.get Renv x) v v' ->
           locals_related Renv (map.update l x v) (map.update l' x v').
       Proof.
@@ -1874,8 +3051,7 @@ Section WithMap.
         destruct_String_eqb x x0.
         1: rewrite !Properties.map.get_update_same; auto.
         1:{ rewrite !Properties.map.get_update_diff; auto.
-            apply_locals_related.
-            rewrite Properties.map.get_update_diff in *; auto. }
+            apply_locals_related. rewrite_map_get_put_hyp. }
       Qed.
 
       Lemma R_le_refl : forall R, R_le R R.
@@ -1933,6 +3109,25 @@ Section WithMap.
             unfold get_collection_tag in *. rewrite_map_get_put_goal. }
         1:{ unfold consistent_with_global_Renv. rewrite_map_get_put_goal.
             rewrite Properties.map.put_put_diff; auto. rewrite_map_get_put_goal.
+            rewrite consistent_Renv_put. apply R_le_refl. }
+      Qed.
+
+      Lemma consistent_with_global_Renv_put_local2 : forall tbl x istr i,
+          x <> tbl ->
+          Renv_le
+            (map.put (consistent_with_global_Renv tbl istr) x (consistent i))
+            (consistent_with_global_Renv tbl (map.put istr x i)).
+      Proof.
+        unfold Renv_le; intros. destruct_String_eqb x0 tbl.
+        1:{ unfold consistent_with_global_Renv.
+            repeat rewrite_map_get_put_goal. unfold R_le; intros.
+            destruct v, v'; simpl in *; auto.
+            destruct_exists. eexists; intuition eauto.
+            unfold get_collection_tag in *. rewrite_map_get_put_hyp. }
+        1:{ unfold consistent_with_global_Renv.
+            rewrite Properties.map.put_put_diff; auto.
+            rewrite_map_get_put_goal.
+            rewrite map.get_put_diff with (k':=tbl); auto.
             rewrite consistent_Renv_put. apply R_le_refl. }
       Qed.
 
@@ -2435,8 +3630,17 @@ Section WithMap.
         end.
 
       Ltac rewrite_expr_value :=
-        lazymatch goal with
-          H: VList _ = interp_expr _ _ _ |- _ => rewrite <- H in * end.
+        multimatch goal with
+        | H: VList _ = interp_expr _ _ _ |- _ => rewrite <- H in *
+        | H: VBool _ = interp_expr _ _ _ |- _ => rewrite <- H in *
+        | H: VRecord _ = interp_expr _ _ _ |- _ => rewrite <- H in *
+        | H: VDict _ = interp_expr _ _ _ |- _ => rewrite <- H in *
+        | H: VOption _ = interp_expr _ _ _ |- _ => rewrite <- H in *
+        | H: interp_expr _ _ _ = VList _ |- _ => rewrite H in *
+        | H: interp_expr _ _ _ = VBool _ |- _ => rewrite H in *
+        | H: interp_expr _ _ _ = VRecord _ |- _ => rewrite H in *
+        | H: interp_expr _ _ _ = VDict _ |- _ => rewrite H in *
+        | H: interp_expr _ _ _ = VOption _ |- _ => rewrite H in * end.
 
       Ltac apply_type_sound_consistent_value e :=
         apply_type_sound2 e;
@@ -2447,6 +3651,362 @@ Section WithMap.
             eapply consistent__type_of_value in H as H'; eauto end;
         repeat rewrite_expr_value;
         invert_type_of_value; repeat rewrite_expr_value.
+
+      Lemma aenv_le__consistent_Renv_le: forall (istr istr' : aenv),
+          aenv_le istr istr' ->
+          Renv_le (consistent_Renv istr) (consistent_Renv istr').
+      Proof.
+        intros. unfold Renv_le; intros.
+        apply aenv_le_at__R_le; auto.
+      Qed.
+
+      Lemma aenv_le_at__lifted_related : forall istr istr' store store' x,
+          aenv_le_at x istr istr' ->
+          locals_related (consistent_Renv istr') store store' ->
+          lifted_related (map.get (consistent_Renv istr') x) (map.get store x) (map.get store' x) ->
+          lifted_related (map.get (consistent_Renv istr) x) (map.get store x) (map.get store' x).
+      Proof.
+        intros.
+        eapply lifted_related__Renv_le; eauto.
+        apply aenv_le_at__R_le; auto.
+      Qed.
+
+      Lemma consistent_Renv_remove : forall iG x,
+          consistent_Renv (map.update iG x None) = map.update (consistent_Renv iG) x None.
+      Proof.
+        intros. unfold consistent_Renv. rewrite mmap_update; auto.
+      Qed.
+
+      Lemma R_le_None_l : forall r, R_le None r.
+      Proof.
+        unfold R_le, lifted_related; intros.
+        repeat case_match; auto.
+      Qed.
+
+      Lemma unop_tag_sound : forall i o v v' t1 t2,
+          type_of_unop o t1 t2 ->
+          type_of_value v t1 ->
+          consistent (unop_collection_tag i o) v v' ->
+          consistent i (interp_unop o v) (interp_unop o v').
+      Proof.
+        destruct o; simpl; intros; subst.
+        all: try apply consistent_refl.
+        invert_type_of_op.
+        lazymatch goal with
+          H: type_of_value _ _ |- _ => inversion H; subst end.
+        destruct_match_hyp; intuition idtac. invert_type_of_value.
+        erewrite Permutation_length; eauto using consistent_refl.
+      Qed.
+
+      Lemma binop_tag_sound : forall i i1 i2 o v1 v1' v2 v2' t1 t2 t3,
+          type_of_binop o t1 t2 t3 ->
+          type_of_value v1 t1 ->
+          type_of_value v2 t2 ->
+          binop_collection_tag i o = (i1, i2) ->
+          consistent i1 v1 v1' -> consistent i2 v2 v2' ->
+          consistent i (interp_binop o v1 v2) (interp_binop o v1' v2').
+      Proof.
+        destruct o; simpl; intros; invert_pair.
+        all: try rewrite consistent_LikeList_eq in *; subst.
+        all: try apply consistent_refl.
+        all: invert_type_of_op;
+          repeat lazymatch goal with
+              H: type_of_value ?v (_ _), H1: consistent _ ?v _ |- _ =>
+                eapply consistent__type_of_value in H1 as H'; eauto;
+                inversion H; inversion H'; subst; clear H; clear H' end.
+        1: apply app_preserve_consistent; auto.
+        1:{ lazymatch goal with
+              H: type_of_value ?v _ |- _ => inversion H; subst; clear H end.
+            apply concat_repeat_preserve_consistent; auto. }
+        1: apply cons_preserve_consistent; auto.
+      Qed.
+
+      Lemma consistent_sym : forall i v v', consistent i v v' -> consistent i v' v.
+      Proof.
+        unfold consistent; intros.
+        repeat destruct_match_hyp; intuition idtac; subst; try congruence.
+        all: auto using Permutation_sym.
+      Qed.
+
+      Lemma locals_related_consistent_Renv_refl : forall iG G,
+          locals_related (consistent_Renv iG) G G.
+      Proof.
+        intros; apply locals_related_refl.
+        intros; rewrite consistent_Renv_sound in *.
+        destruct_match_hyp; try congruence; do_injection.
+        unfold rel_refl; auto using consistent_refl.
+      Qed.
+
+      Ltac invert_type_of_value_clear :=
+      lazymatch goal with
+        H: type_of_value (_ _) _ |- _ =>
+          inversion H; subst; clear H
+      end.
+
+      Ltac use_tag_of_sound_IH' e :=
+        lazymatch goal with
+        | IH: context[consistent _ (interp_expr _ _ e) _] |- context[consistent _ (interp_expr _ _ e) _] => eapply IH
+        | IH: context[consistent _ (interp_expr _ _ e) _], H: tag_of _ _ e _ |- _ => eapply IH in H; clear IH
+        end.
+
+      Ltac use_tag_of_sound_IH :=
+        multimatch goal with
+          |- context[interp_expr _ _ ?e] => use_tag_of_sound_IH' e
+        end.
+
+      Ltac use_tag_of_sound_IH_eauto :=
+        use_tag_of_sound_IH; [ | | | | | | | eauto | eauto ]; auto.
+
+      Ltac use_tag_of_sound_IH_eauto2 :=
+        use_tag_of_sound_IH_eauto;
+        [ |
+        | apply locals_wf_step; [ | eassumption ]
+        | apply locals_wf_step; [ | eassumption ]
+        | rewrite consistent_Renv_put; apply locals_related_step; eauto ];
+        eauto using consistent_refl with fiat2_hints.
+
+      Ltac get_consistent_values e :=
+        apply_type_sound e; eauto with fiat2_hints;
+        lazymatch goal with
+        | H: consistent LikeList ?v _ |- context[?v] =>
+            rewrite consistent_LikeList_eq in *
+        | H: consistent _ ?v _ |- context[?v] =>
+            let H' := fresh "H'" in
+            eapply consistent_sym, consistent__type_of_value in H as H'
+        end; eauto;
+        repeat invert_type_of_value_clear; repeat rewrite_expr_value.
+
+      Ltac use_tag_of_sound_IH2 :=
+        lazymatch goal with
+          |- context[match interp_expr _ _ ?e with _ => _ end] =>
+            use_tag_of_sound_IH' e; [ | | | | | | | eauto | eauto ]; auto;
+            get_consistent_values e
+        end.
+
+      Lemma tag_of_sound : forall (Gstore Genv : tenv) e t,
+          type_of Gstore Genv e t ->
+          tenv_wf Gstore -> tenv_wf Genv ->
+          forall istr ienv store store' env env' i,
+            locals_wf Gstore store -> locals_wf Genv env ->
+            locals_wf Gstore store' -> locals_wf Genv env' ->
+            locals_related (consistent_Renv istr) store store' ->
+            locals_related (consistent_Renv ienv) env env' ->
+            tag_of istr ienv e i ->
+            consistent i (interp_expr store env e) (interp_expr store' env' e).
+      Proof.
+        induction 1 using @type_of_IH; simpl; intros.
+        all: invert_tag_of.
+        1,2: eapply consistent_step; eauto;
+        lazymatch goal with
+          H: locals_related _ ?G _ |- context[get_local ?G ?x] =>
+            specialize (H x) end;
+        rewrite consistent_Renv_sound in *; rewrite_l_to_r;
+        unfold lifted_related, get_local in *;
+        [> apply_locals_wf env; apply_locals_wf env'
+        | apply_locals_wf store; apply_locals_wf store' ];
+        repeat case_match; intuition idtac.
+        1: apply consistent_refl.
+        1: eapply unop_tag_sound; eauto using type_sound.
+        1: eapply binop_tag_sound; eauto using type_sound.
+        1:{ use_tag_of_sound_IH2.
+            case_match; use_tag_of_sound_IH; eauto. }
+        1:{ use_tag_of_sound_IH; eauto with fiat2_hints.
+            rewrite consistent_Renv_put. apply locals_related_step; auto.
+            use_tag_of_sound_IH; eauto. }
+        1:{ use_tag_of_sound_IH2.
+            apply flat_map_preserve_consistent; auto using consistent_sym.
+            intros. apply_Forall_In.
+            use_tag_of_sound_IH_eauto2.
+            get_consistent_values e2; auto using consistent_sym. }
+        1:{ use_tag_of_sound_IH2.
+            eapply consistent_step; eauto.
+            repeat lazymatch goal with
+                     H: VList _ = _, H': _ = VList _ |- _ => clear H H'
+                   end.
+            lazymatch goal with
+              |- consistent ?i ?v ?v' => assert(type_of_value v t2 /\ consistent i v v')
+            end.
+            { lazymatch goal with
+                H: Forall _ _ |- _ => induction H end; simpl.
+              1:{ split; eauto with fiat2_hints.
+                  use_tag_of_sound_IH; eauto using tag_of_weaken. }
+              split.
+              1:{ eapply type_sound; eauto;
+                  [ repeat apply tenv_wf_step | repeat apply locals_wf_step ];
+                  intuition eauto with fiat2_hints. }
+              use_tag_of_sound_IH; eauto.
+              1: repeat apply tenv_wf_step; eauto with fiat2_hints.
+              1,2: repeat apply locals_wf_step; intuition eauto with fiat2_hints.
+              1: eauto using consistent__type_of_value.
+              repeat rewrite consistent_Renv_put. repeat apply locals_related_step;
+                intuition auto using consistent_refl. }
+            intuition idtac. }
+        1:{ eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
+            do 2 f_equal.
+            clear H H0 H2 H3 H4 H13.
+            generalize dependent tl.
+            lazymatch goal with
+              H: Forall _ _ |- _ => induction H end; simpl; auto; intros.
+            invert_Forall2. destruct tl; try discriminate. cbn in *; invert_cons.
+            erewrite IHForall; eauto. f_equal.
+            case_match; cbn in *. f_equal.
+            rewrite <- consistent_LikeList_eq. use_tag_of_sound_IH; eauto. }
+        1:{ use_tag_of_sound_IH2; apply consistent_refl. }
+        1:{ eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
+            do 3 f_equal.
+            apply map_ext_in; intros. repeat apply_Forall_In.
+            case_match; cbn in *; intuition idtac.
+            repeat (use_tag_of_sound_IH; [ | | | | | eauto | eauto ]; auto).
+            rewrite consistent_LikeList_eq in *. congruence. }
+        1:{ use_tag_of_sound_IH2.
+            eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
+            repeat rewrite_expr_value.
+            repeat use_tag_of_sound_IH_eauto; congruence. }
+        1:{ use_tag_of_sound_IH2.
+            eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
+            repeat rewrite_expr_value.
+            use_tag_of_sound_IH_eauto; congruence. }
+        1:{ use_tag_of_sound_IH2.
+            eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
+            repeat rewrite_expr_value.
+            use_tag_of_sound_IH_eauto; congruence. }
+        1:{ use_tag_of_sound_IH_eauto.
+            apply_type_sound e; eauto with fiat2_hints.
+            rewrite consistent_LikeList_eq in *.
+            invert_type_of_value_clear; rewrite_expr_value;
+              lazymatch goal with H: _ = VOption _ |- _ => rewrite H end.
+            all: use_tag_of_sound_IH; eauto with fiat2_hints.
+            rewrite consistent_Renv_put. apply locals_related_step; auto.
+            rewrite consistent_LikeList_eq in *; congruence. }
+        1:{ use_tag_of_sound_IH2.
+            lazymatch goal with H: VDict _ = _ |- _ => clear H end.
+            eapply consistent_step; [rewrite consistent_LikeList_eq | destruct i; auto ].
+            use_tag_of_sound_IH' e0; [ | | | | | | | eauto | eauto ]; auto.
+            rewrite consistent_LikeList_eq in *; rewrite_l_to_r.
+            eapply In_fold_right_ext with (P:=fun v => type_of_value v t);
+              intros; intuition eauto with fiat2_hints; apply_Forall_In.
+            2: apply_type_sound e; intuition eauto with fiat2_hints.
+            rewrite <- consistent_LikeList_eq.
+            use_tag_of_sound_IH; eauto with fiat2_hints.
+            1,2: repeat apply locals_wf_step; intuition eauto with fiat2_hints.
+            repeat rewrite consistent_Renv_put.
+            repeat apply locals_related_step; auto using consistent_refl. }
+        1:{ use_tag_of_sound_IH2.
+            destruct i; cbn in *.
+            1:{ eapply Permutation_sym, Permutation_dedup_Permuted; eauto using Permuted_value_sort. }
+            1:{ eauto using Permutation_sym, perm_trans, Permuted_value_sort. }
+            1:{ f_equal. apply Permutation_SSorted_eq; auto using StronglySorted_value_sort.
+                eauto using perm_trans, Permutation_sym, Permuted_value_sort. } }
+        1:{ use_tag_of_sound_IH2.
+            apply filter_preserve_consistent; auto using consistent_sym.
+            intros; apply_Forall_In.
+            use_tag_of_sound_IH_eauto2.
+            rewrite consistent_LikeList_eq in *; repeat rewrite_l_to_r; congruence. }
+        1:{ repeat use_tag_of_sound_IH2.
+            apply flat_map_preserve_consistent; auto using consistent_sym.
+            intros; apply_Forall_In. apply map_preserve_consistent.
+            1: apply filter_preserve_consistent; auto using consistent_sym; intros.
+            2: intros;
+            lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H as [HL _] end.
+            all: apply_Forall_In;
+              use_tag_of_sound_IH_eauto;
+              [ rewrite consistent_LikeList_eq in *
+              | repeat apply tenv_wf_step; eauto with fiat2_hints
+              | repeat apply locals_wf_step; [ | eassumption | eassumption ]
+              | repeat apply locals_wf_step; [ | eassumption | eassumption ]
+              | repeat rewrite consistent_Renv_put; repeat apply locals_related_step; eauto ];
+              eauto using consistent_refl.
+            repeat rewrite_l_to_r; congruence. }
+        1:{ use_tag_of_sound_IH2. apply map_preserve_consistent; auto using consistent_sym.
+            intros; apply_Forall_In.
+            use_tag_of_sound_IH_eauto2. }
+      Qed.
+
+      Ltac apply_tag_of_sound :=
+        lazymatch goal with
+          H: tag_of _ _ ?e _ |- _ => eapply tag_of_sound in H
+        end.
+
+      Ltac use_well_tagged_sound_IH :=
+        lazymatch goal with
+          IH: context[locals_related _ (interp_command _ _ ?c) _] |-
+            context[locals_related _ (interp_command _ _ ?c) _] =>
+            eapply IH
+        end.
+
+      Lemma well_tagged_sound : forall (Gstore Genv : tenv) c,
+          well_typed Gstore Genv c ->
+          tenv_wf Gstore -> tenv_wf Genv ->
+          forall istr ienv inv istr_expect store store' env env',
+            locals_wf Gstore store -> locals_wf Genv env ->
+            locals_wf Gstore store' -> locals_wf Genv env' ->
+            locals_related (consistent_Renv istr) store store' ->
+            locals_related (consistent_Renv ienv) env env' ->
+            well_tagged istr ienv inv c istr_expect ->
+            locals_related (consistent_Renv istr_expect) (interp_command store env c) (interp_command store' env' c).
+      Proof.
+        induction 1; simpl; intros.
+        all: invert_well_tagged.
+        1:{ eapply locals_related__Renv_le; eauto.
+            apply aenv_le__consistent_Renv_le; auto. }
+        1:{ use_well_tagged_sound_IH; eauto.
+            all: eapply command_type_sound; eauto. }
+        1:{ use_well_tagged_sound_IH; eauto with fiat2_hints.
+            rewrite consistent_Renv_put. apply locals_related_step; auto.
+            eapply tag_of_sound; eauto. }
+        1:{ apply locals_related_lifted_step2.
+            2: eapply aenv_le_at__lifted_related; eauto.
+            eapply locals_related__Renv_le.
+            2: use_well_tagged_sound_IH; eauto with fiat2_hints.
+            1: rewrite consistent_Renv_put. 1: apply Renv_le_refl.
+            rewrite consistent_Renv_put. apply locals_related_step; auto.
+            eapply tag_of_sound; eauto. }
+        1:{ eapply locals_related__Renv_le.
+            2: apply locals_related_step; eauto.
+            2: eapply tag_of_sound; eauto.
+            unfold Renv_le; intros. destruct (String.eqb x x0) eqn:E;
+              rewrite ?eqb_eq, ?eqb_neq in *; subst;
+              rewrite_map_get_put_goal.
+            1:{ rewrite consistent_Renv_sound. unfold get_collection_tag.
+                case_match; [ apply R_le_refl | apply R_le_None_l ]. }
+            1:{ apply aenv_le_at__R_le.
+                lazymatch goal with
+                  H: aenv_le istr_expect _ |- _ =>
+                    specialize (H x0) end.
+                unfold aenv_le_at in *.
+                repeat destruct_match_hyp; intuition idtac.
+                rewrite_map_get_put_hyp. rewrite_l_to_r; auto. } }
+        1:{ apply_type_sound e; invert_type_of_value.
+            apply_tag_of_sound.
+            9,10: eauto. all: eauto.
+            rewrite_expr_value. rewrite consistent_LikeList_eq in *.
+            lazymatch goal with
+              H: interp_expr _ _ _ = _ |- _ => rewrite H end.
+            case_match; use_well_tagged_sound_IH; eauto. }
+        1:{ apply_type_sound e; invert_type_of_value.
+            apply_tag_of_sound.
+            9,10: eauto. all: eauto.
+            rewrite_expr_value. rewrite consistent_LikeList_eq in *.
+            lazymatch goal with
+              H: interp_expr _ _ _ = _ |- _ => rewrite H end.
+            repeat lazymatch goal with
+                     H: _ = _ |- _ => clear H end.
+            lazymatch goal with H: type_of_value _ _ |- _ => clear H end.
+            eapply locals_related__Renv_le; [ eapply aenv_le__consistent_Renv_le; eauto | ].
+            lazymatch goal with
+              H: locals_related (consistent_Renv istr) _ _ |- _ =>
+                eapply locals_related__Renv_le in H end; [ | apply aenv_le__consistent_Renv_le; eauto ].
+            generalize dependent store; generalize dependent store'.
+            lazymatch goal with
+              H: Forall _ _ |- _ => induction H end; simpl; intros.
+            1:{ eapply locals_related__Renv_le; eauto. apply Renv_le_refl. }
+            1:{ apply IHForall.
+                1,2: eapply command_type_sound; eauto with fiat2_hints.
+                use_well_tagged_sound_IH; eauto with fiat2_hints.
+                rewrite consistent_Renv_put. apply locals_related_step; auto.
+                apply consistent_refl. } }
+      Qed.
+
 
       Ltac use_transf_to_idx_preserve_sem''_IH :=
         lazymatch goal with
@@ -2468,7 +4028,7 @@ Section WithMap.
           map.get Gstore tbl = Some tbl_ty ->
           is_tbl_ty tbl_ty = true ->
           forall store store' env env' istr ienv i,
-            collection_tag_leb (get_collection_tag istr tbl) LikeBag = true ->
+            collection_tag_leb (get_collection_tag istr tbl) to_from_con = true ->
             tag_of istr ienv e i ->
             locals_wf Gstore store -> locals_wf Genv env ->
             locals_wf (map.put Gstore tbl (idx_ty tbl_ty)) store' -> locals_wf Genv env' ->
@@ -2504,8 +4064,7 @@ Section WithMap.
                 eapply consistent_step; eauto using consistent__type_of_value.
                 eapply consistent_tran.
                 2: eapply to_from_consistent; eauto using consistent__type_of_value.
-                1: eauto.
-                1: destruct i_avail; auto.
+                1,2: eauto using collection_tag_leb_refl.
                 1: rewrite_l_to_r; auto. }
             1:{ simpl. unfold get_local. apply_locals_related.
                 unfold consistent_with_global_Renv in *. rewrite_map_get_put_hyp.
@@ -2692,6 +4251,18 @@ Section WithMap.
                    repeat apply locals_related_step; auto using consistent_refl ]. }
       Qed.
 
+      Lemma put_consistent_Renv_put_same : forall istr x i R,
+          map.put (consistent_Renv istr) x R = map.put (consistent_Renv (map.put istr x i)) x R.
+      Proof.
+        intros. rewrite consistent_Renv_put, Properties.map.put_put_same.
+        reflexivity.
+      Qed.
+
+      Ltac use_transf_to_idx_preserve_sem'' :=
+        eapply transf_to_idx_preserve_sem''; [ | | eauto | | | | eauto | .. ]; eauto;
+        eapply collection_tag_leb_tran;
+        eauto using aenv_le__collection_tag_leb, aenv_le__istr_inv.
+
       Ltac use_transf_to_idx_preserve_sem'_IH :=
         lazymatch goal with
           IH: context[locals_related _ (interp_command _ _ ?c) _] |-
@@ -2706,7 +4277,7 @@ Section WithMap.
           is_tbl_ty tbl_ty = true ->
           incl (get_free_vars Genv) free_vars ->
           forall (istr ienv inv istr_expect : aenv) (store store' env env': locals),
-            collection_tag_leb (get_collection_tag inv tbl) LikeBag = true ->
+            collection_tag_leb (get_collection_tag inv tbl) to_from_con = true ->
             well_tagged istr ienv inv c istr_expect ->
             locals_wf Gstore store -> locals_wf Genv env ->
             locals_wf (map.put Gstore tbl (idx_ty tbl_ty)) store' -> locals_wf Genv env' ->
@@ -2724,34 +4295,19 @@ Section WithMap.
             apply tenv_wf_step; auto. apply idx_ty_wf; auto. apply_tenv_wf; auto. }
         1:{ use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
             1: apply_incl_lemmas.
-            1: apply locals_wf_step; auto; eapply type_sound; eauto.
             1:{ apply locals_wf_step; auto.
                 eapply type_sound; [ | | eauto | eauto | ];
                   eauto using idx_ty_wf with fiat2_hints.
                 apply transf_to_idx_preserve_ty''; auto. }
             rewrite consistent_Renv_put. apply locals_related_step; auto.
-            assert(collection_tag_leb (get_collection_tag istr tbl) LikeBag = true).
-            { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-            eapply transf_to_idx_preserve_sem''; [ | | eauto | .. ]; eauto. }
+            use_transf_to_idx_preserve_sem''. }
         1:{ case_match_string_eqb.
             1:{ unfold consistent_with_global_Renv.
-                rewrite put_consisteng_Renv_remove_same.
+                erewrite put_consistent_Renv_put_same.
                 apply locals_related_lifted_step.
-                1:{ assert(myH2: forall (Gstore Genv : tenv) c,
-                          tenv_wf Gstore -> tenv_wf Genv ->
-                          well_typed Gstore Genv c ->
-                          forall istr ienv inv istr_expect store store' env env',
-                            locals_wf Gstore store -> locals_wf Genv env ->
-                            locals_wf Gstore store' -> locals_wf Genv env' ->
-                            locals_related (consistent_Renv istr) store store' ->
-                            locals_related (consistent_Renv ienv) env env' ->
-                            well_tagged istr ienv inv c istr_expect ->
-                            locals_related (consistent_Renv istr_expect) (interp_command store env c) (interp_command store' env' c)).
-                    { admit. }
-                    eapply locals_related__Renv_le.
+                1:{ eapply locals_related__Renv_le.
                     1: apply Renv_le_refl.
-                    eapply myH2 with (istr:=map.put istr tbl i); [ | | eauto | .. ]; eauto with fiat2_hints.
-                    1:{ apply locals_wf_step; auto. eapply type_sound; eauto. }
+                    eapply well_tagged_sound with (istr:=map.put istr tbl i); [ | | eauto | .. ]; eauto with fiat2_hints.
                     1:{ erewrite <- Properties.map.put_put_same. apply locals_wf_step; eauto.
                         eapply consistent__type_of_value;
                           [ eapply transf_to_idx_preserve_sem'' with (env:=env) | ];
@@ -2765,9 +4321,7 @@ Section WithMap.
                         end. }
                     rewrite consistent_Renv_put. rewrite consistent_Renv_put_global.
                     apply locals_related_step; auto.
-                    assert(collection_tag_leb (get_collection_tag istr tbl) LikeBag = true).
-                    { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-                    eapply transf_to_idx_preserve_sem''; [ | | eauto | .. ]; eauto. }
+                    use_transf_to_idx_preserve_sem''. }
                 1:{ apply_locals_related. unfold consistent_with_global_Renv in H12.
                     rewrite_map_get_put_hyp. apply_locals_wf store.
                     assert(map.get (map.put Gstore tbl (idx_ty tbl_ty)) tbl = Some (idx_ty tbl_ty)).
@@ -2778,17 +4332,15 @@ Section WithMap.
                     lazymatch goal with H: aenv_le_at _ _ _ |- _ => apply aenv_le_at__collection_tag_leb in H end.
                     eapply consistent_step; eauto. } }
             1:{ apply locals_related_lifted_step2.
-                1:{ eapply locals_related__Renv_le; eauto using consistent_with_global_Renv_remove_local.
+                1:{ eapply locals_related__Renv_le; eauto using consistent_with_global_Renv_put_local2.
                     use_transf_to_idx_preserve_sem'_IH; [ | | | | | | eauto | .. ]; eauto with fiat2_hints.
                     1: unfold get_collection_tag; rewrite_map_get_put_goal.
-                    1: apply locals_wf_step; auto; eapply type_sound; eauto.
                     1:{ rewrite Properties.map.put_put_diff; auto. apply locals_wf_step; auto.
                         eapply type_sound. 1: apply transf_to_idx_preserve_ty''.
                         8: eauto. all: eauto using idx_ty_wf with fiat2_hints. }
                     eapply locals_related__Renv_le; [ apply consistent_with_global_Renv_put_local | ]; auto.
-                    assert(collection_tag_leb (get_collection_tag istr tbl) LikeBag = true).
-                    { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-                    apply locals_related_step; eauto using transf_to_idx_preserve_sem''. }
+                    apply locals_related_step; auto.
+                    use_transf_to_idx_preserve_sem''. }
                 apply_locals_related. eapply lifted_related__Renv_le; eauto.
                 unfold consistent_with_global_Renv; repeat rewrite_map_get_put_goal.
                 apply aenv_le_at__R_le; auto. } }
@@ -2805,15 +4357,9 @@ Section WithMap.
                     repeat case_match; intuition auto using R_le_refl, collection_tag_leb__R_le.
                     unfold R_le, lifted_related; intros. repeat case_match; auto. }
                 unfold consistent_with_global_Renv; repeat rewrite_map_get_put_goal; simpl.
-                eexists; intuition eauto.
-                assert(collection_tag_leb (get_collection_tag istr x) LikeBag = true).
-                { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-                eapply transf_to_idx_preserve_sem''; [ | | eauto | .. ]; eauto. }
+                eexists; intuition eauto. use_transf_to_idx_preserve_sem''. }
             1:{ eapply locals_related__Renv_le.
-                2:{ apply locals_related_step; eauto.
-                    assert(collection_tag_leb (get_collection_tag istr tbl) LikeBag = true).
-                    { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-                    eapply transf_to_idx_preserve_sem''; [ | | eauto | .. ]; eauto. }
+                2:{ apply locals_related_step; eauto. use_transf_to_idx_preserve_sem''. }
                 eapply Renv_le_tran.
                 2: apply consistent_with_global_Renv_put_local; auto.
                 apply aenv_le__consistent_with_global_Renv_le.
@@ -2823,23 +4369,24 @@ Section WithMap.
                 1:{ lazymatch goal with
                     H: aenv_le ?istr _ |- context[map.get ?istr ?y] => specialize (H y) end.
                     unfold aenv_le_at in *. rewrite_map_get_put_hyp. } } }
-        1:{ assert(collection_tag_leb (get_collection_tag istr tbl) LikeBag = true).
-            { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-            lazymatch goal with H: tag_of _ _ _ _ |- _ => eapply transf_to_idx_preserve_sem'', consistent_LikeList_eq in H end.
+        1:{ lazymatch goal with H: tag_of _ _ _ _ |- _ => eapply transf_to_idx_preserve_sem'' in H end.
             10-13: eauto. all: eauto.
-            1: rewrite <- H18. apply_type_sound2 e. invert_type_of_value.
-            case_match; use_transf_to_idx_preserve_sem'_IH. 7, 20: eauto. all: auto. }
-        1:{ assert(collection_tag_leb (get_collection_tag istr tbl) LikeBag = true).
-            { eauto using aenv_le__istr_inv, aenv_le__collection_tag_leb, collection_tag_leb_tran. }
-            lazymatch goal with
+            1: rewrite consistent_LikeList_eq in *; repeat rewrite_r_to_l;
+            apply_type_sound2 e; invert_type_of_value;
+            case_match; use_transf_to_idx_preserve_sem'_IH; eauto.
+            eapply collection_tag_leb_tran;
+              eauto using aenv_le__collection_tag_leb, aenv_le__istr_inv. }
+        1:{ lazymatch goal with
               H: tag_of _ _ _ _ |- _ =>
                 let H' := fresh in
                 eapply transf_to_idx_preserve_sem'' in H as H' end.
-            1: apply consistent_LikeList_eq in H15.
+            1: rewrite consistent_LikeList_eq in H14.
             10-13: eauto. all: eauto.
-            rewrite <- H15. apply_type_sound2 e. invert_type_of_value.
+            2: eapply collection_tag_leb_tran;
+            eauto using aenv_le__collection_tag_leb, aenv_le__istr_inv.
+            rewrite <- H14. apply_type_sound2 e. invert_type_of_value.
             eapply locals_related__Renv_le; eauto using aenv_le__consistent_with_global_Renv_le.
-            lazymatch goal with H: VList _ = _, H1: consistent LikeList _ _ |- _ => clear H H1 end.
+            lazymatch goal with H: VList _ = _, H1: interp_expr _ _ _ = interp_expr _ _ _ |- _ => clear H H1 end.
             destruct l; simpl.
             1: eapply locals_related__Renv_le; eauto using aenv_le__consistent_with_global_Renv_le.
             eapply locals_related__Renv_le in H12; [ | apply aenv_le__consistent_with_global_Renv_le; eauto ].
@@ -2859,17 +4406,17 @@ Section WithMap.
                 1:{ use_transf_to_idx_preserve_sem'_IH; [ | | | | | eauto | .. ]; eauto with fiat2_hints.
                     1: apply_incl_lemmas.
                     rewrite consistent_Renv_put. apply locals_related_step; auto using consistent_refl. } } }
-      Admitted.
+      Qed.
 
       Lemma consistent_tenv_LikeList : forall tbl Gstore store store' x t,
-          locals_related (consistent_with_global_Renv tbl (map.update (make_LikeList_aenv Gstore) tbl None)) store store' ->
+          locals_related (consistent_with_global_Renv tbl (map.put (make_LikeList_aenv Gstore) tbl LikeSet)) store store' ->
           x <> tbl -> map.get Gstore x = Some t -> map.get store x = map.get store' x.
       Proof.
         unfold locals_related, consistent_with_global_Renv; intros.
         specialize (H x). unfold lifted_related in *.
         repeat destruct_match_hyp; intuition auto; try congruence.
-        all: rewrite_map_get_put_hyp; rewrite consistent_Renv_sound in *.
-        all: rewrite Properties.map.get_update_diff in *; auto.
+        all: rewrite_map_get_put_hyp; rewrite consistent_Renv_sound in *;
+        rewrite_map_get_put_hyp.
         all: erewrite make_LikeList_aenv_sound in *; eauto.
         1: do_injection.
         all: congruence.
@@ -2891,11 +4438,18 @@ Section WithMap.
             repeat case_match; auto using consistent_refl. }
       Qed.
 
+      Lemma make_LikeList_aenv__domain_incl : forall Gstore,
+          domain_incl Gstore (make_LikeList_aenv Gstore).
+      Proof.
+        unfold domain_incl; intros. case_match; auto.
+        erewrite make_LikeList_aenv_sound; eauto.
+      Qed.
+
       Lemma transf_to_idx_preserve_sem : forall tbl_ty tbl e c (Gstore Genv : tenv) free_vars,
           tenv_wf Gstore -> tenv_wf Genv ->
           type_of Gstore Genv e tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
-          can_transf_to_index tbl_ty (map.update (make_LikeList_aenv Gstore) tbl None) (CLetMut e tbl c) = true ->
+          can_transf_to_index to_from_con tbl_ty (make_LikeList_aenv Gstore) (CLetMut e tbl c) = true ->
           incl (get_free_vars Genv) free_vars ->
           forall (store env : locals),
             locals_wf Gstore store -> locals_wf Genv env ->
@@ -2904,26 +4458,22 @@ Section WithMap.
         simpl; intros. subst.
         rewrite Bool.andb_true_iff in *; intuition auto.
         unfold can_transf_to_index' in *. destruct_match_hyp.
-        apply stores_eq_excpet__update_eq.
-        intros. apply command_tag_req_sound in E.
+        apply stores_eq_except__update_eq.
+        intros. eapply command_tag_req_sound in E; eauto using domain_incl_step, make_LikeList_aenv__domain_incl.
         destruct (map.get Gstore x) eqn:E_x.
         1:{ symmetry. eapply consistent_tenv_LikeList; eauto.
             eapply transf_to_idx_preserve_sem' with (Gstore:=map.put Gstore tbl tbl_ty); eauto.
             all: try rewrite_map_get_put_goal; eauto with fiat2_hints.
             1: unfold get_collection_tag; repeat destruct_match_hyp; simpl; congruence.
-            1: apply locals_wf_step; auto; eapply type_sound; eauto.
             1:{ rewrite Properties.map.put_put_same. apply locals_wf_step; auto.
                 eapply type_sound. 1: apply to_idx_preserve_ty; auto.
                 1: eapply type_of__type_wf; [ | | eauto ]; auto.
                 3: eauto. all: auto. }
             1:{ eapply put_to_idx__consistent_with_global. 4: eauto. all: auto. }
-            1:{ apply locals_related_refl. intros; rewrite consistent_Renv_sound in *.
-                destruct_match_hyp; try congruence; do_injection.
-                unfold rel_refl; auto using consistent_refl. } }
+            1: apply locals_related_consistent_Renv_refl. }
         1:{ repeat erewrite command_preserve_untouched_store. 4: eauto.
             9: apply transf_to_idx_preserve_ty' with (Gstore:=map.put Gstore tbl tbl_ty); eauto.
             all: repeat rewrite_map_get_put_goal; eauto with fiat2_hints.
-            1:{ apply locals_wf_step; auto. apply_type_sound e. }
             1:{ apply tenv_wf_step; eauto with fiat2_hints. apply idx_ty_wf; eauto with fiat2_hints. }
             1:{ rewrite Properties.map.put_put_same.
                 apply locals_wf_step; auto. eapply type_sound. 1: apply to_idx_preserve_ty.
@@ -2931,20 +4481,23 @@ Section WithMap.
                 4: eauto. all: auto. } }
       Qed.
 
-    (*
-      Lemma well_tagged_sound : forall (Gstore Genv : tenv) c,
+      Print Assumptions transf_to_idx_preserve_sem.
+
+      Lemma transf_to_idx_preserve_sem2 : forall tbl_ty tbl e e' c c' (Gstore Genv : tenv) free_vars,
           tenv_wf Gstore -> tenv_wf Genv ->
-          well_typed Gstore Genv c ->
-          forall istr ienv inv istr_expect store store' env env',
+          type_of Gstore Genv e' tbl_ty ->
+          well_typed (map.put Gstore tbl tbl_ty) Genv c' ->
+          can_transf_to_index to_from_con tbl_ty (make_LikeList_aenv Gstore) (CLetMut e' tbl c') = true ->
+          incl (get_free_vars Genv) free_vars ->
+          forall (store env : locals),
             locals_wf Gstore store -> locals_wf Genv env ->
-            locals_wf Gstore store' -> locals_wf Genv env' ->
-            locals_related (consistent_Renv istr) store store' ->
-            locals_related (consistent_Renv ienv) env env' ->
-            well_tagged istr ienv inv c istr_expect ->
-            locals_related (consistent_Renv istr_expect) (interp_command store env c) (interp_command store' env' c).
+            interp_command store env (CLetMut e tbl c) = interp_command store env (CLetMut e' tbl c') ->
+            interp_command store env (CLetMut e tbl c) = interp_command store env (transf_to_idx free_vars (CLetMut e' tbl c')).
       Proof.
-        induction 3.
-     *)
+        intros. symmetry. rewrite H7. eapply transf_to_idx_preserve_sem.
+        3-8: eauto.
+        all: auto.
+      Qed.
     End WithRelMap.
 
     Lemma to_idx_satisfy_idx_wf : forall free_vars e Gstore Genv t store env,
@@ -2969,10 +4522,8 @@ Section WithMap.
       erewrite interp_expr_strengthen; [ eapply to_idx_wf | .. ].
       6: apply to_idx_ty.
       all: eauto using tenv_wf_empty, locals_wf_empty with fiat2_hints.
-      3: apply map_incl_empty.
-      3: simpl; apply map_incl_step; auto using string_dec, map_incl_empty.
-      2: apply locals_wf_step; [ apply locals_wf_empty | ].
-      all: eapply type_sound; eauto.
+      1: apply map_incl_empty.
+      1: simpl; apply map_incl_step; auto using string_dec, map_incl_empty.
     Qed.
 
     Definition holds_for_all_entries {A : Type} {m : map.map string A} (P : string -> A -> Prop) (G : m) :=
@@ -3095,6 +4646,19 @@ Section WithMap.
     Definition index_wf_with_globals globals (x : string) (v : value) :=
       Forall (fun tbl => x <> tbl \/ idx_wf v) globals.
 
+    Lemma holds_for_all_entries_singleton_put : forall tbl store v,
+        idx_wf v ->
+        holds_for_all_entries (index_wf_with_globals (tbl :: nil))
+          (map.put store tbl v).
+    Proof.
+      constructor; intuition auto.
+      lazymatch goal with
+            |- context[?x = ?y] =>
+              let E := fresh "E" in
+              destruct (String.eqb x y) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst;
+              intuition auto; right; rewrite_map_get_put_hyp
+      end. congruence.
+    Qed.
 
     Lemma CLetMut_Proper2 : forall Gstore Genv (store env : locals) tbl_ty e tbl f c,
         tenv_wf Gstore -> tenv_wf Genv ->
@@ -3157,8 +4721,6 @@ Section WithMap.
         IH: context[parameterized_wf _ _ _ (transf_to_idx' _ _ ?c)] |- context[?c] =>
           apply IH
       end.
-
-    Require Import Morphisms.
 
     Definition iff2 {A B} (P Q : A -> B -> Prop) :=
       forall a b, P a b <-> Q a b.
@@ -3286,5 +4848,17 @@ Section WithMap.
           apply_incl_lemmas. }
     Qed.
 
+    Lemma transf_to_idx'_index_wf2 : forall tbl tbl_ty c free_vars Gstore Gstore' Genv,
+          tenv_wf Gstore -> tenv_wf Genv ->
+          map.get Gstore tbl = Some tbl_ty ->
+          is_tbl_ty tbl_ty = true ->
+          well_typed Gstore Genv c ->
+          incl (get_free_vars Genv) free_vars ->
+          Gstore' = map.put Gstore tbl (idx_ty tbl_ty) ->
+          parameterized_wf Gstore' Genv
+            (index_wf_with_globals (tbl :: nil)) (transf_to_idx' free_vars tbl c).
+    Proof.
+      intros; subst; apply transf_to_idx'_index_wf; auto.
+    Qed.
   End LikeDictIndex.
 End WithMap.
