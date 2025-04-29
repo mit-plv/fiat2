@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TypeSound fiat2.Examples.
+Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.List.
@@ -145,7 +145,7 @@ Section WithWord.
       | EJoin e1 e2 x1 x2 p r => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x r) (option_append (cols x p) (option_append (cols x e1) (cols x e2)))
       | EProj e x1 r => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x r)
       end.
-    
+
     Theorem proj_into_join: forall (store env: locals) (Gstore Genv: tenv) (t1 t2 p r rp: expr) (x y xp: string),
        x <> y ->
        xp <> x ->
@@ -173,7 +173,7 @@ Section WithWord.
 
     Definition make_record (x: string) (cols: list string) : expr :=
       ERecord (map (fun k => (k, EAccess (EVar x) k)) cols).
-    
+
     (* says that for all columns, lists a and b have the same values
        = everything in a is also in b (incl l1 l2) and
          everything in columns is also in a (incl columns l1)*)
@@ -198,7 +198,7 @@ Section WithWord.
       - intros a HA. apply H. rewrite <- dedup_preserves_In. apply in_or_app. left. apply HA.
       - intros a HA. apply H. rewrite <- dedup_preserves_In. apply in_or_app. right. apply HA.
     Qed.
-        
+
     Lemma rel_step: forall (a a': value) (l columns: list string),
         incl l columns -> relation a a' columns -> relation a a' l.
       intros a a' l columns HC HR. unfold relation.
@@ -231,7 +231,7 @@ Section WithWord.
 
    Lemma subcols_dict: forall (x: string) (columns: list string) (e1 e2: expr) (l: list (expr * expr)),
          fold_right (fun (val: expr * expr) (acc: option (list string)) =>
-          (option_append (option_append (cols x (snd val)) (cols x (fst val))) acc))      
+          (option_append (option_append (cols x (snd val)) (cols x (fst val))) acc))
           (Some nil) l = Some columns ->
           In (e1, e2) l -> (exists cols1, cols x e1 = Some cols1 /\ incl cols1 columns)
                      /\ (exists cols2, cols x e2 = Some cols2 /\ incl cols2 columns).
@@ -254,11 +254,11 @@ Section WithWord.
           destruct (cols x e0) eqn:C1; try congruence. destruct (cols x e) eqn:C2; try congruence. destruct l2; try congruence.
           injection H as H. apply dedup_incl in H. destruct H. apply IHl with (columns:=l2) in H0; try reflexivity. destruct H0. split.
           * destruct H0. destruct H0. exists x0. split; try assumption. apply incl_tran with (m:=l2); assumption.
-          * destruct H2. destruct H2. exists x0. split; try assumption. apply incl_tran with (m:=l2); assumption. 
+          * destruct H2. destruct H2. exists x0. split; try assumption. apply incl_tran with (m:=l2); assumption.
    Qed.
 
    Lemma In_map_fst: forall A B (a:A) (b:B) l, In (a,b) l -> In a (map fst l).
-     induction l; intuition. simpl. inversion H; auto. left; subst; reflexivity.   
+     induction l; intuition. simpl. inversion H; auto. left; subst; reflexivity.
    Qed.
 
    Lemma Forall2_Forall :
@@ -269,7 +269,7 @@ Section WithWord.
 
    Ltac dcols e x :=
      destruct (cols x e) eqn:?; try congruence.
- 
+
    (* TODO: use ltacs to condense this proof and other proofs below *)
    Lemma cols_in_record: forall (Gstore Genv: tenv)(e: expr)(t: type)(x: string)(f1: list (string*type))(ecols: list string),
        type_of Gstore Genv e t ->
@@ -385,13 +385,13 @@ Section WithWord.
     Qed.
 
     Ltac destruct_match_goal := lazymatch goal with |-context [match ?x with _ => _ end] => destruct x end.
-                         
+
     Lemma rel_lemma: forall (store: locals) (x: string) (a a': value) (e: expr) (columns: list string) tl tl',
       forall (env: locals),
       type_of_value a (TRecord tl) ->
-      type_of_value a' (TRecord tl') ->  
+      type_of_value a' (TRecord tl') ->
       cols x e = Some columns ->
-      relation a a' columns -> 
+      relation a a' columns ->
       interp_expr store (map.put env x a) e
       = interp_expr store (map.put env x a') e.
     Proof.
@@ -424,7 +424,7 @@ Section WithWord.
                        --- unfold record_proj in H2. auto.
               -- rewrite S1. rewrite S2. reflexivity.
           + unfold get_local. rewrite !map.get_put_diff; try assumption. reflexivity.
-        }        
+        }
       - intros columns env HC HR. simpl. simpl in HC. destruct (string_dec x0 x).
         + congruence.
         + unfold get_local. repeat (rewrite map.get_put_diff; try assumption). reflexivity.
@@ -500,7 +500,7 @@ Section WithWord.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
           * destruct_match_goal; try reflexivity. subst. destruct m.
-            -- rewrite !Properties.map.put_put_same. reflexivity. 
+            -- rewrite !Properties.map.put_put_same. reflexivity.
             -- erewrite IHe2; eauto. eapply rel_step; eauto.
           * eapply rel_step; eauto.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. destruct (cols x e3); try congruence.
@@ -597,7 +597,7 @@ Section WithWord.
       - rewrite String.eqb_eq in XS. contradiction.
       - unfold record_proj. simpl. rewrite XS. reflexivity.
     Qed.
- 
+
     Lemma map_record_proj_skip: forall (s : string) (v : value) (l1 : list (string * value)) (l2 : list string),
        (forall x0, In x0 l2 -> x0 <> s) ->
        map (fun x0 => (x0, record_proj x0 ((s, v) :: l1))) l2 = map (fun x0 => (x0, record_proj x0 l1)) l2.
@@ -643,7 +643,7 @@ Section WithWord.
     Lemma unify_Perm_NoDup_fst: forall (l2'' l2': list (string * type)),
       Permutation.Permutation l2'' l2' ->
       map fst l2' = map fst l2'' ->
-      NoDup (map fst l2'') -> 
+      NoDup (map fst l2'') ->
       l2' = l2''.
       induction l2''.
       - intros. apply Permutation.Permutation_nil. auto.
@@ -704,7 +704,7 @@ Section WithWord.
                   destruct (in_dec string_dec s l0).
                   ** clear IHForall2 H6. apply record_proj_sound with (l:=l)(tl:=l'); auto.
                      --- apply Forall2_split in H3. destruct H3. apply Forall2_fst_eq in H1. rewrite H1. auto.
-                     --- apply map_snd_a0. auto. 
+                     --- apply map_snd_a0. auto.
                   ** assert (HL: incl l0 (map fst l')).
                      {1: unfold incl in *. intros. apply H2 in H1 as H9. destruct H9; try auto. subst. contradiction. }
                       apply IHForall2 in H; clear IHForall2; auto.
@@ -761,10 +761,10 @@ Section WithWord.
            + apply StronglySorted_record_sort.
            + apply StronglySorted_record_sort.
     Qed.
-  
+
     Theorem proj_pushdown_left: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r: expr) (x y xp: string) (pcols rcols: list string) (f1 f2: list (string * type)) (t: type),
       tenv_wf Gstore -> tenv_wf Genv ->
-      locals_wf Gstore store -> locals_wf Genv env ->  
+      locals_wf Gstore store -> locals_wf Genv env ->
       type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) p TBool ->
       type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) r t ->
       type_of Gstore Genv tb1 (TList (TRecord f1)) ->
@@ -885,7 +885,7 @@ Section WithWord.
 
     (* TODO: finish proofs below *)
     Theorem filter_into_join: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 pj rj pf: expr) (xj yj xf: string) (t tx ty tj: type),
-      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj TBool ->  
+      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj TBool ->
       tenv_wf Gstore -> tenv_wf (map.put (map.put Genv xj tx) yj ty) ->
       locals_wf Gstore store -> locals_wf Genv env ->
       let pnew := EBinop OAnd pj (ELet rj xf pf) in
@@ -910,13 +910,13 @@ Section WithWord.
           * admit.
        + admit.
     Admitted.
- 
+
     Lemma typeof_to_typeofvalue : forall (store env: locals) (Gstore Genv: tenv) (e: expr) (t: type),
       type_of Gstore Genv e t -> type_of_value (interp_expr store env e) t.
     Admitted.
 
     Theorem filter_into_join_updated : forall (store env: locals) (Gstore Genv: tenv) (db1 db2 pj rj pf: expr) (xj yj xf: string) (t tx ty: type),
-      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj (TList t) ->  
+      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj (TList t) ->
       tenv_wf Gstore -> tenv_wf (map.put (map.put Genv xj tx) yj ty) ->
       locals_wf Gstore store -> locals_wf Genv env ->
       let pnew := EBinop OAnd pj (ELet rj xf pf) in
@@ -960,7 +960,7 @@ Section WithWord.
       - simpl. rewrite Bool.andb_false_r. admit.
       (*destruct (interp_expr store (map.put (map.put env xj a) yj b) rj) eqn:H4.*)  Admitted. (*inversion H1. simpl.
       destruct (interp_expr store (map.put . rewrite Bool.andb_false_r. simpl. reflexivity.
-    Qed.*)  
+    Qed.*)
 
     Lemma interp_invariant : forall (store env: locals) (Gstore Genv: tenv) (db: expr) (k: string) (v: value) (t: type),
       type_of Gstore Genv db t -> map.get Genv k = None ->

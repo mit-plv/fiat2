@@ -1,63 +1,13 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.Examples fiat2.TypeSystem fiat2.TypeSound fiat2.CollectionTag fiat2.IndexInterface.
-Require Import List String ZArith Permutation.
-Import ListNotations.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
+  fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute fiat2.IndexTransf fiat2.CollectionTag.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Import ResultMonadNotations.
-Require Import Sorted.
-Require Import Morphisms.
-Require Import Ltac2.Ltac2 Ltac2.Control Ltac2.Constr.
+Require Import List String ZArith Permutation Sorted.
+Import ListNotations.
 
-Set Default Proof Mode "Classic".
-
-Open Scope string_scope.
-
-Create HintDb fiat2_hints.
-
-Ltac invert_type_wf :=
-  lazymatch goal with
-  | H: type_wf (TList ?t) |- _ => inversion H; clear H; subst
-  | H: type_wf (TOption ?t) |- _ => inversion H; clear H; subst
-  | H: type_wf (TDict ?t _) |- _ => inversion H; clear H; subst
-  | H: type_wf (TDict _ ?t) |- _ => inversion H; clear H; subst
-  | H: type_wf (TRecord ?tl) |- _ => inversion H; clear H; subst
-  end.
-
-Lemma invert_TList_wf: forall t, type_wf (TList t) -> type_wf t.
-Proof.
-  intros. invert_type_wf; auto.
-Qed.
-
-Lemma invert_TOption_wf: forall t, type_wf (TOption t) -> type_wf t.
-Proof.
-  intros. invert_type_wf; auto.
-Qed.
-
-Lemma invert_TDict_wf_l: forall kt vt, type_wf (TDict kt vt) -> type_wf kt.
-Proof.
-  intros. invert_type_wf; auto.
-Qed.
-
-Lemma invert_TDict_wf_r: forall kt vt, type_wf (TDict kt vt) -> type_wf vt.
-Proof.
-  intros. invert_type_wf; auto.
-Qed.
-
-Lemma invert_TRecord_wf: forall tl, type_wf (TRecord tl) -> Forall type_wf (List.map snd tl).
-Proof.
-  intros. invert_type_wf; auto.
-Qed.
-
-Hint Resolve invert_TList_wf : fiat2_hints.
-Hint Resolve invert_TOption_wf : fiat2_hints.
-Hint Resolve invert_TDict_wf_l : fiat2_hints.
-Hint Resolve invert_TDict_wf_r : fiat2_hints.
-Hint Resolve invert_TRecord_wf : fiat2_hints.
-Hint Resolve type_of__type_wf : fiat2_hints.
-Hint Resolve tenv_wf_step : fiat2_hints.
-Hint Resolve locals_wf_step : fiat2_hints.
 Hint Resolve tenv_wf_empty : fiat2_hints.
 Hint Resolve locals_wf_empty : fiat2_hints.
-Hint Resolve type_sound : fiat2_hints.
+
+Open Scope string_scope.
 
 Definition epair (e1 e2 : expr) := ERecord [("0", e1); ("1", e2)].
 Definition ofst (e : expr) : expr := EAccess e "0".
@@ -66,1012 +16,6 @@ Definition enil := EAtom (ANil None).
 Definition econs (e1 e2 : expr) := EBinop OCons e1 e2.
 Definition cons_to_fst (e1 e2 : expr) :=
   epair (econs e1 (ofst e2)) (osnd e2).
-
-Fixpoint is_NoDup {A} (l : list A) : Prop :=
-  match l with
-  | nil => True
-  | x :: l => ~ In x l /\ is_NoDup l
-  end.
-
-Ltac rewrite_map_get_put_hyp :=
-  multimatch goal with
-  | H: context[map.get (map.put _ ?x _) ?x] |- _ =>
-      rewrite map.get_put_same in H
-  | H: context[map.get (map.put _ _ _) _] |- _ =>
-      rewrite map.get_put_diff in H; try now (simpl in *; intuition)
-  end.
-
-Ltac rewrite_map_get_put_goal :=
-  multimatch goal with
-  | |- context[map.get (map.put _ ?x _) ?x] =>
-      rewrite map.get_put_same
-  | |- context[map.get (map.put _ _ _) _] =>
-      rewrite map.get_put_diff; try now (simpl in *; intuition)
-  end.
-
-Ltac rewrite_l_to_r :=
-  lazymatch goal with
-  | H: ?x = _ |- context[?x] => rewrite H
-  | H: ?x = _, H': context[?x] |- _ => rewrite H in H'
-  end.
-
-Ltac rewrite_r_to_l :=
-  lazymatch goal with
-  | H: _ = ?x, H': context[?x] |- _ => rewrite <- H in H'
-  | H: _ = ?x|- context[?x] => rewrite <- H
-  end.
-
-Ltac apply_Forall_In :=
-  lazymatch goal with
-  | H1: Forall _ ?l, H2: In _ ?l |- _ => eapply List.Forall_In in H1; eauto
-  end.
-
-Ltac destruct_match_hyp :=
-  lazymatch goal with
-    H: context[match ?x with _ => _ end] |- _ =>
-      let E := fresh "E" in
-      destruct x eqn:E end.
-
-Ltac destruct_exists :=
-  lazymatch goal with
-    H: exists _, _ |- _ => destruct H end.
-
-Ltac destruct_and :=
-  lazymatch goal with
-    H: _ /\ _ |- _ => destruct H end.
-
-Ltac invert_type_of_value :=
-  lazymatch goal with
-  | H: type_of_value (_ _) _ |- _ =>
-      inversion H; subst
-  | H: type_of_value ?v (_ _) |- context[?v] =>
-      inversion H; subst
-  end.
-
-Ltac invert_type_of_value_clear :=
-  lazymatch goal with
-  | H: type_of_value (_ _) _ |- _ =>
-      inversion H; subst; clear H
-  | H: type_of_value _ (_ _) |- _ =>
-      inversion H; subst; clear H
-  end.
-
-Ltac invert_type_of_the_value v :=
-  lazymatch goal with
-    H: type_of_value v _ |- _ =>
-      inversion H; subst
-  end.
-
-Ltac invert_well_typed :=
-  lazymatch goal with
-    H: well_typed _ _ _ |- _ => inversion H; subst; clear H end.
-
-Ltac invert_type_of :=
-  lazymatch goal with
-  | H: type_of _ _ (_ _) _ |- _ => inversion H; subst; clear H
-  | H: type_of_binop _ _ _ _ |- _ => inversion H; subst; clear H
-  end.
-
-Ltac invert_type_of_atom :=
-  lazymatch goal with
-    H: type_of_atom _ _ |- _ => inversion H; subst end.
-
-Ltac invert_Forall2 :=
-  lazymatch goal with
-  | H: Forall2 _ _ (_ :: _) |- _ => inversion H; subst; clear H
-  | H: Forall2 _ _ nil |- _ => inversion H; subst; clear H
-  | H: Forall2 _ _ _ |- _ => inversion H; subst; clear H
-  end.
-
-Ltac case_match' c :=
-  lazymatch c with
-  | context [match ?c' with _ => _ end] => case_match' c'
-  | _ =>
-      let E := fresh "E" in
-      destruct c eqn:E
-  end.
-
-Ltac case_match :=
-  match goal with
-  | |- context [ match ?e with
-                 | _ => _
-                 end ] => case_match' e
-  end.
-
-Ltac clear_refl := lazymatch goal with H: ?x = ?x |- _ => clear H end.
-
-Ltac iter_hyps tac :=
-  let iter := ltac2:(tac |- List.iter (fun (h, _ , t) =>
-                                         ltac1:(h t tac|- tac h t)
-                                                 (Ltac1.of_constr (Unsafe.make (Unsafe.Var h)))
-                                                 (Ltac1.of_constr t)
-                                                 tac)
-                              (hyps ())) in
-  iter tac.
-Ltac do_injection' h t :=
-  try lazymatch t with
-    | ?x _ = ?x _ => injection h; intros; subst
-    end.
-
-Ltac do_injection := iter_hyps do_injection'.
-
-Ltac invert_Forall :=
-  lazymatch goal with
-  | H: Forall _ (_ :: _) |- _ => inversion H; subst; clear H
-  end.
-
-Ltac invert_NoDup :=
-  lazymatch goal with H: NoDup (_ :: _) |- _ => inversion H; subst end.
-
-Ltac invert_SSorted :=
-  lazymatch goal with
-  | H: StronglySorted _ (_ :: _) |- _ => inversion H; subst
-  end.
-
-Ltac get_update_same_diff x y :=
-  let E := fresh "E" in
-  destruct (String.eqb x y) eqn:E;
-  [ rewrite eqb_eq in E; subst; repeat rewrite Properties.map.get_update_same
-  | rewrite eqb_neq in E; repeat rewrite Properties.map.get_update_diff ]; auto.
-
-Ltac get_put_same_diff x y :=
-  let E := fresh "E" in
-  destruct (String.eqb x y) eqn:E;
-  [ rewrite eqb_eq in E; subst; repeat rewrite map.get_put_same
-  | rewrite eqb_neq in E; repeat rewrite map.get_put_diff ]; auto.
-
-Ltac apply_type_sound e :=
-  lazymatch goal with
-  | H: type_of _ _ e _ |- _ =>
-      let H' := fresh "H'" in
-      eapply type_sound in H as H'; eauto; try inversion H'; subst; auto
-  end.
-
-Lemma In_access_record : forall A l attr, In attr (List.map fst l) -> exists (x : A), access_record l attr = Success x.
-Proof.
-  induction l; simpl; intros.
-  - intuition eauto.
-  - destruct a; simpl in *. destruct (eqb attr s) eqn:E.
-    + exists a. reflexivity.
-    + rewrite eqb_neq in *. intuition. congruence.
-Qed.
-
-Lemma get_attr_type_ty_wf : forall rt attr,
-    type_wf (TRecord rt) ->
-    type_wf (get_attr_type rt attr).
-Proof.
-  intros. unfold get_attr_type. destruct (access_record rt attr) eqn:E.
-  - apply access_record_sound in E. inversion H.
-    apply in_map with (f:=snd) in E; simpl in E. apply_Forall_In.
-  - constructor.
-Qed.
-
-
-Section fold_command.
-  Context (f : command -> command).
-  Context (g : expr -> expr).
-
-  Fixpoint fold_command (c : command) : command :=
-    f
-      match c with
-      | CSkip => CSkip
-      | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
-      | CLet e x c => CLet (fold_expr g e) x (fold_command c)
-      | CLetMut e x c => CLetMut (fold_expr g e) x (fold_command c)
-      | CAssign x e => CAssign x (fold_expr g e)
-      | CIf e c1 c2 => CIf (fold_expr g e) (fold_command c1) (fold_command c2)
-      | CForeach e x c => CForeach (fold_expr g e) x (fold_command c)
-      end.
-End fold_command.
-
-Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
-  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-  Context {locals : map.map string value} {locals_ok : map.ok locals}.
-
-  Lemma fold_command_id_preserve_ty : forall f c Gstore Genv,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      preserve_ty f ->
-      well_typed Gstore Genv c -> well_typed Gstore Genv (fold_command id f c).
-  Proof.
-    induction c; simpl; auto; intros.
-    all: invert_well_typed.
-    all: econstructor; eauto with fiat2_hints;
-      try apply fold_expr_preserve_ty; auto.
-  Qed.
-
-  Ltac use_fold_command_id_preserve_sem_IH Gstore' :=
-    lazymatch goal with
-      IH: context[interp_command _ _ ?c = _] |-
-        context[interp_command _ _ (fold_command id _ ?c)] =>
-        erewrite <- IH with (Gstore:=Gstore')
-    end.
-
-  Lemma fold_command_id_preserve_sem : forall f c (Gstore Genv : tenv) (store env : locals),
-      tenv_wf Gstore -> tenv_wf Genv ->
-      well_typed Gstore Genv c ->
-      locals_wf Gstore store -> locals_wf Genv env ->
-      preserve_ty f -> preserve_sem (locals := locals) f ->
-      interp_command store env c = interp_command store env (fold_command id f c).
-  Proof.
-    induction c; simpl; auto; intros.
-    all: invert_well_typed.
-    1:{ repeat use_fold_command_id_preserve_sem_IH Gstore; eauto.
-        eapply command_type_sound; eauto. }
-    1:{ use_fold_command_id_preserve_sem_IH Gstore.
-        4: eauto. all: eauto with fiat2_hints.
-        2:{ apply locals_wf_step; auto. eapply type_sound with (Gstore:=Gstore); eauto.
-            apply fold_expr_preserve_ty; auto. }
-        erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ use_fold_command_id_preserve_sem_IH (map.put Gstore x t).
-        all: eauto with fiat2_hints.
-        2:{ apply locals_wf_step; auto. eapply type_sound with (Gstore:=Gstore); eauto.
-            apply fold_expr_preserve_ty; auto. }
-        f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto.
-        repeat case_match; auto.
-        all: use_fold_command_id_preserve_sem_IH Gstore; eauto. }
-    1:{ erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto.
-        repeat case_match; auto.
-        erewrite <- fold_expr_preserve_sem with (Gstore:=Gstore) in *; eauto.
-        apply_type_sound e.
-        lazymatch goal with
-          E: ?x = VList _, E': VList _ = ?x, H: context[?x] |- _ =>
-            rewrite E in E'; do_injection; rewrite E in H end.
-        invert_type_of_value.
-        repeat lazymatch goal with H: context[VList] |- _ => clear H end.
-        generalize dependent store.
-        induction l; simpl in *; auto; intros. invert_Forall.
-        rewrite IHl; auto.
-        2: eapply command_type_sound; eauto with fiat2_hints.
-        f_equal. use_fold_command_id_preserve_sem_IH Gstore. 4: eauto.
-        all: eauto with fiat2_hints. }
-  Qed.
-
-  Definition preserve_ty Gstore f :=
-    forall e t (Genv : tenv),
-      tenv_wf Gstore -> tenv_wf Genv ->
-      type_of Gstore Genv e t -> type_of Gstore Genv (f e) t.
-
-  Definition preserve_sem Gstore store f :=
-    forall e t (Genv : tenv) (env : locals),
-      tenv_wf Gstore -> tenv_wf Genv ->
-      type_of Gstore Genv e t ->
-      locals_wf Gstore store -> locals_wf Genv env ->
-      interp_expr store env e = interp_expr store env (f e).
-
-  Ltac apply_type_of__type_wf :=
-    lazymatch goal with
-    | H: type_of _ _ _ ?t |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H: type_of _ _ _ (TList ?t) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict ?t _) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict _ ?t) |- type_wf ?t =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TRecord ?tl) |- context[?tl] =>
-        let H' := fresh "H'" in
-        apply type_of__type_wf in H as H'
-    end.
-
-  Ltac apply_fold_expr_preserve_ty_IH :=
-    lazymatch goal with
-    | IH: context[type_of _ _ (fold_expr _ ?e) _] |- type_of _ _ (fold_expr _ ?e) _ =>
-        apply IH; auto
-    end.
-
-  Lemma fold_expr_preserve_ty : forall Gstore f,
-      preserve_ty Gstore f -> preserve_ty Gstore (fold_expr f).
-  Proof.
-    unfold preserve_ty. intros * H * ? ? ?.
-    generalize dependent Genv; generalize dependent t. induction e using expr_IH;
-      intros; simpl; auto;
-      apply H; invert_type_of; subst; try econstructor; eauto.
-    all: try apply_fold_expr_preserve_ty_IH; repeat apply tenv_wf_step; auto;
-      try now (apply_type_of__type_wf; auto; try invert_type_wf; auto).
-    1: apply type_of__type_wf in H10; auto.
-    4: apply type_of__type_wf in H11; auto.
-    1: rewrite fst_map_fst; auto.
-    1:{ lazymatch goal with H1: NoDup _, H2: Permutation _ _,
-            H3: List.map fst _ = _ |- _ =>
-                              clear H1 H2 H3 end.
-        generalize dependent tl. induction l; auto. intros.
-        destruct tl; invert_Forall2; try discriminate. simpl in *.
-        constructor.
-        2: apply IHl; invert_Forall; intuition auto.
-        invert_Forall. destruct a; simpl in *. apply H5; auto. }
-    1:{ induction l; simpl; auto. repeat invert_Forall. constructor.
-        2:{ apply IHl; intuition auto. }
-        destruct a; simpl in *. intuition auto. }
-  Qed.
-
-  Ltac apply_fold_expr_preserve_sem_IH :=
-    multimatch goal with
-    | IH: context[interp_expr _ _ (fold_expr _ ?e)],
-        _: type_of _ ?G ?e _ |- context[interp_expr _ _ (fold_expr _ ?e)] =>
-        erewrite <- IH with (Genv:=G); eauto
-    end.
-
-  Ltac trans_eq :=
-    lazymatch goal with
-      H: interp_expr _ _ ?e = _, H': _ = interp_expr _ _ ?e |- _ =>
-        rewrite H in H'; injection H'; intros; subst end.
-
-  Ltac type_of_list_entry :=
-    lazymatch goal with
-    | H1: type_of _ _ ?e _, _: interp_expr _ _ ?e = VList ?l,
-          _: In ?x ?l |- type_of_value ?x _ =>
-        eapply type_sound in H1; eauto; inversion H1; subst;
-        trans_eq;
-        apply_Forall_In end.
-
-  Lemma fold_expr_preserve_sem : forall Gstore store f,
-      preserve_ty Gstore f ->
-      preserve_sem Gstore store f -> preserve_sem Gstore store (fold_expr f).
-  Proof.
-    unfold preserve_sem; intros * ? H_sem. induction e using expr_IH; simpl; auto; intros.
-    1-3: erewrite <- H_sem; eauto.
-    all: invert_type_of.
-    all: try now (erewrite <- H_sem; eauto;
-                  [ simpl; repeat apply_fold_expr_preserve_sem_IH
-                  | econstructor; eauto; apply fold_expr_preserve_ty ];
-                  eauto with fiat2_hints).
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
-        f_equal. apply In_flat_map_ext; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        apply locals_wf_step; auto. type_of_list_entry. }
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
-        apply_fold_expr_preserve_sem_IH.
-        eapply In_fold_right_ext with (P:=fun a => type_of_value a t); intros.
-        1: eapply type_sound; eauto.
-        split;
-          [ apply_fold_expr_preserve_sem_IH | eapply type_sound; eauto ];
-          repeat apply tenv_wf_step; repeat apply locals_wf_step;
-          eauto with fiat2_hints; type_of_list_entry. }
-    1:{ erewrite <- H_sem with (t:=TRecord tl'); eauto.
-        2:{ econstructor; eauto.
-            1: rewrite fst_map_fst; auto.
-            1: lazymatch goal with
-               | H1: Permutation _ _, H2: NoDup _, H3: List.map fst _ = _ |- _ =>
-                   clear H1 H2 H3
-               end. generalize dependent tl. induction l; simpl; auto; intros.
-            destruct tl; simpl in *; invert_Forall2.
-            constructor. 2: apply IHl; invert_Forall; intuition.
-            case_match; simpl in *.
-            apply fold_expr_preserve_ty; auto. }
-        simpl. do 2 f_equal.
-        lazymatch goal with
-        | H1: Permutation _ _, H2: NoDup _, H3: List.map fst _ = _ |- _ =>
-            clear H1 H2 H3
-        end. generalize dependent tl; induction l; simpl; auto; intros.
-        destruct tl; invert_Forall2.
-        invert_Forall; case_match; simpl in *.
-        f_equal. 2: eapply IHl; eauto.
-        f_equal; eauto. }
-    1:{ erewrite <- H_sem; eauto.
-        2:{ econstructor.
-            3:{ induction l; simpl; auto.
-                repeat invert_Forall.
-                case_match; constructor; simpl in *.
-                2: apply IHl; intuition.
-                intuition; apply fold_expr_preserve_ty; eauto. }
-            all: auto. }
-        simpl. do 3 f_equal. induction l; simpl; auto.
-        repeat invert_Forall; case_match; simpl in *.
-        f_equal. 2: apply IHl; intuition.
-        f_equal; intuition; apply_fold_expr_preserve_sem_IH. }
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eapply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
-        all: apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        apply locals_wf_step; eauto. eapply type_sound in H10; eauto. inversion H10; subst.
-        all: trans_eq; congruence. }
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
-        apply_fold_expr_preserve_sem_IH.
-        eapply In_fold_right_ext with (P:=fun a => type_of_value a t); intros.
-        1: eapply type_sound; eauto.
-        split;
-          [ apply_fold_expr_preserve_sem_IH | eapply type_sound; eauto ];
-          repeat apply tenv_wf_step; repeat apply locals_wf_step;
-          eauto with fiat2_hints.
-        all: eapply type_sound in H12; eauto; inversion H12; subst.
-        all: trans_eq; apply_Forall_In; intuition. }
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        f_equal. apply In_filter_ext; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        apply locals_wf_step; auto. type_of_list_entry. }
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
-        f_equal. apply In_flat_map_ext; intros. erewrite In_filter_ext.
-        1: apply map_ext_in; intros.
-        2: simpl; intros.
-        all: apply_fold_expr_preserve_sem_IH;
-          [ repeat apply tenv_wf_step | repeat apply locals_wf_step ]; eauto with fiat2_hints.
-        all: try type_of_list_entry.
-        all: lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition end.
-        type_of_list_entry. }
-    1:{ erewrite <- H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        f_equal. apply map_ext_in; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        repeat apply locals_wf_step; auto; type_of_list_entry. }
-  Qed.
-
-  Definition transf_sound (f : tenv -> tenv -> command -> command) :=
-    forall (Gstore Genv : tenv) c,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      well_typed Gstore Genv c ->
-      well_typed Gstore Genv (f Gstore Genv c) /\
-        forall (store env : locals),
-          locals_wf Gstore store -> locals_wf Genv env ->
-          interp_command store env (f Gstore Genv c) = interp_command store env c.
-
-  Lemma transf_sound__preserve_sem : forall f,
-      transf_sound f ->
-      forall (Gstore Genv : tenv) (c : command),
-        tenv_wf Gstore -> tenv_wf Genv ->
-        well_typed Gstore Genv c ->
-        forall (store env : locals),
-          locals_wf Gstore store -> locals_wf Genv env ->
-          interp_command store env (f Gstore Genv c) = interp_command store env c.
-  Proof.
-    unfold transf_sound; intuition idtac.
-    apply H; auto.
-  Qed.
-
-  Definition expr_transf_sound (f : expr -> expr) :=
-    forall Gstore Genv e t,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      type_of Gstore Genv e t ->
-      type_of Gstore Genv (f e) t /\
-        forall (store env : locals),
-          locals_wf Gstore store -> locals_wf Genv env ->
-          interp_expr store env (f e) = interp_expr store env e.
-
-  Ltac resolve_locals_wf :=
-    repeat apply locals_wf_step;
-    try multimatch goal with H: locals_wf _ _ |- _ => apply H end.
-
-  Lemma to_filter_head_sound : expr_transf_sound to_filter_head.
-  Proof.
-    unfold expr_transf_sound; split; intros;
-      auto using to_filter_head_preserve_ty.
-    rewrite <- to_filter_head_preserve_sem; resolve_locals_wf; eauto.
-  Qed.
-
-  Lemma fold_command_id_sound : forall f,
-      expr_transf_sound f ->
-      transf_sound (fun _ _ => fold_command id f).
-  Proof.
-    unfold expr_transf_sound, transf_sound; intros; split.
-    1:{ apply fold_command_id_preserve_ty; auto.
-        unfold Examples.preserve_ty; intros.
-        lazymatch goal with
-          H: context[_ -> _ /\ _], H': type_of _ _ _ _ |- _ =>
-            apply H in H' end; intuition idtac. }
-    1:{ intros. erewrite <- fold_command_id_preserve_sem;
-        resolve_locals_wf; eauto;
-        unfold Examples.preserve_ty, Examples.preserve_sem; intros;
-        lazymatch goal with
-              H: context[_ -> _ /\ _], H': type_of _ _ _ _ |- _ =>
-                apply H in H' end; intuition auto.
-        rewrite H11; auto. }
-  Qed.
-
-  Lemma expr_transf_sound_compose : forall f g,
-      expr_transf_sound f -> expr_transf_sound g ->
-      expr_transf_sound (Basics.compose f g).
-  Proof.
-    unfold expr_transf_sound; intros * H_f H_g; intros.
-    apply H_g in H1; auto; destruct H1.
-    apply H_f in H1; intuition idtac.
-    rewrite H4, H2; auto.
-  Qed.
-
-  Lemma transf_sound_compose : forall f g,
-      transf_sound f -> transf_sound g ->
-      transf_sound (fun Gstore Genv => Basics.compose (f Gstore Genv) (g Gstore Genv)).
-  Proof.
-    unfold transf_sound; intros * H_f H_g; intros.
-    apply H_g in H1; auto; destruct H1.
-    apply H_f in H1; intuition idtac.
-    rewrite H4, H2; auto.
-  Qed.
-
-  Context {to_from_con from_to_con : collection_tag}.
-  Context {idx : IndexInterface.index} {idx_wf : value -> Prop} {idx_ok : ok to_from_con from_to_con idx idx_wf consistent}.
-  Notation index_wf_with_globals := (index_wf_with_globals (idx_wf:=idx_wf)).
-
-  Section WithGlobals.
-    Context (globals : list string).
-    Context (global_types : list type) (global_types_ok : List.length globals = List.length global_types).
-
-    Section fold_command_with_globals.
-      Context (f : expr -> expr).
-
-      Fixpoint fold_command_with_globals (c : command) : command :=
-        match c with
-        | CSkip => CSkip
-        | CSeq c1 c2 => CSeq (fold_command_with_globals c1) (fold_command_with_globals c2)
-        | CLet e x c => CLet (fold_expr f e) x (fold_command_with_globals c)
-        | CLetMut e x c =>
-            (* Avoid applying the transformation if the global variable is shadowed *)
-            CLetMut (fold_expr f e) x
-              (if inb String.eqb x globals then c else fold_command_with_globals c)
-        | CAssign x e => CAssign x (fold_expr f e)
-        | CIf e c1 c2 =>
-            CIf (fold_expr f e) (fold_command_with_globals c1) (fold_command_with_globals c2)
-        | CForeach e x c =>
-            CForeach (fold_expr f e) x (fold_command_with_globals c)
-        end.
-    End fold_command_with_globals.
-
-    Definition tenv_wf_with_globals Gstore :=
-      Forall2 (fun x t => map.get Gstore x = Some t) globals global_types.
-
-    Lemma tenv_wf_with_globals_step : forall Gstore x t,
-        tenv_wf_with_globals Gstore ->
-        ~ In x globals ->
-        tenv_wf_with_globals (map.put Gstore x t).
-    Proof.
-      intros * H ?. unfold tenv_wf_with_globals in *.
-      induction H; auto. constructor.
-      2: apply IHForall2; intuition.
-      rewrite map.get_put_diff; intuition.
-      lazymatch goal with H: _ -> False |- _ => apply H end.
-      constructor; auto.
-    Qed.
-
-    Lemma not_In__tenv_wf_with_globals : forall x t Gstore,
-        ~ In x globals -> tenv_wf_with_globals Gstore -> tenv_wf_with_globals (map.put Gstore x t).
-    Proof.
-      intros * H_not_in H. unfold tenv_wf_with_globals in *.
-      induction H; auto.
-      constructor. 2: apply IHForall2; intuition.
-      rewrite map.get_put_diff; intuition.
-      apply H_not_in; subst; intuition.
-    Qed.
-
-    Ltac apply_fold_command_with_globals_preserve_ty_IH :=
-      lazymatch goal with
-      | IH: context[fold_command_with_globals _ ?c] |- context[?c] =>
-          apply IH
-      end.
-
-    Lemma fold_command_with_globals_preserve_ty : forall f,
-        (forall Gstore, tenv_wf_with_globals Gstore -> preserve_ty Gstore f) ->
-        forall c Gstore Genv,
-          tenv_wf Gstore -> tenv_wf Genv -> tenv_wf_with_globals Gstore ->
-          well_typed Gstore Genv c -> well_typed Gstore Genv (fold_command_with_globals f c).
-    Proof.
-      induction c; simpl; auto; intros.
-      all: lazymatch goal with
-             H: well_typed _ _ _ |- _ => inversion H; subst
-           end.
-      1: constructor; apply_fold_command_with_globals_preserve_ty_IH; auto.
-      all: econstructor; try now (apply fold_expr_preserve_ty; eauto).
-      all: try apply_fold_command_with_globals_preserve_ty_IH; auto.
-      1,3: apply tenv_wf_step; auto.
-      1: eapply type_of__type_wf with (Gstore:=Gstore); eauto.
-      1: lazymatch goal with
-           H: type_of _ _ _ (TList ?t) |- type_wf ?t =>
-             apply type_of__type_wf in H; auto;
-             apply invert_TList_wf in H; auto
-         end.
-      1:{ case_match; auto.
-          apply_fold_command_with_globals_preserve_ty_IH; auto.
-          1: apply tenv_wf_step; auto;
-          eapply type_of__type_wf with (Gstore:=Gstore); eauto.
-          apply tenv_wf_with_globals_step; auto.
-          rewrite inb_false_iff in *. auto. }
-    Qed.
-
-    Ltac invert_parameterized_wf :=
-      lazymatch goal with H: parameterized_wf _ _ _ _ |- _ => inversion H; subst end.
-
-    Ltac apply_preserve_parameterized_wf_IH :=
-      lazymatch goal with
-        IH: context[fold_command_with_globals _ ?c] |- context[?c] =>
-          apply IH
-      end.
-
-    Ltac apply_fold_command_with_globals_preserve_sem_IH :=
-      lazymatch goal with
-      | IH: context[interp_command _ _ (fold_command_with_globals _ ?c)],
-          H: parameterized_wf ?Gstore' ?Genv' _ ?c |-
-          context[interp_command _ _ (fold_command_with_globals _ ?c)] =>
-          erewrite <- IH with (Gstore:=Gstore') (Genv:=Genv'); eauto
-      end.
-
-    Lemma not_In__index_wf_with_globals : forall x globals (store : locals) v,
-        ~In x globals ->
-        holds_for_all_entries (index_wf_with_globals globals) store ->
-        holds_for_all_entries (index_wf_with_globals globals) (map.put store x v).
-    Proof.
-      unfold holds_for_all_entries; intros.
-      unfold index_wf_with_globals in *.
-      destruct (String.eqb k x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp.
-      rewrite Forall_forall; intros. left; intro contra; subst; auto.
-    Qed.
-
-    Lemma fold_command_with_globals_preserve_sem : forall f c,
-        (forall (Gstore : tenv), tenv_wf_with_globals Gstore ->
-                                 preserve_ty Gstore f) ->
-        (forall (Gstore : tenv) (store : locals),
-            tenv_wf_with_globals Gstore ->
-            holds_for_all_entries (index_wf_with_globals globals) store ->
-            preserve_sem Gstore store f) ->
-        forall (Gstore Genv : tenv) (store env : locals),
-          tenv_wf Gstore -> tenv_wf Genv -> tenv_wf_with_globals Gstore ->
-          parameterized_wf Gstore Genv (index_wf_with_globals globals) c ->
-          locals_wf Gstore store -> locals_wf Genv env ->
-          holds_for_all_entries (index_wf_with_globals globals) store ->
-          interp_command store env c = interp_command store env (fold_command_with_globals f c).
-    Proof.
-      induction c; simpl; intros; auto; invert_parameterized_wf.
-      3:{ erewrite <- fold_expr_preserve_sem; eauto; case_match; auto.
-          rewrite inb_false_iff in *.
-          erewrite <- IHc; auto.
-          4:{ eapply parameterized_wf_Proper.
-              5: eauto. all: eauto.
-              apply iff2_sym. apply rm_not_in_globals; auto. }
-          all: eauto with fiat2_hints.
-          1: apply not_In__tenv_wf_with_globals; auto.
-          unfold holds_for_all_entries.
-          1: apply not_In__index_wf_with_globals; auto. }
-      all: try erewrite <- fold_expr_preserve_sem; eauto;
-        repeat case_match; auto;
-        repeat apply_fold_command_with_globals_preserve_sem_IH; eauto with fiat2_hints.
-      1:{ eapply command_type_sound; eauto.
-          eapply parameterized_wf__well_typed; eauto. }
-      1:{ eapply parameterized_wf__preserve_P with (Gstore:=Gstore); eauto. }
-      1:{ apply_type_sound e. rewrite E in *.
-          lazymatch goal with H: type_of_value _ _ |- _ => inversion H; subst end.
-          lazymatch goal with
-            H1: VList _ = VList _, H2: type_of_value _ _, H3: interp_expr _ _ _ = VList _ |- _ =>
-              clear H1 H2 H3
-          end.
-          generalize dependent store. induction l; simpl; auto; intros.
-          invert_Forall. eapply IHc in H12 as IHc'; eauto with fiat2_hints.
-          rewrite <- IHc'. apply IHl; auto.
-          2: eapply parameterized_wf__preserve_P with (Gstore:=Gstore) (Genv:=map.put Genv x t);
-          eauto with fiat2_hints.
-          apply command_type_sound with (Genv:=map.put Genv x t); auto.
-          2:{ apply tenv_wf_step; auto. apply_type_of__type_wf; auto. invert_type_wf; auto. }
-          2: eapply locals_wf_step; eauto.
-          eapply parameterized_wf__well_typed; eauto. }
-    Qed.
-
-    Lemma fold_command_with_globals_preserve_index_wf : forall f,
-        (forall (Gstore : tenv), tenv_wf_with_globals Gstore ->
-                                 preserve_ty Gstore f) ->
-        (forall (Gstore : tenv) (store : locals),
-            tenv_wf_with_globals Gstore ->
-            holds_for_all_entries (index_wf_with_globals globals) store ->
-            preserve_sem Gstore store f) ->
-        forall c (Gstore Genv : tenv),
-          tenv_wf Gstore -> tenv_wf Genv ->
-          tenv_wf_with_globals Gstore ->
-          parameterized_wf Gstore Genv (index_wf_with_globals globals) c ->
-          parameterized_wf Gstore Genv (index_wf_with_globals globals) (fold_command_with_globals f c).
-    Proof.
-      induction c; simpl; auto; intros; invert_parameterized_wf.
-      all: try (econstructor;
-                try (apply fold_expr_preserve_ty; eauto);
-                apply_preserve_parameterized_wf_IH; eauto with fiat2_hints).
-      1:{ econstructor.
-          1: apply fold_expr_preserve_ty; eauto.
-          case_match; auto. rewrite inb_false_iff in *.
-          eapply parameterized_wf_Proper.
-          3: apply rm_not_in_globals.
-          all: eauto. apply_preserve_parameterized_wf_IH; eauto with fiat2_hints.
-          1: apply tenv_wf_with_globals_step; auto.
-          eapply parameterized_wf_Proper.
-          3: apply iff2_sym, rm_not_in_globals.
-          all: eauto. }
-      1:{ econstructor; eauto.
-          2: apply fold_expr_preserve_ty; eauto.
-          intros. erewrite <- fold_expr_preserve_sem; eauto. }
-    Qed.
-  End WithGlobals.
-
-  Definition apply_after_letmut f (c : command) :=
-    match c with
-    | CLetMut e x c => CLetMut e x (f x c)
-    | _ => c
-    end.
-
-  Context {aenv : map.map string collection_tag} {aenv_ok : map.ok aenv}.
-
-  Definition apply_idx_related_transfs (f : string -> command -> command) (Gstore Genv : tenv) (c : command) :=
-    match c with
-    | CLetMut e tbl _ => match synthesize_expr Gstore Genv e with
-                         | Success (t, _) => if can_transf_to_index to_from_con t (make_LikeList_aenv Gstore) c
-                                             then apply_after_letmut f (transf_to_idx (get_free_vars Genv) c)
-                                             else c
-                         | _ => c
-                         end
-    | _ => c
-    end.
-
-  Local Ltac unfold_typechecker :=
-    lazymatch goal with
-    | H: synthesize_expr _ _ _ = Success _ |- _ => unfold synthesize_expr in H
-    | H: analyze_expr _ _ _ _ = Success _ |- _ => unfold analyze_expr in H
-    end.
-
-  Local Ltac unfold_fold_typechecker := repeat unfold_typechecker; fold synthesize_expr in *; fold analyze_expr in *.
-
-  Lemma synthesizable_atom_ty_unique : forall a a' t t',
-            type_of_atom a t ->
-            synthesize_atom a = Success (t', a') ->
-            t = t'.
-  Proof.
-    destruct a; simpl; intros.
-    all: invert_type_of_atom; try congruence.
-    all: destruct_match_hyp; try congruence.
-  Qed.
-
-  Ltac apply_typechecker_sound :=
-    lazymatch goal with
-      H: synthesize_expr _ _ _ = Success _ |- _ =>
-        eapply typechecker_sound in H
-    end.
-
-  Ltac invert_pair :=
-    lazymatch goal with
-      H: (_, _) = (_, _) |- _ => inversion H; subst
-    end.
-
-  Ltac invert_cons :=
-    lazymatch goal with
-      H: _ :: _ = _ :: _ |- _ => inversion H; subst
-    end.
-
-  Lemma SSorted_app_cons : forall A (P : A -> A -> Prop) l a l',
-      StronglySorted P (l ++ a :: l') ->
-      StronglySorted P (l ++ l').
-  Proof.
-    induction l; simpl; intros.
-    1: apply StronglySorted_inv in H; intuition fail.
-    invert_SSorted. constructor.
-    1: eapply IHl; eauto.
-    rewrite Forall_app in *; intuition idtac.
-    invert_Forall; auto.
-  Qed.
-
-  Lemma Forall2_eq : forall A (l l' : list A), Forall2 eq l l' <-> l = l'.
-  Proof.
-    split; intros.
-    1: induction H; congruence.
-    1: subst; induction l'; auto.
-  Qed.
-
-  Ltac use_synthesize_ty_unique_IH :=
-    lazymatch goal with
-    | IH: ?x -> ?y -> forall _ _, Success (?t, ?e) = _ -> _,
-    H1: ?x, H2: ?y |- _ => specialize (IH H1 H2 e t eq_refl)
-    | IH: context[synthesize_expr _ _ ?e = _ -> _ = _],
-        H: synthesize_expr _ _ ?e = _ |- _ => eapply IH end.
-
-  Lemma synthesizable_ty_unique : forall Gstore Genv e t,
-      type_of Gstore Genv e t ->
-      tenv_wf Gstore -> tenv_wf Genv ->
-      forall e' t',
-      synthesize_expr Gstore Genv e = Success (t', e') ->
-      t = t'.
-  Proof.
-    induction 1 using @type_of_IH; simpl; intros.
-    1,2: apply_typechecker_sound; auto;
-    invert_type_of; congruence.
-    all: unfold_fold_typechecker.
-    all: repeat (destruct_match_hyp; try congruence; []).
-    1:{ do_injection.
-        eapply synthesizable_atom_ty_unique; eauto. }
-    1:{ repeat destruct_match_hyp; try congruence;
-        simpl in *; try invert_pair;
-        lazymatch goal with
-          H: type_of_unop _ _ _ |- _ => inversion H; subst end;
-        try do_injection; try reflexivity.
-        use_synthesize_ty_unique_IH; congruence. }
-    1:{ repeat destruct_match_hyp; try congruence;
-        simpl in *; try invert_pair;
-        lazymatch goal with
-          H: type_of_binop _ _ _ _ |- _ => inversion H; subst end;
-        try do_injection; try reflexivity;
-        use_synthesize_ty_unique_IH; congruence. }
-    all: try now (repeat destruct_match_hyp; try congruence;
-                  try do_injection;
-                  repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
-                  try congruence; try do_injection; subst; eauto;
-                  do_injection; f_equal; use_synthesize_ty_unique_IH;
-               repeat apply tenv_wf_step; eauto with fiat2_hints).
-    1:{ generalize dependent tl. generalize dependent tl'.
-        generalize dependent t'. revert e'.
-        unfold record_type_from in *. induction l; intros.
-        1:{ destruct tl; simpl in *; try congruence.
-            apply Permutation_nil in H2.
-            unfold record_sort, Mergesort.Sectioned.sort in *; simpl in *.
-            do_injection; reflexivity. }
-        1:{ invert_Forall2. destruct tl; simpl in *; try congruence.
-            invert_cons. invert_Forall2; simpl in *.
-            repeat destruct_match_hyp; try congruence.
-            simpl in *; do_injection; invert_pair. repeat clear_refl.
-            apply H11 in H8; auto. destruct p; simpl in *; subst.
-            apply Permutation_sym, Permutation_vs_cons_inv in H2 as H_p.
-            repeat destruct_exists; subst.
-            apply Permutation_sym, Permutation_cons_app_inv in H2 as H_p.
-            invert_NoDup. invert_cons.
-            eapply IHl in H_p; eauto using SSorted_app_cons.
-            do_injection. f_equal.
-            eapply Forall2_eq, Forall2_Permuted_StronglySorted.
-            4: apply Permutation_refl.
-            4:{ pose proof (Permuted_record_sort l2); rewrite_r_to_l.
-                eapply perm_trans, Permuted_record_sort.
-                eapply perm_trans, perm_skip; [ | apply Permutation_sym; eassumption ].
-                apply Permutation_sym, Permutation_middle. }
-            1: apply Forall2_eq; auto.
-            1: apply (Permutation_map fst), Permutation_NoDup in H2; auto.
-            all: intros; subst; auto using StronglySorted_record_sort. } }
-    1:{ apply first_success_exists_l in E.
-        apply first_success_exists_r in E0.
-        repeat destruct_exists; repeat destruct_and.
-        clear H1.
-        repeat lazymatch goal with
-                 H: In ?x _, H': synthesize_expr _ _ (_ ?x) = _ |- _ =>
-                   eapply List.Forall_In in H; eauto;
-                   apply H in H'; auto end.
-        congruence. }
-  Qed.
-
-  Definition expr_aug_transf_sound (f : string -> expr -> expr) : Prop :=
-     forall Gstore Genv tbl tbl_ty e t,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      type_wf tbl_ty -> is_tbl_ty tbl_ty = true ->
-      tenv_wf_with_globals [tbl] [idx_ty tbl_ty] Gstore ->
-      type_of Gstore Genv e t ->
-      type_of Gstore Genv (f tbl e) t /\
-        forall store env,
-          locals_wf Gstore store -> locals_wf Genv env ->
-          holds_for_all_entries (index_wf_with_globals [tbl]) store ->
-          interp_expr store env (f tbl e) = interp_expr store env e.
-
-
-  Definition aug_transf_sound (f : string -> command -> command) : Prop :=
-    forall Gstore Genv tbl t c,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      type_wf t -> is_tbl_ty t = true ->
-      tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-      well_typed Gstore Genv c ->
-      parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) c ->
-      well_typed Gstore Genv (f tbl c) /\
-        parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) (f tbl c) /\
-        forall store env,
-          locals_wf Gstore store -> locals_wf Genv env ->
-          holds_for_all_entries (index_wf_with_globals [tbl]) store ->
-          interp_command store env (f tbl c) = interp_command store env c.
-
-  Lemma aug_transf_sound_compose : forall f g,
-      aug_transf_sound f -> aug_transf_sound g ->
-      aug_transf_sound (fun x => Basics.compose (f x) (g x)).
-  Proof.
-    unfold aug_transf_sound; intros * H_f H_g; intros.
-    eapply H_g in H4; eauto; repeat destruct_and.
-    eapply H_f in H4; eauto; intuition idtac.
-    rewrite H10; auto.
-  Qed.
-
-  Lemma fold_command_with_globals_sound : forall f,
-      expr_aug_transf_sound f ->
-      aug_transf_sound (fun x => fold_command_with_globals [x] (f x)).
-  Proof.
-    unfold expr_aug_transf_sound, aug_transf_sound; intros; intuition idtac.
-    3: symmetry; eapply fold_command_with_globals_preserve_sem;
-        resolve_locals_wf; eauto; auto.
-    2: eapply fold_command_with_globals_preserve_index_wf; eauto; auto.
-    1: eapply fold_command_with_globals_preserve_ty; eauto; try reflexivity.
-    all: try (unfold preserve_ty; intros; eapply H; eauto).
-    all: unfold preserve_sem; intros;
-      lazymatch goal with
-        H: context[type_of _ _ _ _ -> _], H': type_of _ _ _ _ |- _ =>
-          eapply H in H' as [HL HR]; eauto end; erewrite HR; eauto.
-  Qed.
-
-  Context {rel_map : map.map string (value -> value -> Prop)} {rel_map_ok : map.ok rel_map }.
-
-  Lemma apply_idx_related_transfs_sound : forall f,
-    aug_transf_sound f ->
-    transf_sound (apply_idx_related_transfs f).
-  Proof.
-    unfold apply_idx_related_transfs, transf_sound; intros.
-    repeat (case_match; auto). invert_well_typed.
-    eapply synthesizable_ty_unique in E0 as H_syn_ty; eauto; subst.
-    unfold can_transf_to_index in *; rewrite Bool.andb_true_iff in *; destruct_and.
-    assert (H_ty : well_typed (map.put Gstore x (idx_ty t)) Genv (transf_to_idx' (get_free_vars Genv) x c0)).
-    { erewrite <- Properties.map.put_put_same.
-      eapply transf_to_idx_preserve_ty'; eauto using incl_refl.
-      2: rewrite_map_get_put_goal; eauto.
-      1: eauto with fiat2_hints. }
-    assert (H_wf : parameterized_wf (map.put Gstore x (idx_ty t)) Genv (index_wf_with_globals [x]) (transf_to_idx' (get_free_vars Genv) x c0)).
-    { erewrite <- Properties.map.put_put_same.
-      apply transf_to_idx'_index_wf; eauto using incl_refl with fiat2_hints.
-      rewrite_map_get_put_goal; auto. }
-    eapply H in H_wf. 5: eauto.
-    all: eauto using idx_ty_wf with fiat2_hints.
-    2: constructor;  try eapply map.get_put_same; auto.
-    split.
-    1:{ econstructor.
-        1: apply to_idx_preserve_ty; eauto using incl_refl with fiat2_hints.
-        apply H_wf; auto. }
-    1:{ intros. unfold transf_to_idx, apply_after_letmut.
-        cbn [interp_command]. eapply stores_eq_except__update_eq; intros.
-        destruct (map.get Gstore x0) eqn:E.
-        1:{ symmetry. eapply consistent_tenv_LikeList; eauto.
-            intuition idtac. erewrite H12; auto.
-            2:{ resolve_locals_wf. eapply type_sound.
-                1: apply to_idx_preserve_ty.
-                all: resolve_locals_wf; eauto using incl_refl with fiat2_hints. }
-            2:{ constructor; auto. destruct (String.eqb k x) eqn:E_kx;
-                rewrite ?eqb_eq, ?eqb_neq in *; subst; auto; right.
-                rewrite_map_get_put_hyp; do_injection.
-                eapply to_idx_satisfy_idx_wf; resolve_locals_wf; eauto using incl_refl. }
-            unfold can_transf_to_index' in *; destruct_match_hyp.
-            eapply command_tag_req_sound in E1;
-              eauto using domain_incl_step, make_LikeList_aenv__domain_incl.
-            eapply transf_to_idx_preserve_sem' with (Gstore:=map.put Gstore x t); eauto.
-            all: try rewrite_map_get_put_goal; eauto using incl_refl with fiat2_hints.
-            1: unfold get_collection_tag; repeat destruct_match_hyp; simpl; congruence.
-            1:{ rewrite Properties.map.put_put_same. apply locals_wf_step; auto.
-                eapply type_sound. 1: apply to_idx_preserve_ty; auto.
-                1: eapply type_of__type_wf; [ | | eauto ]; auto.
-                3: eauto. all: auto using incl_refl. }
-            1:{ eapply put_to_idx__consistent_with_global. 4: eauto. all: auto using incl_refl. }
-            1: eapply locals_related_consistent_Renv_refl. }
-        1:{ repeat erewrite command_preserve_untouched_store. 4: eauto.
-            9: apply H_wf.
-            all: repeat rewrite_map_get_put_goal; eauto with fiat2_hints.
-            1:{ apply tenv_wf_step; eauto with fiat2_hints. apply idx_ty_wf; eauto with fiat2_hints. }
-            apply locals_wf_step; auto. eapply type_sound. 1: apply to_idx_preserve_ty.
-            1: eapply type_of__type_wf; [ | | eauto ]; auto.
-            4: eauto. all: auto using incl_refl. } }
-        Qed.
-End WithMap.
-
-Definition is_NoDup_opaque {A : Type} := is_NoDup (A:=A).
-
-Lemma is_NoDup_to_transparent : forall A, is_NoDup_opaque (A:=A) = is_NoDup (A:=A).
-Proof.
-  reflexivity.
-Qed.
-
-Opaque is_NoDup_opaque.
-
-Ltac use_is_NoDup :=
-  rewrite is_NoDup_to_transparent in *;
-  simpl in *; intuition idtac; try congruence.
 
 Section WithHole.
   Context (hole : string).
@@ -1122,10 +66,11 @@ Section WithHole.
     Qed.
 
     Section WithMap.
+      Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
       Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
       Notation value := (value (width:=width)).
-      Context {tenv : map.map string type} {tenv_ok : map.ok tenv}
-        {locals : map.map string value} {locals_ok : map.ok locals}.
+      Context {locals : map.map string value} {locals_ok : map.ok locals}.
+      Notation sem_eq := (sem_eq (locals:=locals)).
 
       Ltac apply_In_access_record :=
         lazymatch goal with
@@ -1400,9 +345,9 @@ Section WithHole.
         intros. erewrite interp_expr_strengthen.
         1: eapply fiat2_gallina_from_idx.
         6: apply from_idx_ty.
-        all: eauto using idx_ty_wf, map_incl_empty with fiat2_hints.
+        all: resolve_locals_wf; eauto using idx_ty_wf, map_incl_empty with fiat2_hints.
         eapply map_incl_step_l; auto using map_incl_empty.
-        apply String.eqb_spec.
+        apply Decidable.String.eqb_spec.
       Qed.
 
       Ltac use_from_idx_ty :=
@@ -1433,79 +378,6 @@ Section WithHole.
         2: use_from_idx_ty.
         all: eauto using idx_ty_wf with fiat2_hints.
         prove_sub_wf.
-      Qed.
-
-      Definition singleton_rel x (y y' : string) :=
-        y = x /\ y' = x.
-
-      Lemma singleton_rel_refl : forall (s : string),
-          singleton_rel s s s.
-      Proof.
-        unfold singleton_rel; intuition auto.
-      Qed.
-
-      Definition sem_eq (Gstore Genv : tenv) (t : type) (e1 e2 : expr) :=
-        type_of Gstore Genv e1 t /\ type_of Gstore Genv e2 t /\
-          forall (store env : locals),
-            locals_wf Gstore store -> locals_wf Genv env ->
-            interp_expr store env e1 = interp_expr store env e2.
-
-      Lemma sem_eq_sym  (Gstore Genv : tenv) (t : type) : forall e1 e2,
-          sem_eq Gstore Genv t e1 e2 -> sem_eq Gstore Genv t e2 e1.
-      Proof.
-        unfold sem_eq; intros. intuition auto. symmetry. auto.
-      Qed.
-
-      Lemma sem_eq_trans  (Gstore Genv : tenv) (t : type) : forall e1 e2 e3,
-          sem_eq Gstore Genv t e1 e2 ->
-          sem_eq Gstore Genv t e2 e3 ->
-          sem_eq Gstore Genv t e1 e3.
-      Proof.
-        unfold sem_eq; intros. intuition auto.
-        rewrite H4, H5; auto.
-      Qed.
-
-      Instance EFilter_Proper {t : type} (x0 : string) (Gstore Genv : tenv) :
-        tenv_wf Gstore -> tenv_wf Genv ->
-        Proper (sem_eq Gstore Genv (TList t) ==> singleton_rel x0 ==> sem_eq Gstore (map.put Genv x0 t) TBool ==> sem_eq Gstore Genv (TList t)) EFilter.
-      Proof.
-        intros * ? ? e1 e1' H1 y y' Hy e2 e2' H2.
-        unfold sem_eq in *; intros.
-        unfold singleton_rel in *. intuition auto; subst.
-        1,2: constructor; auto.
-        repeat invert_type_of.
-        simpl. lazymatch goal with
-          H: context[interp_expr _ _ ?e = _] |-
-            context[match interp_expr _ _ ?e with _ => _ end] =>
-            rewrite H end; auto.
-        case_match; auto. f_equal.
-        apply filter_ext_in; intros.
-        lazymatch goal with
-          H: context[interp_expr _ _ ?e = _] |-
-            context[match interp_expr _ _ ?e with _ => _ end] =>
-            rewrite H end; eauto with fiat2_hints.
-        apply_type_sound e1'; auto. rewrite_l_to_r.
-        apply locals_wf_step; auto. do_injection; subst.
-        apply_Forall_In.
-      Qed.
-
-      Ltac apply_tenv_wf :=
-        lazymatch goal with
-          H: tenv_wf ?G, H': map.get ?G _ = Some ?t |- _ =>
-            apply H in H' end.
-
-      Lemma sem_eq_eq : forall Gstore Genv t e1 e2,
-          sem_eq Gstore Genv t e1 e2 ->
-          forall store env : locals,
-            locals_wf Gstore store -> locals_wf Genv env ->
-            interp_expr store env e1 = interp_expr store env e2.
-      Proof.
-        unfold sem_eq; intros; intuition auto.
-      Qed.
-
-      Lemma sem_eq_refl : forall Gstore Genv t e, type_of Gstore Genv e t -> sem_eq Gstore Genv t e e.
-      Proof.
-        unfold sem_eq; intuition auto.
       Qed.
 
       Lemma fold_from_idx : forall Gstore Genv t e k0 v0 acc0,
@@ -1601,7 +473,7 @@ Section WithHole.
         1: eapply fiat2_gallina_to_idx.
         6: apply to_idx_ty.
         all: eauto with fiat2_hints.
-        2: eapply map_incl_step_l; eauto using String.eqb_spec.
+        2: eapply map_incl_step_l; eauto using Decidable.String.eqb_spec.
         all: apply map_incl_empty.
       Qed.
 
@@ -1660,30 +532,6 @@ Section WithHole.
 
       Local Coercion is_true : bool >-> Sortclass.
 
-      Lemma dict_lookup_Lt : forall d k,
-          StronglySorted dict_entry_leb d ->
-          (forall p, In p d -> value_compare k (fst p) = Lt) ->
-          dict_lookup (word:=word) k d = None.
-      Proof.
-        intros. induction d; auto.
-        simpl. destruct a; simpl in *.
-        case_match.
-        - unfold value_eqb in *. pose proof (H0 (v0, v1)).
-          intuition; simpl in *. rewrite H1 in E; discriminate.
-        - apply IHd; inversion H; auto.
-      Qed.
-
-      Lemma Permutation_cons_app_cons : forall A (l : list A) u v xl yl,
-          Permutation xl (v :: yl) -> Permutation (l ++ u :: xl) (v :: l ++ u :: yl).
-      Proof.
-        clear. intros.
-        replace (v :: l ++ u :: yl) with ((v :: nil) ++ l ++ u :: yl)%list; auto.
-        eapply perm_skip with (x:=u), Permutation_sym, perm_trans in H.
-        2: apply perm_swap.
-        eapply perm_trans. 2: eapply Permutation_app_swap_app. simpl.
-        auto using Permutation_app, Permutation_sym.
-      Qed.
-
       Lemma dict_insert_lookup_Permutation :
         forall k d v, Forall has_index_entry_shape d ->
                       StronglySorted dict_entry_leb d ->
@@ -1715,18 +563,6 @@ Section WithHole.
         - apply Permutation_cons_app_cons; auto.
       Qed.
 
-      Lemma Forall_dict_lookup : forall P d k v,
-          Forall P d -> dict_lookup (width:=width) k d = Some v -> P (k, v).
-      Proof.
-        intros * H_P H. induction d; simpl in H; try congruence.
-        destruct a. inversion H_P; subst.
-        lazymatch goal with
-        | H: context[value_eqb ?a ?b] |- _ => destruct (value_eqb a b) eqn:E
-        end.
-        1: apply value_eqb_eq in E; subst; do_injection; auto.
-        1: apply IHd; auto.
-      Qed.
-
       Lemma gallina_list_to_idx_shape : forall l rt,
           Forall (fun v => type_of_value v (TRecord rt)) l ->
           In attr (List.map fst rt) ->
@@ -1742,43 +578,6 @@ Section WithHole.
         end; simpl; auto.
         eapply Forall_dict_lookup in IHH_ty; simpl in IHH_ty; eauto.
         repeat destruct_match_hyp; auto.
-      Qed.
-
-      Ltac destruct_or :=
-        lazymatch goal with
-          H: _ \/ _ |- _ => destruct H
-        end.
-
-      Ltac invert_pair_eq :=
-        lazymatch goal with
-          H: (_, _) = (_, _) |- _ => inversion H; subst
-        end.
-
-      Lemma dict_insert_preserve_SSorted : forall d k v,
-          StronglySorted (dict_entry_leb (word:=word)) d ->
-          StronglySorted dict_entry_leb (dict_insert k v d).
-      Proof.
-        induction d; intros; simpl.
-        - repeat constructor.
-        - case_match; invert_SSorted. unfold value_ltb, value_eqb.
-          case_match.
-          + constructor; auto. rewrite Forall_forall in *.
-            unfold dict_entry_leb in *; simpl in *. apply value_compare_Eq_eq in E; subst; auto.
-          + constructor; auto. rewrite Forall_forall in *; intros. destruct x0.
-            unfold dict_entry_leb, value_leb, leb_from_compare in *; simpl in *.
-            destruct_or.
-            * invert_pair_eq; rewrite E; auto.
-            * apply H3 in H0; simpl in H0. destruct_match_hyp; try discriminate.
-              1: { lazymatch goal with
-                  E: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in E; subst end.
-                   rewrite_l_to_r; trivial. }
-              1: erewrite value_compare_trans; eauto.
-          + constructor; auto. rewrite Forall_forall; intros ? H_in.
-            apply dict_insert_incl in H_in.
-            unfold dict_entry_leb, value_leb, leb_from_compare in *; simpl in *.
-            inversion H_in; subst.
-            * simpl. rewrite value_compare_antisym. rewrite E. auto.
-            * eapply List.Forall_In in H3; eauto.
       Qed.
 
       Lemma gallina_list_to_idx_SSorted : forall l rt,
@@ -1873,18 +672,6 @@ Section WithHole.
             end. congruence. }
       Qed.
 
-      Lemma NoDup_SSorted__Lt : forall (k v : value) d,
-          NoDup (k :: List.map fst d) ->
-          StronglySorted dict_entry_leb ((k, v) :: d) ->
-          forall p, In p d -> value_compare k (fst p) = Lt.
-      Proof.
-        intros. invert_NoDup; invert_SSorted. destruct p; simpl.
-        apply_Forall_In; unfold dict_entry_leb in *; simpl in *.
-        unfold value_leb, leb_from_compare in *.
-        lazymatch goal with |- ?x = _ => destruct x eqn:E end; try congruence.
-        apply value_compare_Eq_eq in E; subst. apply in_map with (f:=fst) in H1; intuition.
-      Qed.
-
       Lemma gallina_from_idx_ty : forall v t,
           type_wf t ->
           is_tbl_ty t = true ->
@@ -1951,46 +738,6 @@ Section WithHole.
 
       Instance dict_idx_ok : IndexInterface.ok LikeBag LikeList dict_idx idx_wf consistent := IndexInterface.Build_ok dict_idx idx_wf idx_ty_wf to_idx_ty from_idx_ty to_idx_wf to_from_LikeBag from_to_LikeList.
 
-      (* Every string in l equals s *)
-      Fixpoint all_eqb' (s : string) (l : list string) : bool :=
-        match l with
-        | nil => true
-        | x :: l => String.eqb x s && all_eqb' s l
-        end.
-
-      Fixpoint all_eqb (l : list (string * list string)) : bool :=
-        match l with
-        | nil => true
-        | (s, sl) :: l => all_eqb' s sl && all_eqb l
-        end.
-
-      Fixpoint all_neqb' (s : string) (l : list string) : bool :=
-        match l with
-        | nil => true
-        | x :: l => negb (String.eqb x s) && all_neqb' s l
-        end.
-
-      Fixpoint all_neqb (l : list string) : bool :=
-        match l with
-        | nil => true
-        | x :: l => all_neqb' x l && all_neqb l
-        end.
-
-      Ltac destruct_subexpr :=
-        multimatch goal with
-        | e : expr |- _ => destruct e; auto; []
-        | o : unop |- _ => destruct o; auto; []
-        | o : binop |- _ => destruct o; auto; []
-        | a : atom |- _ => destruct a; auto; []
-        | t : option type |- _ => destruct t; auto; []
-        | l : list (expr * expr) |- _ => destruct l; auto; []
-        | l : list (string * expr) |- _ => destruct l; auto; []
-        | p : string * expr |- _ => destruct p; auto; []
-        | s : string |- _ => destruct s; auto; []
-        | a : Ascii.ascii |- _ => destruct a; auto; []
-        | b : bool |- _ => destruct b; auto; []
-        end.
-
       Notation elist_to_idx tup0 tup1 tup2 tup3 tup4 acc0 acc1 acc2 x0 x1 x2 attr0 attr1 d :=
         (EFold d (EDict []) tup0 acc0
            (EInsert (EVar acc1) (EAccess (EVar tup1) attr0) (EOptMatch (ELookup (EVar acc2) (EAccess (EVar tup2) attr1)) (ERecord [("0", EAtom (ANil None)); ("1", EVar tup3)]) x0 (ERecord [("0", EBinop OCons (EVar tup4) (EAccess (EVar x1) "0")); ("1", EAccess (EVar x2) "1")] )))).
@@ -2003,6 +750,9 @@ Section WithHole.
 
       Ltac invert_tenv_wf_with_globals :=
         lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
+
+      Ltac rewrite_l_to_r_goal :=
+        multimatch goal with H: ?x = _ |- context[?x] => rewrite H end.
 
       Section eq_filter_to_lookup.
         Context (p : string).
@@ -2025,6 +775,27 @@ Section WithHole.
           | _ => e
           end.
 
+        Lemma eq_filter_to_lookup_head_preserve_ty : forall tbl t (Gstore : tenv),
+            type_wf t -> is_tbl_ty t ->
+            map.get Gstore tbl = Some (idx_ty t) ->
+            preserve_ty Gstore (eq_filter_to_lookup_head tbl).
+        Proof.
+          clear H_NoDup.
+          unfold preserve_ty, is_tbl_ty. intros.
+          repeat destruct_match_hyp; try congruence.
+          repeat destruct_subexpr. simpl.
+          case_match; auto. repeat rewrite Bool.andb_true_r in *.
+          repeat rewrite Bool.andb_true_iff in *; intuition. rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+          repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+          repeat (clear_refl; repeat do_injection2).
+          repeat (econstructor; eauto).
+          1:{ lazymatch goal with H: ?x = _, H': ?x = _ |- _ => rewrite H in H' end.
+              do_injection2. simpl in *; do_injection2.
+              unfold get_attr_type. lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
+              eapply not_free_immut_put_ty; eauto. }
+          all: rewrite map.get_put_same; trivial.
+        Qed.
+
         Definition gallina_filter_access_eq (s : string) (v0 : value) (l : list value) :=
           filter (fun v => value_eqb match v with
                              | VRecord r => record_proj s r
@@ -2042,51 +813,15 @@ Section WithHole.
           unfold get_local. rewrite map.get_put_same. rewrite <- not_free_immut_put_sem; auto.
         Qed.
 
-        Lemma eq_filter_to_lookup_head_preserve_ty : forall tbl t (Gstore : tenv),
-            type_wf t -> is_tbl_ty t ->
-            map.get Gstore tbl = Some (idx_ty t) ->
-            preserve_ty Gstore (eq_filter_to_lookup_head tbl).
+        Lemma gallina_from_idx_cons : forall a idx,
+            index_wf (a :: idx) ->
+            gallina_from_idx (VDict (a :: idx)) = List.app (gallina_from_idx (VDict [a])) (gallina_from_idx (VDict idx)).
         Proof.
-          clear H_NoDup.
-          unfold preserve_ty, is_tbl_ty. intros.
-          repeat destruct_match_hyp; try congruence.
-          repeat destruct_subexpr. simpl.
-          case_match; auto. repeat rewrite Bool.andb_true_r in *.
-          repeat rewrite Bool.andb_true_iff in *; intuition. rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
-          repeat invert_type_of. repeat rewrite_map_get_put_hyp.
-          repeat (clear_refl; repeat do_injection).
-          repeat (econstructor; eauto).
-          1:{ lazymatch goal with H: ?x = _, H': ?x = _ |- _ => rewrite H in H' end.
-              do_injection. do_injection. simpl in *; do_injection.
-              unfold get_attr_type. lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
-              eapply not_free_immut_put_ty; eauto. }
-          all: rewrite map.get_put_same; trivial.
-        Qed.
-
-        Lemma eq_filter_to_lookup_preserve_ty' :
-          forall Gstore tbl t,
-            type_wf t -> is_tbl_ty t ->
-            map.get Gstore tbl = Some (idx_ty t) ->
-            preserve_ty Gstore (fold_expr (eq_filter_to_lookup_head tbl)).
-        Proof.
-          clear H_NoDup.
-          intros. apply fold_expr_preserve_ty.
-          eapply eq_filter_to_lookup_head_preserve_ty; eauto.
-        Qed.
-
-        Lemma eq_filter_to_lookup_preserve_ty :
-          forall c Gstore Genv tbl t,
-            tenv_wf Gstore -> tenv_wf Genv ->
-            type_wf t -> is_tbl_ty t ->
-            tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-            well_typed Gstore Genv c -> well_typed Gstore Genv (fold_command_with_globals [tbl] (eq_filter_to_lookup_head tbl) c).
-        Proof.
-          clear H_NoDup.
-          intros. eapply fold_command_with_globals_preserve_ty.
-          5: eauto.
-          all: simpl in *; auto.
-          intros. eapply eq_filter_to_lookup_head_preserve_ty; eauto.
-          unfold tenv_wf_with_globals in *; invert_Forall2; eauto.
+          unfold index_wf. destruct a; simpl.
+          intros. invert_Forall; simpl in *.
+          case_match; intuition auto. unfold record_proj.
+          repeat (case_match; intuition auto).
+          rewrite <- app_assoc. f_equal; auto.
         Qed.
 
         Lemma dict_lookup__filter_none : forall k idx,
@@ -2103,34 +838,10 @@ Section WithHole.
           rewrite filter_app. destruct (value_eqb k0 v0) eqn:E.
           1: congruence. simpl.
           rewrite H3; auto.
-          rewrite_l_to_r. rewrite value_eqb_sym, E, app_nil_r.
+          repeat rewrite_l_to_r. rewrite value_eqb_sym, E, app_nil_r.
           lazymatch goal with
           | H: Forall _ l0 |- _ => induction H; simpl; auto end. rewrite IHForall.
           case_match; intuition. rewrite_l_to_r. rewrite value_eqb_sym, E. reflexivity.
-        Qed.
-
-        Lemma not_In__dict_lookup : forall (v : value) d, ~ In v (List.map fst d) -> dict_lookup v d = None.
-        Proof.
-          intros * H. induction d; simpl; auto.
-          destruct a; simpl in *. intuition. case_match; auto.
-          apply value_eqb_eq in E; subst; intuition.
-        Qed.
-
-        Lemma Forall_false__filter : forall A f (l : list A), Forall (fun x => f x = false) l -> filter f l = nil.
-        Proof.
-          intros * H; induction l; simpl; auto. simpl in H.
-          inversion H; subst. rewrite H2. auto.
-        Qed.
-
-        Lemma gallina_from_idx_cons : forall a idx,
-            index_wf (a :: idx) ->
-            gallina_from_idx (VDict (a :: idx)) = List.app (gallina_from_idx (VDict [a])) (gallina_from_idx (VDict idx)).
-        Proof.
-          unfold index_wf. destruct a; simpl.
-          intros. invert_Forall; simpl in *.
-          case_match; intuition auto. unfold record_proj.
-          repeat (case_match; intuition auto).
-          rewrite <- app_assoc. f_equal; auto.
         Qed.
 
         Lemma dict_lookup__filter_some : forall k idx kt vt l v,
@@ -2160,8 +871,8 @@ Section WithHole.
                   rewrite Bool.andb_true_iff; split.
                   1:{ rewrite forallb_forall; intros.
                       apply_Forall_In. destruct_match_hyp; intuition auto.
-                      unfold record_proj; rewrite_l_to_r; apply value_eqb_refl. }
-                  1:{ simpl. unfold record_proj; rewrite_l_to_r.
+                      unfold record_proj; rewrite_l_to_r_goal; apply value_eqb_refl. }
+                  1:{ simpl. unfold record_proj; rewrite_l_to_r_goal.
                       rewrite Bool.andb_true_r; apply value_eqb_refl. } }
               1:{ apply dict_lookup__filter_none; auto.
                   apply not_In__dict_lookup.
@@ -2183,12 +894,6 @@ Section WithHole.
                   invert_NoDup; invert_SSorted; constructor; auto. } }
         Qed.
 
-        Ltac rewrite_expr_value :=
-          lazymatch goal with
-          | H: VList _ = _ |- _ => rewrite <- H in *
-          | H: VDict _ = _ |- _ => rewrite <- H in *
-          end.
-
         Lemma eq_filter_to_lookup_head_preserve_sem : forall tbl (Gstore : tenv) (store : locals) t,
             type_wf t -> is_tbl_ty t = true ->
             map.get Gstore tbl = Some (idx_ty t) ->
@@ -2201,18 +906,20 @@ Section WithHole.
             H: context[get_attr_type] |- _ =>
               let H_tbl_ty := fresh "H_tbl_ty" in
               eapply TyELoc in H as H_tbl_ty
-          end. apply_type_sound (ELoc tbl).
+          end. apply_type_sound (ELoc tbl). invert_type_of_value.
           assert(H_wf: index_wf l0).
           { symmetry in H8. unfold get_local in H8. destruct_match_hyp; try discriminate.
-            apply H2 in E. rewrite Forall_forall in E. specialize (E tbl). destruct E; simpl; intuition auto.
+            apply H2 in E. unfold value_wf_with_globals in *.
+            rewrite Forall_forall in E. specialize (E tbl). destruct E; simpl; intuition auto.
             simpl in *. unfold idx_wf in *. subst. auto. }
           repeat destruct_subexpr. unfold eq_filter_to_lookup_head.
           lazymatch goal with |- context[if ?x then _ else _] => destruct x eqn:E' end; auto.
           repeat rewrite Bool.andb_true_r in *. simpl in E'.
           repeat rewrite Bool.andb_true_iff in E'; intuition.
           rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
-          repeat invert_type_of. repeat rewrite_map_get_put_hyp.
-          repeat do_injection. erewrite sem_eq_eq.
+          repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+          repeat rewrite_map_get_put_hyp.
+          repeat do_injection2. symmetry. erewrite sem_eq_eq.
           3,4: eauto.
           2:{ unfold sem_eq. eapply EFilter_Proper; auto.
               2: apply singleton_rel_refl.
@@ -2235,18 +942,20 @@ Section WithHole.
           erewrite fiat2_gallina_filter_access_eq; auto.
           2:{ erewrite fiat2_gallina_from_idx_sem with (t:=TList (TRecord l)); simpl.
               3-8: eauto. all: try constructor; auto. }
-          simpl in H'. simpl. rewrite_expr_value.
+          simpl in H'; simpl.
+          lazymatch goal with H: _ = ?x |- context[?x] => rewrite <- H in * end.
           specialize (dict_lookup_sound (width:=width) l0) as H_lookup.
           eapply (H_lookup _ _ (interp_expr store env e2_2)) in H'; eauto.
           2:{ unfold get_attr_type. lazymatch goal with
               H: ?x = _, H': ?x = _ |- _ => rewrite H in H'
             end. repeat (clear_refl; repeat do_injection).
-              simpl in *; repeat do_injection. simpl in *; do_injection. rewrite_l_to_r.
+              simpl in *; repeat do_injection2. simpl in *; do_injection2. rewrite_l_to_r.
               lazymatch goal with
                 H: context[free_immut_in] |- _ =>
                   eapply not_free_immut_put_ty in H; eauto
               end.
-              eapply type_sound; eauto. }
+              eapply type_sound; resolve_locals_wf;
+                try lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end; auto. }
           inversion H'; subst.
           2: unfold get_local; rewrite map.get_put_same.
           (* dict_lookup found no match *)
@@ -2270,55 +979,6 @@ Section WithHole.
           unfold expr_aug_transf_sound; intros.
           invert_tenv_wf_with_globals. intuition idtac.
           1: eapply eq_filter_to_lookup_head_preserve_ty; eauto.
-          1: symmetry; eapply eq_filter_to_lookup_head_preserve_sem; eauto.
-        Qed.
-
-        Lemma eq_filter_to_lookup_preserve_sem' :
-          forall Gstore store tbl t,
-            type_wf t -> is_tbl_ty t = true ->
-            map.get Gstore tbl = Some (idx_ty t) ->
-            holds_for_all_entries (index_wf_with_globals [tbl]) store ->
-            preserve_sem Gstore store (fold_expr (eq_filter_to_lookup_head tbl)).
-        Proof.
-          unfold is_tbl_ty; intros. repeat destruct_match_hyp; try congruence.
-          apply fold_expr_preserve_sem.
-          1: eapply eq_filter_to_lookup_head_preserve_ty; eauto.
-          eapply eq_filter_to_lookup_head_preserve_sem with (Gstore:=Gstore); eauto.
-        Qed.
-
-        Lemma eq_filter_to_lookup_preserve_sem :
-          forall c (Gstore Genv : tenv) (store env : locals) tbl t,
-            tenv_wf Gstore -> tenv_wf Genv ->
-            type_wf t -> is_tbl_ty t = true ->
-            tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-            parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) c ->
-            locals_wf Gstore store -> locals_wf Genv env ->
-            holds_for_all_entries (index_wf_with_globals [tbl]) store ->
-            interp_command store env c = interp_command store env (fold_command_with_globals [tbl] (eq_filter_to_lookup_head tbl) c).
-        Proof.
-          unfold is_tbl_ty; intros. repeat destruct_match_hyp; try congruence.
-          eapply fold_command_with_globals_preserve_sem with (Gstore:=Gstore); simpl in *; auto.
-          5-7: eauto.
-          all: intros; simpl in *; auto.
-          1:{ unfold tenv_wf_with_globals in *.
-              invert_Forall2. eapply eq_filter_to_lookup_head_preserve_ty; eauto. }
-          1:{ eapply eq_filter_to_lookup_head_preserve_sem with (Gstore:=Gstore0); eauto.
-              simpl. unfold tenv_wf_with_globals in *. invert_Forall2. auto. }
-        Qed.
-
-        Lemma eq_filter_to_lookup_preserve_index_wf :
-          forall c Gstore Genv tbl t,
-            type_wf t -> is_tbl_ty t = true ->
-            tenv_wf Gstore -> tenv_wf Genv ->
-            tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-            parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) c -> parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) (fold_command_with_globals [tbl] (eq_filter_to_lookup_head tbl) c).
-        Proof.
-          unfold is_tbl_ty; intros. repeat destruct_match_hyp; try congruence.
-          eapply fold_command_with_globals_preserve_index_wf.
-          6: eauto.
-          all: simpl in *; auto; intros.
-          all:  unfold tenv_wf_with_globals in *; repeat invert_Forall2.
-          1: eapply eq_filter_to_lookup_head_preserve_ty; eauto.
           1: eapply eq_filter_to_lookup_head_preserve_sem; eauto.
         Qed.
       End eq_filter_to_lookup.
@@ -2337,6 +997,50 @@ Section WithHole.
           | _ => e
           end.
 
+        Lemma neq_filter_to_delete_head_preserve_ty : forall tbl t (Gstore : tenv),
+            type_wf t -> is_tbl_ty t ->
+            map.get Gstore tbl = Some (idx_ty t) ->
+            preserve_ty Gstore (neq_filter_to_delete_head tbl).
+        Proof.
+          clear H_NoDup.
+          unfold is_tbl_ty, preserve_ty; intros.
+          repeat destruct_match_hyp; try congruence.
+          repeat destruct_subexpr. simpl. case_match; auto.
+          repeat rewrite Bool.andb_true_r in E1. repeat rewrite Bool.andb_true_iff in E1; intuition idtac.
+          rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+          repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+          repeat rewrite_map_get_put_hyp. repeat (clear_refl; repeat do_injection2).
+          repeat constructor; auto.
+          1:{ lazymatch goal with
+              H: map.get Gstore tbl = _, H': map.get Gstore tbl = _ |- _ =>
+                rewrite H in *; do_injection2; simpl in *; do_injection2
+            end.
+              unfold get_attr_type.
+              lazymatch goal with
+              | H1: ?x = _, H2: ?x = _ |- _ => rewrite H1 in H2 end.
+              do_injection2; rewrite_l_to_r_goal.
+              repeat clear_refl. unfold index_type. do 3 f_equal.
+              repeat invert_Forall2. repeat invert_type_of_clear.
+              repeat invert_type_of_op_clear; repeat rewrite_map_get_put_hyp.
+              repeat rewrite_l_to_r; repeat (try clear_refl; do_injection).
+              do 3 (destruct tl1; simpl in *; try congruence). destruct p, p0; simpl in *.
+              do 3 (destruct tl; simpl in *; try congruence). destruct p, p0; simpl in *.
+              repeat (lazymatch goal with
+                        H: cons _ _ = cons _ _ |- _ => inversion H; subst; auto end;
+                      clear_refl).
+              multimatch goal with
+                H: Permutation _ _ |- _ => apply Permutation_length_2_inv in H; destruct H end.
+              all: lazymatch goal with
+                     H: _ = cons _ _ |- _ => inversion H; subst; auto end.
+              2:{ invert_SSorted. invert_Forall. unfold record_entry_leb in *; simpl in *.
+                  lazymatch goal with H: is_true (_ <=? _) |- _ => inversion H end. }
+              simpl in *; do_injection2. auto. }
+          1:{ repeat lazymatch goal with
+                  H: ?x = _, H': ?x = _ |- _ => rewrite H in H'
+                end. repeat (clear_refl; repeat do_injection2).
+              eapply not_free_immut_put_ty; eauto. }
+        Qed.
+
         Definition gallina_filter_access_neq (s : string) (v0 : value) (l : list value) :=
           filter (fun v => negb (value_eqb match v with
                                    | VRecord r => record_proj s r
@@ -2352,86 +1056,6 @@ Section WithHole.
         Proof.
           intros * H1 H_free; simpl. rewrite H1. f_equal. apply filter_ext. intro a.
           unfold get_local. rewrite map.get_put_same. rewrite <- not_free_immut_put_sem; auto.
-        Qed.
-
-        Lemma neq_filter_to_delete_head_preserve_ty : forall tbl t (Gstore : tenv),
-            type_wf t -> is_tbl_ty t ->
-            map.get Gstore tbl = Some (idx_ty t) ->
-            preserve_ty Gstore (neq_filter_to_delete_head tbl).
-        Proof.
-          clear H_NoDup.
-          unfold is_tbl_ty, preserve_ty; intros.
-          repeat destruct_match_hyp; try congruence.
-          repeat destruct_subexpr. simpl. case_match; auto.
-          repeat rewrite Bool.andb_true_r in E1. repeat rewrite Bool.andb_true_iff in E1; intuition idtac.
-          rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
-          repeat invert_type_of. repeat rewrite_map_get_put_hyp. repeat (clear_refl; repeat do_injection).
-          repeat constructor; auto.
-          1:{ lazymatch goal with
-              H: map.get Gstore tbl = _, H': map.get Gstore tbl = _ |- _ =>
-                rewrite H in *; do_injection; simpl in *; do_injection
-            end.
-              unfold get_attr_type.
-              lazymatch goal with
-              | H1: ?x = _, H2: ?x = _ |- _ => rewrite H1 in H2 end.
-              do_injection.
-              lazymatch goal with
-              | H: context[?x] |- context[match ?x with _ => _ end] =>
-                  rewrite H end.
-              repeat clear_refl. unfold index_type. do 3 f_equal.
-              repeat invert_Forall2. repeat invert_type_of.
-              repeat rewrite_map_get_put_hyp.
-              repeat rewrite_l_to_r; repeat (try clear_refl; do_injection).
-              do 3 (destruct tl1; simpl in *; try congruence). destruct p, p0; simpl in *.
-              do 3 (destruct tl; simpl in *; try congruence). destruct p, p0; simpl in *.
-              repeat (lazymatch goal with
-                        H: cons _ _ = cons _ _ |- _ => inversion H; subst; auto end;
-                      clear_refl).
-              multimatch goal with
-                H: Permutation _ _ |- _ => apply Permutation_length_2_inv in H; destruct H end.
-              all: lazymatch goal with
-                     H: _ = cons _ _ |- _ => inversion H; subst; auto end.
-              2:{ invert_SSorted. invert_Forall. unfold record_entry_leb in *; simpl in *.
-                  lazymatch goal with H: is_true (_ <=? _) |- _ => inversion H end. }
-              simpl in *; do_injection. auto. }
-          1:{ repeat lazymatch goal with
-                  H: ?x = _, H': ?x = _ |- _ => rewrite H in H'
-                end. repeat (clear_refl; repeat do_injection).
-              eapply not_free_immut_put_ty; eauto. }
-        Qed.
-
-        Lemma neq_filter_to_delete_preserve_ty' :
-          forall Gstore tbl t,
-            type_wf t -> is_tbl_ty t ->
-            map.get Gstore tbl = Some (idx_ty t) ->
-            preserve_ty Gstore (fold_expr (neq_filter_to_delete_head tbl)).
-        Proof.
-          clear H_NoDup.
-          intros. apply fold_expr_preserve_ty.
-          eapply neq_filter_to_delete_head_preserve_ty; eauto.
-        Qed.
-
-        Lemma neq_filter_to_delete_preserve_ty :
-          forall c Gstore Genv tbl t,
-            type_wf t -> is_tbl_ty t = true ->
-            tenv_wf Gstore -> tenv_wf Genv ->
-            tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-            well_typed Gstore Genv c -> well_typed Gstore Genv (fold_command_with_globals [tbl] (neq_filter_to_delete_head tbl) c).
-        Proof.
-          clear H_NoDup.
-          intros. eapply fold_command_with_globals_preserve_ty.
-          5: eauto.
-          all: simpl in *; auto.
-          intros. eapply neq_filter_to_delete_head_preserve_ty; eauto.
-          unfold tenv_wf_with_globals in *; invert_Forall2; eauto.
-        Qed.
-
-        Lemma not_In__dict_delete : forall (k : value) d, ~ In k (List.map fst d) -> dict_delete k d = d.
-        Proof.
-          induction d; intros; simpl; auto.
-          destruct a; case_match; simpl in *.
-          1:apply value_eqb_eq in E; subst; intuition.
-          f_equal. auto.
         Qed.
 
         Lemma gallina_filter_access_neq_from_idx : forall k idx kt vt,
@@ -2492,11 +1116,16 @@ Section WithHole.
           assert (type_of Gstore Genv (efilter_neq x0 x0 attr e1_2_2 (eidx_to_list k0 v1 v1 v1 acc0 acc0 (ELoc tbl))) (TList (TRecord l))).
           { do 3 invert_type_of.
             assert(t1 = TRecord l).
-            { repeat invert_type_of; repeat rewrite_map_get_put_hyp.
-              rewrite_l_to_r. unfold index_type in *; do_injection.
+            { repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+              repeat rewrite_map_get_put_hyp.
+              repeat rewrite_l_to_r.
+              lazymatch goal with
+                H1: map.get _ _ = _, H2: map.get _ _ = _ |- _ =>
+                  rewrite H1 in H2 end.
+              unfold index_type in *; do_injection2.
               simpl in *. congruence. }
             subst; auto. }
-          erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord l))).
+          symmetry. erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord l))).
           3,4: eauto.
           2: apply fold_to_idx; eauto; simpl; intuition auto.
           erewrite fiat2_gallina_to_idx_sem.
@@ -2515,15 +1144,17 @@ Section WithHole.
             H1: locals_wf Gstore store, H2: map.get Gstore _ = _ |- _ => apply H1 in H2 end.
           destruct_match_hyp; intuition idtac.
           invert_type_of_value.
-          apply H2 in E; invert_Forall; destruct_or; intuition auto.
+          apply H2 in E; unfold value_wf_with_globals in *.
+          invert_Forall; destruct_or; intuition auto.
           erewrite gallina_filter_access_neq_from_idx; eauto.
           apply consistent_LikeList_eq.
           rewrite <- gallina_from_to_LikeList with (t:=TList (TRecord l)); auto.
           1:{ apply dict_delete_sound; eauto.
-              repeat invert_type_of. unfold get_attr_type.
-              repeat rewrite_map_get_put_hyp. repeat do_injection.
+              repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+              unfold get_attr_type.
+              repeat rewrite_map_get_put_hyp. repeat do_injection2.
               eapply type_sound.
-              1:{ rewrite_l_to_r. eapply not_free_immut_put_ty; eauto. }
+              1:{ rewrite_l_to_r_goal. eapply not_free_immut_put_ty; eauto. }
               all: auto. }
           1: apply dict_delete_preserve_index_wf; auto.
         Qed.
@@ -2531,212 +1162,14 @@ Section WithHole.
         Lemma neq_filter_to_delete_head_sound : expr_aug_transf_sound (idx_wf:=idx_wf) neq_filter_to_delete_head.
         Proof.
           unfold expr_aug_transf_sound; intros.
-          invert_tenv_wf_with_globals; split.
-          1: eapply neq_filter_to_delete_head_preserve_ty; eauto.
-          1: symmetry; eapply neq_filter_to_delete_head_preserve_sem; eauto.
-        Qed.
-
-        Lemma neq_filter_to_delete_preserve_sem' :
-          forall Gstore store tbl t,
-            type_wf t -> is_tbl_ty t = true ->
-            map.get Gstore tbl = Some (idx_ty t) ->
-            holds_for_all_entries (index_wf_with_globals [tbl]) store ->
-            preserve_sem Gstore store (fold_expr (neq_filter_to_delete_head tbl)).
-        Proof.
-          intros. apply fold_expr_preserve_sem.
-          1: eapply  neq_filter_to_delete_head_preserve_ty; eauto.
-          eapply  neq_filter_to_delete_head_preserve_sem with (Gstore:=Gstore); eauto.
-        Qed.
-
-        Lemma neq_filter_to_delete_preserve_sem :
-          forall c (Gstore Genv : tenv) (store env : locals) tbl t,
-            type_wf t -> is_tbl_ty t = true ->
-            tenv_wf Gstore -> tenv_wf Genv ->
-            tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-            parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) c ->
-            locals_wf Gstore store -> locals_wf Genv env ->
-            holds_for_all_entries (index_wf_with_globals [tbl]) store ->
-            interp_command store env c = interp_command store env (fold_command_with_globals [tbl] (neq_filter_to_delete_head tbl) c).
-        Proof.
-          intros.
-          eapply fold_command_with_globals_preserve_sem with (Gstore:=Gstore); simpl in *; auto.
-          6: eauto.
-          all: intros; simpl in *; eauto; try reflexivity.
-          all: unfold tenv_wf_with_globals in H8; inversion H8; subst.
-          1: eapply neq_filter_to_delete_head_preserve_ty; eauto.
-          1: eapply neq_filter_to_delete_head_preserve_sem with (Gstore:=Gstore0); eauto.
-        Qed.
-
-        Lemma neq_filter_to_delete_preserve_index_wf :
-          forall c Gstore Genv tbl t,
-            type_wf t -> is_tbl_ty t = true ->
-            tenv_wf Gstore -> tenv_wf Genv ->
-            tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
-            parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) c -> parameterized_wf Gstore Genv (index_wf_with_globals [tbl]) (fold_command_with_globals [tbl] (neq_filter_to_delete_head tbl) c).
-        Proof.
-          intros. eapply fold_command_with_globals_preserve_index_wf.
-          6: eauto.
-          all: simpl in *; auto; intros.
-          all:  unfold tenv_wf_with_globals in *; repeat invert_Forall2.
+          invert_tenv_wf_with_globals; split; intros.
           1: eapply neq_filter_to_delete_head_preserve_ty; eauto.
           1: eapply neq_filter_to_delete_head_preserve_sem; eauto.
         Qed.
       End neq_filter_to_delete.
-
     End WithMap.
   End WithVars.
 End WithHole.
 
-Section ConcreteExample.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
-
-  Local Open Scope string.
-
-  Instance ctenv : map.map string type := SortedListString.map _.
-  Instance ctenv_ok : map.ok ctenv := SortedListString.ok _.
-
-  Instance clocals : map.map string value := SortedListString.map _.
-  Instance clocals_ok : map.ok clocals := SortedListString.ok _.
-
-  Instance caenv : map.map string collection_tag := SortedListString.map _.
-  Instance caenv_ok : map.ok caenv := SortedListString.ok _.
-
-  Instance cRenv : map.map string (value -> value -> Prop) := SortedListString.map _.
-  Instance cRenv_ok : map.ok cRenv := SortedListString.ok _.
-
-  Definition attr := "department".
-
-  Lemma H_NoDup : is_NoDup ["tup"; "acc"; "x"; "k"; "v"].
-  Proof.
-    simpl; intuition auto; congruence.
-  Qed.
-
-  Notation idx_wf := (idx_wf attr).
-  Instance cdict_idx : IndexInterface.index := (dict_idx "hole" attr "tup" "acc" "x" "k" "v").
-  Instance cdict_idx_ok : IndexInterface.ok LikeBag LikeList cdict_idx idx_wf consistent.
-    apply dict_idx_ok. apply H_NoDup.
-  Qed.
-
-  Definition to_filter_transf := fold_command id to_filter_head.
-  Definition lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head attr "p" tbl).
-  Definition delete_transf := fun tbl => fold_command_with_globals [tbl] (neq_filter_to_delete_head attr tbl).
-  Definition ex_transf (Gstore Genv : ctenv) :=
-    Basics.compose (apply_idx_related_transfs (to_from_con:=LikeBag) (fun tbl => Basics.compose (lookup_transf tbl) (Basics.compose (delete_transf tbl) (lookup_transf tbl))) Gstore Genv) to_filter_transf.
-
-  Create HintDb transf_hints.
-  Hint Resolve transf_sound_compose : transf_hints.
-  Hint Resolve aug_transf_sound_compose : transf_hints.
-  Hint Resolve fold_command_with_globals_sound : transf_hints.
-  Hint Resolve fold_command_id_sound : transf_hints.
-  Hint Resolve to_filter_head_sound : transf_hints.
-
-  Hint Resolve eq_filter_to_lookup_head_sound : transf_hints.
-  Hint Resolve neq_filter_to_delete_head_sound : transf_hints.
-  (*
-  Hint Resolve apply_idx_related_transfs_sound : transf_hints. *)
-
-  Hint Extern 5 (transf_sound (apply_idx_related_transfs _)) => apply apply_idx_related_transfs_sound : transf_hints.
-
-  (*  Hint Extern 5 (expr_transf_sound to_filter_head) => apply to_filter_head_sound : transf_hints.
-  Hint Extern 5 (expr_aug_transf_sound (neq_filter_to_delete_head _)) => apply neq_filter_to_delete_head_sound : transf_hints.
-
-  Hint Extern 5 (transf_sound (fun _ _ => Basics.compose _ _)) => apply transf_sound_compose : transf_hints.
-  Hint Extern 5 (aug_transf_sound (fun _ => Basics.compose _ _)) => apply aug_transf_sound_compose : transf_hints.
-  Hint Extern 5 (aug_transf_sound (fun _ => fold_command_with_globals _ _)) => apply fold_command_with_globals_sound : transf_hints.
-  Hint Extern 5 (transf_sound (fun _ _ => fold_command id _)) => apply fold_command_id_sound : transf_hints.
-  Hint Extern 5 (expr_aug_transf_sound (eq_filter_to_lookup_head _ _)) => apply eq_filter_to_lookup_head_sound : transf_hints.
-   *)
-
-  Hint Extern 5 (word.ok _) => typeclasses eauto : transf_hints.
-  Hint Extern 5 (map.ok _) => typeclasses eauto : transf_hints.
-  Hint Extern 5 (is_NoDup_opaque _) => eapply H_NoDup : transf_hints.
-
-  (* ??? hint resolve, hint unfold, file cleanup
-   This file only for dict index
-   separate pipeline + concrete example from the idx impl and lemmas
-
-declare uniqueness property as part of the relation type/letmut
-assertion that lasts across execution
-new collection tag
-
-Ranged query using the current dictionary?
-
-Trigram index
-Bitmap index for conjunction/disjunction
-Summation aggregate incrementally updated
-Table -> Columns lookup only reads columns used - zip used columns together
-Some of these options could change the core structure of the language design, so still not time to write paper yet
-   *)
-  Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
-  Proof.
-    eauto 20 with transf_hints.
-  Qed.
-
-  Require Import fiat2.Notations.
-  Open Scope fiat2_scope.
-
-  Definition row_ty := TRecord (record_sort [("name", TString); ("department", TString); ("feedback", TString)]).
-  (* two arbitrary well_typed rows *)
-  Definition row1 := EVar "row1".
-  Definition row2 := EVar "row2".
-
-  Definition build_responses1 := <{ set "responses" := row1 :: row2 :: mut "responses" }>.
-  Definition remove_NA := <{ set "responses" :=
-                             "row" <- mut "responses" ;
-                             check(!("row"["department"] == << EAtom (AString "NA") >>)) ;
-                             ret "row" }>.
-  Definition filter_responses dpt : expr := ESort <[ "row" <- mut "responses" ;
-                                                       check("row"["department"] == << EAtom (AString dpt) >>);
-                                                       ret "row" ]>.
-  Definition query := CSeq remove_NA
-                        (CForeach (filter_responses "EECS") "r"
-                         <{ let "name" = "r"["name"] +++ << EAtom (AString ": ") >> in
-                            let "feedback" = "r"["feedback"] +++ << EAtom (AString "\n") >> in
-                            let "line" = "name" +++ "feedback" in
-                            set "all_feedback" := mut "all_feedback" +++ "line" }>).
-  Definition ex1' := CSeq build_responses1 query.
-  Definition ex1 := CLetMut (EAtom (ANil (Some (row_ty)))) "responses" ex1'.
-
-  Definition init_Gstore : ctenv := map.put map.empty "all_feedback" TString.
-  Definition init_Genv : ctenv := map.put (map.put map.empty "row1" row_ty) "row2" row_ty.
-
-  (* ??? measure performance? *)
-  Compute typecheck (map.put map.empty "all_feedback" TString) init_Genv ex1.
-  Compute can_transf_to_index LikeBag (TList row_ty) (map.put map.empty "all_feedback" LikeList) ex1.
-  Compute command_tag_req_times (fun istr => command_tag_req istr query) (map.put map.empty "all_feedback" LikeList) 1.
-
-  Compute ex1.
-  Definition ex1_to_filter := fold_command id to_filter_head ex1.
-  Compute typecheck (map.put map.empty "all_feedback" TString) init_Genv ex1_to_filter.
-  Compute can_transf_to_index LikeBag (TList row_ty) (map.put map.empty "all_feedback" LikeList) ex1_to_filter.
-  Compute ex1_to_filter.
-
-  Definition ex1_to_idx := transf_to_idx (get_free_vars init_Genv) ex1_to_filter.
-  Compute ex1_to_idx.
-
-  Definition ex1_lookup := apply_after_letmut (fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head attr "p" tbl)) ex1_to_idx.
-  Compute ex1_lookup.
-
-Definition ex1_delete := apply_after_letmut (fun tbl => fold_command_with_globals [tbl] (neq_filter_to_delete_head attr tbl)) ex1_lookup.
-  Compute ex1_delete.
-
-  Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
-
-
-  Ltac resolve_NoDup := repeat constructor; simpl; intuition idtac; congruence.
-
-  Ltac resolve_tenv_wf := repeat apply tenv_wf_step; try apply tenv_wf_empty; repeat constructor; resolve_NoDup.
-
-  Hint Extern 5 (well_typed _ _ _) => simple eapply command_typechecker_sound.
-  Hint Extern 5 (tenv_wf _) => resolve_tenv_wf.
-  Hint Extern 5 (typecheck _ _ _ = Success _) => reflexivity.
-
-  Theorem ex1_transformed_sem : forall (store env : clocals),
-      locals_wf init_Gstore store ->
-      locals_wf init_Genv env ->
-      interp_command store env ex1_transformed = interp_command store env ex1.
-  Proof.
-    eauto using transf_sound__preserve_sem, ex_transf_sound.
-  Qed.
-End ConcreteExample.
+#[export] Hint Resolve eq_filter_to_lookup_head_sound : transf_hints.
+#[export] Hint Resolve neq_filter_to_delete_head_sound : transf_hints.

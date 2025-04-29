@@ -185,9 +185,6 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 
-  (* ??? Move to soundness *)
-  Definition tenv_wf (G : tenv) := forall x t, map.get G x = Some t -> type_wf t.
-
   Inductive type_of (Gstore Genv : tenv) : expr -> type -> Prop :=
   | TyEVar x t : map.get Genv x = Some t -> type_of Gstore Genv (EVar x) t
   | TyELoc x t : map.get Gstore x = Some t -> type_of Gstore Genv (ELoc x) t
@@ -393,14 +390,6 @@ Section WithMap.
       end.
     End TypeOfIH.
 
-    Lemma tenv_wf_step : forall G t, tenv_wf G -> type_wf t -> forall x, tenv_wf (map.put G x t).
-    Proof.
-      unfold tenv_wf; intros. destruct (String.eqb x x0) eqn:E.
-      - rewrite eqb_eq in *; subst. rewrite map.get_put_same in *.
-        injection H1; intro; subst; auto.
-      - rewrite eqb_neq in *. rewrite map.get_put_diff in *; eauto.
-    Qed.
-
     Lemma Forall_access_record : forall A P l k (v : A),
         Forall P (List.map snd l) -> access_record l k = Success v -> P v.
     Proof.
@@ -409,37 +398,6 @@ Section WithMap.
         destruct (String.eqb k s).
         + injection H0; intros; subst; auto.
         + eapply IHl; eauto.
-    Qed.
-
-    Lemma type_of__type_wf : forall Gstore Genv e t,
-        tenv_wf Gstore ->
-        tenv_wf Genv ->
-        type_of Gstore Genv e t ->
-        type_wf t.
-    Proof.
-      intros Gstore Genv e t H_store H_env H. induction H using type_of_IH; eauto.
-      - inversion H; constructor; auto.
-      - inversion H; constructor; auto.
-      - inversion H; repeat constructor; auto.
-      - auto using tenv_wf_step.
-      - apply IHtype_of2. apply tenv_wf_step; auto.
-        apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
-      - constructor; auto.
-        + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
-        + apply Permutation_map with (f := snd), Permutation_sym in H2.
-          rewrite Forall_forall; intros t H_in. eapply Permutation_in in H_in; eauto.
-          remember (List.map snd tl) as tl2. revert H_env H1 H_in; clear; intros.
-          induction H1; try apply in_nil in H_in; intuition.
-          inversion H_in; subst; auto.
-      - apply IHtype_of in H_env as H_wf. inversion H_wf; subst.
-        eapply Forall_access_record; eauto.
-      - constructor; auto.
-      - apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; constructor; auto.
-      - constructor; apply IHtype_of4. repeat apply tenv_wf_step; auto.
-        + apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
-        + apply IHtype_of2 in H_env as H_wf2. inversion H_wf2; auto.
-      - constructor; apply IHtype_of2, tenv_wf_step; auto.
-        apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
     Qed.
 End WithMap.
 
