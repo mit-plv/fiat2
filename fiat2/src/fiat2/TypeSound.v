@@ -16,6 +16,47 @@ Section WithWord.
 
     Local Coercion is_true : bool >-> Sortclass.
 
+    Definition tenv_wf (G : tenv) := forall x t, map.get G x = Some t -> type_wf t.
+
+    Lemma tenv_wf_step : forall G t, tenv_wf G -> type_wf t -> forall x, tenv_wf (map.put G x t).
+    Proof.
+      unfold tenv_wf; intros. destruct (String.eqb x x0) eqn:E.
+      - rewrite eqb_eq in *; subst. rewrite map.get_put_same in *.
+        injection H1; intro; subst; auto.
+      - rewrite eqb_neq in *. rewrite map.get_put_diff in *; eauto.
+    Qed.
+
+    Lemma type_of__type_wf : forall Gstore Genv e t,
+        tenv_wf Gstore ->
+        tenv_wf Genv ->
+        type_of Gstore Genv e t ->
+        type_wf t.
+    Proof.
+      intros Gstore Genv e t H_store H_env H. induction H using @type_of_IH; eauto.
+      - inversion H; constructor; auto.
+      - inversion H; constructor; auto.
+      - inversion H; repeat constructor; auto.
+      - auto using tenv_wf_step.
+      - apply IHtype_of2. apply tenv_wf_step; auto.
+        apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
+      - constructor; auto.
+        + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
+        + apply Permutation_map with (f := snd), Permutation_sym in H2.
+          rewrite Forall_forall; intros t H_in. eapply Permutation_in in H_in; eauto.
+          remember (List.map snd tl) as tl2. revert H_env H1 H_in; clear; intros.
+          induction H1; try apply in_nil in H_in; intuition.
+          inversion H_in; subst; auto.
+      - apply IHtype_of in H_env as H_wf. inversion H_wf; subst.
+        eapply Forall_access_record; eauto.
+      - constructor; auto.
+      - apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; constructor; auto.
+      - constructor; apply IHtype_of4. repeat apply tenv_wf_step; auto.
+        + apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
+        + apply IHtype_of2 in H_env as H_wf2. inversion H_wf2; auto.
+      - constructor; apply IHtype_of2, tenv_wf_step; auto.
+        apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
+    Qed.
+
     Inductive type_of_value : value -> type -> Prop :=
     | TyVWord w : type_of_value (VWord w) TWord
     | TyVInt n : type_of_value (VInt n) TInt
@@ -34,55 +75,55 @@ Section WithWord.
                         type_of_value (VDict l) (TDict tk tv)
     | TyVUnit : type_of_value VUnit TUnit.
 
-  Definition locals_wf (G : tenv) (E : locals) :=
-    forall x t, map.get G x = Some t ->
-                match map.get E x with
-                | Some v => type_of_value v t
-                | _ => False
-                end.
+    Definition locals_wf (G : tenv) (E : locals) :=
+      forall x t, map.get G x = Some t ->
+                  match map.get E x with
+                  | Some v => type_of_value v t
+                  | _ => False
+                  end.
 
-  Lemma locals_wf_step : forall G E,
-      locals_wf G E ->
-      forall x t v,
-        type_of_value v t ->
-        locals_wf (map.put G x t) (map.put E x v).
-  Proof.
-    unfold locals_wf; intros.
-    destruct (String.eqb x0 x) eqn:E_x.
-    - rewrite String.eqb_eq in E_x. rewrite E_x in *.
-      rewrite map.get_put_same. rewrite map.get_put_same in H1. congruence.
-    - rewrite String.eqb_neq in E_x. rewrite map.get_put_diff; auto.
-      rewrite map.get_put_diff in H1; auto. apply H. auto.
-  Qed.
+    Lemma locals_wf_step : forall G E,
+        locals_wf G E ->
+        forall x t v,
+          type_of_value v t ->
+          locals_wf (map.put G x t) (map.put E x v).
+    Proof.
+      unfold locals_wf; intros.
+      destruct (String.eqb x0 x) eqn:E_x.
+      - rewrite String.eqb_eq in E_x. rewrite E_x in *.
+        rewrite map.get_put_same. rewrite map.get_put_same in H1. congruence.
+      - rewrite String.eqb_neq in E_x. rewrite map.get_put_diff; auto.
+        rewrite map.get_put_diff in H1; auto. apply H. auto.
+    Qed.
 
-  Local Ltac destruct_match :=
-    lazymatch goal with
-    | H : (if type_eqb ?x ?y then _ else _) = _ |- _ =>
-        let E := fresh "E" in
-        destruct (type_eqb x y) eqn:E; try discriminate; apply type_eqb_eq in E; subst; simpl in *
-    | H: (match ?x with _ => _ end) = Success _ |- _ =>
-        let E := fresh "E" in
-        destruct x eqn:E; try discriminate; simpl in *
-    end.
+    Ltac destruct_match :=
+      lazymatch goal with
+      | H : (if type_eqb ?x ?y then _ else _) = _ |- _ =>
+          let E := fresh "E" in
+          destruct (type_eqb x y) eqn:E; try discriminate; apply type_eqb_eq in E; subst; simpl in *
+      | H: (match ?x with _ => _ end) = Success _ |- _ =>
+          let E := fresh "E" in
+          destruct x eqn:E; try discriminate; simpl in *
+      end.
 
-  Local Ltac destruct_compare_types :=
-    unfold compare_types in *; destruct_match; constructor.
+    Ltac destruct_compare_types :=
+      unfold compare_types in *; destruct_match; constructor.
 
-  Local Ltac invert_type_wf :=
-    lazymatch goal with
-    | H: type_wf (TList ?t) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
-    | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
-    end.
+    Ltac invert_type_wf :=
+      lazymatch goal with
+      | H: type_wf (TList ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
+      end.
 
-  Local Ltac invert_result :=
+  Ltac invert_result :=
     lazymatch goal with
     | H: Success _ = Success _ |- _ => inversion H; clear H; intros; subst
     end.
 
-  Local Ltac invert_pair :=
+  Ltac invert_pair :=
     lazymatch goal with
     | H: (_, _) = (_, _) |- _ => inversion H; clear H; intros; subst
     end.
@@ -352,13 +393,13 @@ Section WithWord.
       eapply dict_from'_sound; eauto.
     Qed.
 
-  Local Ltac unfold_typechecker :=
+  Ltac unfold_typechecker :=
     lazymatch goal with
     | H: synthesize_expr _ _ _ = Success _ |- _ => unfold synthesize_expr in H
     | H: analyze_expr _ _ _ _ = Success _ |- _ => unfold analyze_expr in H
     end.
 
-  Local Ltac unfold_fold_typechecker := repeat unfold_typechecker; fold synthesize_expr in *; fold analyze_expr in *.
+  Ltac unfold_fold_typechecker := repeat unfold_typechecker; fold synthesize_expr in *; fold analyze_expr in *.
 
   Ltac apply_type_of__type_wf :=
     lazymatch goal with
@@ -382,7 +423,7 @@ Section WithWord.
         apply type_of__type_wf in H as H'
     end.
 
-  Local Ltac apply_typechecker_IH :=
+  Ltac apply_typechecker_IH :=
     lazymatch goal with
     | IH: (forall _ _ _ _, _ -> _ -> (synthesize_expr _ _ ?e = _ -> _) /\ _),
         H: synthesize_expr _ _ ?e = Success _ |- context[?e] => eapply IH in H; eauto
@@ -519,7 +560,7 @@ Section WithWord.
     Qed.
 (*  Show Ltac Profile. *)
 
-    Local Ltac apply_type_sound_IH :=
+    Ltac apply_type_sound_IH :=
       lazymatch goal with
       | H : (tenv_wf ?Genv ->
              forall store env, locals_wf ?Gstore store ->
@@ -534,22 +575,22 @@ Section WithWord.
           apply H; try apply tenv_wf_step; try apply locals_wf_step
       end.
 
-    Local Ltac type_injection :=
+    Ltac type_injection :=
       lazymatch goal with
       | H : TList _ = TList _ |- _ => injection H as H; subst
       end.
 
-    Local Ltac apply_locals_wf :=
+    Ltac apply_locals_wf :=
       match goal with
       | H : locals_wf ?G ?E, H' : map.get ?G ?x = _ |- _ =>
           apply H in H'; unfold get_local; destruct (map.get E x); intuition
       end.
-    Local Ltac invert_Forall :=
+    Ltac invert_Forall :=
       match goal with
       | H : Forall _ (_ :: _) |- _ => inversion H; subst
       end.
 
-    Local Ltac destruct_exists :=
+    Ltac destruct_exists :=
       match goal with
       | H: exists x, _ |- _ => destruct H as [x H]
       end.
@@ -681,7 +722,7 @@ Section WithWord.
       inversion H; intuition. constructor; congruence.
     Qed.
 
-    Local Ltac destruct_value_compare :=
+    Ltac destruct_value_compare :=
       lazymatch goal with
       | H: context[value_compare ?x ?y] |- _ =>
           let E := fresh "E" in
@@ -691,17 +732,17 @@ Section WithWord.
           destruct (value_compare x y) eqn: E
       end.
 
-    Local Ltac invert_SSorted :=
+    Ltac invert_SSorted :=
       lazymatch goal with
       | H: StronglySorted _ (_ :: _) |- _ => inversion H; subst
       end.
 
-    Local Ltac invert_NoDup :=
+    Ltac invert_NoDup :=
       lazymatch goal with
       | H: NoDup (_ :: _) |- _ => inversion H; subst
       end.
 
-    Local Ltac invert_In :=
+    Ltac invert_In :=
       lazymatch goal with H: In _ (_ :: _) |- _ => inversion H end.
 
     Lemma dict_insert_sound : forall l kt vt k v,
@@ -1035,7 +1076,7 @@ Section WithWord.
             try apply_type_of__type_wf; try invert_type_wf; auto.
     Qed.
 
-    Local Ltac apply_cmd_tc_sound_IH :=
+    Ltac apply_cmd_tc_sound_IH :=
       lazymatch goal with
       | IH: context[well_typed _ _ ?c] |- well_typed _ _ ?c =>
           eapply IH; eauto
