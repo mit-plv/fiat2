@@ -145,7 +145,8 @@ Section WithWord.
       | EJoin e1 e2 x1 x2 p r => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x r) (option_append (cols x p) (option_append (cols x e1) (cols x e2)))
       | EProj e x1 r => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x r)
       end.
-    
+
+
     Theorem proj_into_join: forall (store env: locals) (Gstore Genv: tenv) (t1 t2 p r rp: expr) (x y xp: string),
        x <> y ->
        xp <> x ->
@@ -157,18 +158,13 @@ Section WithWord.
        interp_expr store env (EJoin t1 t2 x y p rnew).
     Proof.
       intros store env Gstore Genv t1 t2 p r rp x y xp XY XPX XPY HX HY. simpl.
-      destruct (interp_expr store env t1) eqn:T1; try reflexivity.
-      destruct (interp_expr store env t2) eqn:T2; try reflexivity. f_equal.
+      destruct (interp_expr store env t1) eqn:T1; auto.
+      destruct (interp_expr store env t2) eqn:T2; auto. f_equal.
       rewrite map_flat_map. apply flat_map_ext. intros a. rewrite map_map. apply map_ext. intros b.
-      rewrite not_free_immut_put_sem with (x:=x) (v:=a) (e:=rp).
-      - rewrite not_free_immut_put_sem with (x:=y) (v:=b) (e:=rp).
-        + rewrite Properties.map.put_put_diff with (k1:=xp).
-          * rewrite Properties.map.put_put_diff with (k1:=xp).
-            -- reflexivity.
-            -- apply XPY.
-          * apply XPX.
-        + apply HY.
-      - apply HX.
+      rewrite not_free_immut_put_sem with (x:=x) (v:=a) (e:=rp); auto.
+      rewrite not_free_immut_put_sem with (x:=y) (v:=b) (e:=rp); auto.
+      rewrite Properties.map.put_put_diff with (k1:=xp); auto.
+      rewrite Properties.map.put_put_diff with (k1:=xp); auto.
     Qed.
 
     Definition make_record (x: string) (cols: list string) : expr :=
@@ -761,6 +757,109 @@ Section WithWord.
            + apply StronglySorted_record_sort.
            + apply StronglySorted_record_sort.
     Qed.
+
+    Lemma record_type_a'_rcols: forall (store env:locals) (a a': value) (f1' f1: list (string * type)) (rcols: list string) (xp: string),
+      a' =
+          VRecord
+            (record_sort
+               (map
+                  (fun x0 : string =>
+                   (x0,
+                    match a with
+                    | VRecord l1 => record_proj x0 l1
+                    | _ => VUnit
+                    end)) rcols)) ->
+      f1' =
+           record_sort
+             (map
+                (fun x0 : string =>
+                 match find (fun '(s, _) => (x0 =? s)%string) f1 with
+                 | Some (s, t) => (s, t)
+                 | None => (x0, TUnit)
+                 end) rcols) ->
+      incl rcols (map fst f1) ->
+      NoDup rcols ->
+      type_of_value a (TRecord f1) ->
+      type_of_value a' (TRecord f1').
+    Proof.
+      intros store env a a' f1' f1 rcols xp HA HF HI HD HT. rewrite HA. apply TyVRecord; inversion HT; subst.
+      - rewrite <- Permuted_record_sort. rewrite map_map. rewrite map_ext_id; auto. intros. rewrite <- map_fst_a0. auto.
+      - apply StronglySorted_record_sort.
+      - induction rcols.
+        {1: simpl. unfold record_sort. unfold Mergesort.Sectioned.sort. simpl. apply Forall2_nil. }
+        apply incl_cons_inv in HI. destruct HI. apply invert_NoDup_cons in HD. destruct HD. apply IHrcols in H2 as H6; auto. clear IHrcols.
+        apply Forall2_Permuted_StronglySorted with (l1:=(map (fun x0 : string => (x0, record_proj x0 l)) (a :: rcols)))
+                                                   (l2:=(map (fun x0 : string => match find (fun '(s, _) => (x0 =? s)%string) f1 with
+                                                    | Some (s, t0) => (s, t0) | None => (x0, TUnit) end) (a :: rcols))).
+        + simpl. apply Forall2_cons; simpl in *.
+          * split; try apply map_fst_a0. clear H1 HT. induction H3; simpl; try apply TyVUnit. destruct y. simpl in *. destruct H.
+            -- destruct x. simpl in H1. destruct H1. subst. rewrite eqb_refl. simpl. unfold record_proj. simpl. rewrite eqb_refl. auto.
+            -- apply invert_NoDup_cons in H0. destruct H0. destruct ((a =? s)%string) eqn:AS.
+               ++ rewrite String.eqb_eq in AS. subst. simpl. destruct x. simpl in H1. destruct H1.
+                  destruct ((s =? s0)%string) eqn:SS.
+                  {1: rewrite String.eqb_eq in SS. subst s0. unfold record_proj. simpl. rewrite eqb_refl. auto. }
+                  rewrite String.eqb_neq in SS. subst. contradiction.
+               ++ destruct x. simpl in H1. destruct H1. subst. unfold record_proj. simpl. rewrite AS. rewrite String.eqb_neq in AS.
+                  destruct (in_dec string_dec s rcols).
+                  ** clear IHForall2 H6. apply record_proj_sound with (l:=l)(tl:=l'); auto.
+                     --- apply Forall2_split in H3. destruct H3. apply Forall2_fst_eq in H1. rewrite H1. auto.
+                     --- apply map_snd_a0. auto. 
+                  ** assert (HL: incl rcols (map fst l')).
+                     {1: unfold incl in *. intros. apply H2 in H1 as H9. destruct H9; try auto. subst. contradiction. }
+                      apply IHForall2 in H; clear IHForall2; auto.
+                      rewrite map_record_proj_skip in H6. 2: { intros. unfold incl in HL. apply HL in H1. intro. subst. contradiction. }
+                      assert (HM: (record_sort (map (fun x0 : string => match (if (x0 =? s)%string then Some (s, t) else
+                             find (fun '(s, _) => (x0 =? s)%string) l') with | Some (s, t) => (s, t) | None => (x0, TUnit) end) rcols))
+                              = (record_sort (map (fun x0 : string => match find (fun '(s0, _) => (x0 =? s0)%string) l' with
+                              | Some (s, t) => (s, t) | None => (x0, TUnit) end) rcols))).
+                      --- f_equal. apply map_ext_in. intros. destruct (a0 =? s)%string eqn:AS0; auto. rewrite String.eqb_eq in AS0.
+                          subst. contradiction.
+                      --- rewrite HM in H6. auto.
+          * clear H H4. induction rcols; simpl; try apply Forall2_nil. apply Forall2_cons; simpl.
+            -- split; try apply map_fst_a0. apply incl_cons_inv in H2. destruct H2. apply record_proj_sound with (l:=l)(tl:=f1); auto.
+               ++ apply Forall2_split in H3. destruct H3. apply Forall2_fst_eq in H3. rewrite H3. auto.
+               ++ apply map_snd_a0. auto.
+            -- apply invert_NoDup_cons in H5. destruct H5. apply incl_cons_inv in H2. destruct H2. apply IHrcols; auto. simpl in H6.
+               remember ((a0, record_proj a0 l) :: map (fun x0 : string => (x0, record_proj x0 l)) rcols) as l'.
+               remember ((match find (fun '(s, _) => (a0 =? s)%string) f1 with | Some (s, t) => (s, t) | None => (a0, TUnit) end
+                          :: map (fun x0 : string => match find (fun '(s, _) => (x0 =? s)%string) f1 with
+                          | Some (s, t) => (s, t) | None => (x0, TUnit) end) rcols)) as l2''. clear IHrcols.
+               apply Permutation.Permutation_Forall2 with (l1':=l') in H6.
+               2: {apply Permutation.Permutation_sym. apply Permuted_record_sort. }
+               destruct H6 as [l2' [H6 H7]]. assert (HL2: l2' = l2'').
+               {1: apply Permutation.perm_trans with (l':=record_sort l2'')(l'':=l2')(l:=l2'') in H6; try apply Permuted_record_sort.
+                apply Forall2_split in H7. destruct H7. clear H8.
+                apply unify_Perm_NoDup_fst with (l2':=l2')(l2'':=l2''); auto.
+                - apply Forall2_fst_eq in H7. rewrite <- H7. subst l' l2''. simpl. f_equal; try apply map_fst_a0. rewrite !map_map. simpl.
+                  rewrite map_id. clear H5 H H4 H6 H7. induction rcols; auto. simpl. f_equal; auto. apply map_fst_a0.
+                - rewrite Heql2''. simpl. rewrite map_map. rewrite <- map_fst_a0. clear H6 H7. subst. apply NoDup_cons.
+                  + clear H5. induction rcols; auto. apply not_in_cons in H. destruct H. apply invert_NoDup_cons in H4. destruct H4.
+                    apply not_in_cons. split.
+                    * rewrite <- map_fst_a0. auto.
+                    * apply IHrcols; auto.
+                  + clear H. induction rcols; auto. simpl. rewrite <- map_fst_a0. apply invert_NoDup_cons in H4. destruct H4.
+                    apply incl_cons_inv in H5. destruct H5. apply IHrcols in H4; auto. apply NoDup_cons; auto. clear IHrcols H6.
+                    induction rcols; auto. apply not_in_cons in H. destruct H. simpl in H4. apply invert_NoDup_cons in H4. destruct H4.
+                    apply not_in_cons. split.
+                    * rewrite <- map_fst_a0. auto.
+                    * apply IHrcols; auto. }
+               subst l2''. rewrite Heql' in H7. rewrite HL2 in H7. apply Forall2_cons_iff in H7. destruct H7. simpl in *.
+               apply Forall2_Permuted_StronglySorted with
+                  (l1:=(map (fun x0:string => (x0, record_proj x0 l)) rcols)) (l2:=(map (fun x0:string => match find (fun '(s, _) =>
+                  (x0 =? s)%string) f1 with | Some (s,t) => (s,t) | None => (x0, TUnit) end) rcols)); auto.
+                  ++ simpl. rewrite map_map. simpl. rewrite map_id. auto.
+                  ++ intros. destruct H9. auto.
+                  ++ apply Permuted_record_sort.
+                  ++ apply Permuted_record_sort.
+                  ++ apply StronglySorted_record_sort.
+                  ++ apply StronglySorted_record_sort.
+           + simpl. rewrite map_map. simpl. rewrite map_id. apply NoDup_cons; assumption.
+           + intros. destruct H7. auto.
+           + apply Permuted_record_sort.
+           + apply Permuted_record_sort.
+           + apply StronglySorted_record_sort.
+           + apply StronglySorted_record_sort.
+    Qed.
   
     Theorem proj_pushdown_left: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r: expr) (x y xp: string) (pcols rcols: list string) (f1 f2: list (string * type)) (t: type),
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -883,330 +982,363 @@ Section WithWord.
     Qed.
 
 
-    (* TODO: finish proofs below *)
-    Theorem filter_into_join: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 pj rj pf: expr) (xj yj xf: string) (t tx ty tj: type),
-      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj TBool ->  
-      tenv_wf Gstore -> tenv_wf (map.put (map.put Genv xj tx) yj ty) ->
+
+    Theorem proj_pushdown_filter: forall (store env: locals) (Gstore Genv: tenv) (tbl p r:expr) (x xi xp:string)
+      (pcols rcols: list string) (f1: list (string * type)) (t: type),
+      tenv_wf Gstore -> tenv_wf Genv ->
       locals_wf Gstore store -> locals_wf Genv env ->
-      let pnew := EBinop OAnd pj (ELet rj xf pf) in
-      interp_expr store env (EFilter (EJoin tb1 tb2 xj yj pj rj) xf pf)
-      = interp_expr store env (EJoin tb1 tb2 xj yj pnew rj).
+      type_of Gstore (map.put Genv x (TRecord f1)) p TBool ->
+      type_of Gstore (map.put Genv xp (TRecord f1)) r t ->
+      type_of Gstore Genv tbl (TList (TRecord f1)) ->
+      cols x p = Some pcols ->
+      cols xp r = Some rcols ->
+      let columns := dedup String.eqb (pcols ++ rcols) in 
+      let ri := make_record xi columns in
+      interp_expr store env (EProj (EFilter tbl x p) xp r) =
+      interp_expr store env (EProj (EFilter (EProj tbl xi ri) x p) xp r).
     Proof.
-      intros store env Gstore Genv tb1 tb2 pj rj pf xj yj xf t tx ty tj TJ WF1 WF2 WF3 WF4. simpl.
-      destruct (interp_expr store env tb1) eqn: D1; try reflexivity.
-      destruct (interp_expr store env tb2) eqn: D2; try reflexivity. f_equal.
-      rewrite filter_flat_map. apply In_flat_map_ext. intros a LA.
-      rewrite filter_map_commute. f_equal.
-      rewrite filter_filter. apply In_filter_ext. intros b LB.
-      apply type_sound with Gstore (map.put (map.put Genv xj tx) yj ty) pj TBool store (map.put (map.put env xj a) yj b) in TJ; try auto.
-      - inversion TJ. simpl. remember (interp_expr store (map.put (map.put env xj a) yj b) rj) as RJ.
-        assert (TF: type_of Gstore (map.put Genv xf tj) pf TBool). 1: admit. apply type_sound with Gstore (map.put Genv xf tj) pf TBool store (map.put env xf RJ) in TF; try auto.
-        + inversion TF. admit.
-        + admit.
-        + admit.
-      - apply locals_wf_step.
-        + apply locals_wf_step.
-          * apply WF4.
-          * admit.
-       + admit.
-    Admitted.
- 
-    Lemma typeof_to_typeofvalue : forall (store env: locals) (Gstore Genv: tenv) (e: expr) (t: type),
-      type_of Gstore Genv e t -> type_of_value (interp_expr store env e) t.
-    Admitted.
-
-    Theorem filter_into_join_updated : forall (store env: locals) (Gstore Genv: tenv) (db1 db2 pj rj pf: expr) (xj yj xf: string) (t tx ty: type),
-      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj (TList t) ->  
-      tenv_wf Gstore -> tenv_wf (map.put (map.put Genv xj tx) yj ty) ->
-      locals_wf Gstore store -> locals_wf Genv env ->
-      let pnew := EBinop OAnd pj (ELet rj xf pf) in
-      interp_expr store env (EFilter (EJoin db1 db2 xj yj pj rj) xf pf)
-      = interp_expr store env (EJoin db1 db2 xj yj pnew rj).
-    Proof.
-      intros store env Gstore Genv db1 db2 pj rj pf xj yj xf t tx ty H WF1 WF2 WF3 WF4. simpl.
-      destruct (interp_expr store env db1) eqn: D1; try reflexivity.
-      destruct (interp_expr store env db2) eqn: D2; try reflexivity. f_equal.
-      rewrite filter_flat_map. apply In_flat_map_ext. intros a LA.
-      rewrite filter_map_commute. f_equal.
-      rewrite filter_filter. apply In_filter_ext. intros b LB.
-      apply type_sound with Gstore (map.put (map.put Genv xj tx) yj ty) pj (TList t) store (map.put (map.put env xj a) yj b) in H.
-      - inversion H. rewrite Bool.andb_false_r. simpl. reflexivity.
-      - apply WF1.
-      - apply WF2.
-      - apply WF3.
-      - apply locals_wf_step.
-        + apply locals_wf_step.
-          * apply WF4.
-          * admit.
-       + admit.
-    Admitted.
-
-    Theorem filter_into_join_old: forall (store env: locals) (Gstore Genv: tenv) (db1 db2 pj rj pf: expr) (xj yj xf: string) (tx ty: type),
-      type_of Gstore (map.put (map.put Genv xj tx) yj ty) pj TBool ->
-      let pnew := EBinop OAnd pj (ELet rj xf pf) in
-      interp_expr store env (EFilter (EJoin db1 db2 xj yj pj rj) xf pf)
-      = interp_expr store env (EJoin db1 db2 xj yj pnew rj).
-    Proof.
-      intros store env Gstore Genv db1 db2 pj rj pf xj yj xf tx ty H. simpl.
-      destruct (interp_expr store env db1); try reflexivity.
-      destruct (interp_expr store env db2); try reflexivity. f_equal.
-      rewrite filter_flat_map. apply flat_map_ext. intros a.
-      rewrite filter_map_commute. f_equal.
-      rewrite filter_filter. apply filter_ext. intros b.
-      apply typeof_to_typeofvalue with store (map.put (map.put env xj a) yj b) Gstore (map.put (map.put Genv xj tx) yj ty) pj TBool in H. inversion H.
-      destruct (interp_expr store (map.put (map.put env xj a) yj b) pj) eqn:H2; try inversion H1. simpl.
-      destruct b1.
-      - simpl. rewrite Bool.andb_true_r. admit.
-      - simpl. rewrite Bool.andb_false_r. admit.
-      (*destruct (interp_expr store (map.put (map.put env xj a) yj b) rj) eqn:H4.*)  Admitted. (*inversion H1. simpl.
-      destruct (interp_expr store (map.put . rewrite Bool.andb_false_r. simpl. reflexivity.
-    Qed.*)  
-
-    Lemma interp_invariant : forall (store env: locals) (Gstore Genv: tenv) (db: expr) (k: string) (v: value) (t: type),
-      type_of Gstore Genv db t -> map.get Genv k = None ->
-      interp_expr store env db = interp_expr store (map.put env k v) db.
-    Proof.
-      intros store env0 Gstore Genv db k v t T K.
-      generalize env0 as env.
-      induction T; intros env; simpl; try reflexivity.
-      - unfold get_local. destruct (eqb k x) eqn:KX.
-        + exfalso. rewrite String.eqb_eq in KX. rewrite KX in K. rewrite K in H. discriminate H.
-        + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
-          * reflexivity.
-          * symmetry. apply KX.
-      - rewrite IHT.
-        + reflexivity.
-        + apply K.
-      - rewrite IHT1.
-        + rewrite IHT2.
-          * reflexivity.
-          * apply K.
-        + apply K.
-      - rewrite IHT1.
-        + rewrite IHT2.
-          * rewrite IHT3.
-            -- reflexivity.
-            -- apply K.
-          * apply K.
-        + apply K.
-      - rewrite <- IHT1.
-        + destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX.
-            rewrite Properties.map.put_put_same. reflexivity.
-          * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- rewrite Properties.map.put_comm.
-               ++ reflexivity.
-               ++ symmetry. apply KX.
-            -- rewrite map.get_put_diff.
-               ++ apply K.
-               ++ apply KX.
-        + apply K.
-      - rewrite <- IHT1.
-        + destruct (interp_expr store env e1) eqn:H; try reflexivity.
-          f_equal. apply flat_map_ext. intros a. destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX.
-            rewrite Properties.map.put_put_same. reflexivity.
-          * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- rewrite Properties.map.put_comm.
-               ++ reflexivity.
-               ++ symmetry. apply KX.
-            -- rewrite map.get_put_diff.
-               ++ apply K.
-               ++ apply KX.
-        + apply K.
-      - rewrite <- IHT1. (*EFold*)
-        + destruct (interp_expr store env e1) eqn:H; try reflexivity. f_equal.
-          * apply FunctionalExtensionality.functional_extensionality. intros a.
-            apply FunctionalExtensionality.functional_extensionality. intros b.
-            destruct (eqb y k) eqn:KY.
-            -- admit. (*admitted due to 'rewrite IHT3' making 'set k=v' outermost*)
-            -- rewrite String.eqb_neq in KY. destruct (eqb x k) eqn:KX.
-               ++ admit.
-               ++ rewrite String.eqb_neq in KX. rewrite IHT3.
-                  ** rewrite Properties.map.put_comm.
-                     --- rewrite Properties.map.put_comm with (k1:=x) (k2:=k).
-                         +++ reflexivity.
-                         +++ apply KX.
-                     --- apply KY.
-                  ** rewrite map.get_put_diff.
-                     --- rewrite map.get_put_diff.
-                         +++ apply K.
-                         +++ symmetry. apply KX.
-                     --- symmetry. apply KY.
-          * apply IHT2.
-            -- apply K.
-        + apply K.
-      - f_equal. f_equal. f_equal. apply FunctionalExtensionality.functional_extensionality.
-        intros x. admit. (*ERecord, nested induction*)
-      - rewrite IHT.
-        + reflexivity.
-        + apply K.
-      - f_equal. f_equal. f_equal. admit. (*EDict, nested induction*)
-      - rewrite <- IHT1.
-        + destruct (interp_expr store env d) eqn:H; try reflexivity. rewrite <- IHT2.
-          * rewrite <- IHT3.
-            -- reflexivity.
-            -- apply K.
-          * apply K.
-        + apply K.
-      - rewrite <- IHT1.
-        + destruct (interp_expr store env d) eqn:H; try reflexivity. intuition congruence.
-        + apply K.
-      - rewrite <- IHT1.
-        + destruct (interp_expr store env d) eqn:H; try reflexivity.  intuition congruence.
-        + apply K.
-      - admit.
-      - admit.
-      - admit.
-      - rewrite <- IHT1.
-        + destruct (interp_expr store env e) eqn:H; try reflexivity.
-          f_equal. apply filter_ext. intros a. destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX.
-            rewrite Properties.map.put_put_same. reflexivity.
-          * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- rewrite Properties.map.put_comm.
-               ++ reflexivity.
-               ++ symmetry. apply KX.
-            -- rewrite map.get_put_diff.
-               ++ apply K.
-               ++ apply KX.
-        + apply K.
-      - rewrite <- IHT1. (*EJoin*)
-        + destruct (interp_expr store env e1) eqn:H1; try reflexivity. rewrite <- IHT2.
-          * destruct (interp_expr store env e2) eqn:H2; try reflexivity.
-            f_equal. apply flat_map_ext. intros a. destruct (eqb k y) eqn:KY.
-            -- admit. (*admitted due to 'rewrite IHT4' making 'set k=v' outermost*)
-            -- rewrite String.eqb_neq in KY. destruct (eqb k x) eqn:KX.
-               ++ admit.
-               ++ rewrite String.eqb_neq in KX. f_equal.
-                  ** apply FunctionalExtensionality.functional_extensionality. intros b. rewrite IHT4.
-                     --- rewrite Properties.map.put_comm.
-                         +++ rewrite Properties.map.put_comm with (k1:=k) (k2:=x); congruence.
-                         +++ congruence.
-                     --- rewrite !map.get_put_diff; assumption.
-                  ** apply filter_ext. intros b. rewrite IHT3.
-                     --- rewrite Properties.map.put_comm.
-                         +++ rewrite Properties.map.put_comm with (k1:=k) (k2:=x); congruence.
-                         +++ congruence.
-                     --- rewrite !map.get_put_diff; assumption.
-          * apply K.
-        + apply K.
-      - rewrite <- IHT1.
-        + destruct (interp_expr store env e) eqn:H; try reflexivity. f_equal. f_equal.
-          apply FunctionalExtensionality.functional_extensionality. intros a.
-          destruct (eqb k x) eqn:KX.
-          * rewrite String.eqb_eq in KX. rewrite KX. rewrite Properties.map.put_put_same. reflexivity.
-          * rewrite String.eqb_neq in KX. rewrite IHT2.
-            -- rewrite Properties.map.put_comm.
-               ++ reflexivity.
-               ++ symmetry. apply KX.
-            -- rewrite map.get_put_diff; assumption.
-        + apply K.
-    Admitted.
-
-    Theorem filters_into_join : forall (store env: locals) (Gstore Genv: tenv) (db1 db2 p1 p2 pj rj: expr) (x y: string) (tx ty: type),
-      x <> y ->
-      map.get Genv x = None ->
-      map.get Genv y = None ->
-      type_of Gstore (map.put Genv x tx) p1 TBool ->
-      type_of Gstore (map.put Genv y ty) p2 TBool ->
-      type_of Gstore (map.put (map.put Genv x tx) y ty) pj TBool ->
-      let pnew := EBinop OAnd pj (EBinop OAnd p1 p2) in
-      interp_expr store env (EJoin (EFilter db1 x p1) (EFilter db2 y p2) x y pj rj)
-      = interp_expr store env (EJoin db1 db2 x y pnew rj).
-    Proof.
-      intros store env Gstore Genv db1 db2 p1 p2 pj rj x y tx ty EXY EX EY T1 T2 TJ. simpl.
-      destruct (interp_expr store env db1) eqn: DB1; try reflexivity.
-      destruct (interp_expr store env db2) eqn: DB2; try reflexivity. f_equal.
-      rewrite flat_map_filter. apply flat_map_ext. intros a.
-      apply typeof_to_typeofvalue with store (map.put env x a) Gstore (map.put Genv x tx) p1 TBool in T1 as T1'.
-      inversion T1'. symmetry in H0. destruct b.
-      - f_equal. rewrite filter_filter. apply filter_ext_in. intros b HB.
-        (*apply typeof_to_typeofvalue with (store:=store) (env:=set_local env x a) in TJ as TJ'.*)
-        apply typeof_to_typeofvalue with store (map.put (map.put env x a) y b) Gstore (map.put (map.put Genv x tx) y ty) pj TBool in TJ as TJ'.
-        inversion TJ'. symmetry in H1. simpl.
-        rewrite interp_invariant with store (map.put env x a) Gstore (map.put Genv x tx) p1 y b TBool in H0.
-        + rewrite H0. simpl.
-          apply typeof_to_typeofvalue with store (map.put env y b) Gstore (map.put Genv y ty) p2 TBool in T2 as T2'.
-          inversion T2'. symmetry in H2. rewrite Properties.map.put_comm.
-          * rewrite interp_invariant with store (map.put env y b) Gstore (map.put Genv y ty) p2 x a TBool in H2.
-            -- rewrite H2. reflexivity.
-            -- apply T2.
-            -- rewrite map.get_put_diff.
-               ++ apply EX.
-               ++ apply EXY.
-          * apply EXY.
-        + apply T1.
-        + rewrite map.get_put_diff.
-          * apply EY.
-          * symmetry. apply EXY.
-      - symmetry. apply map_nil. apply filter_nil. intros b HB. unfold apply_bool_binop.
-        destruct (interp_expr store (map.put (map.put env x a) y b) pj) eqn:H4; try reflexivity.
-        rewrite interp_invariant with store (map.put env x a) Gstore (map.put Genv x tx) p1 y b TBool in H0.
-        + rewrite H0.
-          destruct (interp_expr store (map.put (map.put env x a) y b) p2) eqn:H5; try reflexivity.
-          apply Bool.andb_false_r.
-        + apply T1.
-        + rewrite map.get_put_diff.
-          * apply EY.
-          * symmetry. apply EXY.
+      intros store env Gstore Genv tbl p r x xi xp pcols rcols f1 t WF1 WF2 L1 L2 TP TR T HP HR. simpl.
+      destruct (interp_expr store env tbl) eqn:H; auto. f_equal.
+      eapply type_sound in T; eauto. inversion T. rewrite H in H0. injection H0 as H0. subst l0 t0.
+      assert (HI1: incl pcols (map fst f1)). {1: eapply cols_in_record with (e:=p); eauto. rewrite map.get_put_same. auto. }
+      assert (HI2: incl rcols (map fst f1)). {1: eapply cols_in_record with (e:=r); eauto. rewrite map.get_put_same. auto. }
+      apply map_filter_ext; intros a LA; intros; rewrite map_map; simpl; unfold get_local; rewrite map.get_put_same;
+      assert (HT: type_of_value a (TRecord f1)) by (eapply Forall_In in H2; eauto);
+      remember (record_sort (map (fun x0 : string => match find (fun '(s,_) => (x0 =? s)%string) f1 with
+                                                     | Some (s,t) => (s,t)
+                                                     | None => (x0, TUnit) end) (dedup eqb (pcols ++ rcols)))) as f1';
+      remember (VRecord (record_sort (map (fun x0 : string => (x0, match a with | VRecord l0 => record_proj x0 l0 | _ => VUnit end))
+                                        (dedup eqb (pcols ++ rcols))))) as a';
+      assert (HT': type_of_value a' (TRecord f1')) by (eapply record_type_a'; eauto).
+      - rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=pcols); auto. unfold relation.
+        destruct a; try inversion HT. subst. unfold incl. split; intros.
+        + rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a.
+          apply record_proj_lemma. apply dedup_preserves_In in H1. apply in_app_or in H1.
+          apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0. destruct H1.
+          * unfold incl in HI1. apply HI1. auto.
+          * unfold incl in HI2. apply HI2. auto.
+        + rewrite in_map_iff. exists ((a,record_proj a l0)). simpl. split; auto. rewrite <- Permuted_record_sort.
+          apply in_map_iff. exists a. split; auto. rewrite <- dedup_preserves_In. apply in_or_app. left. auto.
+      - clear H0. rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=rcols); auto. unfold relation.
+        destruct a; try inversion HT. subst. unfold incl. split; intros.
+        + rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a.
+          apply record_proj_lemma. apply dedup_preserves_In in H1. apply in_app_or in H1.
+          apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0. destruct H1.
+          * unfold incl in HI1. apply HI1. auto.
+          * unfold incl in HI2. apply HI2. auto.
+        + rewrite in_map_iff. exists ((a,record_proj a l0)). simpl. split; auto. rewrite <- Permuted_record_sort.
+          apply in_map_iff. exists a. split; auto. rewrite <- dedup_preserves_In. apply in_or_app. right. auto.
     Qed.
 
-    Section EnvGenvRelation. (*env-genv relation definitions and related proofs
-                              for possible use in filter/join conversions (not currently used)*)
-    Definition sub_domain1 (env: locals) (Genv: tenv) : Prop := (* in env -> in Genv *)
-      forall (k: string),
-        (exists v: value, map.get env k = Some v) -> (exists t: type, map.get Genv k = Some t).
+    Theorem proj_filter_commute: forall (store env: locals) (Gstore Genv: tenv) (tbl p:expr) (x xp:string)
+      (pcols rcols: list string) (f1: list (string * type)) (t: type),
+      tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
+      type_of Gstore Genv tbl (TList (TRecord f1)) ->
+      cols x p = Some pcols ->
+      incl pcols rcols ->
+      incl rcols (map fst f1) ->
+      NoDup rcols ->
+      let r := make_record xp rcols in
+      interp_expr store env (EProj (EFilter tbl x p) xp r) =
+      interp_expr store env (EFilter (EProj tbl xp r) x p).
+    Proof.
+      intros store env Gstore Genv tbl p x xp pcols rcols f1 t WF1 WF2 L1 L2 T HP HC HI2 HD. simpl. 
+      destruct (interp_expr store env tbl) eqn:H1; auto. f_equal. rewrite filter_map_commute. f_equal. apply In_filter_ext. intros a LA.
+      rewrite map_map. simpl. unfold get_local. rewrite map.get_put_same.
+      eapply type_sound in T; eauto. inversion T. rewrite <- H in H1. injection H1 as H1. subst l0 t0.
+      assert (HT: type_of_value a (TRecord f1)) by (eapply Forall_In in H2; eauto).
+      remember (record_sort (map (fun x0 : string => match find (fun '(s,_) => (x0 =? s)%string) f1 with
+                                                     | Some (s,t) => (s,t)
+                                                     | None => (x0, TUnit) end) rcols)) as f1'.
+      remember (VRecord (record_sort (map (fun x0 : string => (x0, match a with | VRecord l1 => record_proj x0 l1 | _ => VUnit end))
+                                        rcols))) as a'.
+      assert (HT': type_of_value a' (TRecord f1')) by (eapply record_type_a'_rcols; eauto).
+      rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=pcols); auto. unfold relation.
+      destruct a; try inversion HT. subst. unfold incl. split; intros.
+      - rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a.
+        apply record_proj_lemma. apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0.
+        unfold incl in HI2. apply HI2. auto.
+      - rewrite in_map_iff. exists ((a,record_proj a l0)). simpl. split; auto. rewrite <- Permuted_record_sort.
+        apply in_map_iff. exists a. split; auto.
+    Qed.
 
-    Definition sub_domain2 (env: locals) (Genv: tenv) : Prop := (* in Genv -> in env *)
-      forall (k: string),
-        (exists t: type, map.get Genv k = Some t) -> (exists v: value, map.get env k = Some v).
+    Theorem proj_filter_commute2: forall (store env: locals) (Gstore Genv: tenv) (tbl p:expr) (x xp:string)
+      (pcols rcols: list string) (f1: list (string * type)) (t: type),
+      tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
+      type_of Gstore Genv tbl (TList (TRecord f1)) ->
+      cols x p = Some pcols ->
+      incl pcols rcols ->
+      NoDup rcols ->
+      let r := make_record xp rcols in
+      cols xp r = Some rcols ->
+      type_of Gstore (map.put Genv xp (TRecord f1)) r t ->
+      interp_expr store env (EProj (EFilter tbl x p) xp r) =
+      interp_expr store env (EFilter (EProj tbl xp r) x p).
+    Proof.
+      intros store env Gstore Genv tbl p x xp pcols rcols f1 t WF1 WF2 L1 L2 T HP HPC HD r HC TR. subst r. simpl. 
+      destruct (interp_expr store env tbl) eqn:H1; auto. f_equal. rewrite filter_map_commute. f_equal. apply In_filter_ext. intros a LA.
+      rewrite map_map. simpl. unfold get_local. rewrite map.get_put_same.
+      eapply type_sound in T; eauto. inversion T. rewrite <- H in H1. injection H1 as H1. subst l0 t0.
+      assert (HT: type_of_value a (TRecord f1)) by (eapply Forall_In in H2; eauto).
+      remember (record_sort (map (fun x0 : string => match find (fun '(s,_) => (x0 =? s)%string) f1 with
+                                                     | Some (s,t) => (s,t)
+                                                     | None => (x0, TUnit) end) rcols)) as f1'.
+      remember (VRecord (record_sort (map (fun x0 : string => (x0, match a with | VRecord l1 => record_proj x0 l1 | _ => VUnit end))
+                                        rcols))) as a'.
+      assert (HI: incl rcols (map fst f1)).
+      {1: eapply cols_in_record with (e:=(make_record xp rcols)); eauto. rewrite map.get_put_same. auto. }
+      assert (HT': type_of_value a' (TRecord f1')) by (eapply record_type_a'_rcols; eauto).
+      rewrite rel_lemma with (tl:=f1')(tl':=f1)(a:=a')(a':=a)(columns:=pcols); auto. unfold relation.
+      destruct a; try inversion HT. subst. unfold incl. split; intros.
+      - rewrite <- Permuted_record_sort in H0. apply in_map_iff in H0. destruct H0 as [? [? ?]]. subst a.
+        apply record_proj_lemma. apply Forall2_split in H5. destruct H5. apply Forall2_fst_eq in H0. rewrite H0.
+        unfold incl in HI. apply HI. auto.
+      - rewrite in_map_iff. exists ((a,record_proj a l0)). simpl. split; auto. rewrite <- Permuted_record_sort.
+        apply in_map_iff. exists a. split; auto.
+    Qed.
+    
+    Theorem filter_into_join: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r pf: expr) (x y xf: string)
+                                      (f1 f2: list (string * type)),
+        tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
+        type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) p TBool ->
+        type_of Gstore Genv tb1 (TList (TRecord f1)) ->
+        type_of Gstore Genv tb2 (TList (TRecord f2)) ->
+        free_immut_in x pf = false ->
+        free_immut_in y pf = false ->
+        let pnew := EBinop OAnd p (ELet r xf pf) in
+        interp_expr store env (EFilter (EJoin tb1 tb2 x y p r) xf pf)
+        = interp_expr store env (EJoin tb1 tb2 x y pnew r).
+    Proof.
+      intros store env Gstore Genv tb1 tb2 p r pf x y xf f1 f2 WF1 WF2 L1 L2 TP T1 T2 FX FY. simpl.
+      assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T1; auto. inversion T1; auto. }
+      assert (TW2: type_wf (TRecord f2)). 1: { apply type_of__type_wf in T2; auto. inversion T2; auto. }
+      destruct (interp_expr store env tb1) eqn:H1; auto. destruct (interp_expr store env tb2) eqn:H2; auto. f_equal. rewrite filter_flat_map.
+      apply In_flat_map_ext. intros a LA. rewrite filter_map_commute. rewrite filter_filter. f_equal. apply In_filter_ext. intros b LB.
+      eapply type_sound in T1; eauto. inversion T1. rewrite H1 in H. injection H as H. subst l1 t. apply Forall_In with (x:=a) in H3; auto.
+      eapply type_sound in T2; eauto. inversion T2. rewrite H2 in H. injection H as H. subst l1 t. apply Forall_In with (x:=b) in H4; auto.
+      remember (map.put (map.put env x a) y b) as ENVXY. remember (interp_expr store ENVXY p) as P. remember (interp_expr store ENVXY r) as R.
+      assert (HL: locals_wf (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) ENVXY).
+      1: { subst. apply locals_wf_step; auto. apply locals_wf_step; auto. }
+      assert (HT: tenv_wf (map.put (map.put Genv x (TRecord f1)) y (TRecord f2))).
+      1: { apply tenv_wf_step; auto. apply tenv_wf_step; auto. }
+      eapply type_sound with (env := ENVXY) in TP; eauto. inversion TP. simpl. rewrite <- HeqP in H0. rewrite <- H0. destruct b0; simpl.
+      - rewrite Bool.andb_true_r. rewrite HeqENVXY. destruct (string_dec y xf).
+        + subst xf. rewrite Properties.map.put_put_same. destruct (string_dec x y).
+          * subst y. rewrite Properties.map.put_put_same. destruct (interp_expr store (map.put env x R) pf); auto.
+          * rewrite Properties.map.put_put_diff; auto. rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto.
+            destruct (interp_expr store (map.put env y R) pf); auto.
+        + rewrite Properties.map.put_put_diff; auto. destruct (string_dec x xf).
+          * subst xf. rewrite Properties.map.put_put_same. rewrite <- not_free_immut_put_sem with (x:=y)(v:=b); auto.
+            destruct (interp_expr store (map.put env x R) pf); auto.
+          * rewrite Properties.map.put_put_diff with (k2:=xf); auto. rewrite <- not_free_immut_put_sem with (x:=y)(v:=b); auto.
+            rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto. destruct (interp_expr store (map.put env xf R) pf); auto.
+      - rewrite Bool.andb_false_r. destruct (interp_expr store (map.put ENVXY xf R) pf); auto.
+    Qed.
 
-    Definition same_domain2 (env: locals) (Genv: tenv) : Prop :=
-      sub_domain1 env Genv /\ sub_domain2 env Genv.
+    Theorem filter_into_join_left: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r pf: expr) (x y xf: string) (f1 f2: list (string * type)),
+        tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
+        type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) p TBool ->
+        type_of Gstore (map.put Genv xf (TRecord f1)) pf TBool ->
+        type_of Gstore Genv tb1 (TList (TRecord f1)) ->
+        type_of Gstore Genv tb2 (TList (TRecord f2)) ->
+        free_immut_in x pf = false ->
+        free_immut_in y pf = false ->
+        x <> y ->
+        let pnew := EBinop OAnd p (ELet (EVar x) xf pf) in
+        interp_expr store env (EJoin (EFilter tb1 xf pf) tb2 x y p r)
+        = interp_expr store env (EJoin tb1 tb2 x y pnew r).
+    Proof.
+      intros store env Gstore Genv tb1 tb2 p r pf x y xf f1 f2 WF1 WF2 L1 L2 TP TPF T1 T2 FX FY XY. simpl.
+      assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T1; auto. inversion T1; auto. }
+      assert (TW2: type_wf (TRecord f2)). 1: { apply type_of__type_wf in T2; auto. inversion T2; auto. }
+      destruct (interp_expr store env tb1) eqn:H1; auto. destruct (interp_expr store env tb2) eqn:H2; auto. f_equal. rewrite flat_map_filter.
+      apply In_flat_map_ext. intros a LA. eapply type_sound in T1; eauto. inversion T1. rewrite H1 in H. injection H as H. subst l1 t.
+      apply Forall_In with (x:=a) in H3; auto. eapply type_sound with (store:=store) (env:=map.put env xf a) in TPF; eauto.
+      3: { apply locals_wf_step; auto. } 2: { apply tenv_wf_step; auto. } inversion TPF. unfold get_local. destruct b.
+      - f_equal. apply In_filter_ext. intros b LB. rewrite map.get_put_diff; auto. rewrite map.get_put_same.
+        eapply type_sound in T2; eauto. inversion T2. rewrite H2 in H. injection H as H. subst l1 t. apply Forall_In with (x:=b) in H5; auto.
+        eapply type_sound with (store:=store) (env:=map.put (map.put env x a) y b) in TP; eauto.
+        3: {apply locals_wf_step; auto. apply locals_wf_step; auto. } 2: {apply tenv_wf_step; auto. apply tenv_wf_step; auto. }
+        inversion TP. simpl. destruct (string_dec y xf).
+        + subst xf. rewrite Properties.map.put_put_same. rewrite Properties.map.put_put_diff; auto.
+          rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto. rewrite <- H0. rewrite Bool.andb_true_r. auto.
+        + rewrite Properties.map.put_put_diff; auto. destruct (string_dec x xf).
+          * subst xf. rewrite Properties.map.put_put_same. rewrite <- not_free_immut_put_sem with (x:=y)(v:=b); auto. rewrite <- H0.
+            rewrite Bool.andb_true_r. auto.
+          * rewrite Properties.map.put_put_diff with (k2:=xf); auto. rewrite <- not_free_immut_put_sem with (x:=y)(v:=b); auto.
+            rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto. rewrite <- H0. rewrite Bool.andb_true_r. auto.
+      - symmetry. apply map_nil. apply filter_nil. intros b LB.
+        rewrite map.get_put_diff; auto. rewrite map.get_put_same. destruct (string_dec y xf).
+        + subst xf. rewrite Properties.map.put_put_same. rewrite Properties.map.put_put_diff with (k2:=y)(v2:=a); auto.
+          rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto. rewrite <- H0. unfold apply_bool_binop.
+          destruct (interp_expr store (map.put (map.put env x a) y b) p); auto. rewrite Bool.andb_false_r. auto.
+        + rewrite Properties.map.put_put_diff with (k2:=xf); auto. destruct (string_dec x xf).
+          * subst xf. rewrite Properties.map.put_put_same. rewrite not_free_immut_put_sem with (x:=y)(v:=b) in H0; auto. rewrite <- H0.
+            unfold apply_bool_binop. destruct (interp_expr store (map.put (map.put env x a) y b) p); auto. rewrite Bool.andb_false_r. auto.
+          * rewrite Properties.map.put_put_diff with (k2:=xf); auto. rewrite not_free_immut_put_sem with (x:=x)(v:=a) in H0; auto.
+            rewrite not_free_immut_put_sem with (x:=y)(v:=b) in H0; auto. rewrite <- H0. unfold apply_bool_binop.
+            destruct (interp_expr store (map.put (map.put env x a) y b) p); auto. rewrite Bool.andb_false_r. auto.
+    Qed.
 
-    Definition env_genv_relation (env: locals) (Genv: tenv) : Prop :=
-      same_domain2 env Genv /\
-      forall (k: string) (v: value) (t: type),
-        (map.get env k = Some v) -> (map.get Genv k = Some t) -> type_of_value v t.
+    Theorem filter_into_join_right: forall(store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r pf: expr) (x y yf: string) (f1 f2: list (string * type)),
+        tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
+        type_of Gstore (map.put (map.put Genv x (TRecord f1)) y (TRecord f2)) p TBool ->
+        type_of Gstore (map.put Genv yf (TRecord f2)) pf TBool ->
+        type_of Gstore Genv tb1 (TList (TRecord f1)) ->
+        type_of Gstore Genv tb2 (TList (TRecord f2)) ->
+        free_immut_in x pf = false ->
+        free_immut_in y pf = false ->
+        x <> y ->
+        let pnew := EBinop OAnd p (ELet (EVar y) yf pf) in
+        interp_expr store env (EJoin tb1 (EFilter tb2 yf pf) x y p r)
+        = interp_expr store env (EJoin tb1 tb2 x y pnew r).
+    Proof.
+      intros store env Gstore Genv tb1 tb2 p r pf x y yf f1 f2 WF1 WF2 L1 L2 TP TPF T1 T2 FX FY XY. simpl.
+      assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T1; auto. inversion T1; auto. }
+      assert (TW2: type_wf (TRecord f2)). 1: { apply type_of__type_wf in T2; auto. inversion T2; auto. }
+      destruct (interp_expr store env tb1) eqn:H1; auto. destruct (interp_expr store env tb2) eqn:H2; auto. f_equal.
+      apply In_flat_map_ext. intros a LA. f_equal. rewrite filter_filter. apply In_filter_ext. intros b LB.
+      eapply type_sound in T1; eauto. inversion T1. rewrite H1 in H. injection H as H. subst l1 t. apply Forall_In with (x:=a) in H3; auto.
+      eapply type_sound in T2; eauto. inversion T2. rewrite H2 in H. injection H as H. subst l1 t. apply Forall_In with (x:=b) in H4; auto.
+      eapply type_sound with (env:=map.put env yf b) in TPF; eauto.
+      3: { apply locals_wf_step; auto. } 2: { apply tenv_wf_step; auto. } inversion TPF.
+      eapply type_sound with (env:=map.put (map.put env x a) y b) in TP; eauto.
+      3: { apply locals_wf_step; auto. apply locals_wf_step; auto. } 2: { apply tenv_wf_step; auto. apply tenv_wf_step; auto. } inversion TP.
+      unfold get_local. rewrite map.get_put_same. destruct (string_dec y yf).
+      - subst yf. rewrite Properties.map.put_put_same. rewrite Properties.map.put_put_diff; auto.
+        rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto. rewrite <- H0. simpl. auto.
+      - rewrite Properties.map.put_put_diff; auto. rewrite <- not_free_immut_put_sem with (x:=y)(v:=b); auto. destruct (string_dec x yf).
+        + subst yf. rewrite Properties.map.put_put_same. rewrite <- H0. simpl. auto.
+        + rewrite Properties.map.put_put_diff; auto. rewrite <- not_free_immut_put_sem with (x:=x)(v:=a); auto. rewrite <- H0. simpl. auto.
+    Qed.
+    
+Import Permutation.
+    Lemma flat_map_nil: forall (A B: Type) (l: list A),
+        flat_map (fun _ : A => (@nil B)) l = nil.
+      intros. induction l; simpl; auto.
+    Qed.
 
-    Lemma same_domain_inductive : forall (env: locals) (Genv: tenv) (x: string) (a: value) (tx: type),
-        same_domain2 env Genv ->
-        same_domain2 (map.put env x a) (map.put Genv x tx).
-      intros env Genv x a tx [EG1 EG2]. split.
-      - unfold sub_domain1. intros k [v EV]. destruct (eqb k x) eqn:KX.
-        + rewrite String.eqb_eq in KX. rewrite KX. exists tx. apply map.get_put_same.
-        + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
-          * apply EG1. rewrite map.get_put_diff in EV.
-            -- exists v. apply EV.
-            -- apply KX.
-          * apply KX.
-      - unfold sub_domain2. intros k [t EV]. destruct (eqb k x) eqn:KX.
-        + rewrite String.eqb_eq in KX. rewrite KX. exists a. apply map.get_put_same.
-        + rewrite String.eqb_neq in KX. rewrite map.get_put_diff.
-          * apply EG2. rewrite map.get_put_diff in EV.
-            -- exists t. apply EV.
-            -- apply KX.
-          * apply KX. Qed.
+    Lemma map_eq_flat_map: forall (A B: Type) (f: A -> B) (l: list A),
+        map f l = flat_map (fun x => f x :: nil) l.
+      intros. induction l; simpl; auto.
+    Qed.
 
-    Lemma env_genv_inductive: forall (env: locals) (Genv: tenv) (x: string) (a: value) (tx: type),
-      type_of_value a tx ->
-      (forall (k : string) (v : value) (t : type),
-        map.get env k = Some v -> map.get Genv k = Some t -> type_of_value v t) ->
-      forall (k : string) (v : value) (t : type),
-        map.get (map.put env x a) k = Some v ->
-        map.get (map.put Genv x tx) k = Some t -> type_of_value v t.
-    intros env Genv x a tx T EG k v t KV KT. destruct (eqb k x) eqn:KX.
-    - rewrite String.eqb_eq in KX. rewrite KX in KV, KT.
-      rewrite map.get_put_same in KV. rewrite map.get_put_same in KT. inversion KV. inversion KT.
-      rewrite <- H0. rewrite <- H1. apply T.
-    - rewrite String.eqb_neq in KX. apply EG with k.
-      + rewrite map.get_put_diff in KV.
-        * apply KV.
-        * apply KX.
-      + rewrite map.get_put_diff in KT.
-        * apply KT.
-        * apply KX. Qed.
-    End EnvGenvRelation.
+    Lemma flat_map_eq_map: forall (A B C: Type) (E: A->B->C) (f: A -> list B) (l: list A),
+        flat_map (fun x => map (fun y => E x y) (f x)) l =
+        flat_map (fun x => flat_map (fun y => E x y :: nil) (f x)) l.
+      intros. apply In_flat_map_ext. intros a LA. apply map_eq_flat_map.
+    Qed.
+
+    Lemma flat_map2_filter: forall (A B C: Type) (p: C -> A -> bool) (f: C -> A -> list B) (l1: list A) (l2: list C),
+        flat_map (fun x => flat_map (fun a => f x a) (filter (fun a => p x a) l1)) l2 =
+        flat_map (fun x => flat_map (fun a => if p x a then f x a else nil) l1) l2.
+      intros. apply In_flat_map_ext. intros a LA. apply flat_map_filter.
+    Qed.
+    
+    Lemma flat_map_commute: forall (A B C: Type) (f: B -> A -> list C) (l1: list A) (l2: list B),
+        Permutation.Permutation (flat_map (fun x => flat_map (f x) l1) l2) (flat_map (fun y => flat_map (fun x => (f x y)) l2) l1).
+      intros A B C f. induction l1.
+      - intros l2. simpl. rewrite flat_map_nil. auto.
+      - simpl. intros l2. rewrite <- IHl1. induction l2 as [|b l2 IHl2].
+        + simpl. auto.
+        + simpl. rewrite <- app_assoc. rewrite <- app_assoc. apply Permutation.Permutation_app_head. rewrite IHl2.
+          rewrite app_assoc. rewrite app_assoc. apply Permutation.Permutation_app_tail. rewrite Permutation.Permutation_app_comm. auto.
+    Qed.
+
+    Lemma filter_true_id : forall (A : Type) (l : list A),
+        filter (fun _ => true) l = l.
+    Proof.
+      intros A l. induction l; auto. simpl. rewrite IHl. auto.
+    Qed.
+    
+    Theorem join_comm: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r: expr) (x y: string) (l1 l2: list value),
+        x <> y ->
+        interp_expr store env (EJoin tb1 tb2 x y p r) = VList l1 ->
+        interp_expr store env (EJoin tb2 tb1 y x p r) = VList l2 ->
+        Permutation.Permutation l1 l2.
+    Proof.
+      intros store env Gstore Genv tb1 tb2 p r x y l1 l2 XY H1 H2. simpl in *.
+      destruct (interp_expr store env tb1) eqn:T1 in *; destruct (interp_expr store env tb2) eqn:T2 in *; inversion H1.
+      injection H2 as H2. rewrite <- H2. clear H0 H2 H1. rewrite flat_map_eq_map. rewrite flat_map_eq_map.
+      rewrite flat_map2_filter. rewrite flat_map2_filter. rewrite flat_map_commute.
+      assert (H: flat_map
+       (fun y0 : value =>
+        flat_map
+          (fun x0 : value => if match
+              interp_expr store (map.put (map.put env x x0) y y0) p
+            with | VBool b => b | _ => false end then
+            interp_expr store (map.put (map.put env x x0) y y0) r :: nil
+           else nil) l) l0 = flat_map
+       (fun x0 : value =>
+        flat_map
+          (fun a : value => if match
+              interp_expr store (map.put (map.put env y x0) x a) p
+            with | VBool b => b | _ => false end then
+            interp_expr store (map.put (map.put env y x0) x a) r :: nil
+           else nil) l) l0).
+      - apply In_flat_map_ext. intros a LA. apply In_flat_map_ext. intros b LB. rewrite Properties.map.put_put_diff; auto.
+      - rewrite H. apply Permutation.Permutation_refl.
+    Qed.
+
+    Theorem join_assoc: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 tb3 p1 p12 r12: expr) (x y z xy yz:string) (l1 l2: list value) (xcols ycols zcols: list string),
+        let rx := make_record x xcols in
+        let ry := make_record y ycols in
+        let rz := make_record z zcols in
+        let rxy := ERecord (("0"%string, rx) :: ("1"%string, ry) :: nil) in
+        let ryz := ERecord (("0"%string, ry) :: ("1"%string, rz) :: nil) in
+        let y_yz := EAccess (EVar yz) "0" in
+        let z_yz := EAccess (EVar yz) "1" in
+        let p12let := (ELet z_yz z (ELet rxy xy p12)) in
+        let p23 := EBinop OAnd p1 p12let in
+        let r23 := (ELet z_yz z (ELet (EBinop OConcat (EVar x) y_yz) xy r12)) in
+        x <> y -> y <> z -> x <> z ->
+        interp_expr store env (EJoin (EJoin tb1 tb2 x y p1 rxy) tb3 xy z p12 r12) = VList l1 ->
+        interp_expr store env (EJoin tb1 (EJoin tb2 tb3 y z (EAtom (ABool true)) ryz) x yz p23 r23) = VList l2 ->
+        Permutation.Permutation l1 l2.
+    Proof.
+      intros. cbn [interp_expr] in *.
+      destruct (interp_expr store env tb1) eqn:T1; try (solve [inversion H2]).
+      destruct (interp_expr store env tb2) eqn:T2; try (solve [inversion H2]).
+      destruct (interp_expr store env tb3) eqn:T3; try (solve [inversion H2]).
+      unfold interp_atom in H3. rewrite filter_true_id in H3.
+      injection H2 as L1. injection H3 as L2. rewrite <- L1. rewrite <- L2. Admitted.
+          
+
+    Theorem proj_proj: forall (store env: locals) (Gstore Genv: tenv) (tb r r2: expr) (x x2: string) (r2cols rcols: list string),
+        free_immut_in x2 r = false ->
+        let rnew := ELet r2 x r in
+        interp_expr store env (EProj (EProj tb x2 r2) x r) =
+        interp_expr store env (EProj tb x2 rnew).
+    Proof.
+      intros store env Gstore Genv tb r r2 x x2 r2cols rcols H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
+      rewrite map_map. apply map_ext_in. intros a LA. destruct (string_dec x2 x).
+      - subst. rewrite Properties.map.put_put_same. auto.
+      - rewrite Properties.map.put_put_diff; auto. rewrite <- not_free_immut_put_sem with (x:=x2)(e:=r); auto.
+    Qed.
+
+    Theorem efilter_efilter: forall (store env: locals) (Gstore Genv: tenv) (tb p p2: expr) (x y: string) (f1: list (string*type)),
+        tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
+        type_of Gstore (map.put Genv x (TRecord f1)) p TBool ->
+        type_of Gstore (map.put Genv y (TRecord f1)) p2 TBool ->
+        type_of Gstore Genv tb (TList (TRecord f1)) ->
+        free_immut_in x p2 = false ->
+        let pnew := EBinop OAnd p (ELet (EVar x) y p2) in
+        interp_expr store env (EFilter (EFilter tb y p2) x p) =
+        interp_expr store env (EFilter tb x pnew).
+    Proof.
+      intros store env Gstore Genv tb p p2 x y f1 WF1 WF2 L1 L2 TP TP2 T H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
+      assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T; auto. inversion T; auto. }
+      rewrite filter_filter. apply In_filter_ext. intros a LA. unfold get_local. rewrite map.get_put_same.
+      eapply type_sound in T; eauto. inversion T. rewrite H1 in H0. injection H0 as H0. subst l0 t. apply Forall_In with (x:=a) in H3; auto.
+      eapply type_sound with (env:=map.put env x a) in TP; eauto.
+      3: { apply locals_wf_step; auto. } 2: { apply tenv_wf_step; auto. } inversion TP.
+      eapply type_sound with (env:=map.put  env y a) in TP2; eauto.
+      3: { apply locals_wf_step; auto. } 2: { apply tenv_wf_step; auto. } inversion TP2.
+      destruct (string_dec x y).
+      - subst. rewrite Properties.map.put_put_same. rewrite <- H4. simpl. auto.
+      - rewrite Properties.map.put_put_diff; auto. erewrite <- not_free_immut_put_sem with (x:=x); eauto. rewrite <- H4. simpl. auto.
+    Qed.
+    
+
   End WithMap.
 End WithWord.
