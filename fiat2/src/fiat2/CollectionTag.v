@@ -2001,7 +2001,7 @@ Section WithMap.
             tag_of istr ienv e i ->
             consistent i (interp_expr store env e) (interp_expr store' env' e).
       Proof.
-        induction 1 using @type_of_IH; simpl; intros.
+        induction 1 using type_of_IH; simpl; intros.
         all: invert_tag_of.
         1,2: eapply consistent_step; eauto;
         lazymatch goal with

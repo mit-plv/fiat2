@@ -322,7 +322,6 @@ Ltac destruct_subexpr :=
   | b : bool |- _ => destruct b; auto; []
   end.
 
-
 Definition size_of_map {key value map} (m : @map.rep key value map) :=
   map.fold (fun n _ _ => S n) O m.
 
@@ -725,6 +724,22 @@ Proof.
   1: rewrite map.get_put_diff in *; auto.
 Qed.
 
+Lemma map_incl_step_l : forall {kt vt} {key_eqb : kt -> kt -> bool}
+                               {mt : map.map kt vt} {mt_ok : map.ok mt} (m m' : mt)
+                               x v,
+    (forall x y : kt, BoolSpec (x = y) (x <> y) (key_eqb x y)) ->
+    map_incl m m' -> map.get m' x = Some v ->
+    map_incl (map.put m x v) m'.
+Proof.
+  intros.
+  erewrite <- Properties.map.put_noop; eauto.
+  apply map_incl_step; auto.
+  intros. specialize (H k1 k2).
+  destruct (key_eqb k1 k2) eqn:E;
+    [ left; eapply autoforward.BoolSpec_true
+    | right; eapply autoforward.BoolSpec_false ]; eauto.
+Qed.
+
 Lemma map_incl_step_r : forall {A : Type} {map : map.map string A} {map_ok : map.ok map}
                                k v (m m' : map),
     map_incl m m' -> map.get m k = None -> map_incl m (map.put m' k v).
@@ -798,7 +813,7 @@ Section WithMap.
         map_incl Gstore Gstore' -> map_incl Genv Genv' ->
         type_of Gstore' Genv' e t.
   Proof.
-    induction 1 using @type_of_IH; simpl; intros.
+    induction 1 using type_of_IH; simpl; intros.
     all: econstructor; eauto.
     all: try (apply_type_of_strengthen_IH; auto;
               repeat apply map_incl_step; auto using string_dec).
@@ -1044,7 +1059,7 @@ Section WithMap.
       synthesize_expr Gstore Genv e = Success (t', e') ->
       t = t'.
   Proof.
-    induction 1 using @type_of_IH; simpl; intros.
+    induction 1 using type_of_IH; simpl; intros.
     1,2: apply_typechecker_sound; auto;
     invert_type_of; congruence.
     all: unfold_fold_typechecker.
@@ -1107,6 +1122,9 @@ Section WithMap.
         congruence. }
   Qed.
 End WithMap.
+
+#[export] Hint Resolve tenv_wf_empty : fiat2_hints.
+#[export] Hint Resolve locals_wf_empty : fiat2_hints.
 
 Lemma dedup_nil : forall A A_eqb (l : list A),
     List.dedup A_eqb l = nil -> l = nil.
@@ -1672,3 +1690,14 @@ Section WithMap.
         rewrite Properties.map.put_put_diff with (k1 := x0); auto.
   Qed.
 End WithMap.
+
+
+Open Scope string_scope.
+
+Definition epair (e1 e2 : expr) := ERecord [("0", e1); ("1", e2)].
+Definition ofst (e : expr) : expr := EAccess e "0".
+Definition osnd (e : expr) : expr := EAccess e "1".
+Definition enil := EAtom (ANil None).
+Definition econs (e1 e2 : expr) := EBinop OCons e1 e2.
+Definition cons_to_fst (e1 e2 : expr) :=
+  epair (econs e1 (ofst e2)) (osnd e2).

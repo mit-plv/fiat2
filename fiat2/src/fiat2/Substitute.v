@@ -490,3 +490,101 @@ Section WithMap.
               | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
     Qed.
 End WithMap.
+
+Import ListNotations.
+Open Scope list_scope.
+
+Fixpoint free_immuts_in (e : expr) : list string :=
+  match e with
+  | EVar x => [x]
+  | ELoc x => []
+  | EAtom _ => []
+  | EUnop o e => free_immuts_in e
+  | EBinop o e1 e2 =>
+      free_immuts_in e1 ++ free_immuts_in e2
+  | EIf e1 e2 e3 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
+  | ELet e1 x e2 | EFlatmap e1 x e2 =>
+      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
+  | EFold e1 e2 v acc e3 =>
+       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec v (remove string_dec acc (free_immuts_in e3))
+  | ERecord l =>
+      fold_right (fun v acc => free_immuts_in (snd v) ++ acc) [] l
+  | EAccess e s => free_immuts_in e
+  | EDict l =>
+      fold_right (fun v acc => free_immuts_in (fst v) ++ free_immuts_in (snd v) ++ acc) [] l
+  | EInsert e1 e2 e3 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
+  | EDelete e1 e2 =>
+      free_immuts_in e1 ++ free_immuts_in e2
+  | ELookup e1 e2 =>
+      free_immuts_in e1 ++ free_immuts_in e2
+  | EOptMatch e1 e2 x e3 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x (free_immuts_in e3)
+  | EDictFold e1 e2 k v acc e3 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec k (remove string_dec v (remove string_dec acc (free_immuts_in e3)))
+  | ESort e => free_immuts_in e
+  | EFilter e1 x e2 =>
+      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
+  | EJoin e1 e2 x y e3 e4 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++
+        remove string_dec x (remove string_dec y (free_immuts_in e3)) ++
+        remove string_dec x (remove string_dec y (free_immuts_in e4))
+  | EProj e1 x e2 =>
+      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
+  end.
+
+Ltac apply_in_app_or :=
+  lazymatch goal with
+    H: In _ (_ ++ _) |- _ =>
+      apply in_app_or in H end.
+
+Ltac apply_in_remove :=
+  lazymatch goal with
+    H: In _ (remove _ _ _) |- _ =>
+      apply in_remove in H end.
+
+Lemma free_immuts_in__free_immut_in : forall x e,
+    In x (free_immuts_in e) <-> free_immut_in x e = true.
+Proof.
+  induction e using expr_IH; cbn; auto; try now (intuition idtac; congruence).
+  1:{ split; intro; intuition idtac; subst.
+      1: apply eqb_refl.
+      1: left; rewrite eqb_eq in *; congruence. }
+  all: try now (split; intro; rewrite !Bool.orb_true_iff in *;
+                [ repeat (apply_in_app_or; intuition idtac)
+                | intuition auto with *; apply in_or_app; auto; try now (left; auto);
+                  repeat (right; apply in_or_app; try now (left; auto)); auto ]).
+  all: try now (split; intro; rewrite !Bool.orb_true_iff, !Bool.andb_true_iff in *; rewrite !Bool.negb_true_iff in *;
+      repeat (apply_in_app_or; intuition idtac);
+      repeat (apply_in_remove; intuition idtac);
+      [ right; intuition idtac; rewrite eqb_neq in *; congruence
+      | repeat (apply in_or_app; intuition idtac; right);
+        rewrite eqb_neq in *; repeat apply in_in_remove; auto ]).
+  1:{ induction H; cbn in *; intuition auto; try congruence;
+      rewrite Bool.orb_true_iff in *.
+      1: case_match; apply_in_app_or; intuition idtac.
+      1: apply in_or_app; destruct_match_hyp; intuition idtac. }
+  1:{ induction H; cbn in *; intuition auto; try congruence.
+      1:{ case_match; cbn in *;
+          repeat (apply_in_app_or; intuition idtac);
+          rewrite !Bool.orb_true_iff in *; auto. }
+      1:{ destruct_match_hyp; cbn in *.
+          rewrite !Bool.orb_true_iff in *;
+          repeat (apply in_or_app; intuition idtac; right). } }
+  1:{ split; intro; rewrite !Bool.orb_true_iff, !Bool.andb_true_iff in *; rewrite !Bool.negb_true_iff in *; rewrite Bool.orb_true_iff in *;
+      repeat (apply_in_app_or; intuition idtac);
+      repeat (apply_in_remove; intuition idtac).
+      1,2: repeat right; intuition idtac; rewrite eqb_neq in *; congruence.
+      1: do 2 (apply in_or_app; intuition idtac; right); apply in_or_app;
+      rewrite eqb_neq in *; [ left | right ]; repeat apply in_in_remove; auto. }
+Qed.
+
+Fixpoint free_immuts_in_sub (sub : list (string * expr)) :=
+  match sub with
+  | nil => nil
+  | (x, e) :: sub => free_immuts_in e ++ free_immuts_in_sub sub
+  end.
+
+Definition no_cap_substitute (sub : list (string * expr)) (e : expr) : expr :=
+  substitute sub (free_immuts_in_sub sub) e.

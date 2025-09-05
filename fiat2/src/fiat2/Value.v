@@ -540,3 +540,5 @@ Section WithWord.
       - apply dict_entry_leb_trans.
     Qed.
 End WithWord.
+
+Arguments list_beq {A}.

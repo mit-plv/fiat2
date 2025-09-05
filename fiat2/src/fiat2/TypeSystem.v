@@ -411,7 +411,7 @@ Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   | TUnit, TUnit => true
   | TOption t1, TOption t1' => type_eqb t1 t1'
   | TList t1, TList t1' => type_eqb t1 t1'
-  | TRecord l, TRecord l' => list_beq _ (fun p p' => andb (String.eqb (fst p) (fst p'))
+  | TRecord l, TRecord l' => list_beq (fun p p' => andb (String.eqb (fst p) (fst p'))
                                                        (type_eqb (snd p) (snd p'))) l l'
   | TDict kt vt, TDict kt' vt' => andb (type_eqb kt kt') (type_eqb vt vt')
   | _, _ => false
@@ -972,3 +972,5 @@ Section WithMap.
                         end
     end.
 End WithMap.
+
+Arguments type_of_IH tenv : clear implicits.

@@ -32,7 +32,7 @@ Section WithWord.
         type_of Gstore Genv e t ->
         type_wf t.
     Proof.
-      intros Gstore Genv e t H_store H_env H. induction H using @type_of_IH; eauto.
+      intros Gstore Genv e t H_store H_env H. induction H using type_of_IH; eauto.
       - inversion H; constructor; auto.
       - inversion H; constructor; auto.
       - inversion H; repeat constructor; auto.
@@ -917,7 +917,7 @@ Section WithWord.
         locals_wf Gstore store -> locals_wf Genv env ->
         type_of_value (interp_expr store env e) t.
     Proof.
-      intros Gstore Genv e t H H_Gstore H_Genv. induction H using @type_of_IH; simpl; intros store env H_store H_env; auto.
+      intros Gstore Genv e t H H_Gstore H_Genv. induction H using type_of_IH; simpl; intros store env H_store H_env; auto.
       1, 2: (* TyEVar | TyELoc *)
         apply_locals_wf.
       - (* TyEAtom *)

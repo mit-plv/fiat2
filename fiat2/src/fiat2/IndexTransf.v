@@ -32,7 +32,6 @@ Section WithMap.
           case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
             rewrite_map_get_put_hyp; rewrite ?map.get_empty in *; congruence. }
       all: eauto with fiat2_hints.
-      2: apply tenv_wf_step; eauto using tenv_wf_empty with fiat2_hints.
       2:{ eapply type_of_strengthen. 1: apply to_idx_ty.
           all: eauto with fiat2_hints.
           1: apply map_incl_empty.
@@ -41,8 +40,7 @@ Section WithMap.
       1: eapply to_idx_wf; eauto.
       4: apply to_idx_ty.
       9: simpl; apply map_incl_refl.
-      all: eauto using tenv_wf_empty, locals_wf_empty,
-          type_sound with fiat2_hints.
+      all: eauto with fiat2_hints.
       apply map_incl_empty.
     Qed.
 
@@ -57,7 +55,7 @@ Section WithMap.
       intros. erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole t).
       5: eauto. 8,9: eauto. all: auto.
       3: eapply type_of_strengthen; try apply to_idx_ty.
-      all: eauto using tenv_wf_empty with fiat2_hints.
+      all: eauto with fiat2_hints.
       3: apply map_incl_step; try apply string_dec.
       2,3: apply map_incl_empty.
       2:{ unfold sub_wf; intros. simpl.
@@ -67,7 +65,7 @@ Section WithMap.
             | rewrite map.get_empty in *; discriminate ]. }
       erewrite interp_expr_strengthen; [ eapply to_idx_wf | .. ].
       6: apply to_idx_ty.
-      all: eauto using tenv_wf_empty, locals_wf_empty with fiat2_hints.
+      all: eauto with fiat2_hints.
       1: apply map_incl_empty.
       1: simpl; apply map_incl_step; auto using string_dec, map_incl_refl.
     Qed.
@@ -83,7 +81,7 @@ Section WithMap.
         [ | | eapply type_of_strengthen; eauto using to_idx_ty | .. ]; auto.
       2: apply map_incl_empty.
       2: apply map_incl_refl.
-      1: eauto using tenv_wf_empty with fiat2_hints.
+      1: eauto with fiat2_hints.
       1:{ unfold sub_wf; simpl; intros.
           case_match_string_eqb; try congruence.
           rewrite map.get_empty in *; discriminate. }
@@ -100,7 +98,7 @@ Section WithMap.
         [ | | eapply type_of_strengthen; eauto using from_idx_ty | .. ]; auto.
       2: apply map_incl_empty.
       2: apply map_incl_refl.
-      1: eauto using tenv_wf_empty with fiat2_hints.
+      1: eauto with fiat2_hints.
       1:{ unfold sub_wf; simpl; intros.
           case_match_string_eqb; try congruence.
           rewrite map.get_empty in *; discriminate. }
@@ -160,7 +158,7 @@ Section WithMap.
         type_of Gstore Genv e t ->
         type_of (map.put Gstore tbl (idx_ty tbl_ty)) Genv (fold_expr (idx_read_to_list_read tbl) e) t.
     Proof.
-      induction 5 using @type_of_IH; simpl; intros.
+      induction 5 using type_of_IH; simpl; intros.
       all: try (econstructor; eauto; apply_transf_to_idx_preserve_ty''_IH; apply tenv_wf_step; eauto with fiat2_hints).
       4: repeat apply tenv_wf_step; eauto with fiat2_hints.
       1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
@@ -169,7 +167,7 @@ Section WithMap.
               simpl; auto.
               1: apply_tenv_wf; auto.
               1: rewrite get_free_vars_empty.
-              all: eauto using idx_ty_wf, incl_nil_l, tenv_wf_empty with fiat2_hints.
+              all: eauto using idx_ty_wf, incl_nil_l with fiat2_hints.
               1: constructor; rewrite_map_get_put_goal; auto.
               1: apply map_incl_step; auto using string_dec.
               1,2: apply map_incl_empty. }
@@ -218,10 +216,8 @@ Section WithMap.
           rewrite_map_get_put_goal. }
       1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
           1:{ econstructor; [ rewrite_map_get_put_goal; eauto | ].
-              eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); auto.
-              1,2: apply tenv_wf_step; auto using tenv_wf_empty.
-              1: apply idx_ty_wf; auto.
-              1,2: repeat apply_tenv_wf; auto.
+              eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty);
+                eauto using idx_ty_wf with fiat2_hints.
               1:{ eapply type_of_strengthen; eauto using to_idx_ty, map_incl_refl.
                   apply map_incl_empty. }
               1:{ unfold sub_wf. simpl; intros.
@@ -245,7 +241,7 @@ Section WithMap.
         well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl c)).
     Proof.
       simpl; intros. subst. econstructor.
-      1:{ eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto using tenv_wf_empty, incl_refl with fiat2_hints.
+      1:{ eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto using incl_refl with fiat2_hints.
           1: eapply type_of_strengthen; [ apply to_idx_ty; eauto | apply map_incl_empty | apply map_incl_refl ].
           1: eapply type_of__type_wf; [ | | eauto ]; auto.
           1:{ unfold sub_wf. simpl; intros.
@@ -362,10 +358,7 @@ Section WithMap.
       erewrite substitute_preserve_sem with (Gstore:=Gstore) (Genv0:=map.put map.empty hole t); eauto.
       3: eapply type_of_strengthen.
       1: eapply interp_expr_strengthen.
-      all: try apply to_idx_ty; eauto.
-      all: try apply tenv_wf_step; eauto with fiat2_hints; try apply tenv_wf_empty.
-      all: try apply locals_wf_step; auto; try apply locals_wf_empty.
-      1: eapply type_sound; eauto.
+      all: try apply to_idx_ty; eauto with fiat2_hints.
       all: try apply map_incl_step; auto using string_dec;
         try apply map_incl_empty; try apply incl_refl.
       unfold sub_wf; intros; simpl.
@@ -391,9 +384,7 @@ Section WithMap.
       3: eapply type_of_strengthen.
       1: eapply interp_expr_strengthen.
       all: try apply from_idx_ty; eauto.
-      all: try apply tenv_wf_step; eauto with fiat2_hints; try apply tenv_wf_empty.
-      all: try apply locals_wf_step; auto; try apply locals_wf_empty.
-      1: eapply type_sound; eauto.
+      all: eauto with fiat2_hints.
       all: try apply map_incl_step; auto using string_dec;
         try apply map_incl_empty; try apply incl_refl.
       unfold sub_wf; intros; simpl.
@@ -536,7 +527,7 @@ Section WithMap.
             locals_related (consistent_Renv ienv) env env' ->
             consistent i (interp_expr store env e) (interp_expr store' env' (fold_expr (idx_read_to_list_read tbl) e)).
       Proof.
-        intros * ? ? H. induction H using @type_of_IH; intros; simpl.
+        intros * ? ? H. induction H using type_of_IH; intros; simpl.
         all: invert_tag_of.
         all: try now (repeat use_transf_to_idx_preserve_sem''_IH;
                       rewrite consistent_LikeList_eq in *; repeat rewrite_r_to_l;
@@ -549,7 +540,7 @@ Section WithMap.
             apply_locals_wf env. apply_locals_wf env'. repeat destruct_match_hyp; intuition auto. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ erewrite fiat2_gallina_from_idx with (Genv:=map.empty); simpl.
-                7: eauto. all: eauto using idx_ty_wf, tenv_wf_empty, locals_wf_empty with fiat2_hints.
+                7: eauto. all: eauto using idx_ty_wf with fiat2_hints.
                 2: constructor; rewrite_map_get_put_goal; auto.
                 2: rewrite get_free_vars_empty; auto; apply incl_refl.
                 unfold get_local. apply_locals_related.

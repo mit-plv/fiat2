@@ -4,18 +4,7 @@ Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Re
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
-Hint Resolve tenv_wf_empty : fiat2_hints.
-Hint Resolve locals_wf_empty : fiat2_hints.
-
 Open Scope string_scope.
-
-Definition epair (e1 e2 : expr) := ERecord [("0", e1); ("1", e2)].
-Definition ofst (e : expr) : expr := EAccess e "0".
-Definition osnd (e : expr) : expr := EAccess e "1".
-Definition enil := EAtom (ANil None).
-Definition econs (e1 e2 : expr) := EBinop OCons e1 e2.
-Definition cons_to_fst (e1 e2 : expr) :=
-  epair (econs e1 (ofst e2)) (osnd e2).
 
 Section WithHole.
   Context (hole : string).
@@ -71,6 +60,37 @@ Section WithHole.
       Notation value := (value (width:=width)).
       Context {locals : map.map string value} {locals_ok : map.ok locals}.
       Notation sem_eq := (sem_eq (locals:=locals)).
+
+      (* ??? experiment with uniqueness of (substitute ... to_idx)'s type *)
+      Lemma to_idx_ty_unique :  forall Gstore Genv e t,
+          type_wf t -> is_tbl_ty t = true ->
+          (forall t', type_of Gstore Genv e t' -> t = t') ->
+          forall t', type_of Gstore Genv (substitute [(hole, e)] (get_free_vars Genv) to_idx) t' ->
+                     t' = (idx_ty t).
+      Proof.
+        unfold to_idx; cbn [substitute sub_lookup]; intros.
+        repeat (try rewrite eqb_refl in *; invert_type_of_clear).
+        assert(tup =? x = false). { apply eqb_neq; use_is_NoDup. }
+        assert(tup =? acc = false). { apply eqb_neq; use_is_NoDup. }
+        rewrite H2 in *. rewrite H5 in *. cbn in *.
+        apply H1 in H9; subst. simpl.
+        unfold is_tbl_ty in *. destruct_match_hyp; try discriminate.
+        remember (fresh_var tup (get_free_vars Genv)) as tup'.
+        remember (fresh_var acc (tup' :: get_free_vars Genv)) as acc'.
+        remember (fresh_var x (acc' :: tup' :: get_free_vars Genv)) as x'.
+        assert(tup' <> acc' /\ tup' <> x').
+        { rewrite Heqacc', Heqx'. auto using fresh_var_neq, fresh_var_neq2. }
+        clear Heqtup' Heqacc' Heqx'.
+        repeat invert_Forall2.
+        repeat invert_type_of_clear.
+        repeat rewrite_map_get_put_hyp; repeat (try clear_refl; do_injection).
+        invert_type_of_op_clear.
+        do 3 (destruct tl1; try discriminate). destruct p, p0; cbn in *.
+        inversion H16; inversion H26; subst.
+        apply Permutation_length_2_inv in H19; intuition idtac; subst.
+        2:{ invert_SSorted. invert_Forall. inversion H19. }
+        unfold index_type, get_attr_type. rewrite H18. cbn in *. congruence.
+      Qed.
 
       Ltac apply_In_access_record :=
         lazymatch goal with
@@ -319,7 +339,7 @@ Section WithHole.
             simpl in *; subst. unfold record_proj; simpl.
             do 2 invert_type_of_value_clear; auto. }
       Qed.
-
+(* ??? remove
       Lemma map_incl_step_l : forall {kt vt} {key_eqb : kt -> kt -> bool}
                                      {mt : map.map kt vt} {mt_ok : map.ok mt} (m m' : mt)
                                      x v,
@@ -335,7 +355,7 @@ Section WithHole.
           [ left; eapply autoforward.BoolSpec_true
           | right; eapply autoforward.BoolSpec_false ]; eauto.
       Qed.
-
+*)
       Lemma fiat2_gallina_from_idx2 : forall (store env : locals) (v : value) t,
           type_wf t -> is_tbl_ty t = true ->
           type_of_value v (idx_ty t) ->
@@ -363,39 +383,43 @@ Section WithHole.
         | rewrite map.get_put_diff, map.get_empty in *; auto ];
         congruence.
 
-      Lemma fiat2_gallina_from_idx_sem : forall Gstore Genv store env e t,
+      Hint Resolve incl_refl : core.
+
+      Lemma fiat2_gallina_from_idx_sem : forall Gstore Genv store env e t free_vars,
           tenv_wf Gstore -> tenv_wf Genv ->
           type_wf t -> is_tbl_ty t = true ->
           type_of Gstore Genv e (idx_ty t) ->
           locals_wf Gstore store -> locals_wf Genv env ->
-          interp_expr store env (substitute [(hole, e)] (get_free_vars Genv) from_idx) = VList (gallina_from_idx (interp_expr store env e)).
+          incl (get_free_vars Genv) free_vars ->
+          interp_expr store env (substitute [(hole, e)] free_vars from_idx) = VList (gallina_from_idx (interp_expr store env e)).
       Proof.
         intros. erewrite substitute_preserve_sem.
         1:{ erewrite fiat2_gallina_from_idx2; eauto with fiat2_hints.
             simpl. rewrite_map_get_put_goal. auto. }
-        6-8: eauto using incl_refl.
+        6-8: eauto.
         all: auto.
         2: use_from_idx_ty.
         all: eauto using idx_ty_wf with fiat2_hints.
         prove_sub_wf.
       Qed.
 
-      Lemma fold_from_idx : forall Gstore Genv t e k0 v0 acc0,
+      Lemma fold_from_idx : forall Gstore Genv t e k0 v0 acc0 free_vars,
           is_NoDup [k0; v0; acc0] ->
           tenv_wf Gstore -> tenv_wf Genv ->
           type_wf t -> is_tbl_ty t = true ->
           type_of Gstore Genv e (idx_ty t) ->
+          incl (get_free_vars Genv) free_vars ->
           sem_eq Gstore Genv t
             (EDictFold e (EAtom (ANil None)) k0 v0 acc0
                (EBinop OConcat (EAccess (EVar v0) "0") (EBinop OCons (EAccess (EVar v0) "1") (EVar acc0))))
-            (substitute [(hole, e)] (get_free_vars Genv) from_idx).
+            (substitute [(hole, e)] free_vars from_idx).
       Proof.
         unfold sem_eq; intros. intuition idtac.
         1:{ unfold idx_ty in *. unfold is_tbl_ty in *.
             do 2 (destruct_match_hyp; try discriminate).
             invert_type_wf.
             repeat (econstructor; eauto); repeat rewrite_map_get_put_goal; eauto. }
-        1:{ eapply substitute_preserve_ty; auto using incl_refl.
+        1:{ eapply substitute_preserve_ty; auto.
             2: use_from_idx_ty.
             1: eauto using idx_ty_wf with fiat2_hints.
             1: prove_sub_wf. }
@@ -405,7 +429,7 @@ Section WithHole.
             case_match; auto.
             eapply In_fold_right_ext with (P:=fun _ => True); intuition auto.
             repeat rewrite_map_get_put_goal; use_is_NoDup. }
-        6-8: eauto using incl_refl.
+        6-8: eauto.
         all: auto.
         2: use_from_idx_ty.
         all: eauto using idx_ty_wf with fiat2_hints.
@@ -418,15 +442,16 @@ Section WithHole.
         | apply map_incl_empty
         | apply map_incl_refl ].
 
-      Lemma fold_to_idx : forall Gstore Genv t e x0 tup0 acc0,
+      Lemma fold_to_idx : forall Gstore Genv t e x0 tup0 acc0 free_vars,
           is_NoDup [x0; tup0; acc0] ->
           tenv_wf Gstore -> tenv_wf Genv ->
           is_tbl_ty t = true ->
           type_of Gstore Genv e t ->
+          incl (get_free_vars Genv) free_vars ->
           sem_eq Gstore Genv (idx_ty t)
             (EFold e (EDict []) tup0 acc0
                (EInsert (EVar acc0) (EAccess (EVar tup0) attr) (EOptMatch (ELookup (EVar acc0) (EAccess (EVar tup0) attr)) (epair enil (EVar tup0)) x0 (cons_to_fst (EVar tup0) (EVar x0)))))
-            (substitute [(hole, e)] (get_free_vars Genv) to_idx).
+            (substitute [(hole, e)] free_vars to_idx).
       Proof.
         unfold sem_eq, is_tbl_ty; intros.
         repeat destruct_match_hyp; try discriminate; subst.
@@ -439,7 +464,7 @@ Section WithHole.
             all: repeat rewrite_map_get_put_goal; try congruence; eauto.
             1: apply get_attr_type_ty_wf; eauto with fiat2_hints.
             1,2: unfold get_attr_type; apply_In_access_record; destruct_exists; rewrite_l_to_r; auto. }
-        1:{ eapply substitute_preserve_ty; auto using incl_refl.
+        1:{ eapply substitute_preserve_ty; auto.
             2: use_to_idx_ty.
             1,2: eauto using idx_ty_wf with fiat2_hints.
             1: prove_sub_wf. }
@@ -455,7 +480,7 @@ Section WithHole.
                 destruct x; auto
             end. repeat f_equal.
             all: repeat (rewrite_map_get_put_goal; try now use_is_NoDup); reflexivity. }
-        6-8: eauto using incl_refl.
+        6-8: eauto.
         all: auto.
         2: use_to_idx_ty.
         all: eauto using idx_ty_wf with fiat2_hints.
@@ -477,17 +502,18 @@ Section WithHole.
         all: apply map_incl_empty.
       Qed.
 
-      Lemma fiat2_gallina_to_idx_sem : forall Gstore Genv store env e t,
+      Lemma fiat2_gallina_to_idx_sem : forall Gstore Genv store env e t free_vars,
           tenv_wf Gstore -> tenv_wf Genv ->
           is_tbl_ty t = true ->
           type_of Gstore Genv e t ->
           locals_wf Gstore store -> locals_wf Genv env ->
-          interp_expr store env (substitute [(hole, e)] (get_free_vars Genv) to_idx) = VDict (gallina_to_idx (interp_expr store env e)).
+          incl (get_free_vars Genv) free_vars ->
+          interp_expr store env (substitute [(hole, e)] free_vars to_idx) = VDict (gallina_to_idx (interp_expr store env e)).
       Proof.
         intros. erewrite substitute_preserve_sem.
         1:{ erewrite fiat2_gallina_to_idx2; eauto with fiat2_hints.
             simpl. rewrite_map_get_put_goal. auto. }
-        6-8: eauto using incl_refl.
+        6-8: eauto.
         all: auto.
         2: use_to_idx_ty.
         all: eauto with fiat2_hints.
@@ -941,7 +967,7 @@ Section WithHole.
                   simpl in *; repeat do_injection. auto. } }
           erewrite fiat2_gallina_filter_access_eq; auto.
           2:{ erewrite fiat2_gallina_from_idx_sem with (t:=TList (TRecord l)); simpl.
-              3-8: eauto. all: try constructor; auto. }
+              3-9: eauto. all: try constructor; auto. }
           simpl in H'; simpl.
           lazymatch goal with H: _ = ?x |- context[?x] => rewrite <- H in * end.
           specialize (dict_lookup_sound (width:=width) l0) as H_lookup.
