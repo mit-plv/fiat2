@@ -135,15 +135,13 @@ Notation "k : v" := (k, v)
                       (in custom record_entry at level 0, k constr at level 0, v custom fiat2_expr, no associativity).
 Notation "x [ k ]" := (EAccess x k)
    (in custom fiat2_expr at level 10).
-Notation "{[{ x , .. , y }]}" := (EDict (cons x .. (cons y nil%type)..))
-   (in custom fiat2_expr at level 99, x custom dict_entry, y custom dict_entry).
 Notation "k : v" := (k, v)
    (in custom dict_entry at level 0, k custom fiat2_expr, v custom fiat2_expr, no associativity).
-Notation "'insert(' d , k -> v ')'" := (EInsert d k v)
+Notation "'insert(' d , k -> v ')'" := (ETernop OInsert d k v)
    (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr, v custom fiat2_expr).
-Notation "'delete(' d , k ')'" := (EDelete d k)
+Notation "'delete(' d , k ')'" := (EBinop ODelete d k)
    (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr).
-Notation "'lookup(' d , k ')'" := (ELookup d k)
+Notation "'lookup(' d , k ')'" := (EBinop OLookup d k)
    (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr).
 
 Notation "x <- e1 ; e2" := (EFlatmap e1 x e2)

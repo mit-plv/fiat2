@@ -55,6 +55,7 @@ Inductive atom : Type :=
 | AString (s : string)
 | ANil (t : option type)
 | ANone (t : option type)
+| AEmptyDict (t : option (type * type))
 | AUnit.
 
 (* Unary operators *)
@@ -92,7 +93,13 @@ Inductive binop : Type :=
 | ORepeat
 | OCons
 | ORange
-| OWRange.
+| OWRange
+| OLookup
+| ODelete.
+
+(* Ternary operators *)
+Inductive ternop : Set :=
+| OInsert.
 
 (* Expressions *)
 Inductive expr : Type :=
@@ -101,16 +108,13 @@ Inductive expr : Type :=
 | EAtom (a : atom)
 | EUnop (o : unop) (e : expr)
 | EBinop (o : binop) (e1 e2: expr)
+| ETernop (o : ternop) (e1 e2 e3 : expr)
 | EIf (e1 : expr) (e2 e3 : expr)
 | ELet (e1 : expr) (x : string) (e2 : expr)
 | EFlatmap (e1 : expr) (x : string) (e2 : expr)
 | EFold (e1 e2 : expr) (v acc : string) (e3 : expr)
 | ERecord (l : list (string * expr))
 | EAccess (r : expr) (s : string)
-| EDict (l : list (expr * expr))
-| EInsert (d k v : expr)
-| EDelete (d k : expr)
-| ELookup (d k : expr)
 | EOptMatch (e : expr) (e_none : expr) (x : string) (e_some : expr)
 | EDictFold (d e0 : expr) (k v acc : string) (e : expr)
 | ESort (l : expr) (* by value order *)
@@ -122,17 +126,15 @@ Inductive expr : Type :=
 Section ExprIH.
   Context (P : expr -> Prop).
   Hypothesis (f_var : forall x, P (EVar x)) (f_loc : forall x, P (ELoc x)) (f_atom : forall a, P (EAtom a))
-    (f_unop : forall o e, P e -> P (EUnop o e)) (f_binop : forall o e1 e2, P e1 -> P e2 -> P (EBinop o e1 e2))
+    (f_unop : forall o e, P e -> P (EUnop o e))
+    (f_binop : forall o e1 e2, P e1 -> P e2 -> P (EBinop o e1 e2))
+    (f_ternop : forall o e1 e2 e3, P e1 -> P e2 -> P e3 -> P (ETernop o e1 e2 e3))
     (f_if : forall e1 e2 e3, P e1 -> P e2 -> P e3 -> P (EIf e1 e2 e3))
     (f_let : forall e1 x e2, P e1 -> P e2 -> P (ELet e1 x e2))
     (f_flatmap : forall e1 x e2, P e1 -> P e2 -> P (EFlatmap e1 x e2))
     (f_fold : forall e1 e2 x y e3, P e1 -> P e2 -> P e3 -> P (EFold e1 e2 x y e3))
     (f_record : forall l, Forall (fun p => P (snd p)) l -> P (ERecord l))
     (f_access : forall r s, P r -> P (EAccess r s))
-    (f_dict : forall l, Forall (fun p => P (fst p) /\ P (snd p)) l -> P (EDict l))
-    (f_insert : forall d k v, P d -> P k -> P v -> P (EInsert d k v))
-    (f_delete : forall d k, P d -> P k -> P (EDelete d k))
-    (f_lookup : forall d k, P d -> P k -> P (ELookup d k))
     (f_optmatch : forall e e_none x e_some, P e -> P e_none -> P e_some -> P (EOptMatch e e_none x e_some))
     (f_dictfold : forall d e0 k v acc e, P d -> P e0 -> P e -> P (EDictFold d e0 k v acc e))
     (f_sort : forall l, P l -> P (ESort l))
@@ -146,11 +148,6 @@ Section ExprIH.
         | nil => Forall_nil (fun p => P (snd p))
         | p :: l' => Forall_cons p (expr_IH (snd p)) (record_expr_IH l')
         end.
-      Fixpoint dict_expr_IH (l : list (expr * expr)) : Forall (fun v => P (fst v) /\ P (snd v)) l :=
-        match l as l0 return Forall (fun v => P (fst v) /\ P (snd v)) l0 with
-        | nil => Forall_nil (fun v => P (fst v) /\ P (snd v))
-        | v :: l' => Forall_cons v (conj (expr_IH (fst v)) (expr_IH (snd v)))(dict_expr_IH l')
-        end.
     End __.
 
     Fixpoint expr_IH (e : expr) : P e :=
@@ -160,16 +157,13 @@ Section ExprIH.
       | EAtom a => f_atom a
       | EUnop o e => f_unop o e (expr_IH e)
       | EBinop o e1 e2 => f_binop o e1 e2 (expr_IH e1) (expr_IH e2)
+      | ETernop o e1 e2 e3 => f_ternop o e1 e2 e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
       | EIf e1 e2 e3 => f_if e1 e2 e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
       | ELet e1 x e2 => f_let e1 x e2 (expr_IH e1) (expr_IH e2)
       | EFlatmap e1 x e2 => f_flatmap e1 x e2 (expr_IH e1) (expr_IH e2)
       | EFold e1 e2 x y e3 => f_fold e1 e2 x y e3 (expr_IH e1) (expr_IH e2) (expr_IH e3)
       | ERecord l => f_record l (record_expr_IH expr_IH l)
       | EAccess r s => f_access r s (expr_IH r)
-      | EDict l => f_dict l (dict_expr_IH expr_IH l)
-      | EInsert d k v => f_insert d k v (expr_IH d) (expr_IH k) (expr_IH v)
-      | EDelete d k => f_delete d k (expr_IH d) (expr_IH k)
-      | ELookup d k => f_lookup d k (expr_IH d) (expr_IH k)
       | EOptMatch e e_none x e_some => f_optmatch e e_none x e_some (expr_IH e) (expr_IH e_none) (expr_IH e_some)
       | EDictFold d e0 k v acc e => f_dictfold d e0 k v acc e (expr_IH d) (expr_IH e0) (expr_IH e)
       | ESort l => f_sort l (expr_IH l)

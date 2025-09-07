@@ -26,6 +26,15 @@ Section WithWord.
       - rewrite eqb_neq in *. rewrite map.get_put_diff in *; eauto.
     Qed.
 
+    Ltac invert_type_wf :=
+      lazymatch goal with
+      | H: type_wf (TList ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
+      end.
+
     Lemma type_of__type_wf : forall Gstore Genv e t,
         tenv_wf Gstore ->
         tenv_wf Genv ->
@@ -33,9 +42,9 @@ Section WithWord.
         type_wf t.
     Proof.
       intros Gstore Genv e t H_store H_env H. induction H using type_of_IH; eauto.
-      - inversion H; constructor; auto.
-      - inversion H; constructor; auto.
-      - inversion H; repeat constructor; auto.
+      all: try now (inversion H; constructor; auto).
+      - inversion H; repeat constructor; auto; subst;
+          apply IHtype_of1 in H_env; invert_type_wf; auto.
       - auto using tenv_wf_step.
       - apply IHtype_of2. apply tenv_wf_step; auto.
         apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
@@ -48,8 +57,6 @@ Section WithWord.
           inversion H_in; subst; auto.
       - apply IHtype_of in H_env as H_wf. inversion H_wf; subst.
         eapply Forall_access_record; eauto.
-      - constructor; auto.
-      - apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; constructor; auto.
       - constructor; apply IHtype_of4. repeat apply tenv_wf_step; auto.
         + apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
         + apply IHtype_of2 in H_env as H_wf2. inversion H_wf2; auto.
@@ -109,15 +116,6 @@ Section WithWord.
     Ltac destruct_compare_types :=
       unfold compare_types in *; destruct_match; constructor.
 
-    Ltac invert_type_wf :=
-      lazymatch goal with
-      | H: type_wf (TList ?t) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
-      end.
-
   Ltac invert_result :=
     lazymatch goal with
     | H: Success _ = Success _ |- _ => inversion H; clear H; intros; subst
@@ -135,10 +133,12 @@ Section WithWord.
     destruct a; split; simpl; intro.
     all: try (invert_result; constructor).
     all: try destruct_compare_types.
-    1, 3: repeat destruct_match; invert_result; constructor; apply type_wf_comp_sound; auto.
+    1, 3, 5: repeat destruct_match; rewrite ?Bool.andb_true_iff in *; intuition idtac;
+    invert_result; constructor; apply type_wf_comp_sound; auto using type_wf_comp_sound.
     1, 2: repeat destruct_match;
     [ destruct_compare_types; invert_result; invert_type_wf; auto
     | invert_result; constructor; invert_type_wf; auto ].
+    1: repeat destruct_match; destruct_compare_types; invert_type_wf; auto.
   Qed.
 
   Lemma fst_map_fst : forall (A B C : Type) (l : list (A * B)) (f : A -> B -> C),
@@ -323,76 +323,6 @@ Section WithWord.
     rewrite String.eqb_eq in E. invert_result. auto.
   Qed.
 
-  Lemma first_success_exists_l : forall Gstore Genv t l,
-      first_success (List.map (fun '(k, _) => synthesize_expr Gstore Genv k) l) = Success t ->
-      exists (p : expr * expr) e, In p l /\ synthesize_expr Gstore Genv (fst p) = Success (t, e).
-  Proof.
-    induction l; simpl; intros; try discriminate.
-    destruct a as [k v]. destruct_match.
-    - destruct a; invert_result; subst. eauto.
-    - apply IHl in H as [p [e H]]. exists p; exists e. intuition.
-  Qed.
-
-  Lemma first_success_exists_r : forall Gstore Genv t l,
-      first_success (List.map (fun '(_, v) => synthesize_expr Gstore Genv v) l) = Success t ->
-      exists (p : expr * expr) e, In p l /\ synthesize_expr Gstore Genv (snd p) = Success (t, e).
-  Proof.
-    induction l; simpl; intros; try discriminate.
-    destruct a as [k v]. destruct_match.
-    - destruct a; invert_result; subst. eauto.
-    - apply IHl in H as [p [e H]]. exists p; exists e. intuition.
-  Qed.
-
-  Lemma dict_from'_sound : forall l,
-      Forall (fun p =>
-                (forall (Gstore Genv : tenv) (t : type) (e' : expr),
-                    tenv_wf Gstore ->
-                    tenv_wf Genv ->
-                    (synthesize_expr Gstore Genv (fst p) = Success (t, e') -> type_of Gstore Genv (fst p) t) /\
-                      (analyze_expr Gstore Genv t (fst p) = Success e' -> type_wf t -> type_of Gstore Genv (fst p) t)) /\
-                  (forall (Gstore Genv : tenv) (t : type) (e' : expr),
-                      tenv_wf Gstore ->
-                      tenv_wf Genv ->
-                      (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
-                        (analyze_expr Gstore Genv t (snd p) = Success e' -> type_wf t  -> type_of Gstore Genv (snd p) t))) l ->
-      forall Gstore Genv kt vt l',
-        tenv_wf Gstore -> tenv_wf Genv ->
-        type_wf kt -> type_wf vt ->
-        dict_from' (List.map (fun '(k, v) => k' <- analyze_expr Gstore Genv kt k;; v' <- analyze_expr Gstore Genv vt v;; Success (k', v')) l) = Success l' -> Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l.
-  Proof.
-   Proof.
-      induction l; simpl; intros.
-      - apply Forall_nil.
-      - repeat destruct_match. invert_result. inversion H; subst; simpl in *.
-        constructor.
-        + split; simpl.
-          * apply H6 in E3; auto.
-          * apply H6 in E4; auto.
-        + eapply IHl; eauto.
-   Qed.
-
-  Lemma analyze_dict_body_sound : forall l,
-      Forall (fun p =>
-                (forall (Gstore Genv : tenv) (t : type) (e' : expr),
-                    tenv_wf Gstore ->
-                    tenv_wf Genv ->
-                    (synthesize_expr Gstore Genv (fst p) = Success (t, e') -> type_of Gstore Genv (fst p) t) /\
-                      (analyze_expr Gstore Genv t (fst p) = Success e' -> type_wf t -> type_of Gstore Genv (fst p) t)) /\
-                  (forall (Gstore Genv : tenv) (t : type) (e' : expr),
-                      tenv_wf Gstore ->
-                      tenv_wf Genv ->
-                      (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv (snd p) t) /\
-                        (analyze_expr Gstore Genv t (snd p) = Success e' -> type_wf t -> type_of Gstore Genv (snd p) t))) l ->
-      forall Gstore Genv kt vt e',
-        tenv_wf Gstore -> tenv_wf Genv ->
-        type_wf kt -> type_wf vt ->
-        analyze_dict_body analyze_expr Gstore Genv kt vt l = Success e' -> Forall (fun p => type_of Gstore Genv (fst p) kt /\ type_of Gstore Genv (snd p) vt) l.
-  Proof.
-      unfold analyze_dict_body, dict_from. intros.
-      destruct_match. invert_result.
-      eapply dict_from'_sound; eauto.
-    Qed.
-
   Ltac unfold_typechecker :=
     lazymatch goal with
     | H: synthesize_expr _ _ _ = Success _ |- _ => unfold synthesize_expr in H
@@ -459,6 +389,10 @@ Section WithWord.
         unfold_fold_typechecker; repeat destruct_match; try invert_result;
         repeat (apply_typechecker_IH; try invert_pair; try econstructor; eauto; try constructor;
                 try apply_type_of__type_wf; auto; try invert_type_wf; auto).
+      - (* ETernop *)
+        split; intros; unfold_fold_typechecker; repeat destruct_match;
+          repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
+                try apply_type_of__type_wf; auto; try invert_type_wf; auto).
       - (* EIf *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
@@ -498,34 +432,6 @@ Section WithWord.
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto).
-      - (* EDict *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
-                  try apply_type_of__type_wf; auto; try invert_type_wf; auto).
-        + invert_result. constructor.
-          * apply first_success_exists_l in E as [p0 [e0 [HL HR]]]. rewrite Forall_forall in H.
-            apply H in HR; auto; apply_type_of__type_wf; auto.
-          * apply first_success_exists_r in E0 as [p0 [e0 [HL HR]]]. rewrite Forall_forall in H.
-            apply H in HR; auto; apply_type_of__type_wf; auto.
-          * eapply analyze_dict_body_sound; eauto.
-            -- apply first_success_exists_l in E as [p0 [e0 [HL HR]]]. rewrite Forall_forall in H.
-               apply H in HR; auto; apply_type_of__type_wf; auto.
-            -- apply first_success_exists_r in E0 as [p0 [e0 [HL HR]]]. rewrite Forall_forall in H.
-               apply H in HR; auto; apply_type_of__type_wf; auto.
-        + constructor; try invert_type_wf; auto.
-          eapply analyze_dict_body_sound; eauto; invert_type_wf; auto.
-      - (* EInsert *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* EDelete *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* ELookup *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
       - (* EOptmatch *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
@@ -921,11 +827,21 @@ Section WithWord.
       1, 2: (* TyEVar | TyELoc *)
         apply_locals_wf.
       - (* TyEAtom *)
-        match goal with H : type_of_atom _ _ |- _ => inversion H end; subst; constructor; apply Forall_nil.
+        match goal with H : type_of_atom _ _ |- _ => inversion H end; subst; constructor;
+        auto using SSorted_nil, Forall_nil, NoDup_nil.
       - (* TyEUnop *)
         inversion H; apply_type_sound_IH; try discriminate; repeat constructor; auto.
       - (* TyEBinop *)
-        inversion H; repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
+        inversion H; subst.
+        25:{ (* OLookup *)
+          cbn. revert IHtype_of2. apply_type_sound_IH. intros.
+          eapply dict_lookup_sound;[ | | | apply IHtype_of2 ]; auto.
+          constructor; auto. }
+        25:{ (* ODelete *)
+          cbn. revert IHtype_of2. apply_type_sound_IH. intros.
+          eapply dict_delete_sound;[ | | | apply IHtype_of2 ]; auto.
+          constructor; auto. }
+        all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall A f (l : list A), Forall f l -> forall n, Forall f (concat (repeat l n))).
           { clear. induction n; simpl; intros.
@@ -942,6 +858,10 @@ Section WithWord.
             - apply Forall_nil.
             - repeat constructor; auto. }
           auto.
+      - (* TyETernop *)
+        inversion H; subst.
+        cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+        apply dict_insert_sound; auto. constructor; auto.
       - (* TyEIf *)
         repeat apply_type_sound_IH;
           match goal with
@@ -1001,37 +921,6 @@ Section WithWord.
             intuition; congruence. }
           rewrite E; auto.
         + apply access_record_sound; auto.
-      - (* TyEDict *)
-        constructor; auto.
-        + rewrite Forall_forall in *.
-          assert (forall p, In p (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l) -> type_of_value (fst p) kt /\ type_of_value (snd p) vt).
-          { induction l; intros; simpl in *; try now (exfalso; auto).
-            destruct H3.
-            - pose proof (H1 a); intuition; destruct a; subst; simpl in *.
-              + change e with (fst (e, e0)). apply H2; auto.
-              + change e0 with (snd (e, e0)). apply H2; auto.
-            - apply IHl; auto. }
-          intros. apply H3. eapply dedup_In. pose proof (Permuted_dict_sort (width:=width)).
-          eapply Permutation_in; [ apply Permutation_sym |]; eauto.
-        + assert (Permutation_NoDup_fst : forall A B (l0 l' : list (A * B)), NoDup (List.map fst l0) -> Permutation l0 l' -> NoDup (List.map fst l')).
-          { intros A B l0 l' H_NoDup H_Permu. eapply Permutation_map in H_Permu. eapply Permutation_NoDup; eauto. }
-          eapply Permutation_NoDup_fst.
-          2: eapply Permuted_dict_sort.
-          apply NoDup_dedup_fst. unfold value_eqb. split.
-          * destruct (value_compare (fst x) (fst y)) eqn:E; try discriminate. intros.
-            apply value_compare_Eq_eq. auto.
-          * intros. rewrite H3. rewrite value_compare_refl. auto.
-        + apply StronglySorted_dict_sort.
-      - (* TyEInsert *)
-        repeat apply_type_sound_IH; apply dict_insert_sound; constructor; try invert_type_wf; auto.
-      - (* TyEDelete *)
-        repeat apply_type_sound_IH; apply dict_delete_sound; try constructor;
-          try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyELookup *)
-        repeat apply_type_sound_IH;
-          lazymatch goal with
-          | H: Forall (fun p => type_of_value (fst p) ?t /\ _) _ |- _ => apply dict_lookup_sound with (kt := t)
-          end; try constructor; try invert_type_wf; auto.
       - (* TyEOptMatch *)
         repeat apply_type_sound_IH; auto; try constructor;
           try apply_type_of__type_wf; try invert_type_wf; auto.
@@ -1147,6 +1036,5 @@ Section WithWord.
         + apply tenv_wf_step; auto. invert_type_wf; auto.
         + apply locals_wf_step; auto.
     Qed.
-
   End WithMap.
 End WithWord.

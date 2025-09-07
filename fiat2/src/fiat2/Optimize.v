@@ -127,6 +127,7 @@ Section WithWord.
       | EAtom _ => Some nil
       | EUnop _ e => cols x e
       | EBinop _ e1 e2 => option_append (cols x e1) (cols x e2)
+      | ETernop _ e1 e2 e3 => option_append (cols x e1) (option_append (cols x e2) (cols x e3))
       | EIf e1 e2 e3 => option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | ELet e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
       | EFlatmap e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
@@ -134,10 +135,6 @@ Section WithWord.
       | ERecord l => fold_right (fun val acc => option_append (cols x (snd val)) acc) (Some nil) l
       | EAccess (EVar x1) y => if string_dec x1 x then Some (y :: nil) else Some nil
       | EAccess e y => cols x e
-      | EDict l => fold_right (fun val acc => option_append (option_append (cols x (snd val)) (cols x (fst val))) acc) (Some nil) l
-      | EInsert d k v => option_append (cols x v) (option_append (cols x d) (cols x k))
-      | EDelete d k => option_append (cols x d) (cols x k)
-      | ELookup d k => option_append (cols x d) (cols x k)
       | EOptMatch e en x1 es => if string_dec x x1 then option_append (cols x e) (cols x en) else option_append (cols x e) (option_append (cols x en) (cols x es))
       | EDictFold d e0 x1 x2 x3 e => if Sumbool.sumbool_or _ _ _ _ (Sumbool.sumbool_or _ _ _ _ (string_dec x x2) (string_dec x x3)) (string_dec x x1) then option_append (cols x d) (cols x e0) else option_append (cols x e) (option_append (cols x d) (cols x e0))
       | ESort l => cols x l
@@ -282,6 +279,11 @@ Section WithWord.
      - injection H0 as H0. rewrite <- H0. apply incl_nil_l.
      - dcols e1 x. dcols e2 x. injection H4 as H4. rewrite <- H4.
        unfold incl in *. intros. apply dedup_In in H5. apply in_app_or in H5. destruct H5; eauto.
+     - dcols e1 x. dcols e2 x. dcols e3 x.
+       unfold incl in *. intros. do_injection.
+       repeat (lazymatch goal with H: In _ (dedup _ _) |- _ => apply dedup_In in H end;
+               lazymatch goal with
+                 H: In _ (_ ++ _) |- _ => apply in_app_or in H; destruct H end; eauto).
      - dcols e3 x. dcols e1 x. dcols e2 x.
        injection H5 as H5. rewrite <- H5. unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6.
         + eapply H4; eauto.
@@ -317,31 +319,6 @@ Section WithWord.
           * subst. apply In_map_fst in H0. assumption.
           * simpl in H2. inversion H2.
         + apply incl_nil_l.
-      - clear H H0 H1. generalize dependent ecols. induction l; intros; simpl in *.
-        + injection H3 as H3. rewrite <- H3. apply incl_nil_l.
-        + destruct a. simpl in *. destruct (cols x e0) eqn:C0; try congruence. destruct (cols x e) eqn:C; try congruence.
-          apply Forall_inv_tail in H2 as H1. apply Forall_inv in H2. simpl in *. destruct H2. remember T as T1. clear HeqT1.
-          apply H0 with (ecols:=l0) in T; try assumption. apply H with (ecols:=l1) in T1; try assumption.
-            destruct (fold_right (fun (val : expr * expr) (acc : option (list string)) =>
-            match
-              match cols x (snd val) with
-              | Some l1 => match cols x (fst val) with | Some l2 => Some (dedup eqb (l1 ++ l2)) | None => None end
-              | None => None
-              end
-            with
-            | Some l1 => match acc with | Some l2 => Some (dedup eqb (l1 ++ l2)) | None => None end
-            | None => None
-            end) (Some nil) l); try congruence. injection H3 as H3. rewrite <- H3. apply IHl with (ecols:=l2) in H1; try reflexivity.
-            unfold incl in *. intros. apply dedup_In in H2. apply in_app_or in H2. destruct H2; auto. apply dedup_In in H2.
-            apply in_app_or in H2. destruct H2; auto.
-      - destruct (cols x v); try congruence. destruct (cols x d); try congruence. destruct (cols x k); try congruence.
-        injection H5 as H5. rewrite <- H5. unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6.
-        + eapply H4; eauto.
-        + apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
-      - destruct (cols x d); try congruence. destruct (cols x k); try congruence. injection H3 as H3. rewrite <- H3.
-        unfold incl in *. intros. apply dedup_In in H4. apply in_app_or in H4. destruct H4; eauto.
-      - destruct (cols x d); try congruence. destruct (cols x k); try congruence. injection H3 as H3. rewrite <- H3.
-        unfold incl in *. intros. apply dedup_In in H4. apply in_app_or in H4. destruct H4; eauto.
       - destruct (string_dec x x0).
         + destruct (cols x e); try congruence. destruct (cols x e_none); try congruence. injection H4 as H4. rewrite <- H4.
           unfold incl in *. intros. apply dedup_In in H5. apply in_app_or in H5. destruct H5; eauto.
@@ -395,7 +372,7 @@ Section WithWord.
          and the relation holds between a a' and the expression's columns
          (columns of expression incl in a', a' included in a), then can replace a with a' when interpreting e *)
       induction e using expr_IH.
-      11: {
+      12: {
           intros columns ? ? env ? ? HC HR. simpl in *. destruct e eqn:E; try now (erewrite IHe; eauto). simpl. destruct (string_dec x0 x).
           + subst. unfold get_local. rewrite !map.get_put_same. unfold relation in HR. destruct a,a'; intuition. inversion H. subst.
             inversion H0. subst. clear H6 H9. injection HC as HC. rewrite <- HC in H2. simpl in *. unfold incl in H2. simpl in *.
@@ -431,6 +408,12 @@ Section WithWord.
         destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC. destruct HC. f_equal.
          + eapply IHe1; eauto. eapply rel_step; eauto.
          + eapply IHe2; eauto. eapply rel_step; eauto.
+      - intros columns ? ? env ? ? HC HR. simpl in *. unfold option_append in HC. destruct (cols x e1); try congruence.
+        destruct (cols x e2); try congruence. destruct (cols x e3); try congruence.
+        injection HC as HC. apply dedup_incl in HC. destruct HC. apply incl_dedup in H2; intuition idtac. f_equal.
+         + eapply IHe1; eauto. eapply rel_step; eauto.
+         + eapply IHe2; eauto. eapply rel_step; eauto.
+         + eapply IHe3; eauto. eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (cols x e3); try congruence.
         destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC.
         apply dedup_incl in HC. destruct HC. apply incl_dedup in H0. destruct H0. erewrite IHe1; eauto.
@@ -472,26 +455,6 @@ Section WithWord.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. f_equal. f_equal. apply map_ext_in. intros [s e] LA. f_equal.
         apply Forall_In with (x:=(s,e)) in H; try assumption. simpl in *. eapply subcols_record in HC; eauto. destruct HC.
         destruct H0. eapply H; eauto. eapply rel_step; eauto.
-      - intros columns ? ? env HT1 HT2 HC HR. simpl in *. f_equal. f_equal. f_equal. apply map_ext_in. intros [s e] LA.
-        apply Forall_In with (x:=(s,e)) in H; try assumption. simpl in *. eapply subcols_dict in HC; eauto. destruct HC.
-        destruct H0. destruct H0. destruct H1. destruct H1. destruct H. f_equal.
-        + eapply H; eauto. eapply rel_step; eauto.
-        + eapply H4; eauto. eapply rel_step; eauto.
-      - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (cols x e3); try congruence.
-        destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC.
-        apply dedup_incl in HC. destruct HC. apply incl_dedup in H0. destruct H0. erewrite IHe1; eauto.
-        + destruct_match_goal; try reflexivity. f_equal. f_equal.
-          * eapply IHe2; eauto. eapply rel_step; eauto.
-          * eapply IHe3; eauto. eapply rel_step; eauto.
-        + eapply rel_step; eauto.
-      - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (cols x e1); try congruence.
-        destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC. destruct HC. erewrite IHe1; eauto.
-        + destruct_match_goal; try reflexivity. f_equal. f_equal. eapply IHe2; eauto. eapply rel_step; eauto.
-        + eapply rel_step; eauto.
-      - intros columns env ? ? HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (cols x e1); try congruence.
-        destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC. destruct HC. erewrite IHe1; eauto.
-        + destruct_match_goal; try reflexivity. f_equal. f_equal. eapply IHe2; eauto. eapply rel_step; eauto.
-        + eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0).
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.

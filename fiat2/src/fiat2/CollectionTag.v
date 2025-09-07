@@ -50,6 +50,11 @@ Section WithMap.
     | _ => (LikeList, LikeList)
     end.
 
+  Definition ternop_collection_tag (i : collection_tag) (o : ternop) : collection_tag * collection_tag * collection_tag :=
+    match o with
+    | OInsert => (LikeList, LikeList, LikeList)
+    end.
+
   Definition get_collection_tag (m : aenv) (x : string) : collection_tag :=
     match map.get m x with
     | Some i => i
@@ -79,6 +84,13 @@ Section WithMap.
         let '(istr1, ienv1) := tag_req i1 e1 in
         let '(istr2, ienv2) := tag_req i2 e2 in
         (lub_merge istr1 istr2, lub_merge ienv1 ienv2)
+    | ETernop o e1 e2 e3 =>
+        let '(i1, i2, i3) := ternop_collection_tag i o in
+        let '(istr1, ienv1) := tag_req i1 e1 in
+        let '(istr2, ienv2) := tag_req i2 e2 in
+        let '(istr3, ienv3) := tag_req i3 e3 in
+        (lub_merge (lub_merge istr1 istr2) istr3,
+          lub_merge (lub_merge ienv1 ienv2) ienv3)
     | EIf e1 e2 e3 =>
         let '(istr1, ienv1) := tag_req LikeList e1 in
         let '(istr2, ienv2) := tag_req i e2 in
@@ -109,29 +121,6 @@ Section WithMap.
     | EAccess e s =>
         let '(istr, ienv) := tag_req LikeList e in
         (istr, ienv)
-    | EDict l =>
-        fold_right (fun p acc => let '(istr1', ienv1') := tag_req LikeList (fst p) in
-                                 let '(istr2', ienv2') := tag_req LikeList (snd p) in
-                                 let '(istr, ienv) := acc in
-                                 (lub_merge (lub_merge istr1' istr2') istr,
-                                   lub_merge (lub_merge ienv1' ienv2') ienv))
-          (map.empty, map.empty) l
-    | EInsert d k v =>
-        let '(istr1, ienv1) := tag_req LikeList d in
-        let '(istr2, ienv2) := tag_req LikeList k in
-        let '(istr3, ienv3) := tag_req LikeList v in
-        (lub_merge (lub_merge istr1 istr2) istr3,
-          lub_merge (lub_merge ienv1 ienv2) ienv3)
-    | EDelete d k =>
-        let '(istr1, ienv1) := tag_req LikeList d in
-        let '(istr2, ienv2) := tag_req LikeList k in
-        (lub_merge istr1 istr2,
-          lub_merge ienv1 ienv2)
-    | ELookup d k =>
-        let '(istr1, ienv1) := tag_req LikeList d in
-        let '(istr2, ienv2) := tag_req LikeList k in
-        (lub_merge istr1 istr2,
-          lub_merge ienv1 ienv2)
     | EOptMatch e1 e2 x e3 =>
         let '(istr1, ienv1) := tag_req LikeList e1 in
         let '(istr2, ienv2) := tag_req i e2 in
@@ -273,6 +262,11 @@ Section WithMap.
                                        tag_of istr ienv e1 i1 ->
                                        tag_of istr ienv e2 i2 ->
                                        tag_of istr ienv (EBinop o e1 e2) i_expect
+  | WTAETernop i1 i2 i3 o e1 e2 e3 i_expect : ternop_collection_tag i_expect o = (i1, i2, i3) ->
+                                       tag_of istr ienv e1 i1 ->
+                                       tag_of istr ienv e2 i2 ->
+                                       tag_of istr ienv e3 i3 ->
+                                       tag_of istr ienv (ETernop o e1 e2 e3) i_expect
   | WTAEIf e1 e2 e3 i_expect : tag_of istr ienv e1 LikeList ->
                                tag_of istr ienv e2 i_expect ->
                                tag_of istr ienv e3 i_expect ->
@@ -293,18 +287,6 @@ Section WithMap.
                             tag_of istr ienv (ERecord l) i_expect
   | WTAEAccess e s i_expect : tag_of istr ienv e LikeList ->
                               tag_of istr ienv (EAccess e s) i_expect
-  | WTAEDict l i_expect : Forall (fun p => tag_of istr ienv (fst p) LikeList /\ tag_of istr ienv (snd p) LikeList) l ->
-                          tag_of istr ienv (EDict l) i_expect
-  | WTAEInsert d k v i_expect : tag_of istr ienv d LikeList ->
-                                tag_of istr ienv k LikeList ->
-                                tag_of istr ienv v LikeList ->
-                                tag_of istr ienv (EInsert d k v) i_expect
-  | WTAEDelete d k i_expect : tag_of istr ienv d LikeList ->
-                              tag_of istr ienv k LikeList ->
-                              tag_of istr ienv (EDelete d k) i_expect
-  | WTAELookup d k i_expect : tag_of istr ienv d LikeList ->
-                              tag_of istr ienv k LikeList ->
-                              tag_of istr ienv (ELookup d k) i_expect
   | WTAEOptMatch e1 e2 x e3 i_expect : tag_of istr ienv e1 LikeList ->
                                        tag_of istr ienv e2 i_expect ->
                                        tag_of istr (map.put ienv x LikeList) e3 i_expect ->
@@ -633,7 +615,7 @@ Section WithMap.
     econstructor; eauto using collection_tag_leb_tran.
     1:{ econstructor; eauto. use_tag_of_strengthen_IH; eauto.
         repeat apply aenv_le_step, collection_tag_leb_refl. auto. }
-    1,2: econstructor; lazymatch goal with H: tag_of _ _ _ _ |- _ => clear H end;
+    1: econstructor; lazymatch goal with H: tag_of _ _ _ _ |- _ => clear H end;
         lazymatch goal with H: Forall _ _ |- _ => induction H end; auto;
         invert_Forall; constructor; intuition eauto.
   Qed.
@@ -877,7 +859,7 @@ Section WithMap.
       tag_of istr ienv e i.
   Proof.
     induction e using expr_IH.
-    9:{ cbn [tag_req]; intros.
+    10:{ cbn [tag_req]; intros.
         repeat (destruct_match_hyp; []); invert_pair.
         remember (tag_req_times
                     (fun i : collection_tag => tag_req i e3) y i 3) as i'.
@@ -927,18 +909,6 @@ Section WithMap.
             rewrite Forall_forall; intros. apply_Forall_In.
             eapply tag_of_strengthen; eauto; eauto using lub_merge__aenv_le_r. } }
     1: constructor; auto.
-    1:{ generalize dependent istr; generalize dependent ienv.
-        induction l; simpl in *.
-        1: constructor; auto.
-        repeat constructor; invert_Forall;
-          repeat (destruct_match_hyp; invert_pair); repeat use_tag_req_sound_IH.
-        1:{ strengthen_tag_judgements; eauto; eauto using aenv_le_tran, lub_merge__aenv_le_l. }
-        all: repeat lazymatch goal with
-            IH: ?x -> _, H: ?x |- _ =>
-              eapply IH in H; eauto; inversion H; subst end.
-        2: rewrite Forall_forall; intros; apply_Forall_In; intuition idtac.
-        all: eapply tag_of_strengthen; eauto;
-          eauto using aenv_le_tran, lub_merge__aenv_le_l, lub_merge__aenv_le_r. }
     1:{ econstructor; try strengthen_tag_judgements; eauto;
                   eauto using aenv_le_update, aenv_le_tran,
           lub_merge__aenv_le_l, lub_merge__aenv_le_r.
@@ -1010,19 +980,6 @@ Section WithMap.
         lazymatch goal with
           H: context[Forall2 _ _ _ -> _], H': Forall2 _ _ _ |- _ =>
             eapply H in H' end; [ | eauto ].
-        auto using lub_merge__domain_incl. }
-    1:{ lazymatch goal with
-        H: type_of _ _ (EDict _) _ |- _ => clear H end.
-        generalize dependent istr. generalize dependent ienv.
-        lazymatch goal with
-        H: Forall _ _ |- _ => induction H end; simpl in *; intros.
-        1: invert_pair2; apply domain_incl_empty.
-        repeat destruct_match_hyp; repeat invert_pair2.
-        invert_Forall.
-        lazymatch goal with
-          H: context[Forall _ _ -> _], H': Forall _ _ |- _ =>
-            eapply H in H' end; [ | eauto ].
-        intuition idtac. repeat use_tag_req_domain_IH.
         auto using lub_merge__domain_incl. }
   Qed.
 
@@ -1950,6 +1907,20 @@ Section WithMap.
         1: apply cons_preserve_consistent; auto.
       Qed.
 
+      Lemma ternop_tag_sound : forall i i1 i2 i3 o v1 v1' v2 v2' v3 v3' t1 t2 t3 t4,
+          type_of_ternop o t1 t2 t3 t4 ->
+          type_of_value v1 t1 ->
+          type_of_value v2 t2 ->
+          type_of_value v3 t3 ->
+          ternop_collection_tag i o = (i1, i2, i3) ->
+          consistent i1 v1 v1' -> consistent i2 v2 v2' -> consistent i3 v3 v3' ->
+          consistent i (interp_ternop o v1 v2 v3) (interp_ternop o v1' v2' v3').
+      Proof.
+        destruct o; simpl; intros; invert_pair.
+        rewrite consistent_LikeList_eq in *; subst.
+        apply consistent_refl.
+      Qed.
+
       Ltac use_tag_of_sound_IH' e :=
         lazymatch goal with
         | IH: context[consistent _ (interp_expr _ _ e) _] |- context[consistent _ (interp_expr _ _ e) _] => eapply IH
@@ -2015,6 +1986,7 @@ Section WithMap.
         1: apply consistent_refl.
         1: eapply unop_tag_sound; eauto using type_sound.
         1: eapply binop_tag_sound; eauto using type_sound.
+        1: eapply ternop_tag_sound; eauto using type_sound.
         1:{ use_tag_of_sound_IH2.
             case_match; use_tag_of_sound_IH; eauto. }
         1:{ use_tag_of_sound_IH; eauto with fiat2_hints.
@@ -2059,24 +2031,6 @@ Section WithMap.
             case_match; cbn in *. f_equal.
             rewrite <- consistent_LikeList_eq. use_tag_of_sound_IH; eauto. }
         1:{ use_tag_of_sound_IH2; apply consistent_refl. }
-        1:{ eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
-            do 3 f_equal.
-            apply map_ext_in; intros. repeat apply_Forall_In.
-            case_match; cbn in *; intuition idtac.
-            repeat (use_tag_of_sound_IH; [ | | | | | eauto | eauto ]; auto).
-            rewrite consistent_LikeList_eq in *. congruence. }
-        1:{ use_tag_of_sound_IH2.
-            eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
-            repeat rewrite_expr_value.
-            repeat use_tag_of_sound_IH_eauto; congruence. }
-        1:{ use_tag_of_sound_IH2.
-            eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
-            repeat rewrite_expr_value.
-            use_tag_of_sound_IH_eauto; congruence. }
-        1:{ use_tag_of_sound_IH2.
-            eapply consistent_step; [ rewrite consistent_LikeList_eq | destruct i; auto ].
-            repeat rewrite_expr_value.
-            use_tag_of_sound_IH_eauto; congruence. }
         1:{ use_tag_of_sound_IH_eauto.
             apply_type_sound e; eauto with fiat2_hints.
             rewrite consistent_LikeList_eq in *.

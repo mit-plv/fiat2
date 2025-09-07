@@ -18,6 +18,7 @@ Section WithWord.
     | AString s => VString s
     | ANone _ => VOption None
     | ANil _ => VList nil
+    | AEmptyDict _ => VDict nil
     | AUnit => VUnit
     end.
 
@@ -80,6 +81,26 @@ Section WithWord.
     | S n => VWord lo :: eval_range_word (word.add lo (word.of_Z 1)) n
     end.
 
+  Fixpoint dict_insert (k v : value) (l : list (value * value)) : list (value * value) :=
+    match l with
+    | nil => (k, v) :: nil
+    | (k', v') :: l => if value_ltb k k' then (k, v) :: (k', v') :: l
+                      else if value_eqb k k' then (k, v) :: l
+                           else (k', v') :: dict_insert k v l
+    end.
+
+  Fixpoint dict_delete (k : value) (l : list (value * value)) : list (value * value) :=
+    match l with
+    | nil => nil
+    | (k', v) :: l => if value_eqb k k' then l else (k', v) :: dict_delete k l
+    end.
+
+  Fixpoint dict_lookup (k : value) (l : list (value * value)) : option value :=
+    match l with
+    | nil => None
+    | (k', v) :: l => if value_eqb k k' then Some v else dict_lookup k l
+    end.
+
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
     | OWPlus => apply_word_binop word.add a b
@@ -133,6 +154,22 @@ Section WithWord.
                  | VWord s, VWord e => VList (eval_range_word s (Z.to_nat (word.unsigned e - word.unsigned s)))
                  | _, _ => VUnit
                  end
+    | OLookup => match a, b with
+                 | VDict d, k => VOption (dict_lookup k d)
+                 | _, _ => VUnit
+                 end
+    | ODelete => match a, b with
+                 | VDict d, k => VDict (dict_delete k d)
+                 | _, _ => VUnit
+                 end
+    end.
+
+  Definition interp_ternop (o : ternop) (a b c : value) : value :=
+    match o with
+    | OInsert => match a, b, c with
+                 | VDict d, k, v => VDict (dict_insert k v d)
+                 | _, _, _ => VUnit
+                 end
     end.
 
   Definition record_proj (s : string) (l : list (string * value)) : value :=
@@ -145,26 +182,6 @@ Section WithWord.
   Proof.
     intros * H. unfold record_proj; rewrite H. reflexivity.
   Qed.
-
-  Fixpoint dict_insert (k v : value) (l : list (value * value)) : list (value * value) :=
-    match l with
-    | nil => (k, v) :: nil
-    | (k', v') :: l => if value_ltb k k' then (k, v) :: (k', v') :: l
-                      else if value_eqb k k' then (k, v) :: l
-                           else (k', v') :: dict_insert k v l
-    end.
-
-  Fixpoint dict_delete (k : value) (l : list (value * value)) : list (value * value) :=
-    match l with
-    | nil => nil
-    | (k', v) :: l => if value_eqb k k' then l else (k', v) :: dict_delete k l
-    end.
-
-  Fixpoint dict_lookup (k : value) (l : list (value * value)) : option value :=
-    match l with
-    | nil => None
-    | (k', v) :: l => if value_eqb k k' then Some v else dict_lookup k l
-    end.
 
   Section WithMap.
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
@@ -181,6 +198,8 @@ Section WithWord.
       | EAtom a => interp_atom a
       | EUnop o e => interp_unop o (interp_expr store env e)
       | EBinop o e1 e2 => interp_binop o (interp_expr store env e1) (interp_expr store env e2)
+      | ETernop o e1 e2 e3 => interp_ternop o (interp_expr store env e1)
+                                (interp_expr store env e2) (interp_expr store env e3)
       | EIf e1 e2 e3 => match interp_expr store env e1 with
                         | VBool b => if b then interp_expr store env e2 else interp_expr store env e3
                         | _ => VUnit
@@ -207,24 +226,6 @@ Section WithWord.
                        | VRecord l => record_proj s l
                        | _ => VUnit
                        end
-      | EDict l => VDict (dict_sort
-                            (List.dedup (fun p p' => value_eqb (fst p) (fst p'))
-                               (List.map (fun '(k, v) => (interp_expr store env k, interp_expr store env v)) l)))
-      | EInsert d k v =>
-          match interp_expr store env d with
-          | VDict l => VDict (dict_insert (interp_expr store env k) (interp_expr store env v) l)
-          | _ => VUnit
-          end
-      | EDelete d k =>
-          match interp_expr store env d with
-          | VDict l => VDict (dict_delete (interp_expr store env k) l)
-          | _ => VUnit
-          end
-      | ELookup d k =>
-          match interp_expr store env d with
-          | VDict l => VOption (dict_lookup (interp_expr store env k) l)
-          | _ => VUnit
-          end
       | EOptMatch e e_none x e_some =>
           match interp_expr store env e with
           | VOption None => interp_expr store env e_none

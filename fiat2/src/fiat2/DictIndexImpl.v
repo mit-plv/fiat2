@@ -17,9 +17,9 @@ Section WithHole.
     (* Materialize tbl (expected to be a list of records) into an index over attr *)
     Definition to_idx : expr :=
       let k := EAccess (EVar tup) attr in
-      EFold (EVar hole) (EDict nil) tup acc
-        (EInsert (EVar acc) k
-           (EOptMatch (ELookup (EVar acc) k)
+      EFold (EVar hole) (EAtom (AEmptyDict None)) tup acc
+        (ETernop OInsert (EVar acc) k
+           (EOptMatch (EBinop OLookup (EVar acc) k)
               (epair enil (EVar tup))
               x (cons_to_fst (EVar tup) (EVar x)))).
 
@@ -60,37 +60,6 @@ Section WithHole.
       Notation value := (value (width:=width)).
       Context {locals : map.map string value} {locals_ok : map.ok locals}.
       Notation sem_eq := (sem_eq (locals:=locals)).
-
-      (* ??? experiment with uniqueness of (substitute ... to_idx)'s type *)
-      Lemma to_idx_ty_unique :  forall Gstore Genv e t,
-          type_wf t -> is_tbl_ty t = true ->
-          (forall t', type_of Gstore Genv e t' -> t = t') ->
-          forall t', type_of Gstore Genv (substitute [(hole, e)] (get_free_vars Genv) to_idx) t' ->
-                     t' = (idx_ty t).
-      Proof.
-        unfold to_idx; cbn [substitute sub_lookup]; intros.
-        repeat (try rewrite eqb_refl in *; invert_type_of_clear).
-        assert(tup =? x = false). { apply eqb_neq; use_is_NoDup. }
-        assert(tup =? acc = false). { apply eqb_neq; use_is_NoDup. }
-        rewrite H2 in *. rewrite H5 in *. cbn in *.
-        apply H1 in H9; subst. simpl.
-        unfold is_tbl_ty in *. destruct_match_hyp; try discriminate.
-        remember (fresh_var tup (get_free_vars Genv)) as tup'.
-        remember (fresh_var acc (tup' :: get_free_vars Genv)) as acc'.
-        remember (fresh_var x (acc' :: tup' :: get_free_vars Genv)) as x'.
-        assert(tup' <> acc' /\ tup' <> x').
-        { rewrite Heqacc', Heqx'. auto using fresh_var_neq, fresh_var_neq2. }
-        clear Heqtup' Heqacc' Heqx'.
-        repeat invert_Forall2.
-        repeat invert_type_of_clear.
-        repeat rewrite_map_get_put_hyp; repeat (try clear_refl; do_injection).
-        invert_type_of_op_clear.
-        do 3 (destruct tl1; try discriminate). destruct p, p0; cbn in *.
-        inversion H16; inversion H26; subst.
-        apply Permutation_length_2_inv in H19; intuition idtac; subst.
-        2:{ invert_SSorted. invert_Forall. inversion H19. }
-        unfold index_type, get_attr_type. rewrite H18. cbn in *. congruence.
-      Qed.
 
       Ltac apply_In_access_record :=
         lazymatch goal with
@@ -449,8 +418,8 @@ Section WithHole.
           type_of Gstore Genv e t ->
           incl (get_free_vars Genv) free_vars ->
           sem_eq Gstore Genv (idx_ty t)
-            (EFold e (EDict []) tup0 acc0
-               (EInsert (EVar acc0) (EAccess (EVar tup0) attr) (EOptMatch (ELookup (EVar acc0) (EAccess (EVar tup0) attr)) (epair enil (EVar tup0)) x0 (cons_to_fst (EVar tup0) (EVar x0)))))
+            (EFold e (EAtom (AEmptyDict None)) tup0 acc0
+               (ETernop OInsert (EVar acc0) (EAccess (EVar tup0) attr) (EOptMatch (EBinop OLookup (EVar acc0) (EAccess (EVar tup0) attr)) (epair enil (EVar tup0)) x0 (cons_to_fst (EVar tup0) (EVar x0)))))
             (substitute [(hole, e)] free_vars to_idx).
       Proof.
         unfold sem_eq, is_tbl_ty; intros.
@@ -765,8 +734,8 @@ Section WithHole.
       Instance dict_idx_ok : IndexInterface.ok LikeBag LikeList dict_idx idx_wf consistent := IndexInterface.Build_ok dict_idx idx_wf idx_ty_wf to_idx_ty from_idx_ty to_idx_wf to_from_LikeBag from_to_LikeList.
 
       Notation elist_to_idx tup0 tup1 tup2 tup3 tup4 acc0 acc1 acc2 x0 x1 x2 attr0 attr1 d :=
-        (EFold d (EDict []) tup0 acc0
-           (EInsert (EVar acc1) (EAccess (EVar tup1) attr0) (EOptMatch (ELookup (EVar acc2) (EAccess (EVar tup2) attr1)) (ERecord [("0", EAtom (ANil None)); ("1", EVar tup3)]) x0 (ERecord [("0", EBinop OCons (EVar tup4) (EAccess (EVar x1) "0")); ("1", EAccess (EVar x2) "1")] )))).
+        (EFold d (EAtom (AEmptyDict None)) tup0 acc0
+           (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr0) (EOptMatch (EBinop OLookup (EVar acc2) (EAccess (EVar tup2) attr1)) (ERecord [("0", EAtom (ANil None)); ("1", EVar tup3)]) x0 (ERecord [("0", EBinop OCons (EVar tup4) (EAccess (EVar x1) "0")); ("1", EAccess (EVar x2) "1")] )))).
 
       Notation eidx_to_list k v0 v1 v2 acc0 acc1 d :=
         (EDictFold d (EAtom (ANil None)) k v0 acc0 (EBinop OConcat (EAccess (EVar v1) "0") (EBinop OCons (EAccess (EVar v2) "1") (EVar acc1)))).
@@ -794,7 +763,7 @@ Section WithHole.
               if (all_eqb [(v0, [v1; v2]); (acc0, [acc1]); (tbl, [tbl0]); (attr, [attr0]); (x, [x0])] &&
                     all_neqb [k0; v0; acc0] &&
                     negb (free_immut_in x e'))%bool
-              then EOptMatch (ELookup (ELoc tbl) e')
+              then EOptMatch (EBinop OLookup (ELoc tbl) e')
                      enil
                      p (EBinop OConcat (ofst (EVar p)) (econs (osnd (EVar p)) enil))
               else e
@@ -1018,7 +987,7 @@ Section WithHole.
             => if (all_eqb [(tbl, [tbl0]); (v0,[v1; v2]); (acc0, [acc1; acc2; acc3; acc4]); (y0, [y1]); (tup0, [tup1; tup2; tup3; tup4]); (attr, [attr0; attr1; attr2]); (x0, [x1; x2])] &&
                      all_neqb [acc0; tup0; v0; k0; x0] &&
                      negb (free_immut_in y0 k'))%bool
-               then EDelete (ELoc tbl) k'
+               then EBinop ODelete (ELoc tbl) k'
                else e
           | _ => e
           end.
@@ -1031,12 +1000,13 @@ Section WithHole.
           clear H_NoDup.
           unfold is_tbl_ty, preserve_ty; intros.
           repeat destruct_match_hyp; try congruence.
-          repeat destruct_subexpr. simpl. case_match; auto.
-          repeat rewrite Bool.andb_true_r in E1. repeat rewrite Bool.andb_true_iff in E1; intuition idtac.
+          repeat destruct_subexpr. simpl.
+          repeat (case_match; auto).
+          repeat rewrite Bool.andb_true_r in *. repeat rewrite Bool.andb_true_iff in *; intuition idtac.
           rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
           repeat invert_type_of_clear. repeat invert_type_of_op_clear.
           repeat rewrite_map_get_put_hyp. repeat (clear_refl; repeat do_injection2).
-          repeat constructor; auto.
+          repeat econstructor; auto.
           1:{ lazymatch goal with
               H: map.get Gstore tbl = _, H': map.get Gstore tbl = _ |- _ =>
                 rewrite H in *; do_injection2; simpl in *; do_injection2
@@ -1045,11 +1015,12 @@ Section WithHole.
               lazymatch goal with
               | H1: ?x = _, H2: ?x = _ |- _ => rewrite H1 in H2 end.
               do_injection2; rewrite_l_to_r_goal.
+              repeat invert_type_of_op_clear.
               repeat clear_refl. unfold index_type. do 3 f_equal.
               repeat invert_Forall2. repeat invert_type_of_clear.
               repeat invert_type_of_op_clear; repeat rewrite_map_get_put_hyp.
               repeat rewrite_l_to_r; repeat (try clear_refl; do_injection).
-              do 3 (destruct tl1; simpl in *; try congruence). destruct p, p0; simpl in *.
+              do 3 (destruct tl0; simpl in *; try congruence). destruct p, p0; simpl in *.
               do 3 (destruct tl; simpl in *; try congruence). destruct p, p0; simpl in *.
               repeat (lazymatch goal with
                         H: cons _ _ = cons _ _ |- _ => inversion H; subst; auto end;
@@ -1135,7 +1106,8 @@ Section WithHole.
           unfold preserve_sem, is_tbl_ty; intros.
           repeat destruct_match_hyp; try congruence.
           unfold holds_for_all_entries, index_wf_with_globals in *.
-          repeat destruct_subexpr. unfold neq_filter_to_delete_head in *. case_match; auto.
+          repeat destruct_subexpr. unfold neq_filter_to_delete_head in *.
+          repeat (case_match; auto).
           simpl in * |-. repeat rewrite Bool.andb_true_r in * |-.
           repeat rewrite Bool.andb_true_iff in * |-; intuition idtac.
           rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.

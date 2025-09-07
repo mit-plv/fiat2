@@ -160,7 +160,7 @@ Section WithMap.
     Proof.
       induction 5 using type_of_IH; simpl; intros.
       all: try (econstructor; eauto; apply_transf_to_idx_preserve_ty''_IH; apply tenv_wf_step; eauto with fiat2_hints).
-      4: repeat apply tenv_wf_step; eauto with fiat2_hints.
+      3: repeat apply tenv_wf_step; eauto with fiat2_hints.
       1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
           1:{ repeat rewrite_l_to_r; do_injection. eapply type_of_strengthen.
               1: apply from_idx_preserve_ty with (Gstore:=map.put map.empty x (idx_ty t)) (Genv:=map.empty);
@@ -182,10 +182,6 @@ Section WithMap.
           case_match; simpl in *. constructor; auto.
           destruct tl; simpl in *; try congruence. invert_cons.
           apply IHl; auto. }
-      1:{ constructor; auto. lazymatch goal with H: Forall _ _ |- _ => induction H end.
-          all: simpl; auto.
-          case_match; simpl in *; constructor; intuition auto.
-          invert_Forall; apply IHForall; auto. }
     Qed.
 
     Ltac use_transf_to_idx_preserve_ty'_IH :=
@@ -578,8 +574,7 @@ Section WithMap.
             simpl in *. repeat case_match; try congruence; intuition auto.
             erewrite Permutation_length; eauto. }
         1:{ destruct o; simpl in * |-; repeat use_transf_to_idx_preserve_sem''_IH.
-            all: lazymatch goal with
-                   H: (_, _) = (_, _) |- _ => inversion H; subst end;
+            all: invert_pair;
               repeat rewrite consistent_LikeList_eq in *; repeat rewrite_r_to_l;
               try (eapply consistent_step;
                    [ rewrite consistent_LikeList_eq; eauto
@@ -594,6 +589,12 @@ Section WithMap.
                 apply concat_repeat_preserve_consistent; auto. }
             1:{ apply_type_sound_consistent_value e2.
                 apply cons_preserve_consistent; auto. } }
+        1:{ destruct o; cbn in *; invert_pair.
+            repeat use_transf_to_idx_preserve_sem''_IH.
+            repeat rewrite consistent_LikeList_eq in *; repeat rewrite_r_to_l.
+            eapply consistent_step;
+              [ rewrite consistent_LikeList_eq; eauto
+              | destruct i; auto ]. }
         1:{ repeat use_transf_to_idx_preserve_sem''_IH.
             rewrite consistent_LikeList_eq in *; repeat rewrite_r_to_l.
             apply_type_sound2 e1. invert_type_of_value. case_match; auto. }
@@ -656,18 +657,6 @@ Section WithMap.
                 lazymatch goal with
                   H: Forall _ l |- _ => eapply IHl in H; eauto end.
                 constructor; auto. } }
-        1:{ eapply consistent_step.
-            1: apply consistent_LikeList_eq; auto.
-            2: destruct i; auto.
-            do 3 f_equal. induction l; simpl; auto.
-            case_match; repeat invert_Forall; simpl in *.
-            f_equal.
-            2: apply IHl; auto; constructor; auto.
-            intuition auto.
-            repeat (lazymatch goal with
-                    | IH:context [ consistent _ (interp_expr _ _ ?e) ], H:tag_of _ _ ?e _ |- _ => eapply IH in H
-                    end; [ | | | | | | eauto | eauto ]; auto).
-            rewrite consistent_LikeList_eq in *. congruence. }
         1:{ use_transf_to_idx_preserve_sem''_IH;
             rewrite consistent_LikeList_eq in *; repeat rewrite_r_to_l.
             apply_type_sound2 e. invert_type_of_value.

@@ -46,16 +46,13 @@ Section fold_expr.
       | EVar _ | ELoc _ | EAtom _ => e
       | EUnop o e => EUnop o (fold_expr e)
       | EBinop o e1 e2 => EBinop o (fold_expr e1) (fold_expr e2)
+      | ETernop o e1 e2 e3 => ETernop o (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | EIf e1 e2 e3 => EIf (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | ELet e1 x e2 => ELet (fold_expr e1) x (fold_expr e2)
       | EFlatmap e1 x e2 => EFlatmap (fold_expr e1) x (fold_expr e2)
       | EFold e1 e2 x y e3 => EFold (fold_expr e1) (fold_expr e2) x y (fold_expr e3)
       | ERecord l => ERecord (List.map (fun '(s, e) => (s, fold_expr e)) l)
       | EAccess e x => EAccess (fold_expr e) x
-      | EDict l => EDict (List.map (fun '(e1, e2) => (fold_expr e1, fold_expr e2)) l)
-      | EInsert d k v => EInsert (fold_expr d) (fold_expr k) (fold_expr v)
-      | EDelete d k => EDelete (fold_expr d) (fold_expr k)
-      | ELookup d k => ELookup (fold_expr d) (fold_expr k)
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
       | EDictFold d e0 k v acc e => EDictFold (fold_expr d) (fold_expr e0) k v acc (fold_expr e)
       | ESort l => ESort (fold_expr l)
@@ -87,7 +84,7 @@ Section WithMap.
     all: try apply_fold_expr_preserve_ty_IH; repeat apply tenv_wf_step; auto;
       try now (apply_type_of__type_wf; eauto; try invert_type_wf; auto).
     1: apply type_of__type_wf in H10; auto.
-    4: apply type_of__type_wf in H11; auto.
+    3: apply type_of__type_wf in H11; auto.
     1: rewrite fst_map_fst; auto.
     1:{ lazymatch goal with H1: NoDup _, H2: Permutation _ _,
             H3: List.map fst _ = _ |- _ =>
@@ -97,9 +94,6 @@ Section WithMap.
         constructor.
         2: apply IHl; invert_Forall; intuition auto.
         invert_Forall. destruct a; simpl in *. apply H5; auto. }
-    1:{ induction l; simpl; auto. repeat invert_Forall. constructor.
-        2:{ apply IHl; intuition auto. }
-        destruct a; simpl in *. intuition auto. }
   Qed.
 
   Ltac apply_fold_expr_preserve_sem_IH :=
@@ -159,18 +153,6 @@ Section WithMap.
         invert_Forall; case_match; simpl in *.
         f_equal. 2: eapply IHl; eauto.
         f_equal; eauto. }
-    1:{ erewrite H_sem; eauto.
-        2:{ econstructor.
-            3:{ induction l; simpl; auto.
-                repeat invert_Forall.
-                case_match; constructor; simpl in *.
-                2: apply IHl; intuition.
-                intuition; apply fold_expr_preserve_ty; eauto. }
-            all: auto. }
-        simpl. do 3 f_equal. induction l; simpl; auto.
-        repeat invert_Forall; case_match; simpl in *.
-        f_equal. 2: apply IHl; intuition.
-        f_equal; intuition; apply_fold_expr_preserve_sem_IH. }
     1:{ erewrite H_sem; eauto.
         2: econstructor; eapply fold_expr_preserve_ty; eauto with fiat2_hints.
         simpl. apply_fold_expr_preserve_sem_IH. repeat case_match; auto.

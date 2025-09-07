@@ -48,6 +48,8 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
   | EAtom a => EAtom a
   | EUnop o e0 => EUnop o (substitute sub free_vars e0)
   | EBinop o e1 e2 => EBinop o (substitute sub free_vars e1) (substitute sub free_vars e2)
+  | ETernop o e1 e2 e3 => ETernop o (substitute sub free_vars e1)
+                            (substitute sub free_vars e2) (substitute sub free_vars e3)
   | EIf e1 e2 e3 => EIf (substitute sub free_vars e1) (substitute sub free_vars e2) (substitute sub free_vars e3)
   | ELet e1 x e2 =>
       let x' := fresh_var x free_vars in
@@ -64,10 +66,6 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
         (substitute ((acc, EVar acc') :: (v, EVar v') :: sub) (acc' :: v' :: free_vars) e3)
   | ERecord l => ERecord (List.map (fun '(s, e) => (s, substitute sub free_vars e)) l)
   | EAccess e s => EAccess (substitute sub free_vars e) s
-  | EDict l => EDict (List.map (fun '(ke, ve) => (substitute sub free_vars ke, substitute sub free_vars ve)) l)
-  | EInsert d k v => EInsert (substitute sub free_vars d) (substitute sub free_vars k) (substitute sub free_vars v)
-  | EDelete d k => EDelete (substitute sub free_vars d) (substitute sub free_vars k)
-  | ELookup d k => ELookup (substitute sub free_vars d) (substitute sub free_vars k)
   | EOptMatch e1 e2 x e3 =>
       let x' := fresh_var x free_vars in
       EOptMatch (substitute sub free_vars e1) (substitute sub free_vars e2) x'
@@ -230,15 +228,6 @@ Section WithMap.
           constructor.
           1:{ case_match; simpl in *. eapply H; eauto. }
           1: apply IHForall; auto. }
-      1:{ constructor; auto.
-          lazymatch goal with H: type_of _ _ _ _ |- _ => clear H end.
-          induction H8; simpl; auto. constructor; invert_Forall.
-          1:{ case_match; simpl in *; intuition auto.
-              all: lazymatch goal with
-                     H: context[type_of _ _ (substitute _ _ ?e) _] |-
-                       type_of _ _ (substitute _ _ ?e) _ =>
-                       eapply H end; eauto. }
-          1: apply IHForall; auto. }
       1:{ econstructor; eauto;
           use_substitute_preserve_ty_IH; simpl; intros.
           3,8: eauto.
@@ -375,9 +364,6 @@ Section WithMap.
           case_match. destruct tl; try discriminate; simpl in *.
           lazymatch goal with H: _ :: _ = _ :: _ |- _ => inversion H; subst end. erewrite IHl; eauto.
           do 2 f_equal. eauto. }
-      1:{ do 3 f_equal. rewrite map_map. apply map_ext_in; intros.
-          case_match. repeat apply_Forall_In; simpl in *. intuition auto.
-          f_equal; eauto. }
       1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
           apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
           invert_type_of_value.
@@ -502,6 +488,8 @@ Fixpoint free_immuts_in (e : expr) : list string :=
   | EUnop o e => free_immuts_in e
   | EBinop o e1 e2 =>
       free_immuts_in e1 ++ free_immuts_in e2
+  | ETernop o e1 e2 e3 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
   | EIf e1 e2 e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
   | ELet e1 x e2 | EFlatmap e1 x e2 =>
@@ -511,14 +499,6 @@ Fixpoint free_immuts_in (e : expr) : list string :=
   | ERecord l =>
       fold_right (fun v acc => free_immuts_in (snd v) ++ acc) [] l
   | EAccess e s => free_immuts_in e
-  | EDict l =>
-      fold_right (fun v acc => free_immuts_in (fst v) ++ free_immuts_in (snd v) ++ acc) [] l
-  | EInsert e1 e2 e3 =>
-      free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
-  | EDelete e1 e2 =>
-      free_immuts_in e1 ++ free_immuts_in e2
-  | ELookup e1 e2 =>
-      free_immuts_in e1 ++ free_immuts_in e2
   | EOptMatch e1 e2 x e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x (free_immuts_in e3)
   | EDictFold e1 e2 k v acc e3 =>
@@ -565,13 +545,6 @@ Proof.
       rewrite Bool.orb_true_iff in *.
       1: case_match; apply_in_app_or; intuition idtac.
       1: apply in_or_app; destruct_match_hyp; intuition idtac. }
-  1:{ induction H; cbn in *; intuition auto; try congruence.
-      1:{ case_match; cbn in *;
-          repeat (apply_in_app_or; intuition idtac);
-          rewrite !Bool.orb_true_iff in *; auto. }
-      1:{ destruct_match_hyp; cbn in *.
-          rewrite !Bool.orb_true_iff in *;
-          repeat (apply in_or_app; intuition idtac; right). } }
   1:{ split; intro; rewrite !Bool.orb_true_iff, !Bool.andb_true_iff in *; rewrite !Bool.negb_true_iff in *; rewrite Bool.orb_true_iff in *;
       repeat (apply_in_app_or; intuition idtac);
       repeat (apply_in_remove; intuition idtac).
