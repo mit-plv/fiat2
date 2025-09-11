@@ -100,12 +100,14 @@ Inductive type_wf : type -> Prop :=
                 type_wf (TRecord l)
 | WFTDict kt vt : type_wf kt ->
                   type_wf vt ->
-                  type_wf (TDict kt vt).
+                  type_wf (TDict kt vt)
+| WFTBag t : type_wf t ->
+             type_wf (TBag t).
 
 Fixpoint type_wf_comp (t : type) : bool :=
   match t with
   | TWord | TInt | TBool | TString | TUnit => true
-  | TOption t | TList t => type_wf_comp t
+  | TOption t | TList t | TBag t => type_wf_comp t
   | TRecord tl => NoDup_comp String.eqb (List.map fst tl) &&
                     StronglySorted_comp record_entry_leb tl &&
                     (fix forall_snd (tl : list (string * type)) :=
@@ -191,6 +193,10 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
 | TyOInsert kt vt : type_of_ternop OInsert (TDict kt vt) kt vt (TDict kt vt).
 
+Inductive type_of_aggr : aggr -> type -> type -> Prop :=
+| TyAGSum : type_of_aggr AGSum TInt TInt
+| TyAGCount t : type_of_aggr AGCount t TInt.
+
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
 
@@ -217,13 +223,19 @@ Section WithMap.
   | TyELet e1 t1 x e2 t2 : type_of Gstore Genv e1 t1 ->
                            type_of Gstore (map.put Genv x t1) e2 t2 ->
                            type_of Gstore Genv (ELet e1 x e2) t2
-  | TyEFlatmap e1 t1 x e2 t2 : type_of Gstore Genv e1 (TList t1) ->
+  | TyEFlatmap_List e1 t1 x e2 t2 : type_of Gstore Genv e1 (TList t1) ->
                                type_of Gstore (map.put Genv x t1) e2 (TList t2) ->
-                               type_of Gstore Genv (EFlatmap e1 x e2) (TList t2)
+                               type_of Gstore Genv (EFlatmap LikeList e1 x e2) (TList t2)
+  | TyEFlatmap_Bag e1 t1 x e2 t2 : type_of Gstore Genv e1 (TBag t1) ->
+                               type_of Gstore (map.put Genv x t1) e2 (TBag t2) ->
+                               type_of Gstore Genv (EFlatmap LikeBag e1 x e2) (TBag t2)
   | TyEFold e1 t1 e2 t2 x y e3 : type_of Gstore Genv e1 (TList t1) ->
                                  type_of Gstore Genv e2 t2 ->
                                  type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 ->
                                  type_of Gstore Genv (EFold e1 e2 x y e3) t2
+  | TyEACFold ag e t1 t2 : type_of_aggr ag t1 t2 ->
+                           type_of Gstore Genv e (TBag t1) ->
+                           type_of Gstore Genv (EACFold ag e) t2
   | TyERecord (l : list (string * expr)) (tl tl' : list (string * type)) :
     List.map fst l = List.map fst tl ->
     Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
@@ -242,19 +254,34 @@ Section WithMap.
                                          type_of Gstore Genv e0 t ->
                                          type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
                                          type_of Gstore Genv (EDictFold d e0 k v acc e) t
-  | TyESort l t : type_of Gstore Genv l (TList t) ->
-                  type_of Gstore Genv (ESort l) (TList t)
-  | TyEFilter e t x p : type_of Gstore Genv e (TList t) ->
+  | TyESort_List l t : type_of Gstore Genv l (TList t) ->
+                  type_of Gstore Genv (ESort LikeList l) (TList t)
+  | TyESort_Bag l t : type_of Gstore Genv l (TBag t) ->
+                  type_of Gstore Genv (ESort LikeBag l) (TList t)
+  | TyEFilter_List e t x p : type_of Gstore Genv e (TList t) ->
                         type_of Gstore (map.put Genv x t) p TBool ->
-                        type_of Gstore Genv (EFilter e x p) (TList t)
-  | TyEJoin e1 t1 e2 t2 x y p r t3 : type_of Gstore Genv e1 (TList t1) ->
+                        type_of Gstore Genv (EFilter LikeList e x p) (TList t)
+  | TyEFilter_Bag e t x p : type_of Gstore Genv e (TBag t) ->
+                        type_of Gstore (map.put Genv x t) p TBool ->
+                        type_of Gstore Genv (EFilter LikeBag e x p) (TBag t)
+  | TyEJoin_List e1 t1 e2 t2 x y p r t3 : type_of Gstore Genv e1 (TList t1) ->
                                      type_of Gstore Genv e2 (TList t2) ->
                                      type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool ->
                                      type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 ->
-                                     type_of Gstore Genv (EJoin e1 e2 x y p r) (TList t3)
-  | TyEProj e t1 x r t2 : type_of Gstore Genv e (TList t1) ->
+                                     type_of Gstore Genv (EJoin LikeList e1 e2 x y p r) (TList t3)
+  | TyEJoin_Bag e1 t1 e2 t2 x y p r t3 : type_of Gstore Genv e1 (TBag t1) ->
+                                     type_of Gstore Genv e2 (TBag t2) ->
+                                     type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool ->
+                                     type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 ->
+                                     type_of Gstore Genv (EJoin LikeBag e1 e2 x y p r) (TBag t3)
+  | TyEProj_List e t1 x r t2 : type_of Gstore Genv e (TList t1) ->
                           type_of Gstore (map.put Genv x t1) r t2 ->
-                          type_of Gstore Genv (EProj e x r) (TList t2).
+                          type_of Gstore Genv (EProj LikeList e x r) (TList t2)
+  | TyEProj_Bag e t1 x r t2 : type_of Gstore Genv e (TBag t1) ->
+                          type_of Gstore (map.put Genv x t1) r t2 ->
+                          type_of Gstore Genv (EProj LikeBag e x r) (TBag t2)
+  | TyEBagOf e t : type_of Gstore Genv e (TList t) ->
+                   type_of Gstore Genv (EBagOf e) (TBag t).
 
   Inductive well_typed (Gstore Genv : tenv) : command -> Prop :=
   | WTCSkip : well_typed Gstore Genv CSkip
@@ -298,14 +325,22 @@ Section WithMap.
     Hypothesis (f_let : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 t1 -> P Genv e1 t1 ->
                                                    type_of Gstore (map.put Genv x t1) e2 t2 -> P (map.put Genv x t1) e2 t2 ->
                                                    P Genv (ELet e1 x e2) t2).
-    Hypothesis (f_flatmap : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
+    Hypothesis (f_flatmap_list : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
                                                        type_of Gstore (map.put Genv x t1) e2 (TList t2) -> P (map.put Genv x t1) e2 (TList t2) ->
-                                                       P Genv (EFlatmap e1 x e2) (TList t2)).
+                                                       P Genv (EFlatmap LikeList e1 x e2) (TList t2)).
+    Hypothesis (f_flatmap_bag : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 (TBag t1) -> P Genv e1 (TBag t1) ->
+                                                       type_of Gstore (map.put Genv x t1) e2 (TBag t2) -> P (map.put Genv x t1) e2 (TBag t2) ->
+                                                       P Genv (EFlatmap LikeBag e1 x e2) (TBag t2)).
     Hypothesis (f_fold : forall Genv e1 t1 e2 t2 x y e3,
                    type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
                    type_of Gstore Genv e2 t2 -> P Genv e2 t2 ->
                    type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 -> P (map.put (map.put Genv x t1) y t2) e3 t2 ->
                    P Genv (EFold e1 e2 x y e3) t2).
+    Hypothesis (f_acfold : forall Genv ag e t1 t2,
+                   type_of_aggr ag t1 t2 ->
+                   type_of Gstore Genv e (TBag t1) ->
+                   P Genv e (TBag t1) ->
+                   P Genv (EACFold ag e) t2).
     Hypothesis (f_record : forall Genv l tl tl', List.map fst l = List.map fst tl ->
                                                  Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) ->
                                                  Forall2 (P Genv) (List.map snd l) (List.map snd tl) ->
@@ -324,20 +359,39 @@ Section WithMap.
                                                                   type_of Gstore Genv e0 t -> P Genv e0 t ->
                                                                   type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t -> P (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
                                                                   P Genv (EDictFold d e0 k v acc e) t).
-    Hypothesis (f_sort : forall Genv l t, type_of Gstore Genv l (TList t) -> P Genv l (TList t) ->
-                                          P Genv (ESort l) (TList t)).
-    Hypothesis (f_filter : forall Genv e t x p, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
-                                                type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
-                                                P Genv (EFilter e x p) (TList t)).
-    Hypothesis (f_join : forall Genv e1 t1 e2 t2 x y p r t3,
+    Hypothesis (f_sort_list : forall Genv l t, type_of Gstore Genv l (TList t) -> P Genv l (TList t) ->
+                                          P Genv (ESort LikeList l) (TList t)).
+    Hypothesis (f_sort_bag : forall Genv l t, type_of Gstore Genv l (TBag t) -> P Genv l (TBag t) ->
+                                          P Genv (ESort LikeBag l) (TList t)).
+    Hypothesis (f_filter_list : forall Genv e t x p,
+                   type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
+                   type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
+                   P Genv (EFilter LikeList e x p) (TList t)).
+    Hypothesis (f_filter_bag : forall Genv e t x p,
+                   type_of Gstore Genv e (TBag t) -> P Genv e (TBag t) ->
+                   type_of Gstore (map.put Genv x t) p TBool -> P (map.put Genv x t) p TBool ->
+                   P Genv (EFilter LikeBag e x p) (TBag t)).
+    Hypothesis (f_join_list : forall Genv e1 t1 e2 t2 x y p r t3,
                    type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
                    type_of Gstore Genv e2 (TList t2) -> P Genv e2 (TList t2) ->
                    type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool -> P (map.put (map.put Genv x t1) y t2) p TBool ->
                    type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 -> P (map.put (map.put Genv x t1) y t2) r t3 ->
-                   P Genv (EJoin e1 e2 x y p r) (TList t3)).
-    Hypothesis (f_proj : forall Genv e t1 x r t2, type_of Gstore Genv e (TList t1) -> P Genv e (TList t1) ->
+                   P Genv (EJoin LikeList e1 e2 x y p r) (TList t3)).
+    Hypothesis (f_join_bag : forall Genv e1 t1 e2 t2 x y p r t3,
+                   type_of Gstore Genv e1 (TBag t1) -> P Genv e1 (TBag t1) ->
+                   type_of Gstore Genv e2 (TBag t2) -> P Genv e2 (TBag t2) ->
+                   type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool -> P (map.put (map.put Genv x t1) y t2) p TBool ->
+                   type_of Gstore (map.put (map.put Genv x t1) y t2) r t3 -> P (map.put (map.put Genv x t1) y t2) r t3 ->
+                   P Genv (EJoin LikeBag e1 e2 x y p r) (TBag t3)).
+    Hypothesis (f_proj_list : forall Genv e t1 x r t2, type_of Gstore Genv e (TList t1) -> P Genv e (TList t1) ->
                                                   type_of Gstore (map.put Genv x t1) r t2 -> P (map.put Genv x t1) r t2 ->
-                                                  P Genv (EProj e x r) (TList t2)).
+                                                  P Genv (EProj LikeList e x r) (TList t2)).
+    Hypothesis (f_proj_bag : forall Genv e t1 x r t2, type_of Gstore Genv e (TBag t1) -> P Genv e (TBag t1) ->
+                                                  type_of Gstore (map.put Genv x t1) r t2 -> P (map.put Genv x t1) r t2 ->
+                                                  P Genv (EProj LikeBag e x r) (TBag t2)).
+    Hypothesis (f_bagof : forall Genv e t, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
+                                           P Genv (EBagOf e) (TBag t)).
+
     Section __.
       Context (type_of_IH : forall Genv e t, type_of Gstore Genv e t -> P Genv e t).
 
@@ -360,17 +414,25 @@ Section WithMap.
             He2 (type_of_IH Genv e2 t2 He2) He3 (type_of_IH Genv e3 t3 He3)
       | TyEIf _ _ e1 e2 e3 t He1 He2 He3 => f_if Genv e1 e2 e3 t He1 (type_of_IH Genv e1 TBool He1) He2 (type_of_IH Genv e2 t He2) He3 (type_of_IH Genv e3 t He3)
       | TyELet _ _ e1 t1 x e2 t2 He1 He2 => f_let Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 t1 He1) He2 (type_of_IH (map.put Genv x t1) e2 t2 He2)
-      | TyEFlatmap _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TList t2) He2)
+      | TyEFlatmap_List _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap_list Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TList t2) He2)
+      | TyEFlatmap_Bag _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap_bag Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TBag t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TBag t2) He2)
       | TyEFold _ _ e1 t1 e2 t2 x y e3 He1 He2 He3 => f_fold Genv e1 t1 e2 t2 x y e3 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 t2 He2) He3 (type_of_IH (map.put (map.put Genv x t1) y t2) e3 t2 He3)
+      | TyEACFold _ _ ag e t1 t2 Hag He => f_acfold Genv ag e t1 t2 Hag He (type_of_IH Genv e (TBag t1) He)
       | TyERecord _ _ l tl tl' Hname Hfield Hpermu Hnodup Hsort => f_record Genv l tl tl' Hname Hfield (record_type_of_IH type_of_IH Genv (List.map snd l) (List.map snd tl) Hfield) Hpermu Hnodup Hsort
       | TyEAccess _ _ e tl x t He Hin => f_access Genv e tl x t He (type_of_IH Genv e (TRecord tl) He) Hin
       | TyEOptMatch _ _ e t1 e_none t2 x e_some He He_none He_some => f_optmatch Genv e t1 e_none t2 x e_some He (type_of_IH Genv e (TOption t1) He) He_none (type_of_IH Genv e_none t2 He_none) He_some (type_of_IH (map.put Genv x t1) e_some t2 He_some)
       | TyEDictFold _ _ d kt vt e0 t k v acc e Hd He0 He => f_dictfold Genv d kt vt e0 t k v acc e Hd (type_of_IH Genv d (TDict kt vt) Hd) He0 (type_of_IH Genv e0 t He0)  He (type_of_IH (map.put (map.put (map.put Genv k kt) v vt) acc t) e t He)
-      | TyESort _ _ l t Hl => f_sort Genv l t Hl (type_of_IH Genv l (TList t) Hl)
-      | TyEFilter _ _ e t x p He Hp => f_filter Genv e t x p He (type_of_IH Genv e (TList t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
-      | TyEJoin _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join Genv e1 t1 e2 t2 x y p r t3 He1
+      | TyESort_List _ _ l t Hl => f_sort_list Genv l t Hl (type_of_IH Genv l (TList t) Hl)
+      | TyESort_Bag _ _ l t Hl => f_sort_bag Genv l t Hl (type_of_IH Genv l (TBag t) Hl)
+      | TyEFilter_List _ _ e t x p He Hp => f_filter_list Genv e t x p He (type_of_IH Genv e (TList t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
+      | TyEFilter_Bag _ _ e t x p He Hp => f_filter_bag Genv e t x p He (type_of_IH Genv e (TBag t) He) Hp (type_of_IH (map.put Genv x t) p TBool Hp)
+      | TyEJoin_List _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join_list Genv e1 t1 e2 t2 x y p r t3 He1
                    (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 (TList t2) He2) Hp (type_of_IH (map.put (map.put Genv x t1) y t2) p TBool Hp) Hr (type_of_IH (map.put (map.put Genv x t1) y t2) r t3 Hr)
-      | TyEProj _ _ e t1 x r t2 He Hr => f_proj Genv e t1 x r t2 He (type_of_IH Genv e (TList t1) He) Hr (type_of_IH (map.put Genv x t1) r t2 Hr)
+      | TyEJoin_Bag _ _ e1 t1 e2 t2 x y p r t3 He1 He2 Hp Hr => f_join_bag Genv e1 t1 e2 t2 x y p r t3 He1
+                   (type_of_IH Genv e1 (TBag t1) He1) He2 (type_of_IH Genv e2 (TBag t2) He2) Hp (type_of_IH (map.put (map.put Genv x t1) y t2) p TBool Hp) Hr (type_of_IH (map.put (map.put Genv x t1) y t2) r t3 Hr)
+      | TyEProj_List _ _ e t1 x r t2 He Hr => f_proj_list Genv e t1 x r t2 He (type_of_IH Genv e (TList t1) He) Hr (type_of_IH (map.put Genv x t1) r t2 Hr)
+      | TyEProj_Bag _ _ e t1 x r t2 He Hr => f_proj_bag Genv e t1 x r t2 He (type_of_IH Genv e (TBag t1) He) Hr (type_of_IH (map.put Genv x t1) r t2 Hr)
+      | TyEBagOf _ _ e t He => f_bagof Genv e t He (type_of_IH Genv e (TList t) He)
       end.
     End TypeOfIH.
 
@@ -398,6 +460,7 @@ Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   | TRecord l, TRecord l' => list_beq (fun p p' => andb (String.eqb (fst p) (fst p'))
                                                        (type_eqb (snd p) (snd p'))) l l'
   | TDict kt vt, TDict kt' vt' => andb (type_eqb kt kt') (type_eqb vt vt')
+  | TBag t, TBag t' => type_eqb t t'
   | _, _ => false
   end.
 
@@ -645,16 +708,32 @@ Section WithMap.
     | ELet e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                       e2' <- analyze_expr Gstore (map.put Genv x t1) expected e2 ;;
                       Success (ELet e1' x e2')
-    | EFlatmap e1 x e2 => match expected with
-                          | TList t2 =>
-                              '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                              match t1 with
-                              | TList t1 => e2' <- analyze_expr Gstore (map.put Genv x t1) (TList t2) e2 ;;
-                                            Success (EFlatmap e1' x e2')
-                              | t1 => error:(e1 "has type" t1 "but expected a list")
-                              end
-                          | _ => error:(e "is a list but expected" expected)
-                          end
+    | EFlatmap tag e1 x e2 =>
+        match tag with
+        | LikeList =>
+            match expected with
+            | TList t2 =>
+                '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                match t1 with
+                | TList t1 => e2' <- analyze_expr Gstore (map.put Genv x t1) (TList t2) e2 ;;
+                              Success (EFlatmap LikeList e1' x e2')
+                | t1 => error:(e1 "has type" t1 "but expected a list")
+                end
+            | _ => error:(e "is a list but expected" expected)
+            end
+        | LikeBag =>
+            match expected with
+            | TBag t2 =>
+                '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                match t1 with
+                | TBag t1 => e2' <- analyze_expr Gstore (map.put Genv x t1) (TBag t2) e2 ;;
+                              Success (EFlatmap LikeBag e1' x e2')
+                | t1 => error:(e1 "has type" t1 "but expected a bag")
+                end
+            | _ => error:(e "is a bag but expected" expected)
+            end
+        | _ => error:(tag "not supported yet")
+        end
     | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                             match t1 with
                             | TList t1 => e2' <- analyze_expr Gstore Genv expected e2 ;;
@@ -662,6 +741,19 @@ Section WithMap.
                                           Success (EFold e1' e2' x y e3')
                             | t1 => error:(e1 "has type" t1 "but expected a list")
                             end
+    | EACFold ag l => match ag with
+                      | AGSum => if type_eqb expected TInt
+                                 then l' <- analyze_expr Gstore Genv (TBag TInt) l ;;
+                                      Success (EACFold ag l')
+                                 else error:(e "has type" TInt "but expected" expected)
+                      | AGCount => if type_eqb expected TInt
+                                   then '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                                        match t1 with
+                                        | TBag t1 => Success (EACFold ag l')
+                                        | t1 => error:(l "has type" t1 "but expected a bag")
+                                        end
+                                   else error:(e "has type" TInt "but expected" expected)
+                      end
     | ERecord l => match expected with
                    | TRecord tl =>
                        if Nat.leb (length tl) (length l)
@@ -700,43 +792,104 @@ Section WithMap.
                          Success (EDictFold d' e0' k v acc e')
         | t => error:(d "has type" t "but expected a dictionary")
         end
-    | ESort l => match expected with
-                 | TList t => analyze_expr Gstore Genv (TList t) l
-                 | _ => error:(l "is a list but expected" expected)
-                 end
-    | EFilter l x p => match expected with
-                       | TList t => l' <- analyze_expr Gstore Genv expected l ;;
-                                    p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
-                                    Success (EFilter l' x p')
-                       | _ => error:(e "is a list but expected" expected)
-                       end
-    | EJoin l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
-                             match t1 with
-                             | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
-                                           match t2 with
-                                           | TList t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
-                                                         p' <- analyze_expr Gstore Genv' TBool p ;;
-                                                         match expected with
-                                                         | TList t3 =>
-                                                             r' <- analyze_expr Gstore Genv' t3 r ;;
-                                                             Success (EJoin l1' l2' x y p' r')
-                                                         | _ => error:(e "is a list but expected" expected)
-                                                         end
-                                           | t => error:(l2 "has type" t "but expected a list")
-                                           end
-                             | t => error:(l1 "has type" t "but expected a list")
-                             end
-    | EProj l x r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
-                     match t1 with
-                     | TList t1 => match expected with
-                                   | TList t2 => r' <- analyze_expr Gstore (map.put Genv x t1) t2 r ;;
-                                                 Success (EProj l' x r')
-                                   | _ => error:(e "is a list but expected" expected)
-                                   end
-                     | t => error:(l "has type" t "but expected a list")
-                     end
+    | ESort tag l =>
+            match expected with
+            | TList t =>
+                match tag with
+                | LikeList =>
+                    l' <- analyze_expr Gstore Genv (TList t) l ;;
+                    Success (ESort LikeList l')
+                | LikeBag =>
+                    l' <- analyze_expr Gstore Genv (TBag t) l ;;
+                    Success (ESort LikeBag l')
+                | _ => error:(tag "not supported yet")
+                end
+            | _ => error:(e "is a list but expected" expected)
+            end
+    | EFilter tag l x p =>
+        match tag with
+        | LikeList =>
+            match expected with
+            | TList t => l' <- analyze_expr Gstore Genv expected l ;;
+                         p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
+                         Success (EFilter LikeList l' x p')
+            | _ => error:(e "is a list but expected" expected)
+            end
+        | LikeBag =>
+            match expected with
+            | TBag t => l' <- analyze_expr Gstore Genv expected l ;;
+                        p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
+                        Success (EFilter LikeBag l' x p')
+            | _ => error:(e "is a bag but expected" expected)
+            end
+        | _ => error:(tag "not supported yet")
+        end
+    | EJoin tag l1 l2 x y p r =>
+        '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
+        match tag with
+        | LikeList =>
+            match t1 with
+            | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
+                          match t2 with
+                          | TList t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
+                                        p' <- analyze_expr Gstore Genv' TBool p ;;
+                                        match expected with
+                                        | TList t3 =>
+                                            r' <- analyze_expr Gstore Genv' t3 r ;;
+                                            Success (EJoin LikeList l1' l2' x y p' r')
+                                        | _ => error:(e "is a list but expected" expected)
+                                        end
+                          | t => error:(l2 "has type" t "but expected a list")
+                          end
+            | t => error:(l1 "has type" t "but expected a list")
+            end
+        | LikeBag =>
+            match t1 with
+            | TBag t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
+                          match t2 with
+                          | TBag t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
+                                        p' <- analyze_expr Gstore Genv' TBool p ;;
+                                        match expected with
+                                        | TBag t3 =>
+                                            r' <- analyze_expr Gstore Genv' t3 r ;;
+                                            Success (EJoin LikeBag l1' l2' x y p' r')
+                                        | _ => error:(e "is a bag but expected" expected)
+                                        end
+                          | t => error:(l2 "has type" t "but expected a bag")
+                          end
+            | t => error:(l1 "has type" t "but expected a bag")
+            end
+        | _ => error:(tag "not supported yet")
+        end
+    | EProj tag l x r =>
+        '(t1, l') <- synthesize_expr Gstore Genv l ;;
+        match tag with
+        | LikeList =>
+            match t1 with
+            | TList t1 => match expected with
+                          | TList t2 => r' <- analyze_expr Gstore (map.put Genv x t1) t2 r ;;
+                                        Success (EProj LikeList l' x r')
+                          | _ => error:(e "is a list but expected" expected)
+                          end
+            | t => error:(l "has type" t "but expected a list")
+            end
+        | LikeBag =>
+            match t1 with
+            | TBag t1 => match expected with
+                          | TBag t2 => r' <- analyze_expr Gstore (map.put Genv x t1) t2 r ;;
+                                       Success (EProj LikeBag l' x r')
+                          | _ => error:(e "is a bag but expected" expected)
+                          end
+            | t => error:(l "has type" t "but expected a bag")
+            end
+        | _ => error:(tag "not supported yet")
+        end
+    | EBagOf l => match expected with
+                  | TBag t => l' <- analyze_expr Gstore Genv (TList t) l ;;
+                              Success (EBagOf l')
+                  | t => error:(e "is a bag but expected" t)
+                  end
     end
-
   with synthesize_expr (Gstore Genv : tenv) (e : expr) : result (type * expr) :=
          match e with
          | EVar x => match map.get Genv x with
@@ -826,15 +979,29 @@ Section WithMap.
          | ELet e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                            '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
                            Success (t2, ELet e1' x e2')
-         | EFlatmap e1 x e2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                               match t1 with
-                               | TList t1 => '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
-                                             match t2 with
-                                             | TList t2 => Success (TList t2, EFlatmap e1' x e2')
-                                             | t2 => error:(e2 "has type" t2 "but expected a list")
-                                             end
-                               | t1 => error:(e1 "has type" t1 "but expected a list")
+         | EFlatmap tag e1 x e2 =>
+             '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+             match tag with
+             | LikeList =>
+                 match t1 with
+                 | TList t1 => '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
+                               match t2 with
+                               | TList t2 => Success (TList t2, EFlatmap LikeList e1' x e2')
+                               | t2 => error:(e2 "has type" t2 "but expected a list")
                                end
+                 | t1 => error:(e1 "has type" t1 "but expected a list")
+                 end
+             | LikeBag =>
+                 match t1 with
+                 | TBag t1 => '(t2, e2') <- synthesize_expr Gstore (map.put Genv x t1) e2 ;;
+                               match t2 with
+                               | TBag t2 => Success (TBag t2, EFlatmap LikeBag e1' x e2')
+                               | t2 => error:(e2 "has type" t2 "but expected a bag")
+                               end
+                 | t1 => error:(e1 "has type" t1 "but expected a bag")
+                 end
+             | _ => error:(tag "not supported yet")
+             end
          | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                                  match t1 with
                                  | TList t1 => '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
@@ -842,6 +1009,17 @@ Section WithMap.
                                                Success (t2, EFold e1' e2' x y e3')
                                  | t1 => error:(e1 "has type" t1 "but expected a list")
                                  end
+         | EACFold ag l => match ag with
+                           | AGSum =>
+                               l' <- analyze_expr Gstore Genv (TBag TInt) l ;;
+                               Success (TInt, EACFold ag l')
+                           | AGCount =>
+                               '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                               match t1 with
+                               | TBag t1 => Success (TInt, EACFold ag l')
+                               | t1 => error:(l "has type" t1 "but expected a bag")
+                               end
+                           end
          | ERecord l => record_type_from (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)
          | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
                           match t with
@@ -873,36 +1051,86 @@ Section WithMap.
                  Success (t, EDictFold d' e0' k v acc e')
              | t => error:(d "has type" t "but expected a dictionary")
              end
-         | ESort l =>
+         | ESort tag l =>
              '(t, l') <- synthesize_expr Gstore Genv l ;;
-             match t with
-             | TList t => Success (TList t, ESort l')
-             | t => error:(l "has type" t "but expected a list")
+             match tag with
+             | LikeList =>
+                 match t with
+                 | TList t => Success (TList t, ESort LikeList l')
+                 | t => error:(l "has type" t "but expected a list")
+                 end
+             | LikeBag =>
+                 match t with
+                 | TBag t => Success (TList t, ESort LikeBag l')
+                 | t => error:(l "has type" t "but expected a bag")
+                 end
+             | _ => error:(tag "not supported yet")
              end
-         | EFilter l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
-                              match t with
-                              | TList t => p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
-                                           Success (TList t, EFilter l' x p')
-                              | t => error:(l "has type" t "but expected a list")
-                              end
-         | EJoin l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
+         | EFilter tag l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
+                                match tag with
+                                | LikeList =>
+                                    match t with
+                                    | TList t => p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
+                                                 Success (TList t, EFilter LikeList l' x p')
+                                    | t => error:(l "has type" t "but expected a list")
+                                    end
+                                | LikeBag =>
+                                    match t with
+                                    | TBag t => p' <- analyze_expr Gstore (map.put Genv x t) TBool p ;;
+                                                 Success (TBag t, EFilter LikeBag l' x p')
+                                    | t => error:(l "has type" t "but expected a bag")
+                                    end
+                                | _ => error:(tag "not supported yet")
+                                end
+         | EJoin tag l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
+                                      match tag with
+                                        | LikeList =>
+                                            match t1 with
+                                            | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
+                                                          match t2 with
+                                                          | TList t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
+                                                                        p' <- analyze_expr Gstore Genv' TBool p ;;
+                                                                        '(t3, r') <- synthesize_expr Gstore Genv' r ;;
+                                                                        Success (TList t3, EJoin LikeList l1' l2' x y p' r')
+                                                          | t => error:(l2 "has type" t "but expected a list")
+                                                          end
+                                            | t => error:(l1 "has type" t "but expected a list")
+                                            end
+                                      | LikeBag =>
+                                            match t1 with
+                                            | TBag t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
+                                                          match t2 with
+                                                          | TBag t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
+                                                                        p' <- analyze_expr Gstore Genv' TBool p ;;
+                                                                        '(t3, r') <- synthesize_expr Gstore Genv' r ;;
+                                                                        Success (TBag t3, EJoin LikeBag l1' l2' x y p' r')
+                                                          | t => error:(l2 "has type" t "but expected a bag")
+                                                          end
+                                            | t => error:(l1 "has type" t "but expected a bag")
+                                            end
+                                      | _ => error:(tag "not supported yet")
+                                      end
+         | EProj tag l x r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                              match tag with
+                              | LikeList =>
                                   match t1 with
-                                  | TList t1 => '(t2, l2') <- synthesize_expr Gstore Genv l2 ;;
-                                                match t2 with
-                                                | TList t2 => let Genv' := map.put (map.put Genv x t1) y t2 in
-                                                              p' <- analyze_expr Gstore Genv' TBool p ;;
-                                                              '(t3, r') <- synthesize_expr Gstore Genv' r ;;
-                                                              Success (TList t3, EJoin l1' l2' x y p' r')
-                                                | t => error:(l2 "has type" t "but expected a list")
-                                                end
-                                  | t => error:(l1 "has type" t "but expected a list")
+                                  | TList t1 => '(t2, r') <- synthesize_expr Gstore (map.put Genv x t1) r ;;
+                                                Success (TList t2, EProj LikeList l' x r')
+                                  | t => error:(l "has type" t "but expected a list")
                                   end
-         | EProj l x r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
-                          match t1 with
-                          | TList t1 => '(t2, r') <- synthesize_expr Gstore (map.put Genv x t1) r ;;
-                                        Success (TList t2, EProj l' x r')
-                          | t => error:(l "has type" t "but expected a list")
-                          end
+                              | LikeBag =>
+                                  match t1 with
+                                  | TBag t1 => '(t2, r') <- synthesize_expr Gstore (map.put Genv x t1) r ;;
+                                                Success (TBag t2, EProj LikeBag l' x r')
+                                  | t => error:(l "has type" t "but expected a bag")
+                                  end
+                              | _ => error:(tag "not supported yet")
+                              end
+         | EBagOf l => '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                       match t1 with
+                       | TList t1 => Success (TBag t1, EBagOf l')
+                       | t => error:(l "has type" t "but expected a list")
+                       end
          end.
 
   Fixpoint typecheck (Gstore Genv : tenv) (c : command) : result command :=
