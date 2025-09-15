@@ -125,7 +125,7 @@ Notation "'if' e1 'then' e2 'else' e3" := (EIf e1 e2 e3)
    (in custom fiat2_expr at level 99).
 Notation "'let' x = e1 'in' e2"        := (ELet e1 x e2)
    (in custom fiat2_expr at level 100, x constr at level 0, e1 custom fiat2_expr, e2 custom fiat2_expr).
-Notation "'flatmap' e1 x e2"           := (EFlatmap e1 x e2)
+Notation "'flatmap' e1 x e2"           := (EFlatmap LikeList e1 x e2)
    (in custom fiat2_expr at level 99, x constr at level 0).
 Notation "'fold' e1 e2 x y e3"           := (EFold e1 e2 x y e3)
    (in custom fiat2_expr at level 99, x constr at level 0, y constr at level 0).
@@ -144,7 +144,7 @@ Notation "'delete(' d , k ')'" := (EBinop ODelete d k)
 Notation "'lookup(' d , k ')'" := (EBinop OLookup d k)
    (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr).
 
-Notation "x <- e1 ; e2" := (EFlatmap e1 x e2)
+Notation "x <- e1 ; e2" := (EFlatmap LikeList e1 x e2)
    (in custom fiat2_expr at level 0, e1 custom fiat2_expr at level 100, e2 custom fiat2_expr at level 100).
 Notation "'check(' e1 ')' ; e2" := (EIf e1 e2 (EAtom (ANil None)))
    (in custom fiat2_expr at level 100, e1 custom fiat2_expr, e2 custom fiat2_expr).

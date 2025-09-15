@@ -28,7 +28,7 @@ Definition ex1 : expr := <[ let "scores" = [ {"s": 1} ] in
   Goal ex1 = ELet
                (EBinop OCons (ERecord (("s", EAtom (AInt 1)) :: nil)) e_nil)
                "scores"
-               (EFlatmap
+               (EFlatmap LikeList
                   (EVar "scores") "x"
                   (e_check (EBinop OLess (EAtom (AInt 80))
                               (EAccess (EVar "x") "s")) (e_singleton (EVar "x")))).
@@ -43,8 +43,8 @@ Definition ex1 : expr := <[ let "scores" = [ {"s": 1} ] in
       "n" <- mut "names";
       check("x"["s_id"] == "n"["n_id"]);
         ret {"name": "n"["n_name"], "score": "x"["s_score"]} ]>.
-  Goal ex2 = EFlatmap (ELoc "scores") "x"
-               (EFlatmap (ELoc "names") "n"
+  Goal ex2 = EFlatmap LikeList (ELoc "scores") "x"
+               (EFlatmap LikeList (ELoc "names") "n"
                   (EIf (EBinop OEq (EAccess (EVar "x") "s_id") (EAccess (EVar "n") "n_id"))
                      (EBinop OCons
                         (ERecord (("name", EAccess (EVar "n") "n_name") :: ("score", EAccess (EVar "x") "s_score") :: nil))
@@ -60,9 +60,9 @@ Definition ex1 : expr := <[ let "scores" = [ {"s": 1} ] in
        check("p"["age"] < 40 && "p"["id"] == "e"["id"]);
        ret {"name": "p"["name"], "salary": "e"["salary"]}
       ]>.
-  Goal ex3 = EFlatmap
+  Goal ex3 = EFlatmap LikeList
       (ELoc "persons") "p"
-      (EFlatmap
+      (EFlatmap LikeList
          (ELoc "employees") "e"
          (EIf
             (EBinop OAnd

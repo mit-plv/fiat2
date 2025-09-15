@@ -105,7 +105,7 @@ Inductive ternop : Set :=
 | OInsert.
 
 (* What an expr with a list type can be interpreted to *)
-Inductive collection_tag := LikeBag | LikeList | LikeSet.
+Inductive collection_tag := LikeBag | LikeList.
 
 Inductive aggr := AGSum | AGCount.
 

@@ -11,6 +11,9 @@ Ltac apply_type_of__type_wf :=
   | H: type_of _ _ _ (TList ?t) |- type_wf ?t =>
       let H' := fresh "H'" in
       apply type_of__type_wf in H as H'
+  | H: type_of _ _ _ (TBag ?t) |- type_wf ?t =>
+      let H' := fresh "H'" in
+      apply type_of__type_wf in H as H'
   | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
       let H' := fresh "H'" in
       apply type_of__type_wf in H as H'
@@ -36,7 +39,16 @@ Ltac type_of_list_entry :=
         _: In ?x ?l |- type_of_value ?x _ =>
       eapply type_sound in H1; eauto; inversion H1; subst;
       trans_of_eq;
-      apply_Forall_In end.
+      apply_Forall_In
+  end.
+
+Ltac type_of_bag_entry :=
+  lazymatch goal with
+    H: type_of _ _ ?e (TBag _), _: interp_expr _ _ ?e = VBag ?l,
+        _: In ?a (bag_to_list ?l) |- type_of_value ?a _ =>
+      apply_type_sound e; invert_type_of_value; rewrite_l_to_r;
+      Forall_fst__Forall_bag_to_list; do_injection; apply_Forall_In
+  end.
 
 Section fold_expr.
   Context (f : expr -> expr).
@@ -49,16 +61,18 @@ Section fold_expr.
       | ETernop o e1 e2 e3 => ETernop o (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | EIf e1 e2 e3 => EIf (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | ELet e1 x e2 => ELet (fold_expr e1) x (fold_expr e2)
-      | EFlatmap e1 x e2 => EFlatmap (fold_expr e1) x (fold_expr e2)
+      | EFlatmap tag e1 x e2 => EFlatmap tag (fold_expr e1) x (fold_expr e2)
       | EFold e1 e2 x y e3 => EFold (fold_expr e1) (fold_expr e2) x y (fold_expr e3)
+      | EACFold ag e => EACFold ag (fold_expr e)
       | ERecord l => ERecord (List.map (fun '(s, e) => (s, fold_expr e)) l)
       | EAccess e x => EAccess (fold_expr e) x
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
       | EDictFold d e0 k v acc e => EDictFold (fold_expr d) (fold_expr e0) k v acc (fold_expr e)
-      | ESort l => ESort (fold_expr l)
-      | EFilter e x p => EFilter (fold_expr e) x (fold_expr p)
-      | EJoin e1 e2 x y p r => EJoin (fold_expr e1) (fold_expr e2) x y (fold_expr p) (fold_expr r)
-      | EProj e x r => EProj (fold_expr e) x (fold_expr r)
+      | ESort tag l => ESort tag (fold_expr l)
+      | EFilter tag e x p => EFilter tag (fold_expr e) x (fold_expr p)
+      | EJoin tag e1 e2 x y p r => EJoin tag (fold_expr e1) (fold_expr e2) x y (fold_expr p) (fold_expr r)
+      | EProj tag e x r => EProj tag (fold_expr e) x (fold_expr r)
+      | EBagOf e => EBagOf (fold_expr e)
       end.
 End fold_expr.
 
@@ -121,6 +135,13 @@ Section WithMap.
         apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         apply locals_wf_step; auto; type_of_list_entry. }
     1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
+        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
+        do 2 f_equal. apply In_flat_map_ext; intros.
+        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
+        apply locals_wf_step; auto.
+        type_of_bag_entry. }
+    1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
         repeat apply tenv_wf_step; eauto with fiat2_hints.
         simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
@@ -179,6 +200,13 @@ Section WithMap.
         apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         apply locals_wf_step; auto. type_of_list_entry. }
     1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
+        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
+        f_equal. apply In_filter_ext; intros.
+        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
+        apply locals_wf_step; auto. apply_type_sound e1. rewrite_l_to_r.
+        invert_type_of_value. apply_Forall_In. }
+    1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty;
         repeat apply tenv_wf_step; eauto with fiat2_hints.
         simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
@@ -191,11 +219,30 @@ Section WithMap.
         all: lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition end.
         type_of_list_entry. }
     1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty;
+        repeat apply tenv_wf_step; eauto with fiat2_hints.
+        simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
+        do 2 f_equal. apply In_flat_map_ext; intros. erewrite In_filter_ext.
+        1: apply map_ext_in; intros.
+        2: simpl; intros.
+        all: apply_fold_expr_preserve_sem_IH;
+          [ repeat apply tenv_wf_step | repeat apply locals_wf_step ]; eauto with fiat2_hints.
+        all: try lazymatch goal with
+                 H: In _ (filter _ _) |- _ =>
+                   apply filter_In in H; intuition end;
+        type_of_bag_entry. }
+    1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
         simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
         f_equal. apply map_ext_in; intros.
         apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         repeat apply locals_wf_step; auto; type_of_list_entry. }
+    1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
+        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
+        do 2 f_equal. apply map_ext_in; intros.
+        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
+        repeat apply locals_wf_step; auto. type_of_bag_entry. }
   Qed.
 
   Lemma fold_expr_sound : forall f,
@@ -542,7 +589,7 @@ End fold_command_with_global.
 #[export] Hint Resolve fold_command_with_globals_sound : transf_hints.
 #[export] Hint Resolve fold_command_id_sound : transf_hints.
 
-
+(* ??? remove?
 Section WithMap.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
   Notation value := (value (width:=width)).
@@ -617,3 +664,4 @@ Section WithMap.
     unfold sem_eq; intuition auto.
   Qed.
 End WithMap.
+*)

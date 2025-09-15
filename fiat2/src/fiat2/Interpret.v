@@ -257,7 +257,6 @@ Section WithWord.
                                                         end) (bag_to_list l1)))
               | _ => VUnit
               end
-          | _ => VUnit
           end
       | EFold e1 e2 x y e3 =>
           match interp_expr store env e1 with
@@ -302,7 +301,6 @@ Section WithWord.
               | VBag l => VList (bag_to_list l)
               | _ => VUnit
               end
-          | _ => VUnit
           end
       | EFilter tag l x p =>
           match tag with
@@ -328,7 +326,6 @@ Section WithWord.
                                        end) l)
               | _ => VUnit
               end
-          | _ => VUnit
           end
       | EJoin tag l1 l2 x y p r =>
           match tag with
@@ -371,7 +368,6 @@ Section WithWord.
                   end
               | _ => VUnit
               end
-          | _ => VUnit
           end
       | EProj tag l x r =>
           match tag with
@@ -388,7 +384,6 @@ Section WithWord.
                                      (bag_to_list l)))
               | _ => VUnit
             end
-          | _ => VUnit
           end
       | EBagOf l => match interp_expr store env l with
                     | VList l => VBag (list_to_bag l)

@@ -732,7 +732,6 @@ Section WithMap.
                 end
             | _ => error:(e "is a bag but expected" expected)
             end
-        | _ => error:(tag "not supported yet")
         end
     | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                             match t1 with
@@ -802,7 +801,6 @@ Section WithMap.
                 | LikeBag =>
                     l' <- analyze_expr Gstore Genv (TBag t) l ;;
                     Success (ESort LikeBag l')
-                | _ => error:(tag "not supported yet")
                 end
             | _ => error:(e "is a list but expected" expected)
             end
@@ -822,7 +820,6 @@ Section WithMap.
                         Success (EFilter LikeBag l' x p')
             | _ => error:(e "is a bag but expected" expected)
             end
-        | _ => error:(tag "not supported yet")
         end
     | EJoin tag l1 l2 x y p r =>
         '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
@@ -859,7 +856,6 @@ Section WithMap.
                           end
             | t => error:(l1 "has type" t "but expected a bag")
             end
-        | _ => error:(tag "not supported yet")
         end
     | EProj tag l x r =>
         '(t1, l') <- synthesize_expr Gstore Genv l ;;
@@ -882,7 +878,6 @@ Section WithMap.
                           end
             | t => error:(l "has type" t "but expected a bag")
             end
-        | _ => error:(tag "not supported yet")
         end
     | EBagOf l => match expected with
                   | TBag t => l' <- analyze_expr Gstore Genv (TList t) l ;;
@@ -1000,7 +995,6 @@ Section WithMap.
                                end
                  | t1 => error:(e1 "has type" t1 "but expected a bag")
                  end
-             | _ => error:(tag "not supported yet")
              end
          | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                                  match t1 with
@@ -1064,7 +1058,6 @@ Section WithMap.
                  | TBag t => Success (TList t, ESort LikeBag l')
                  | t => error:(l "has type" t "but expected a bag")
                  end
-             | _ => error:(tag "not supported yet")
              end
          | EFilter tag l x p => '(t, l') <- synthesize_expr Gstore Genv l ;;
                                 match tag with
@@ -1080,7 +1073,6 @@ Section WithMap.
                                                  Success (TBag t, EFilter LikeBag l' x p')
                                     | t => error:(l "has type" t "but expected a bag")
                                     end
-                                | _ => error:(tag "not supported yet")
                                 end
          | EJoin tag l1 l2 x y p r => '(t1, l1') <- synthesize_expr Gstore Genv l1 ;;
                                       match tag with
@@ -1108,7 +1100,6 @@ Section WithMap.
                                                           end
                                             | t => error:(l1 "has type" t "but expected a bag")
                                             end
-                                      | _ => error:(tag "not supported yet")
                                       end
          | EProj tag l x r => '(t1, l') <- synthesize_expr Gstore Genv l ;;
                               match tag with
@@ -1124,7 +1115,6 @@ Section WithMap.
                                                 Success (TBag t2, EProj LikeBag l' x r')
                                   | t => error:(l "has type" t "but expected a bag")
                                   end
-                              | _ => error:(tag "not supported yet")
                               end
          | EBagOf l => '(t1, l') <- synthesize_expr Gstore Genv l ;;
                        match t1 with
