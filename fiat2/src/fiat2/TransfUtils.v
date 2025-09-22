@@ -589,7 +589,6 @@ End fold_command_with_global.
 #[export] Hint Resolve fold_command_with_globals_sound : transf_hints.
 #[export] Hint Resolve fold_command_id_sound : transf_hints.
 
-(* ??? remove?
 Section WithMap.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
   Notation value := (value (width:=width)).
@@ -628,7 +627,7 @@ Section WithMap.
 
   Instance EFilter_Proper {t : type} (x0 : string) (Gstore Genv : tenv) :
     tenv_wf Gstore -> tenv_wf Genv ->
-    Proper (sem_eq Gstore Genv (TList t) ==> singleton_rel x0 ==> sem_eq Gstore (map.put Genv x0 t) TBool ==> sem_eq Gstore Genv (TList t)) EFilter.
+    Proper (sem_eq Gstore Genv (TList t) ==> singleton_rel x0 ==> sem_eq Gstore (map.put Genv x0 t) TBool ==> sem_eq Gstore Genv (TList t)) (EFilter LikeList).
   Proof.
     intros * ? ? e1 e1' H1 y y' Hy e2 e2' H2.
     unfold sem_eq in *; intros.
@@ -664,4 +663,3 @@ Section WithMap.
     unfold sem_eq; intuition auto.
   Qed.
 End WithMap.
-*)

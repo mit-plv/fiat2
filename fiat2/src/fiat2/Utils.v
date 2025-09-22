@@ -329,6 +329,7 @@ Ltac destruct_subexpr :=
   | s : string |- _ => destruct s; auto; []
   | a : Ascii.ascii |- _ => destruct a; auto; []
   | b : bool |- _ => destruct b; auto; []
+  | tag : collection_tag |- _ => destruct tag; auto; []
   end.
 
 Ltac Forall_fst__Forall_bag_to_list :=
