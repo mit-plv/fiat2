@@ -97,8 +97,6 @@ Notation "x < y"              := (EBinop OLess x y)
    (in custom fiat2_expr at level 70, left associativity).
 Notation "x == y"             := (EBinop OEq x y)
    (in custom fiat2_expr at level 70, left associativity).
-Notation "'repeat(' list ',' cnt ')'"       := (EBinop ORepeat list cnt)
-   (in custom fiat2_expr at level 10, left associativity).
 Notation "x :: y"             := (EBinop OCons x y)
    (in custom fiat2_expr at level 55, right associativity).
 Notation "'range(' x ',' y ')'"  := (EBinop ORange x y)

@@ -146,17 +146,21 @@ Inductive type_of_atom : atom -> type -> Prop :=
 | TyAEmptyDict' kt vt : type_wf kt -> type_wf vt ->
                     type_of_atom (AEmptyDict None) (TDict kt vt)
 | TyAEmptyDict kt vt : type_wf kt -> type_wf vt ->
-                   type_of_atom (AEmptyDict (Some (kt, vt))) (TDict kt vt)
+                       type_of_atom (AEmptyDict (Some (kt, vt))) (TDict kt vt)
+| TyAEmptyBag' t : type_wf t ->
+                   type_of_atom (AEmptyBag None) (TBag t)
+| TyAEmptyBag t : type_wf t ->
+                  type_of_atom (AEmptyBag (Some t)) (TBag t)
 | TyAUnit : type_of_atom AUnit TUnit.
 
 Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyOWNeg : type_of_unop OWNeg TWord TWord
 | TyONeg : type_of_unop ONeg TInt TInt
 | TyONot : type_of_unop ONot TBool TBool
-| TyOLength t : type_wf t -> type_of_unop OLength (TList t) TInt
+| TyOLength t : type_of_unop OLength (TList t) TInt
 | TyOLengthString : type_of_unop OLengthString TString TInt
 | TyOIntToString : type_of_unop OIntToString TInt TString
-| TyOSome t : type_wf t -> type_of_unop OSome t (TOption t).
+| TyOSome t : type_of_unop OSome t (TOption t).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOWPlus : type_of_binop OWPlus TWord TWord TWord
@@ -173,20 +177,16 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOMod : type_of_binop OMod TInt TInt TInt
 | TyOAnd : type_of_binop OAnd TBool TBool TBool
 | TyOOr : type_of_binop OOr TBool TBool TBool
-| TyOConcat t : type_wf t ->
-                type_of_binop OConcat (TList t) (TList t) (TList t)
+| TyOConcat t : type_of_binop OConcat (TList t) (TList t) (TList t)
 | TyOConcatString : type_of_binop OConcatString TString TString TString
 | TyOWLessU : type_of_binop OWLessU TWord TWord TBool
 | TyOWLessS : type_of_binop OWLessS TWord TWord TBool
 | TyOLess : type_of_binop OLess TInt TInt TBool
-| TyOEq t : type_wf t ->
-            type_of_binop OEq t t TBool
-| TyORepeat t : type_wf t ->
-                type_of_binop ORepeat (TList t) TInt (TList t)
-| TyOCons t : type_wf t ->
-              type_of_binop OCons t (TList t) (TList t)
+| TyOEq t : type_of_binop OEq t t TBool
+| TyOCons t : type_of_binop OCons t (TList t) (TList t)
 | TyORange : type_of_binop ORange TInt TInt (TList TInt)
 | TyOWRange : type_of_binop OWRange TWord TWord (TList TWord)
+| TyOBagInsert t : type_of_binop OBagInsert (TBag t) t (TBag t)
 | TyOLookup kt vt : type_of_binop OLookup (TDict kt vt) kt (TOption vt)
 | TyODelete kt vt : type_of_binop ODelete (TDict kt vt) kt (TDict kt vt).
 
@@ -517,6 +517,13 @@ Definition analyze_atom (expected : type) (a : atom) : result atom :=
                     | Some (kt, vt) => compare_types expected (TDict kt vt) a
                     | _ => error:(a "is a dictionary but expected" expected)
                     end
+  | AEmptyBag t => match t with
+                   | Some t => compare_types expected (TBag t) a
+                   | None => match expected with
+                             | TBag t' => Success (AEmptyBag (Some t'))
+                             | _ => error:(a "is a bag but expected" expected)
+                             end
+                   end
   | AUnit => compare_types expected TUnit a
   end.
 
@@ -545,6 +552,12 @@ Definition synthesize_atom (a : atom) : result (type * atom) :=
                                        else error:("Malformed type" kt "or" vt)
                     | None => error:("Insufficient type information for" a)
                     end
+  | AEmptyBag t => match t with
+                   | Some t => if type_wf_comp t
+                               then Success (TBag t, a)
+                               else error:("Malformed type" t)
+                   | None => error:("Insufficient type information for" a)
+                   end
   | AUnit => Success (TUnit, a)
   end.
 
@@ -652,12 +665,6 @@ Section WithMap.
                                          Success (EBinop o e1' e2')
                             | _ => error:(e "is a list but expected" expected)
                             end
-                        | ORepeat =>
-                            match expected with
-                            | TList t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;; e2' <- analyze_expr Gstore Genv TInt e2 ;;
-                                              Success (EBinop o e1' e2')
-                            | _ => error:(e "is a list but expected" expected)
-                            end
                         | OEq =>
                             match expected with
                             | TBool => match synthesize_expr Gstore Genv e1 with
@@ -668,6 +675,12 @@ Section WithMap.
                                                         Success (EBinop OEq e1' e2')
                                        end
                             | _ => error:(e "is a boolean but expected" expected)
+                            end
+                        | OBagInsert =>
+                            match expected with
+                            | TBag t => e2' <- analyze_expr Gstore Genv t e2 ;; e1' <- analyze_expr Gstore Genv (TBag t) e1 ;;
+                                         Success (EBinop o e1' e2')
+                            | _ => error:(e "is a bag but expected" expected)
                             end
                         | OLookup => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                      match t1 with
@@ -926,18 +939,21 @@ Section WithMap.
                                                    | t => error:(e2 "has type" t "but expected a list")
                                                    end
                                  end
-                             | ORepeat =>
-                                 '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
-                                 match t1 with
-                                 | TList t => e2' <- analyze_expr Gstore Genv TInt e2 ;; Success (TList t, EBinop o e1' e2')
-                                 | t => error:(e1 "has type" t "but expected a list")
-                                 end
                              | OEq =>
                                  match synthesize_expr Gstore Genv e1 with
                                  | Success (t, e1') => e2' <- analyze_expr Gstore Genv t e2 ;; Success (TBool, EBinop o e1' e2')
                                  | Failure err => '(t, e2') <- synthesize_expr Gstore Genv e2 ;;
                                                   e1' <- analyze_expr Gstore Genv t e1 ;;
                                                   Success (TBool, EBinop o e1' e2')
+                                 end
+                             | OBagInsert =>
+                                 match synthesize_expr Gstore Genv e2 with
+                                 | Success (t, e2') => e1' <- analyze_expr Gstore Genv (TBag t) e1 ;; Success (TBag t, EBinop o e1' e2')
+                                 | Failure err2 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                                   match t1 with
+                                                   | TBag t => e2' <- analyze_expr Gstore Genv t e2 ;; Success (TBag t, EBinop o e1' e2')
+                                                   | t => error:(e1 "has type" t "but expected a list")
+                                                   end
                                  end
                              | OLookup => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                           match t1 with

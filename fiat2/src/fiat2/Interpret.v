@@ -20,6 +20,7 @@ Section WithWord.
     | ANone _ => VOption None
     | ANil _ => VList nil
     | AEmptyDict _ => VDict nil
+    | AEmptyBag _ => VBag nil
     | AUnit => VUnit
     end.
 
@@ -166,10 +167,6 @@ Section WithWord.
                | _, _ => VUnit
                end
     | OEq => VBool (value_eqb a b)
-    | ORepeat => match a, b with
-                 | VList l, VInt n => VList (concat (repeat l (Z.to_nat n)))
-                 | _, _ => VUnit
-                 end
     | OCons => match b with
                | VList l => VList (cons a l)
                | _ => VUnit
@@ -182,6 +179,10 @@ Section WithWord.
                  | VWord s, VWord e => VList (eval_range_word s (Z.to_nat (word.unsigned e - word.unsigned s)))
                  | _, _ => VUnit
                  end
+    | OBagInsert => match a with
+                    | VBag l => VBag (bag_insert b l)
+                    | _ => VUnit
+                    end
     | OLookup => match a, b with
                  | VDict d, k => VOption (dict_lookup k d)
                  | _, _ => VUnit

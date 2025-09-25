@@ -59,6 +59,7 @@ Inductive atom : Type :=
 | ANil (t : option type)
 | ANone (t : option type)
 | AEmptyDict (t : option (type * type))
+| AEmptyBag (t : option type)
 | AUnit.
 
 (* Unary operators *)
@@ -93,10 +94,10 @@ Inductive binop : Type :=
 | OWLessS
 | OLess
 | OEq
-| ORepeat
 | OCons
 | ORange
 | OWRange
+| OBagInsert
 | OLookup
 | ODelete.
 

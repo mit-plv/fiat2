@@ -177,9 +177,9 @@ Section WithWord.
     destruct a; split; simpl; intro.
     all: try (invert_result; constructor).
     all: try destruct_compare_types.
-    1, 3, 5: repeat destruct_match; rewrite ?Bool.andb_true_iff in *; intuition idtac;
+    1, 3, 5, 7: repeat destruct_match; rewrite ?Bool.andb_true_iff in *; intuition idtac;
     invert_result; constructor; apply type_wf_comp_sound; auto using type_wf_comp_sound.
-    1, 2: repeat destruct_match;
+    1, 2, 4: repeat destruct_match;
     [ destruct_compare_types; invert_result; invert_type_wf; auto
     | invert_result; constructor; invert_type_wf; auto ].
     1: repeat destruct_match; destruct_compare_types; invert_type_wf; auto.
@@ -541,6 +541,7 @@ Section WithWord.
     Ltac type_injection :=
       lazymatch goal with
       | H : TList _ = TList _ |- _ => injection H as H; subst
+      | H : TBag _ = TBag _ |- _ => injection H as H; subst
       end.
 
     Ltac apply_locals_wf :=
@@ -1125,13 +1126,15 @@ Section WithWord.
           eapply dict_delete_sound;[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.
           constructor; auto. }
+        24:{ revert IHtype_of2; apply_type_sound_IH; intros.
+             cbn. constructor; auto using bag_insert_preserve_pos,
+               bag_insert_preserve_SSorted, bag_insert_preserve_NoDup.
+             rewrite Forall_forall; intros ? H_in.
+             eapply bag_insert_incl in H_in as [ H_in | H_in ].
+             2: apply_Forall_In.
+             rewrite_asm; auto. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
-        + assert (forall A f (l : list A), Forall f l -> forall n, Forall f (concat (repeat l n))).
-          { clear. induction n; simpl; intros.
-            - apply Forall_nil.
-            - apply Forall_app; auto. }
-          auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).
           { clear; induction len; simpl; intros.
             - apply Forall_nil.

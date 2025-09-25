@@ -12,7 +12,7 @@ Class index :=
     }.
 
 Class ok (idx : index)
-  {width: Z} {word: word.word width} {word_ok: word.ok word} (idx_wf : value (width:=width) -> Prop)
+  {width: Z} {word: word.word width} {word_ok: word.ok word} (idx_wf : value (width:=width) -> value (width:=width) -> Prop)
   {tenv : map.map string type} {tenv_ok : map.ok tenv}
   {locals : map.map string value} {locals_ok : map.ok locals} :=
   { idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t);
@@ -22,7 +22,7 @@ Class ok (idx : index)
     to_idx_wf : forall (v : value) (t : type),
       type_wf t -> is_tbl_ty t = true ->
       type_of_value v t ->
-      idx_wf (interp_expr map.empty (map.put map.empty hole v) to_idx);
+      idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx);
   }.
 
 Arguments IndexInterface2.Build_ok idx {width}%Z_scope {word}
