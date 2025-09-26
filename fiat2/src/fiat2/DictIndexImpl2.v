@@ -5,13 +5,47 @@ Import ListNotations.
 
 Open Scope string_scope.
 
+Section WithMap.
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (width:=width)).
+  Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+  Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
+      free_immut_in x e = false ->
+      type_of Gstore Genv e t ->
+      type_of Gstore (map.put Genv x t') e t.
+  Proof.
+    intros. destruct (map.get Genv x) eqn:E.
+    1:{ rewrite <- Properties.map.put_remove_same.
+        eapply type_of_strengthen;
+          [
+          | apply map_incl_refl
+          | apply map_incl_step_r; try apply map_incl_refl;
+            apply map.get_remove_same ].
+        eapply not_free_immut_put_ty; eauto.
+        rewrite Properties.map.put_remove_same, Properties.map.put_noop; eauto. }
+    1:{ eapply type_of_strengthen; eauto using map_incl_refl.
+        apply map_incl_step_r; auto using map_incl_refl. }
+  Qed.
+End WithMap.
+
+Ltac access_record_Success__is_tbl_ty :=
+  cbn; apply inb_true_iff;
+  lazymatch goal with
+    H: access_record _ _ = Success _ |- _ =>
+      apply access_record_sound in H;
+      apply in_map with (f:=fst) in H;
+      cbn in H
+  end; assumption.
+
 Section WithHole.
   Context (hole : string).
   Context (attr : string).
 
   Section WithVars.
     Context (tup acc x k v y : string).
-    Context (H_NoDup : is_NoDup_opaque [tup; acc; x; k; v]).
+    Context (H_NoDup : is_NoDup_opaque [tup; acc; x; k; v; y]).
 
     Definition to_idx : expr :=
       let k := EAccess (EVar tup) attr in
@@ -285,7 +319,7 @@ Section WithHole.
         case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
         [ rewrite_map_get_put_hyp
         | rewrite map.get_put_diff, map.get_empty in *; auto ];
-        congruence.
+        try congruence.
 
       Lemma fold_to_idx : forall Gstore Genv t e x0 tup0 acc0 free_vars,
           is_NoDup [x0; tup0; acc0] ->
@@ -334,6 +368,11 @@ Section WithHole.
         all: eauto using idx_ty_wf with fiat2_hints.
         prove_sub_wf.
       Qed.
+
+      Instance dict_idx : IndexInterface2.index := IndexInterface2.mk hole to_idx idx_ty is_tbl_ty.
+
+      Instance dict_idx_ok : IndexInterface2.ok dict_idx idx_wf :=
+        IndexInterface2.Build_ok dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
       Section WithTags.
         Context (tbl : string).
@@ -454,7 +493,7 @@ Section WithHole.
                       | Success (VRecord rv_aux) =>
                           match access_record rv_aux idx_tag with
                           | Success v_idx =>
-                              idx_wf v_id v_idx
+                              v_idx = interp_expr map.empty (map.put map.empty hole v_id) to_idx
                           | _ => False
                           end
                       | _ => False
@@ -469,6 +508,11 @@ Section WithHole.
             unfold is_tbl_ty, idx_ty in *.
             apply_locals_wf store.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            assert (idx_wf a a1).
+            { subst. eapply to_idx_wf; eauto.
+              invert_type_of_value_clear.
+              pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H15 E1 H2); auto. }
+            clear H5.
             invert_type_of_value_clear.
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2).
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E2 H3).
@@ -529,8 +573,11 @@ Section WithHole.
                 rewrite Forall_false__filter; auto.
                 rewrite Forall_forall.
                 intros. invert_type_of_value_clear.
-                apply filter_eq_nil__Forall_false in H5.
-                rewrite Forall_forall in H5; apply H5 in H8 as H_x1.
+                lazymatch goal with
+                  H: filter _ ?l = [], H': In _ ?l |- _ =>
+                    apply filter_eq_nil__Forall_false in H;
+                    rewrite Forall_forall in H; apply H in H' as H_x1
+                end.
                 apply_Forall_In.
                 rewrite_map_get_put_goal. invert_type_of_value_clear.
                 unfold record_proj in *.
@@ -540,7 +587,10 @@ Section WithHole.
                 lazymatch goal with
                   H: _ = dict_lookup _ _ |- _ =>
                     rewrite <- H in * end.
-                f_equal. apply Permutation_list_to_bag_eq in H5.
+                f_equal.
+                lazymatch goal with
+                  H: Permutation _ _ |- _ =>
+                    apply Permutation_list_to_bag_eq in H end.
                 rewrite bag_to_list_to_bag in *; auto. subst.
                 f_equal. apply In_filter_ext; intros.
                 apply_Forall_In. invert_type_of_value_clear.
@@ -552,27 +602,293 @@ Section WithHole.
         Section cons_to_insert.
           Definition cons_to_insert_head (e : expr) :=
             match e with
-            | eto_idx tup tup1 tup2 tup3 acc acc1 acc2 x x1 attr0 attr1 (EBinop OCons e1 e2) =>
-                ELet (eto_idx tup tup tup tup acc acc acc x x attr attr e2) y
-                  (ELet (EAccess e1 attr) k
-                     (ETernop OInsert (EVar y)
-                        (EVar k)
-                        (EBinop OBagInsert
-                           (EOptMatch
-                              (EBinop OLookup (EVar y) (EVar k))
-                              (EAtom (AEmptyBag None)) x (EVar x))
-                           (EVar k))))
+            | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EBinop OCons e1 e2) =>
+                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1]); (x0, [x1])] &&
+                      all_neqb [acc0; tup0; x0] &&
+                      negb (free_immut_in y e1))%bool
+                then
+                  ELet (eto_idx tup tup tup tup acc acc acc x x attr attr e2) y
+                       (ETernop OInsert (EVar y)
+                          (EAccess e1 attr)
+                          (EBinop OBagInsert
+                             (EOptMatch
+                                (EBinop OLookup (EVar y) (EAccess e1 attr))
+                                (EAtom (AEmptyBag None)) x (EVar x))
+                             e1))
+                else e
             | _ => e
             end.
+
+          Lemma cons_to_insert_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore cons_to_insert_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (econstructor; eauto);
+              repeat rewrite_map_get_put_goal; auto;
+              try use_is_NoDup.
+            all: repeat eapply not_free_immut_put_ty2; eauto.
+          Qed.
+
+          Lemma fiat2_gallina_to_idx2: forall (store env : locals) v t,
+              type_wf t -> is_tbl_ty t = true ->
+              type_of_value v t ->
+              map.get env hole = Some v ->
+              interp_expr store env to_idx = gallina_to_idx v.
+          Proof.
+            intros.
+            erewrite interp_expr_strengthen.
+            1: eapply fiat2_gallina_to_idx.
+            6: apply to_idx_ty.
+            all: eauto with fiat2_hints.
+            2: eapply map_incl_step_l; eauto using Decidable.String.eqb_spec.
+            all: apply map_incl_empty.
+          Qed.
+
+          Lemma fold_right_invariant : forall (A B : Type) (a : A) (l : list B) (f : B -> A -> A) (P : A -> Prop),
+              P a -> (forall (a : A) (b : B), P a -> In b l -> P (f b a)) ->
+              P (fold_right f a l).
+          Proof.
+            intros. assert(fold_right f a l = fold_right f a l /\ P (fold_right f a l)).
+            { auto using In_fold_right_ext'. }
+            intuition auto.
+          Qed.
+
+          Lemma cons_to_insert_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store cons_to_insert_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [cons_to_insert_head]. repeat (case_match; auto; []).
+            cbn in * |-.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            enough (E_Let: forall e1 e2 x, interp_expr store env (ELet e1 x e2) = interp_expr store (map.put env x (interp_expr store env e1)) e2); auto.
+            rewrite E_Let.
+            erewrite sem_eq_eq with (env:=env) (t:=idx_ty (TList (TRecord tl))); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty. }
+            let pat := open_constr:(EFold _ _ v0 acc0 _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty.
+                1: repeat econstructor; eauto. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3: prove_sub_wf.
+            2:{ eapply type_of_strengthen;
+                [
+                | apply map_incl_empty
+                | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3:{ prove_sub_wf.
+                do_injection. repeat econstructor; eauto. }
+            2:{ eapply type_of_strengthen;
+                [
+                | apply map_incl_empty
+                | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
+              [ | | | eapply type_sound; eauto ]; eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
+              [ | | | apply_type_sound e1_2; invert_type_of_value_clear;
+                      repeat constructor; eauto with fiat2_hints ];
+              eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            apply_type_sound e1_2; invert_type_of_value_clear. cbn.
+            unfold get_local; rewrite_map_get_put_goal.
+            f_equal. apply_type_sound e1_1; invert_type_of_value_clear.
+            erewrite <- not_free_immut_put_sem; auto.
+            rewrite_expr_value. f_equal.
+            lazymatch goal with
+              |- context[dict_lookup ?k ?d] =>
+                enough (type_of_value (VDict d) (TDict (get_attr_type tl attr) (TBag (TRecord tl))))
+            end.
+            2:{ apply fold_right_invariant.
+                1: constructor; auto using NoDup_nil, SSorted_nil.
+                intros. apply_Forall_In. repeat invert_type_of_value_clear.
+                apply dict_insert_sound.
+                1: apply get_attr_type_ty_wf; eauto with fiat2_hints.
+                1: constructor; eauto with fiat2_hints.
+                1: constructor; auto.
+                1:{ eapply record_proj_sound; eauto.
+                    1: lazymatch goal with
+                         H: context[Forall2] |- _ =>
+                           apply Forall2_split in H;
+                           rewrite Forall2_fst_eq in H
+                       end;
+                    intuition idtac; rewrite_r_to_l; auto.
+                    1: lazymatch goal with
+                         H: access_record _ _ = Success _ |- _ =>
+                           apply access_record_sound in H;
+                           let H' := fresh "H'" in
+                           apply NoDup_In_get_attr_type in H as H'
+                       end; subst; auto. }
+                1:{ lazymatch goal with
+                    |- context[dict_lookup ?k0 ?d] =>
+                      enough (H_dict2: type_of_value (VDict d) (TDict (get_attr_type tl attr) (TBag (TRecord tl)))); [ | constructor; auto ];
+                      eapply dict_lookup_sound with (k:=k0) in H_dict2
+                  end.
+                    2: apply get_attr_type_ty_wf; eauto with fiat2_hints.
+                    2: constructor; eauto with fiat2_hints.
+                    2:{ eapply record_proj_sound; eauto.
+                        1: lazymatch goal with
+                             H: context[Forall2] |- _ =>
+                               apply Forall2_split in H;
+                               rewrite Forall2_fst_eq in H
+                           end;
+                        intuition idtac; rewrite_r_to_l; auto.
+                        1: lazymatch goal with
+                             H: access_record _ _ = Success _ |- _ =>
+                               apply access_record_sound in H;
+                               let H' := fresh "H'" in
+                               apply NoDup_In_get_attr_type in H as H'
+                           end; subst; auto. }
+                    repeat invert_type_of_value_clear; constructor.
+                    all: try apply bag_insert_preserve_NoDup; auto using NoDup_nil.
+                    all: try apply bag_insert_preserve_SSorted; auto using SSorted_nil.
+                    all: try apply bag_insert_preserve_pos; auto.
+                    all: rewrite Forall_forall; intros ? H_in;
+                      apply bag_insert_incl in H_in; intuition idtac;
+                      try lazymatch goal with
+                          H: In _ nil |- _ =>
+                            apply in_nil in H; intuition fail
+                        end;
+                      try (lazymatch goal with
+                             H: ?x = _ |- context[?x] => rewrite H end;
+                           constructor; auto);
+                      apply_Forall_In. } }
+            eapply dict_lookup_sound with (k:=record_proj attr l0) in H7.
+            2: apply get_attr_type_ty_wf; eauto with fiat2_hints.
+            2: constructor; eauto with fiat2_hints.
+            2:{ eapply record_proj_sound; eauto.
+                1: lazymatch goal with
+                     H: context[Forall2] |- _ =>
+                       apply Forall2_split in H;
+                       rewrite Forall2_fst_eq in H
+                   end;
+                intuition idtac; rewrite_r_to_l; auto.
+                1: lazymatch goal with
+                     H: access_record _ _ = Success _ |- _ =>
+                       apply access_record_sound in H;
+                       let H' := fresh "H'" in
+                       apply NoDup_In_get_attr_type in H as H'
+                   end; subst; auto. }
+            invert_type_of_value_clear; auto.
+            rewrite_map_get_put_goal.
+            invert_type_of_value_clear; auto.
+          Qed.
         End cons_to_insert.
 
         Section use_idx.
           Definition use_idx_head (e : expr) :=
             match e with
             | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EAccess (ELoc tbl0) id_tag0) =>
-                EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
+                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1]); (x0, [x1]); (tbl, [tbl0]); (id_tag, [id_tag0])] &&
+                      all_neqb [acc0; tup0; x0])%bool
+                then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
+                else e
             | _ => e
             end.
+
+          Lemma use_idx_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              preserve_ty Gstore use_idx_head.
+          Proof.
+            clear H_NoDup.
+            unfold preserve_ty, is_tbl_ty. intros.
+            repeat destruct_match_hyp; try congruence.
+            repeat destruct_subexpr. simpl.
+            repeat (case_match; auto; []). repeat rewrite Bool.andb_true_r in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
+            repeat (rewrite_l_to_r; do_injection2).
+            repeat lazymatch goal with
+                     H: type_of_atom _ _ |- _ =>
+                       inversion H; subst; clear H
+                   end.
+            repeat (econstructor; eauto).
+            lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
+            f_equal; unfold idx_ty; f_equal.
+            unfold get_attr_type.
+            lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
+            reflexivity.
+          Qed.
+
+          Lemma use_idx_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              match map.get store tbl with
+              | Some (VRecord rv) =>
+                  match access_record rv id_tag with
+                  | Success v_id =>
+                      match access_record rv aux_tag with
+                      | Success (VRecord rv_aux) =>
+                          match access_record rv_aux idx_tag with
+                          | Success v_idx =>
+                              v_idx = interp_expr map.empty (map.put map.empty hole v_id) to_idx
+                          | _ => False
+                          end
+                      | _ => False
+                      end
+                  | _ => False
+                  end
+              | _ => False
+              end ->
+              preserve_sem Gstore store use_idx_head.
+          Proof.
+            unfold preserve_sem; intros.
+            unfold is_tbl_ty, idx_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            invert_type_of_value_clear.
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2).
+            repeat destruct_subexpr. unfold eq_filter_to_lookup_head.
+            cbn [use_idx_head]; repeat (case_match; auto; []). cbn [all_eqb all_eqb' all_neqb all_neqb'] in * |-.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+            repeat clear_refl.
+            let pat := open_constr:(EFold _ _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord l1))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: repeat econstructor; eauto. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord l1))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            2: eapply type_of_strengthen; eauto using to_idx_ty;
+            [ apply map_incl_empty | apply map_incl_refl ].
+            2:{ prove_sub_wf. do_injection.
+                repeat econstructor; eauto. }
+            remember to_idx as to_idx_opaque. unfold make_sub_env.
+            cbn [interp_expr].
+            unfold get_local, record_proj; repeat rewrite_l_to_r.
+            symmetry; eapply interp_expr_strengthen;
+              [ | | | eauto using map_incl_empty, map_incl_refl .. ];
+              [ | | apply to_idx_ty | | apply locals_wf_step; eauto with fiat2_hints ];
+              eauto with fiat2_hints.
+          Qed.
         End use_idx.
       End WithTags.
     End WithMap.
