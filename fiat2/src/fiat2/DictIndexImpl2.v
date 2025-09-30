@@ -102,21 +102,24 @@ Section WithHole.
         1,2: unfold get_attr_type; apply_In_access_record; destruct_exists; rewrite_l_to_r; auto.
       Qed.
 
-    Definition idx_wf (tbl_v idx_v : value) : Prop :=
-      match tbl_v, idx_v with
-      | VList l, VDict d =>
-          forall attr_v,
-            Permutation
-              (filter (fun r => match r with
-                                | VRecord rc => value_eqb (record_proj attr rc) attr_v
-                                | _ => false
-                                end) l)
-              (bag_to_list match dict_lookup attr_v d with
-                 | Some (VBag b) => b
-                 | _ => nil
-                 end)
-      | _, _ => False
-      end.
+      Definition idx_wf (tbl_v idx_v : value) : Prop :=
+        idx_v = interp_expr map.empty (map.put map.empty hole tbl_v) to_idx.
+
+      Definition idx_chara (tbl_v idx_v : value) : Prop :=
+        match tbl_v, idx_v with
+        | VList l, VDict d =>
+            forall attr_v,
+              Permutation
+                (filter (fun r => match r with
+                                  | VRecord rc => value_eqb (record_proj attr rc) attr_v
+                                  | _ => false
+                                  end) l)
+                (bag_to_list match dict_lookup attr_v d with
+                   | Some (VBag b) => b
+                   | _ => nil
+                   end)
+        | _, _ => False
+        end.
 
       Definition gallina_to_idx (tbl_v : value) : value :=
         match tbl_v with
@@ -276,12 +279,13 @@ Section WithHole.
         rewrite bag_to_list_app. auto.
       Qed.
 
-      Lemma to_idx_wf : forall (v : value) (t : type),
+      Lemma idx_wf__idx_chara : forall (t : type) (tbl_v idx_v : value),
           type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
+          type_of_value tbl_v t ->
+          idx_wf tbl_v idx_v -> idx_chara tbl_v idx_v.
       Proof.
-        intros; erewrite fiat2_gallina_to_idx; eauto.
+        unfold idx_wf, idx_chara.
+        intros; subst; erewrite fiat2_gallina_to_idx; eauto.
         unfold is_tbl_ty, idx_wf, gallina_to_idx in *.
         repeat destruct_match_hyp; try discriminate.
         invert_type_of_value_clear. intros.
@@ -298,6 +302,14 @@ Section WithHole.
         1:{ rewrite dict_lookup_insert_diff; auto.
             rewrite <- value_eqb_iff_eq, Bool.not_true_iff_false in *;
               eauto using value_eqb_sym. }
+      Qed.
+
+      Lemma to_idx_wf : forall (v : value) (t : type),
+          type_wf t -> is_tbl_ty t = true ->
+          type_of_value v t ->
+          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
+      Proof.
+        intros; unfold idx_wf; auto.
       Qed.
 
       Notation eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 d :=
@@ -478,7 +490,6 @@ Section WithHole.
                 rewrite value_compare_refl; reflexivity. }
           Qed.
 
-
           Lemma eq_filter_to_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
               type_wf t -> is_tbl_ty t = true ->
               map.get Gstore tbl = Some (TRecord tl) ->
@@ -493,7 +504,7 @@ Section WithHole.
                       | Success (VRecord rv_aux) =>
                           match access_record rv_aux idx_tag with
                           | Success v_idx =>
-                              v_idx = interp_expr map.empty (map.put map.empty hole v_id) to_idx
+                              idx_wf v_id v_idx
                           | _ => False
                           end
                       | _ => False
@@ -508,11 +519,14 @@ Section WithHole.
             unfold is_tbl_ty, idx_ty in *.
             apply_locals_wf store.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
-            assert (idx_wf a a1).
-            { subst. eapply to_idx_wf; eauto.
+            assert (idx_chara a a1).
+            { subst. eapply idx_wf__idx_chara; eauto.
               invert_type_of_value_clear.
-              pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H15 E1 H2); auto. }
-            clear H5.
+              pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2); auto. }
+            lazymatch goal with
+              H: idx_wf _ _, H': idx_chara _ _ |- _ =>
+                clear H; unfold idx_chara in H'
+            end.
             invert_type_of_value_clear.
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2).
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E2 H3).
