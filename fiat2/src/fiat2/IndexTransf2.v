@@ -330,5 +330,299 @@ Section WithMap.
             eapply transf_to_idx_preserve_ty'; try reflexivity; eauto using incl_refl with fiat2_hints.
             rewrite_map_get_put_goal; auto. }
       Qed.
+
+      Definition consistent_with_global (store store' : locals) :=
+        match map.get store tbl with
+        | Some v =>
+            match map.get store' tbl with
+            | Some (VRecord rv) =>
+                match access_record rv id_tag with
+                | Success v_id =>
+                    v_id = v
+                | _ => False
+                end
+            | _ => False
+            end
+        | _ => False
+        end /\
+          forall x, x <> tbl -> map.get store x = map.get store' x.
+
+      Lemma consistent_with_global__store_eq_except : forall (store store' : locals),
+          consistent_with_global store store' ->
+          forall x, x <> tbl -> map.get store x = map.get store' x.
+      Proof.
+        unfold consistent_with_global.
+        intuition idtac.
+      Qed.
+
+      Lemma In_map_ext2 :   forall [A B : Type] (f g : A -> B) (l l' : list A),
+          l = l' ->
+          (forall a : A, In a l -> f a = g a) ->
+          map f l = map g l'.
+      Proof.
+        intros; subst; eapply map_ext_in; eauto.
+      Qed.
+
+      Ltac use_transf_to_idx_preserve_sem''_IH :=
+        lazymatch goal with
+          IH: context[interp_expr _ _ (fold_expr _ ?e) = _] |-
+            context[interp_expr _ _ (fold_expr _ ?e)] =>
+            erewrite IH end.
+
+      Lemma transf_to_idx_preserve_sem'' : forall tbl tbl_ty Gstore Genv e t,
+          type_of Gstore Genv e t ->
+          map.get Gstore tbl = Some tbl_ty ->
+          tenv_wf Gstore -> tenv_wf Genv ->
+          is_tbl_ty tbl_ty = true ->
+          forall store store' env,
+            locals_wf Gstore store -> locals_wf Genv env ->
+            consistent_with_global store store' ->
+            interp_expr store' env (fold_expr create_aux_read_head e) = interp_expr store env e.
+      Proof.
+        intros * H. induction H using type_of_IH; intros; cbn; auto.
+        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
+            cbn; unfold consistent_with_global, get_local, record_proj in *.
+            1: repeat case_match; intuition idtac.
+            destruct_and.
+            lazymatch goal with
+              H: context[map.get _ _ = _] |- _ => rewrite H end; auto. }
+        all: try now (repeat (use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints)).
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            case_match; auto; f_equal.
+            apply_type_sound e1; eauto. rewrite_l_to_r.
+            invert_type_of_value_clear.
+            apply In_flat_map_ext; intros. apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            case_match; auto. do 2 f_equal.
+            apply_type_sound e1. rewrite_l_to_r; invert_type_of_value_clear.
+            apply In_flat_map_ext; intros.
+            rewrite Forall_map_fst with (P:= fun v => type_of_value v t1) in *.
+            lazymatch goal with
+              H: In _ _ |- _ => apply bag_to_list_incl in H end.
+            apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            case_match; auto.
+            revert IHtype_of3;
+              use_transf_to_idx_preserve_sem''_IH; eauto; intros.
+            apply_type_sound e1; rewrite_l_to_r; invert_type_of_value_clear.
+            eapply In_fold_right_ext with (P:=fun v => type_of_value v t2);
+              intros; intuition idtac; try apply_Forall_In.
+            1: eapply type_sound; eauto.
+            1: use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints;
+            eapply tenv_wf_step; eauto with fiat2_hints.
+            1:{ use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+                2: eapply tenv_wf_step; eauto with fiat2_hints.
+                eapply type_sound; eauto with fiat2_hints.
+                eapply tenv_wf_step; eauto with fiat2_hints. } }
+        1:{ do 2 f_equal. rewrite map_map.
+            lazymatch goal with
+              H1: Permutation _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
+                clear H1 H2 H3
+            end. generalize dependent tl.
+            induction l; cbn; auto; intros.
+            destruct tl; try discriminate.
+            case_match; cbn in *. invert_cons.
+            repeat lazymatch goal with
+                     H: Forall2 _ (_ :: _) _ |- _ =>
+                       inversion H; subst; clear H end.
+            erewrite IHl; eauto.
+            use_transf_to_idx_preserve_sem''_IH; eauto. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e. invert_type_of_value_clear;
+              use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound d. invert_type_of_value_clear.
+            revert IHtype_of3.
+            use_transf_to_idx_preserve_sem''_IH; eauto; intros.
+            apply In_fold_right_ext with (P:=fun v => type_of_value v t); eauto with fiat2_hints.
+            intros. apply_Forall_In. intuition idtac;
+              use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+            2: eapply type_sound; eauto with fiat2_hints.
+            all: repeat apply tenv_wf_step; eauto with fiat2_hints. }
+        1,2: use_transf_to_idx_preserve_sem''_IH; eauto;
+        apply_type_sound e; invert_type_of_value_clear;
+        f_equal; apply In_filter_ext; intros; apply_Forall_In;
+        use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e1. invert_type_of_value_clear.
+            use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e2. invert_type_of_value_clear.
+            f_equal. apply In_flat_map_ext; intros; apply_Forall_In.
+            repeat lazymatch goal with
+                     H: VList _ = _ |- _ => clear H
+                   end.
+            induction l0; cbn; auto. invert_Forall.
+            erewrite IHtype_of3; eauto with fiat2_hints.
+            2: repeat apply tenv_wf_step; eauto with fiat2_hints.
+            do 2 (case_match; auto). cbn.
+            rewrite IHl0; auto.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+            repeat apply tenv_wf_step; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e1. invert_type_of_value_clear.
+            use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e2. invert_type_of_value_clear.
+            do 2 f_equal. apply In_flat_map_ext; intros.
+            lazymatch goal with
+              H: In _ (bag_to_list _) |- _ => apply bag_to_list_incl in H end.
+            rewrite Forall_map_fst with (P:=fun v => type_of_value v t1) in *.
+            apply_Forall_In. apply In_map_ext2.
+            1:{ apply In_filter_ext; intros.
+                lazymatch goal with
+                  H: In _ (bag_to_list _) |- _ => apply bag_to_list_incl in H end.
+                rewrite Forall_map_fst with (P:=fun v => type_of_value v t2) in *.
+                apply_Forall_In.
+                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+                repeat apply tenv_wf_step; eauto with fiat2_hints. }
+            1:{ intros.
+                lazymatch goal with
+                  H: In _ (filter _ (bag_to_list _)) |- _ =>
+                    apply filter_In in H as [H _];
+                    apply bag_to_list_incl in H end.
+                rewrite Forall_map_fst with (P:=fun v => type_of_value v t2) in *.
+                apply_Forall_In.
+                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+                repeat apply tenv_wf_step; eauto with fiat2_hints. } }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e. invert_type_of_value_clear.
+            f_equal. apply map_ext_in.
+            intros; apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e. invert_type_of_value_clear.
+            do 2 f_equal.
+            apply map_ext_in; intros.
+            lazymatch goal with
+              H: In _ (bag_to_list _) |- _ => apply bag_to_list_incl in H end.
+            rewrite Forall_map_fst with (P:=fun v => type_of_value v t1) in *.
+            apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+      Qed.
+
+      Lemma consistent_with_global_update : forall (l0 l0' l l' : locals),
+          consistent_with_global l0 l0' ->
+          consistent_with_global l l' ->
+          forall x,
+            consistent_with_global (map.update l x (map.get l0 x)) (map.update l' x (map.get l0' x)).
+      Proof.
+        intros.
+        unfold consistent_with_global.
+        destruct (String.eqb x tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+        1:{ rewrite Properties.map.get_update_same.
+            unfold consistent_with_global in *.
+            case_match; intuition idtac.
+            1: rewrite Properties.map.get_update_same; repeat (case_match; intuition idtac).
+            1: rewrite !Properties.map.get_update_diff; auto. }
+        1:{ rewrite Properties.map.get_update_diff; auto.
+            unfold consistent_with_global in *.
+            case_match; intuition idtac.
+            1: rewrite Properties.map.get_update_diff; auto.
+            1:{ destruct (String.eqb x x0) eqn:E'; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+                1: rewrite !Properties.map.get_update_same; auto.
+                1: rewrite !Properties.map.get_update_diff; auto. } }
+      Qed.
+
+      Lemma consistent_with_global_put_local : forall (l l' : locals) x v v',
+          consistent_with_global l l' ->
+          x <> tbl ->
+          v = v' ->
+          consistent_with_global (map.put l x v) (map.put l' x v').
+      Proof.
+        unfold consistent_with_global; intros; subst.
+        repeat rewrite_map_get_put_goal; intuition auto.
+        destruct_get_put_strings; reflexivity.
+      Qed.
+
+      Ltac use_transf_to_idx_preserve_sem'_IH :=
+        lazymatch goal with
+          IH: context[consistent_with_global (interp_command _ _ ?c) _] |-
+            consistent_with_global (interp_command _ _ ?c) _ =>
+            eapply IH
+        end.
+
+      Lemma transf_to_idx_preserve_sem' : forall tbl_ty c (Gstore Genv : tenv) free_vars,
+          well_typed Gstore Genv c ->
+          map.get Gstore tbl = Some tbl_ty ->
+          is_tbl_ty tbl_ty = true ->
+          incl (get_free_vars Genv) free_vars ->
+          tenv_wf Gstore -> tenv_wf Genv ->
+          forall (store store' env : locals),
+            locals_wf Gstore store -> locals_wf Genv env ->
+            consistent_with_global store store' ->
+            consistent_with_global (interp_command store env c) (interp_command store' env (transf_to_idx' free_vars c)).
+      Proof.
+        intros * H. revert free_vars. induction H; cbn; auto; intros.
+        1:{ use_transf_to_idx_preserve_sem'_IH; auto.
+            eapply command_type_sound; eauto. }
+        1:{ erewrite transf_to_idx_preserve_sem''; eauto.
+            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+            eapply incl_tran; [ apply get_free_vars_put | apply incl_cons_step ]; assumption. }
+        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+            1:{ unfold consistent_with_global.
+                rewrite !Properties.map.get_update_same.
+                unfold consistent_with_global in *; intuition auto.
+                rewrite !Properties.map.get_update_diff; auto.
+                do 2 f_equal. apply map.map_ext. intros.
+                destruct_get_put_strings. f_equal.
+                erewrite transf_to_idx_preserve_sem''; eauto.
+                unfold consistent_with_global; auto. }
+            1:{ apply consistent_with_global_update; auto.
+                use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+                1: rewrite_map_get_put_goal.
+                apply consistent_with_global_put_local; auto.
+                erewrite transf_to_idx_preserve_sem''; eauto. } }
+        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst; cbn [interp_command].
+            1:{ unfold consistent_with_global in *; intuition idtac;
+                repeat rewrite_map_get_put_goal.
+                cbn [interp_expr List.map].
+                erewrite NoDup_In_access_record.
+                2: eapply Permutation_NoDup;
+                [ eapply Permutation_map, Permuted_record_sort
+                | cbn; repeat constructor; intuition idtac;
+                  destruct_In; auto ].
+                2: eapply Permutation_in; [ apply Permuted_record_sort | ];
+                cbn; auto.
+                erewrite transf_to_idx_preserve_sem''; eauto.
+                unfold consistent_with_global; auto. }
+            1:{ erewrite transf_to_idx_preserve_sem''; eauto.
+                apply consistent_with_global_put_local; auto. } }
+        1:{ erewrite transf_to_idx_preserve_sem''; eauto.
+            repeat case_match; auto. }
+        1:{ erewrite transf_to_idx_preserve_sem''; eauto.
+            case_match; auto.
+            apply_type_sound e. rewrite_l_to_r. invert_type_of_value_clear.
+            lazymatch goal with
+              H: _ = VList _ |- _ => clear H end.
+            generalize dependent store; generalize dependent store'.
+            induction l; cbn; auto. invert_Forall; intros.
+            apply IHl; auto.
+            1: eapply command_type_sound; eauto with fiat2_hints.
+            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+            eapply incl_tran; [ apply get_free_vars_put | apply incl_cons_step ]; assumption. }
+      Qed.
+
+      Lemma transf_to_idx_preserve_sem : forall tbl_ty e c (Gstore Genv : tenv) free_vars,
+          is_tbl_ty tbl_ty = true ->
+          type_of Gstore Genv e tbl_ty ->
+          well_typed (map.put Gstore tbl tbl_ty) Genv c ->
+          incl (get_free_vars Genv) free_vars ->
+          tenv_wf Gstore -> tenv_wf Genv ->
+          forall (store env : locals),
+            locals_wf Gstore store -> locals_wf Genv env ->
+            interp_command store env (transf_to_idx free_vars (CLetMut e tbl c)) = interp_command store env (CLetMut e tbl c).
+      Proof.
+        simpl; intros.
+        apply stores_eq_except__update_eq. symmetry.
+        apply consistent_with_global__store_eq_except; auto.
+        eapply transf_to_idx_preserve_sem'; eauto with fiat2_hints.
+        1: rewrite_map_get_put_goal; auto.
+        unfold consistent_with_global; intuition idtac; repeat rewrite_map_get_put_goal.
+        erewrite NoDup_In_access_record; eauto.
+        1:{ eapply Permutation_NoDup; [ eapply Permutation_map, Permuted_record_sort | ].
+            cbn; repeat constructor; intuition idtac. destruct_In; auto. }
+        eapply Permutation_in; [ eapply Permuted_record_sort | ]; constructor; auto.
+      Qed.
     End WithIndex.
-End WithTags.
+End WithMap.
