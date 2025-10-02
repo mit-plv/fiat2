@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface2.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Permutation Morphisms.
 Import ListNotations.
@@ -538,12 +538,11 @@ Section WithMap.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Section WithIndex.
-    Context {consistency : Type} (consistent : consistency -> value -> value -> Prop).
-    Context {to_from_con from_to_con : consistency}.
-    Context {idx : IndexInterface.index} {idx_wf : value -> Prop} {idx_ok : ok to_from_con from_to_con idx idx_wf consistent}.
+    Context {idx : IndexInterface2.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
+    Context (aux_ty : type -> type) (aux_wf : value -> Prop).
 
-    Notation expr_aug_transf_sound := (expr_aug_transf_sound (idx_wf:=idx_wf)).
-    Notation aug_transf_sound := (aug_transf_sound (idx_wf:=idx_wf)).
+    Notation expr_aug_transf_sound := (expr_aug_transf_sound aux_ty aux_wf).
+    Notation aug_transf_sound := (aug_transf_sound aux_ty aux_wf).
 
     Lemma fold_command_with_globals_sound : forall f,
         expr_aug_transf_sound f ->

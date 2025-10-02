@@ -1063,7 +1063,6 @@ Section WithMap.
         1:{ apply_type_sound e. eapply command_type_sound; eauto with fiat2_hints. }}
   Qed.
 
-  (* ??? remove
   Local Ltac unfold_typechecker :=
     lazymatch goal with
     | H: synthesize_expr _ _ _ = Success _ |- _ => unfold synthesize_expr in H
@@ -1124,10 +1123,15 @@ Section WithMap.
     all: try now (repeat destruct_match_hyp; try congruence;
                   try do_injection;
                   repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
-                  try congruence; try do_injection2; subst; eauto;
-                  do_injection2; f_equal; use_synthesize_ty_unique_IH;
+                  try congruence; repeat (try clear_refl; do_injection); subst; eauto; repeat (try clear_refl; do_injection); f_equal; use_synthesize_ty_unique_IH;
                   repeat apply tenv_wf_step; eauto with fiat2_hints).
     1:{ do_injection. inversion H; subst; eauto. }
+    1:{ repeat destruct_match_hyp; try congruence;
+        try do_injection;
+        repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
+        lazymatch goal with
+          H: type_of_aggr _ _ _ |- _ => inversion H; subst
+        end; auto. }
     1:{ generalize dependent tl. generalize dependent tl'.
         generalize dependent t'. revert e'.
         unfold record_type_from in *. induction l; intros.
@@ -1156,7 +1160,6 @@ Section WithMap.
             1: apply (Permutation_map fst), Permutation_NoDup in H2; auto.
             all: intros; subst; auto using StronglySorted_record_sort. } }
   Qed.
-*)
 End WithMap.
 
 #[export] Hint Resolve tenv_wf_empty : fiat2_hints.

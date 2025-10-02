@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface2.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Morphisms.
 Import ListNotations.
@@ -268,34 +268,33 @@ Section WithMap.
   End WithGlobals.
 
   Section WithIndex.
-    Context {consistency : Type} (consistent : consistency -> value -> value -> Prop).
-    Context {to_from_con from_to_con : consistency}.
-    Context {idx : IndexInterface.index} {idx_wf : value -> Prop} {idx_ok : ok to_from_con from_to_con idx idx_wf consistent}.
+    Context {idx : IndexInterface2.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
+    Context (aux_ty : type -> type) (aux_wf : value -> Prop).
 
-    Definition expr_aug_transf_sound (f : string -> expr -> expr) : Prop :=
-      forall Gstore Genv tbl tbl_ty e t,
-        tenv_wf Gstore -> tenv_wf Genv ->
-        type_wf tbl_ty -> is_tbl_ty tbl_ty = true ->
-        tenv_wf_with_globals [tbl] [idx_ty tbl_ty] Gstore ->
-        type_of Gstore Genv e t ->
-        type_of Gstore Genv (f tbl e) t /\
-          forall store env,
-            locals_wf Gstore store -> locals_wf Genv env ->
-            holds_for_all_entries (value_wf_with_globals idx_wf [tbl]) store ->
-            interp_expr store env (f tbl e) = interp_expr store env e.
+  Definition expr_aug_transf_sound (f : string -> expr -> expr) : Prop :=
+    forall Gstore Genv tbl tbl_ty e t,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      type_wf tbl_ty -> is_tbl_ty tbl_ty = true ->
+      tenv_wf_with_globals [tbl] [aux_ty tbl_ty] Gstore ->
+      type_of Gstore Genv e t ->
+      type_of Gstore Genv (f tbl e) t /\
+        forall store env,
+          locals_wf Gstore store -> locals_wf Genv env ->
+          holds_for_all_entries (value_wf_with_globals aux_wf [tbl]) store ->
+          interp_expr store env (f tbl e) = interp_expr store env e.
 
     Definition aug_transf_sound (f : string -> command -> command) : Prop :=
       forall Gstore Genv tbl t c,
         tenv_wf Gstore -> tenv_wf Genv ->
         type_wf t -> is_tbl_ty t = true ->
-        tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
+        tenv_wf_with_globals [tbl] [aux_ty t] Gstore ->
         well_typed Gstore Genv c ->
-        parameterized_wf Gstore Genv (value_wf_with_globals idx_wf [tbl]) c ->
+        parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) c ->
         well_typed Gstore Genv (f tbl c) /\
-          parameterized_wf Gstore Genv (value_wf_with_globals idx_wf [tbl]) (f tbl c) /\
+          parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) (f tbl c) /\
           forall store env,
             locals_wf Gstore store -> locals_wf Genv env ->
-            holds_for_all_entries (value_wf_with_globals idx_wf [tbl]) store ->
+            holds_for_all_entries (value_wf_with_globals aux_wf [tbl]) store ->
             interp_command store env (f tbl c) = interp_command store env c.
 
     Lemma aug_transf_sound_compose : forall f g,
