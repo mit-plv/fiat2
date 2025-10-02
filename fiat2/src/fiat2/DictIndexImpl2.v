@@ -863,7 +863,7 @@ Section WithHole.
                       | Success (VRecord rv_aux) =>
                           match access_record rv_aux idx_tag with
                           | Success v_idx =>
-                              v_idx = interp_expr map.empty (map.put map.empty hole v_id) to_idx
+                              idx_wf v_id v_idx
                           | _ => False
                           end
                       | _ => False
@@ -874,7 +874,7 @@ Section WithHole.
               end ->
               preserve_sem Gstore store use_idx_head.
           Proof.
-            unfold preserve_sem; intros.
+            unfold preserve_sem, idx_wf; intros.
             unfold is_tbl_ty, idx_ty in *.
             apply_locals_wf store.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
@@ -957,7 +957,7 @@ Section ConcreteExample.
   Compute ex1_to_filter.
   Definition ex1_to_bag := fold_command id push_down_collection (fold_command id annotate_collection ex1_to_filter).
   Compute ex1_to_bag.
-  Definition ex1_create_aux := fold_command (create_aux_write_head "hole" "department" "tup" "acc" "x" "id_tag" "aux_tag" "idx_tag" "responses" nil) (create_aux_read_head "id_tag" "responses") ex1_to_bag.
+  Definition ex1_create_aux := fold_command (create_aux_write_head "hole" "department" "tup" "acc" "x" "id_tag" "aux_tag" "idx_tag" "responses" nil) (tcreate_aux_read_head "id_tag" "responses") ex1_to_bag.
   Compute ex1_create_aux.
   Definition ex1_idx_write := fold_command id (cons_to_insert_head "department" "k" "d") ex1_create_aux.
   Compute ex1_idx_write.

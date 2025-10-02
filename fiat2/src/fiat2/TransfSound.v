@@ -145,6 +145,69 @@ Section WithMap.
         eapply parameterized_wf__well_typed; eauto. }
   Qed.
 
+  Definition iff2 {A B} (P Q : A -> B -> Prop) :=
+    forall a b, P a b <-> Q a b.
+
+  Lemma iff2_refl : forall A B (P : A -> B -> Prop),
+      iff2 P P.
+  Proof.
+    unfold iff2; intros; intuition auto.
+  Qed.
+
+  Lemma iff2_sym : forall A B (P Q : A -> B -> Prop),
+      iff2 P Q -> iff2 Q P.
+  Proof.
+    unfold iff2; intros; apply iff_sym; auto.
+  Qed.
+
+  Lemma iff2_trans : forall A B (P Q R : A -> B -> Prop),
+      iff2 P Q -> iff2 Q R -> iff2 P R.
+  Proof.
+    unfold iff2; split; intros.
+    1: apply H0, H; auto.
+    1: apply H, H0; auto.
+  Qed.
+
+  Add Parametric Relation A B : (A -> B -> Prop) iff2
+      reflexivity proved by (iff2_refl A B)
+      symmetry proved by (iff2_sym A B)
+      transitivity proved by (iff2_trans A B)
+      as iff2_rel.
+
+  Instance rm_from_pred_Proper : Proper (iff2 ==> eq ==> iff2) rm_from_pred.
+  Proof.
+    intros P Q H x x' Hx.
+    unfold iff2, rm_from_pred; intros.
+    subst; intuition auto.
+    all: right; apply H; auto.
+  Qed.
+
+  Instance holds_for_all_entries_Proper {A : Type} {m : map.map string A} : Proper (iff2 ==> eq ==> iff) (holds_for_all_entries (m:=m)).
+  Proof.
+    intros P Q H x x' Hx.
+    unfold holds_for_all_entries. split; intros.
+    all: subst; apply H, H0; auto.
+  Qed.
+
+  Lemma iff2_parameterized_wf : forall x y z P Q,
+      iff2 P Q ->
+      parameterized_wf x y P z -> parameterized_wf x y Q z.
+  Proof.
+    intros * H_iff2 H_wf. generalize dependent Q.
+    induction H_wf; intros.
+    all: econstructor; eauto.
+    1:{ apply IHH_wf. erewrite H_iff2; auto using iff2_refl. }
+    1:{ intros. apply H_iff2, H; auto.
+        rewrite H_iff2; auto. }
+  Qed.
+
+  Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> iff) parameterized_wf.
+  Proof.
+    intros x x' Hx y y' Hy P Q H z z' Hz.
+    split; subst; apply iff2_parameterized_wf;
+      auto using iff2_sym.
+  Qed.
+
   Section WithPv.
     Context (Pv : value -> Prop).
 
@@ -160,69 +223,6 @@ Section WithMap.
       unfold value_wf_with_globals in *.
       destruct (String.eqb k x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp.
       rewrite Forall_forall; intros. left; intro contra; subst; auto.
-    Qed.
-
-    Definition iff2 {A B} (P Q : A -> B -> Prop) :=
-      forall a b, P a b <-> Q a b.
-
-    Lemma iff2_refl : forall A B (P : A -> B -> Prop),
-        iff2 P P.
-    Proof.
-      unfold iff2; intros; intuition auto.
-    Qed.
-
-    Lemma iff2_sym : forall A B (P Q : A -> B -> Prop),
-        iff2 P Q -> iff2 Q P.
-    Proof.
-      unfold iff2; intros; apply iff_sym; auto.
-    Qed.
-
-    Lemma iff2_trans : forall A B (P Q R : A -> B -> Prop),
-        iff2 P Q -> iff2 Q R -> iff2 P R.
-    Proof.
-      unfold iff2; split; intros.
-      1: apply H0, H; auto.
-      1: apply H, H0; auto.
-    Qed.
-
-    Add Parametric Relation A B : (A -> B -> Prop) iff2
-        reflexivity proved by (iff2_refl A B)
-        symmetry proved by (iff2_sym A B)
-        transitivity proved by (iff2_trans A B)
-        as iff2_rel.
-
-    Instance rm_from_pred_Proper : Proper (iff2 ==> eq ==> iff2) rm_from_pred.
-    Proof.
-      intros P Q H x x' Hx.
-      unfold iff2, rm_from_pred; intros.
-      subst; intuition auto.
-      all: right; apply H; auto.
-    Qed.
-
-    Instance holds_for_all_entries_Proper {A : Type} {m : map.map string A} : Proper (iff2 ==> eq ==> iff) (holds_for_all_entries (m:=m)).
-    Proof.
-      intros P Q H x x' Hx.
-      unfold holds_for_all_entries. split; intros.
-      all: subst; apply H, H0; auto.
-    Qed.
-
-    Lemma iff2_parameterized_wf : forall x y z P Q,
-        iff2 P Q ->
-        parameterized_wf x y P z -> parameterized_wf x y Q z.
-    Proof.
-      intros * H_iff2 H_wf. generalize dependent Q.
-      induction H_wf; intros.
-      all: econstructor; eauto.
-      1:{ apply IHH_wf. erewrite H_iff2; auto using iff2_refl. }
-      1:{ intros. apply H_iff2, H; auto.
-          rewrite H_iff2; auto. }
-    Qed.
-
-    Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> iff) parameterized_wf.
-    Proof.
-      intros x x' Hx y y' Hy P Q H z z' Hz.
-      split; subst; apply iff2_parameterized_wf;
-        auto using iff2_sym.
     Qed.
 
     Lemma rm_not_in_globals : forall x globals,

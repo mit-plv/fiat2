@@ -517,11 +517,11 @@ Section WithGlobals.
           1: apply fold_expr_preserve_ty; eauto.
           case_match; auto. rewrite inb_false_iff in *.
           eapply parameterized_wf_Proper.
-          4: apply rm_not_in_globals.
+          3: apply rm_not_in_globals.
           all: eauto. apply_preserve_parameterized_wf_IH; eauto with fiat2_hints.
           1: apply tenv_wf_with_globals_step; auto.
           eapply parameterized_wf_Proper.
-          4: apply iff2_sym, rm_not_in_globals.
+          3: apply iff2_sym, rm_not_in_globals.
           all: eauto. }
       1:{ econstructor; eauto.
           2: apply fold_expr_preserve_ty; eauto.

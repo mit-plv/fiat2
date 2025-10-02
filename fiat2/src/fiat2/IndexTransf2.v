@@ -201,6 +201,17 @@ Section WithMap.
         | _ => c
         end.
 
+      Definition transf_to_idx_ty (tbl_ty : type) :=
+        TRecord
+          (record_sort
+             [(id_tag, tbl_ty); (aux_tag, idx_ty tbl_ty)]).
+
+      Ltac NoDup_map_record_sort :=
+        eapply Permutation_NoDup;
+        [ eapply Permutation_map, Permuted_record_sort
+        | cbn; repeat constructor; intuition idtac;
+          destruct_In; auto ].
+
       Ltac apply_transf_to_idx_preserve_ty''_IH :=
         lazymatch goal with IH: context[type_of _ _ ?e _ ] |- type_of _ _ ?e _ => apply IH end.
 
@@ -209,11 +220,9 @@ Section WithMap.
           map.get Gstore tbl = Some tbl_ty ->
           is_tbl_ty tbl_ty = true ->
           type_of Gstore Genv e t ->
-          type_of (map.put Gstore tbl
-                     (TRecord
-                        (record_sort
-                           [(id_tag, tbl_ty); (aux_tag, idx_ty tbl_ty)]))) Genv (fold_expr create_aux_read_head e) t.
+          type_of (map.put Gstore tbl (transf_to_idx_ty tbl_ty)) Genv (fold_expr create_aux_read_head e) t.
       Proof.
+        unfold transf_to_idx_ty.
         induction 5 using type_of_IH; simpl; intros.
         all: try (econstructor; eauto; apply_transf_to_idx_preserve_ty''_IH; apply tenv_wf_step; eauto with fiat2_hints).
         3: repeat apply tenv_wf_step; eauto with fiat2_hints.
@@ -221,10 +230,7 @@ Section WithMap.
             1:{ repeat rewrite_l_to_r; do_injection.
                 repeat econstructor; try rewrite_map_get_put_goal; eauto.
                 apply NoDup_In_access_record.
-                1:{ eapply Permutation_NoDup.
-                    1: eapply Permutation_map; apply Permuted_record_sort.
-                    cbn; repeat constructor; intuition idtac.
-                    destruct_In; auto. }
+                1: NoDup_map_record_sort.
                 eapply Permutation_in; [ apply Permuted_record_sort | ].
                 cbn; auto. }
             constructor. rewrite_map_get_put_goal. }
@@ -252,10 +258,7 @@ Section WithMap.
           is_tbl_ty tbl_ty = true ->
           well_typed Gstore Genv c ->
           incl (get_free_vars Genv) free_vars ->
-          Gstore' = map.put Gstore tbl
-                      (TRecord
-                         (record_sort
-                            [(id_tag, tbl_ty); (aux_tag, idx_ty tbl_ty)])) ->
+          Gstore' = map.put Gstore tbl (transf_to_idx_ty tbl_ty) ->
           well_typed Gstore' Genv (transf_to_idx' free_vars c).
       Proof.
         induction c; simpl; intros; try invert_well_typed; try now (constructor; auto).
@@ -281,10 +284,7 @@ Section WithMap.
                     1:{ eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty);
                         eauto using idx_ty_wf with fiat2_hints.
                         1:{ apply tenv_wf_step; auto. constructor; auto using StronglySorted_record_sort.
-                            1: eapply Permutation_NoDup;
-                            [ eapply Permutation_map, Permuted_record_sort
-                            | cbn; repeat constructor; intuition idtac;
-                              destruct_In; auto ].
+                            1: NoDup_map_record_sort.
                             1:{ eapply Permutation_Forall;
                                 [ eapply Permutation_map, Permuted_record_sort | ].
                                 cbn. repeat constructor; eauto using idx_ty_wf. } }
@@ -558,7 +558,7 @@ Section WithMap.
             eapply command_type_sound; eauto. }
         1:{ erewrite transf_to_idx_preserve_sem''; eauto.
             use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
-            eapply incl_tran; [ apply get_free_vars_put | apply incl_cons_step ]; assumption. }
+            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ unfold consistent_with_global.
                 rewrite !Properties.map.get_update_same.
@@ -578,10 +578,7 @@ Section WithMap.
                 repeat rewrite_map_get_put_goal.
                 cbn [interp_expr List.map].
                 erewrite NoDup_In_access_record.
-                2: eapply Permutation_NoDup;
-                [ eapply Permutation_map, Permuted_record_sort
-                | cbn; repeat constructor; intuition idtac;
-                  destruct_In; auto ].
+                2: NoDup_map_record_sort.
                 2: eapply Permutation_in; [ apply Permuted_record_sort | ];
                 cbn; auto.
                 erewrite transf_to_idx_preserve_sem''; eauto.
@@ -600,7 +597,7 @@ Section WithMap.
             apply IHl; auto.
             1: eapply command_type_sound; eauto with fiat2_hints.
             use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
-            eapply incl_tran; [ apply get_free_vars_put | apply incl_cons_step ]; assumption. }
+            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
       Qed.
 
       Lemma transf_to_idx_preserve_sem : forall tbl_ty e c (Gstore Genv : tenv) free_vars,
@@ -620,9 +617,168 @@ Section WithMap.
         1: rewrite_map_get_put_goal; auto.
         unfold consistent_with_global; intuition idtac; repeat rewrite_map_get_put_goal.
         erewrite NoDup_In_access_record; eauto.
-        1:{ eapply Permutation_NoDup; [ eapply Permutation_map, Permuted_record_sort | ].
-            cbn; repeat constructor; intuition idtac. destruct_In; auto. }
+        1: NoDup_map_record_sort.
         eapply Permutation_in; [ eapply Permuted_record_sort | ]; constructor; auto.
       Qed.
+
+      Definition aux_wf (v : value) :=
+        match v with
+          VRecord rv =>
+            match access_record rv id_tag with
+            | Success v_id =>
+                match access_record rv aux_tag with
+                | Success v_aux =>
+                    idx_wf v_id v_aux
+                | _ => False
+                end
+            | _ => False
+            end
+        | _ => False
+        end.
+
+      Lemma well_typed__aux_wf_nil : forall c Gstore Genv,
+          tenv_wf Gstore -> tenv_wf Genv ->
+          well_typed Gstore Genv c ->
+          forall P,
+            (forall x v, P x v <-> value_wf_with_globals aux_wf nil x v) ->
+            parameterized_wf Gstore Genv P c.
+      Proof.
+        induction 3; intros.
+        all: try now (constructor; auto).
+        1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints. }
+        1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints.
+            intros. split.
+            1: constructor.
+            1:{ unfold rm_from_pred. intros; right. rewrite H3. constructor. } }
+        1:{ econstructor; eauto. intros. rewrite H3; constructor. }
+        1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints. }
+      Qed.
+
+      Lemma rm_from_aux_wf__aux_wf_nil : forall (x : string) (v : value),
+          rm_from_pred (value_wf_with_globals aux_wf (tbl :: nil)) tbl x v <-> value_wf_with_globals aux_wf nil x v.
+      Proof.
+        intros. split.
+        1: constructor.
+        1:{ intros. unfold rm_from_pred.
+            destruct (String.eqb x tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *;
+              subst; intuition auto.
+            right. constructor; auto. }
+      Qed.
+
+      Lemma transf_to_idx_ty_wf : forall t,
+          type_wf t -> is_tbl_ty t = true ->
+          type_wf (transf_to_idx_ty t).
+      Proof.
+        intros.
+        unfold transf_to_idx_ty. constructor; auto using StronglySorted_record_sort.
+        1: NoDup_map_record_sort.
+        1: rewrite Forall_map.
+        eapply Permutation_Forall; [ apply Permuted_record_sort | ].
+        repeat constructor; intuition idtac; cbn.
+        auto using idx_ty_wf.
+      Qed.
+
+      Lemma to_idx_satisfy_idx_wf : forall free_vars e Gstore Genv t store env,
+          tenv_wf Gstore -> tenv_wf Genv ->
+          type_of Gstore Genv e t ->
+          is_tbl_ty t = true ->
+          incl (get_free_vars Genv) free_vars ->
+          locals_wf Gstore store -> locals_wf Genv env ->
+          idx_wf (interp_expr store env e)
+            (interp_expr store env (substitute ((hole, e) :: nil) free_vars to_idx)).
+      Proof.
+      intros. erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole t).
+      5: eauto. 8,9: eauto. all: auto.
+      3: eapply type_of_strengthen; try apply to_idx_ty.
+      all: eauto with fiat2_hints.
+      3: apply map_incl_step; try apply string_dec.
+      2,3: apply map_incl_empty.
+      2:{ unfold sub_wf; intros. simpl.
+          case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
+            rewrite_map_get_put_hyp;
+            [ do_injection; auto
+            | rewrite map.get_empty in *; discriminate ]. }
+      unfold make_sub_env.
+      erewrite interp_expr_strengthen with (e:=to_idx); [ eapply to_idx_wf | .. ].
+      6: apply to_idx_ty.
+      all: eauto with fiat2_hints.
+      1: apply map_incl_empty.
+      1: simpl; apply map_incl_step; auto using string_dec, map_incl_refl.
+    Qed.
+
+
+      Ltac apply_transf_to_idx'_index_wf_IH :=
+        lazymatch goal with
+          IH: context[parameterized_wf _ _ _ (transf_to_idx' _ ?c)] |- context[?c] =>
+            apply IH
+        end.
+
+      Lemma transf_to_idx'_index_wf : forall tbl_ty c free_vars Gstore Genv,
+          map.get Gstore tbl = Some tbl_ty ->
+          is_tbl_ty tbl_ty = true ->
+          well_typed Gstore Genv c ->
+        incl (get_free_vars Genv) free_vars ->
+        tenv_wf Gstore -> tenv_wf Genv ->
+        parameterized_wf (map.put Gstore tbl (transf_to_idx_ty tbl_ty)) Genv (value_wf_with_globals aux_wf [tbl]) (transf_to_idx' free_vars c).
+      Proof.
+        unfold value_wf_with_globals.
+        induction c; simpl; intros; try invert_well_typed; try now (constructor; auto).
+        1:{ econstructor.
+            1: apply transf_to_idx_preserve_ty''; eauto.
+            apply_transf_to_idx'_index_wf_IH; eauto with fiat2_hints.
+            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
+        1:{ econstructor.
+            1: apply transf_to_idx_preserve_ty''; eauto.
+            case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+            1:{ rewrite Properties.map.put_put_same.
+                apply well_typed__aux_wf_nil; eauto with fiat2_hints.
+                apply rm_from_aux_wf__aux_wf_nil. }
+            1:{ rewrite Properties.map.put_put_diff; auto.
+              eapply parameterized_wf_Proper; try reflexivity; auto.
+              1:{ apply rm_not_in_globals.
+                  intro contra. inversion contra; auto. }
+              apply IHc; eauto with fiat2_hints.
+              rewrite_map_get_put_goal. } }
+      1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+          1:{ econstructor.
+              2: rewrite_map_get_put_goal; eauto.
+              2:{ rewrite_l_to_r. do_injection.
+                  econstructor; [ | | apply Permuted_record_sort | .. ]; auto using StronglySorted_record_sort.
+                  1:{ repeat constructor; eauto using transf_to_idx_preserve_ty''.
+                      eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole t);
+                        eauto using transf_to_idx_ty_wf with fiat2_hints.
+                      1:{ eapply type_of_strengthen.
+                          1: apply to_idx_ty; eauto with fiat2_hints.
+                          1: apply map_incl_empty.
+                          1: apply map_incl_refl. }
+                      1:{ unfold sub_wf; intros; simpl.
+                          destruct (String.eqb x hole) eqn:E_x;
+                            rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp; try do_injection; auto using transf_to_idx_preserve_ty''.
+                          rewrite map.get_empty in *; congruence. } }
+                  1:{ repeat constructor; intuition auto. destruct_In; auto. } }
+              1:{ intros. rewrite Forall_forall; intros. destruct_In; intuition idtac.
+                  right. unfold aux_wf. cbn [interp_expr List.map].
+                  repeat (erewrite NoDup_In_access_record;
+                          [
+                          | NoDup_map_record_sort
+                          | eapply Permutation_in; [ apply Permuted_record_sort | ];
+                            cbn; auto ]).
+                  rewrite_l_to_r; do_injection; clear_refl.
+                  eapply to_idx_satisfy_idx_wf.
+                  3: apply transf_to_idx_preserve_ty'';
+                  [ | | eauto .. ]; auto.
+                  all: eauto using transf_to_idx_ty_wf with fiat2_hints. } }
+          1:{ econstructor.
+              2: rewrite_map_get_put_goal; eauto.
+              2: apply transf_to_idx_preserve_ty''; auto.
+              intros. unfold aux_wf. constructor; auto. } }
+      1:{ constructor; try apply_transf_to_idx'_index_wf_IH; intuition.
+          apply transf_to_idx_preserve_ty''; auto. }
+      1:{ econstructor; eauto.
+          1: apply transf_to_idx_preserve_ty''; eauto.
+          apply_transf_to_idx'_index_wf_IH; eauto with fiat2_hints.
+          eauto using incl_tran, incl_cons_step, get_free_vars_put. }
+      Qed.
+
     End WithIndex.
 End WithMap.
