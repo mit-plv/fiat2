@@ -387,11 +387,42 @@ Section WithHole.
         IndexInterface2.Build_ok dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
       Section WithTags.
-        Context (tbl : string).
         Context (id_tag aux_tag idx_tag: string).
+
+        Definition aux_ty_for_idx (aux_ty : type -> type) : Prop :=
+          forall t,
+            match aux_ty t with
+            | TRecord tl =>
+                access_record tl id_tag = Success t /\
+                  match access_record tl aux_tag with
+                  | Success (TRecord aux_tl) => access_record aux_tl idx_tag = Success (idx_ty t)
+                  | _ => False
+                  end
+            | _ => False
+            end.
+
+        Definition aux_wf_for_idx (v : value) : Prop :=
+          match v with
+          | VRecord rv =>
+              match access_record rv id_tag with
+              | Success v_id =>
+                  match access_record rv aux_tag with
+                  | Success (VRecord rv_aux) =>
+                      match access_record rv_aux idx_tag with
+                      | Success v_idx =>
+                          idx_wf v_id v_idx
+                      | _ => False
+                      end
+                  | _ => False
+                  end
+              | _ => False
+              end
+          | _ => False
+          end.
 
         Section eq_filter_to_lookup.
           Context (b : string).
+          Context (tbl : string).
 
           Definition eq_filter_to_lookup_head (e : expr) :=
             (* filter (tbl[id_tag]) (fun row => row.attr == e') -->
@@ -497,25 +528,12 @@ Section WithHole.
               access_record tl aux_tag = Success (TRecord aux_tl) ->
               access_record aux_tl idx_tag = Success (idx_ty t) ->
               match map.get store tbl with
-              | Some (VRecord rv) =>
-                  match access_record rv id_tag with
-                  | Success v_id =>
-                      match access_record rv aux_tag with
-                      | Success (VRecord rv_aux) =>
-                          match access_record rv_aux idx_tag with
-                          | Success v_idx =>
-                              idx_wf v_id v_idx
-                          | _ => False
-                          end
-                      | _ => False
-                      end
-                  | _ => False
-                  end
+              | Some v => aux_wf_for_idx v
               | _ => False
               end ->
               preserve_sem Gstore store eq_filter_to_lookup_head.
           Proof.
-            unfold preserve_sem; intros.
+            unfold preserve_sem, aux_wf_for_idx; intros.
             unfold is_tbl_ty, idx_ty in *.
             apply_locals_wf store.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
@@ -809,6 +827,7 @@ Section WithHole.
         End cons_to_insert.
 
         Section use_idx.
+          Context (tbl : string).
           Definition use_idx_head (e : expr) :=
             match e with
             | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EAccess (ELoc tbl0) id_tag0) =>
@@ -856,25 +875,12 @@ Section WithHole.
               access_record tl aux_tag = Success (TRecord aux_tl) ->
               access_record aux_tl idx_tag = Success (idx_ty t) ->
               match map.get store tbl with
-              | Some (VRecord rv) =>
-                  match access_record rv id_tag with
-                  | Success v_id =>
-                      match access_record rv aux_tag with
-                      | Success (VRecord rv_aux) =>
-                          match access_record rv_aux idx_tag with
-                          | Success v_idx =>
-                              idx_wf v_id v_idx
-                          | _ => False
-                          end
-                      | _ => False
-                      end
-                  | _ => False
-                  end
+              | Some v => aux_wf_for_idx v
               | _ => False
               end ->
               preserve_sem Gstore store use_idx_head.
           Proof.
-            unfold preserve_sem, idx_wf; intros.
+            unfold preserve_sem, aux_wf_for_idx, idx_wf; intros.
             unfold is_tbl_ty, idx_ty in *.
             apply_locals_wf store.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
@@ -904,97 +910,63 @@ Section WithHole.
               eauto with fiat2_hints.
           Qed.
         End use_idx.
+
+
+        Ltac invert_tenv_wf_with_globals :=
+          lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
+
+        Lemma eq_filter_to_lookup_head_sound : forall b aux_ty aux_wf,
+            aux_ty_for_idx aux_ty ->
+            (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
+            expr_aug_transf_sound aux_ty aux_wf (eq_filter_to_lookup_head b).
+        Proof.
+          unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+          invert_tenv_wf_with_globals.
+          specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+          1: eapply eq_filter_to_lookup_head_preserve_ty; eauto.
+          1: eapply eq_filter_to_lookup_head_preserve_sem; eauto.
+          lazymatch goal with
+            H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+              apply H in H'
+          end.
+          destruct_match_hyp; intuition idtac.
+          lazymatch goal with
+            H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+              apply H in H'
+          end.
+          unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+        Qed.
+
+        Lemma cons_to_insert_head_sound : expr_transf_sound (locals:=locals) cons_to_insert_head.
+        Proof.
+          unfold expr_transf_sound; intros.
+          intuition idtac.
+          1: eapply cons_to_insert_head_preserve_ty; eauto.
+          1: eapply cons_to_insert_head_preserve_sem; [ | | eauto .. ]; auto.
+        Qed.
+
+        Lemma use_idx_head_sound : forall aux_ty aux_wf,
+            aux_ty_for_idx aux_ty ->
+            (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
+            expr_aug_transf_sound aux_ty aux_wf use_idx_head.
+        Proof.
+          unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+          invert_tenv_wf_with_globals.
+          specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+          1: eapply use_idx_head_preserve_ty; eauto.
+          1: eapply use_idx_head_preserve_sem; eauto.
+          lazymatch goal with
+            H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+              apply H in H'
+          end.
+          destruct_match_hyp; intuition idtac.
+          lazymatch goal with
+            H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+              apply H in H'
+          end.
+          unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+        Qed.
       End WithTags.
     End WithMap.
   End WithVars.
 End WithHole.
-
-
-(* ??? An example *)
-  Require Import fiat2.Notations coqutil.Map.SortedListString.
-  Open Scope fiat2_scope.
-Section ConcreteExample.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
-
-  Local Open Scope string.
-
-  Instance ctenv : map.map string type := SortedListString.map _.
-  Instance ctenv_ok : map.ok ctenv := SortedListString.ok _.
-
-  Instance clocals : map.map string value := SortedListString.map _.
-  Instance clocals_ok : map.ok clocals := SortedListString.ok _.
-
-  Instance caenv : map.map string collection_tag := SortedListString.map _.
-  Instance caenv_ok : map.ok caenv := SortedListString.ok _.
-
-  Instance cRenv : map.map string (value -> value -> Prop) := SortedListString.map _.
-  Instance cRenv_ok : map.ok cRenv := SortedListString.ok _.
-
-
-  Definition row_ty := TRecord (record_sort [("name", TString); ("department", TString); ("feedback", TString)]).
-  (* two arbitrary well_typed rows *)
-  Definition row1 := EVar "row1".
-  Definition row2 := EVar "row2".
-
-  Definition build_responses1 := <{ set "responses" := row1 :: row2 :: mut "responses" }>.
-  Definition filter_responses dpt : expr := ESort LikeList <[ "row" <- mut "responses" ;
-                                                       check("row"["department"] == << EAtom (AString dpt) >>);
-                                                       ret "row" ]>.
-  Definition query := CForeach (filter_responses "EECS") "r"
-                         <{ let "name" = "r"["name"] +++ << EAtom (AString ": ") >> in
-                            let "feedback" = "r"["feedback"] +++ << EAtom (AString "\n") >> in
-                            let "line" = "name" +++ "feedback" in
-                            set "all_feedback" := mut "all_feedback" +++ "line" }>.
-  Definition ex1' := CSeq build_responses1 query.
-  Definition ex1 := CLetMut (EAtom (ANil (Some (row_ty)))) "responses" ex1'.
-  Compute ex1.
-
-  Require Import fiat2.RelTransf.
-  Definition init_Gstore : ctenv := map.put map.empty "all_feedback" TString.
-  Definition init_Genv : ctenv := map.put (map.put map.empty "row1" row_ty) "row2" row_ty.
-  Definition ex1_to_filter := fold_command id to_filter_head ex1.
-  Compute ex1_to_filter.
-  Definition ex1_to_bag := fold_command id push_down_collection (fold_command id annotate_collection ex1_to_filter).
-  Compute ex1_to_bag.
-  Definition ex1_create_aux := fold_command (create_aux_write_head "hole" "department" "tup" "acc" "x" "id_tag" "aux_tag" "idx_tag" "responses" nil) (tcreate_aux_read_head "id_tag" "responses") ex1_to_bag.
-  Compute ex1_create_aux.
-  Definition ex1_idx_write := fold_command id (cons_to_insert_head "department" "k" "d") ex1_create_aux.
-  Compute ex1_idx_write.
-  Definition ex1_idx_write2 := fold_command id (cons_to_insert_head "department" "k" "d") ex1_idx_write.
-  Compute ex1_idx_write2.
-  Definition ex1_use_idx := fold_command id (use_idx_head "responses" "aux_tag" "idx_tag") ex1_idx_write2.
-  Compute ex1_use_idx.
-  Definition ex1_idx_lookup := fold_command id (eq_filter_to_lookup_head "department" "responses" "id_tag" "aux_tag" "idx_tag" "b") ex1_use_idx.
-  Compute ex1_idx_lookup.
-
-        Lemma eq_filter_to_lookup_head_preserve_ty : forall t tl aux_tl (Gstore : tenv),
-            type_wf t -> is_tbl_ty t = true ->
-            map.get Gstore tbl = Some (TRecord tl) ->
-            access_record tl id_tag = Success t ->
-            access_record tl aux_tag = Success (TRecord aux_tl) ->
-            access_record aux_tl idx_tag = Success (idx_ty t) ->
-            preserve_ty Gstore eq_filter_to_lookup_head.
-        Proof.
-          clear H_NoDup.
-          unfold preserve_ty, is_tbl_ty. intros.
-          repeat destruct_match_hyp; try congruence.
-          repeat destruct_subexpr. simpl.
-          case_match; auto. repeat rewrite Bool.andb_true_r in *.
-          repeat rewrite Bool.andb_true_iff in *; intuition idtac.
-          rewrite eqb_eq in *; subst.
-          repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
-          repeat (clear_refl; repeat do_injection2).
-          repeat (econstructor; eauto).
-          1:{ lazymatch goal with H: ?x = _, H': ?x = _ |- _ => rewrite H in H' end.
-              do_injection2. simpl in *; do_injection2.
-              unfold get_attr_type. lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
-              eapply not_free_immut_put_ty; eauto. }
-          all: rewrite map.get_put_same; trivial.
-        Qed.
-
-        Theorem eq_filter_to_lookup_head_preserve_sem :
-idx_wf
-  (interp_expr store env (EAccess (ELoc tbl) id_tag))
-    (interp_expr store env idx_e) ->
-End WithMap.
