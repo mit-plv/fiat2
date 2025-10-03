@@ -44,8 +44,8 @@ Section WithHole.
   Context (attr : string).
 
   Section WithVars.
-    Context (tup acc x k v y : string).
-    Context (H_NoDup : is_NoDup_opaque [tup; acc; x; k; v; y]).
+    Context (tup acc x : string).
+    Context (H_NoDup : is_NoDup_opaque [tup; acc; x]).
 
     Definition to_idx : expr :=
       let k := EAccess (EVar tup) attr in
@@ -271,7 +271,7 @@ Section WithHole.
       Lemma bag_to_list_insert_Permutation : forall (v : value) b,
           Permutation (bag_to_list (bag_insert v b)) (v :: bag_to_list b).
       Proof.
-        intros. pose proof (bag_to_list__bag_insert v0 b).
+        intros. pose proof (bag_to_list__bag_insert v b).
         repeat destruct_exists; destruct_and; subst.
         rewrite_l_to_r.
         eapply perm_trans.
@@ -632,6 +632,7 @@ Section WithHole.
         End eq_filter_to_lookup.
 
         Section cons_to_insert.
+          Context (y : string).
           Definition cons_to_insert_head (e : expr) :=
             match e with
             | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EBinop OCons e1 e2) =>
@@ -708,7 +709,7 @@ Section WithHole.
             2:{ apply fold_to_idx; eauto using incl_refl.
                 1: use_is_NoDup.
                 1: access_record_Success__is_tbl_ty. }
-            let pat := open_constr:(EFold _ _ v0 acc0 _) in
+            let pat := open_constr:(EFold _ _ v acc0 _) in
             erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
             2:{ apply fold_to_idx; eauto using incl_refl.
                 1: use_is_NoDup.
@@ -915,10 +916,11 @@ Section WithHole.
         Ltac invert_tenv_wf_with_globals :=
           lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
 
-        Lemma eq_filter_to_lookup_head_sound : forall b aux_ty aux_wf,
+        Lemma eq_filter_to_lookup_head_sound : forall b is_tbl_ty' aux_ty aux_wf,
             aux_ty_for_idx aux_ty ->
+            (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
             (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
-            expr_aug_transf_sound aux_ty aux_wf (eq_filter_to_lookup_head b).
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head b).
         Proof.
           unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
           invert_tenv_wf_with_globals.
@@ -937,18 +939,11 @@ Section WithHole.
           unfold value_wf_with_globals in *. invert_Forall; intuition auto.
         Qed.
 
-        Lemma cons_to_insert_head_sound : expr_transf_sound (locals:=locals) cons_to_insert_head.
-        Proof.
-          unfold expr_transf_sound; intros.
-          intuition idtac.
-          1: eapply cons_to_insert_head_preserve_ty; eauto.
-          1: eapply cons_to_insert_head_preserve_sem; [ | | eauto .. ]; auto.
-        Qed.
-
-        Lemma use_idx_head_sound : forall aux_ty aux_wf,
+        Lemma use_idx_head_sound : forall is_tbl_ty' aux_ty aux_wf,
             aux_ty_for_idx aux_ty ->
+            (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
             (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
-            expr_aug_transf_sound aux_ty aux_wf use_idx_head.
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf use_idx_head.
         Proof.
           unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
           invert_tenv_wf_with_globals.
@@ -967,6 +962,15 @@ Section WithHole.
           unfold value_wf_with_globals in *. invert_Forall; intuition auto.
         Qed.
       End WithTags.
+
+      Lemma cons_to_insert_head_sound : forall y,
+          expr_transf_sound (locals:=locals) (cons_to_insert_head y).
+      Proof.
+        unfold expr_transf_sound; intros.
+        intuition idtac.
+        1: eapply cons_to_insert_head_preserve_ty; eauto.
+        1: eapply cons_to_insert_head_preserve_sem; [ | | eauto .. ]; auto.
+      Qed.
     End WithMap.
   End WithVars.
 End WithHole.

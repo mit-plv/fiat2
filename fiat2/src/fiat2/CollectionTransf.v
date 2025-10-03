@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfUtils.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfUtils fiat2.TransfSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -237,6 +237,13 @@ Section WithWord.
           eapply perm_trans; [ apply list_to_bag_to_list_Permutation | apply Permuted_value_sort ]. }
     Qed.
 
+    Theorem annotate_collection_sound : expr_transf_sound (locals:=locals) annotate_collection.
+    Proof.
+      unfold expr_transf_sound; intros; intuition idtac.
+      1: apply annotate_collection_preserve_ty; auto.
+      1: eapply annotate_collection_preserve_sem; eauto.
+    Qed.
+
     Lemma bag_of_ty : forall e Gstore Genv t,
         type_of Gstore Genv e (TList t) ->
         type_of Gstore Genv (bag_of e) (TBag t).
@@ -298,6 +305,13 @@ Section WithWord.
     Proof.
       destruct 1; auto; cbn; intros.
       erewrite bag_of_sem; eauto.
+    Qed.
+
+    Theorem push_down_collection_sound : expr_transf_sound (locals:=locals) push_down_collection.
+    Proof.
+      unfold expr_transf_sound; intros; intuition idtac.
+      1: apply push_down_collection_preserve_ty; auto.
+      1: eapply push_down_collection_preserve_sem; eauto.
     Qed.
   End WithMap.
 End WithWord.

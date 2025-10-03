@@ -539,10 +539,10 @@ Section WithMap.
 
   Section WithIndex.
     Context {idx : IndexInterface2.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
-    Context (aux_ty : type -> type) (aux_wf : value -> Prop).
+    Context (is_tbl_ty : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop).
 
-    Notation expr_aug_transf_sound := (expr_aug_transf_sound aux_ty aux_wf).
-    Notation aug_transf_sound := (aug_transf_sound aux_ty aux_wf).
+    Notation expr_aug_transf_sound := (expr_aug_transf_sound is_tbl_ty aux_ty aux_wf).
+    Notation aug_transf_sound := (aug_transf_sound is_tbl_ty aux_ty aux_wf).
 
     Lemma fold_command_with_globals_sound : forall f,
         expr_aug_transf_sound f ->

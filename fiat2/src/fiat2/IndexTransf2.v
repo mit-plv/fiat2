@@ -4,15 +4,6 @@ Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Re
 Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
-Fixpoint mk_compo_idx' (e : expr) (free_vars : list string) (idxs : list (string * IndexInterface2.index)) :=
-  match idxs with
-  | nil => nil
-  | (tag, idx) :: idxs => (tag, substitute [(@hole idx, e)] free_vars (@to_idx idx)) :: mk_compo_idx' e free_vars idxs
-  end.
-
-Definition mk_compo_idx (e : expr) (free_vars : list string) (idxs : list (string * IndexInterface2.index)) :=
-  ERecord (mk_compo_idx' e free_vars idxs).
-
 Lemma map_fst_map_triple : forall A B C D (l : list (A * B * C)) (f : B -> D),
     List.map fst (List.map (fun '(a, b, _) => (a, f b)) l) = List.map fst (List.map fst l).
 Proof.
@@ -32,7 +23,7 @@ Section compo_idx.
   Notation value := (value (width:=width)).
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
-  Context {idxs : list (string * IndexInterface2.index * (value -> value -> Prop))}.
+  Context (idxs : list (string * IndexInterface2.index * (value -> value -> Prop))).
   Context {idxs_ok : Forall (fun '(_, idx, idx_wf) => ok idx idx_wf) idxs}.
   Context (H_tag_NoDup : NoDup (List.map fst (List.map fst idxs))).
   Context (hole0 : string).
@@ -47,7 +38,11 @@ Section compo_idx.
   Definition compo_idx_wf (v v' : value) : Prop :=
     match v' with
     | VRecord v' =>
-        Forall (fun '(tag, _, idx_wf) => idx_wf v (record_proj tag v')) idxs
+        Forall (fun '(tag, _, idx_wf) =>
+                  match access_record v' tag with
+                  | Success v' => idx_wf v v'
+                  | _ => False
+                  end) idxs
     | _ => False
     end.
 
@@ -828,7 +823,7 @@ Section WithMap.
         apply to_idx_preserve_ty; eauto using incl_refl with fiat2_hints.
 
       Lemma apply_idx_related_transfs_sound : forall f,
-          aug_transf_sound aux_ty aux_wf f ->
+          aug_transf_sound is_tbl_ty aux_ty aux_wf f ->
           transf_sound (locals:=locals) (apply_idx_related_transfs f).
       Proof.
         unfold apply_idx_related_transfs, transf_sound; intros.

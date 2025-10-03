@@ -268,8 +268,7 @@ Section WithMap.
   End WithGlobals.
 
   Section WithIndex.
-    Context {idx : IndexInterface2.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
-    Context (aux_ty : type -> type) (aux_wf : value -> Prop).
+    Context (is_tbl_ty : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop).
 
   Definition expr_aug_transf_sound (f : string -> expr -> expr) : Prop :=
     forall Gstore Genv tbl tbl_ty e t,
@@ -306,8 +305,17 @@ Section WithMap.
       eapply H_f in H4; eauto; intuition idtac.
       rewrite H10; auto.
     Qed.
+
+    Lemma expr_transf_sound__expr_aug_transf_sound : forall (f : expr -> expr),
+        expr_transf_sound f ->
+        expr_aug_transf_sound (fun _ => f).
+    Proof.
+      unfold expr_transf_sound, expr_aug_transf_sound; intros;
+        apply H in H5; intuition auto.
+    Qed.
   End WithIndex.
 End WithMap.
 
 #[export] Hint Resolve transf_sound_compose : transf_hints.
 #[export] Hint Resolve aug_transf_sound_compose : transf_hints.
+#[export] Hint Resolve expr_transf_sound__expr_aug_transf_sound : transf_hints.
