@@ -19,6 +19,7 @@ Fixpoint bag_of (e : expr) : expr :=
   | EFilter LikeList e x p => EFilter LikeBag (bag_of e) x p
   | EJoin LikeList e1 e2 x y p e3 => EJoin LikeBag (bag_of e1) (bag_of e2) x y p e3
   | EProj LikeList e1 x e2 => EProj LikeBag (bag_of e1) x e2
+  | EBinop OCons e1 e2 => EBinop OBagInsert (bag_of e2) e1
   | _ => EBagOf e
   end.
 
@@ -250,7 +251,8 @@ Section WithWord.
     Proof.
       induction e using expr_IH; cbn; intros.
       all: try now (econstructor; eauto).
-      all: case_match; invert_type_of; econstructor; eauto.
+      all: case_match; invert_type_of; try invert_type_of_op;
+        repeat (econstructor; eauto).
     Qed.
 
     Definition VBag_of (v : value) :=
@@ -267,6 +269,8 @@ Section WithWord.
         interp_expr store env (bag_of e) = VBag_of (interp_expr store env e).
     Proof.
       induction 1; unfold VBag_of in *; auto; intros.
+      1:{ cbn. case_match; auto; cbn. rewrite IHtype_of2; auto.
+          case_match; auto. }
       1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
           apply Permutation_list_to_bag_eq. apply Utils.Permutation_flat_map; intros;
             auto using list_to_bag_to_list_Permutation.

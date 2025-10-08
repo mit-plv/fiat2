@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2
 fiat2.CollectionTransf fiat2.DictIndexImpl2 fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf2 fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith.
@@ -72,6 +72,8 @@ Section ConcreteExample.
 
   Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
   Proof.
+    unfold ex_transf.
+    (* Use Ltac for automation instead *)
     apply transf_sound_compose; eauto 20 with transf_hints.
   Qed.
 
@@ -98,10 +100,6 @@ Section ConcreteExample.
   Definition init_Gstore : ctenv := map.put map.empty "all_feedback" TString.
   Definition init_Genv : ctenv := map.put (map.put map.empty "row1" row_ty) "row2" row_ty.
 
-  Definition ex1_1 := (Basics.compose push_down_collection_transf (Basics.compose annotate_collection_transf to_filter_transf)) ex1.
-  Compute ex1_1.
-  Compute apply_idx_related_transfs (idx:=ccompo_idx) "id_tag" "aux_tag" (fun tbl => Basics.compose (cons_transf tbl) (lookup_transf tbl)) init_Gstore init_Genv ex1_1.
-
   Unset Printing Notations.
   Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
   Compute ex1_transformed.
@@ -122,3 +120,5 @@ Section ConcreteExample.
     eauto using transf_sound__preserve_sem, ex_transf_sound.
   Qed.
 End ConcreteExample.
+
+Print Assumptions ex1_transformed_sem.

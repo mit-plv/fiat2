@@ -196,4 +196,45 @@ Section WithMap.
   Qed.
 End WithMap.
 
+Definition to_proj_head (e : expr) :=
+  match e with
+  | EFlatmap LikeList e x
+      (EBinop OCons e' (EAtom (ANil _))) =>
+      EProj LikeList e x e'
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma to_proj_head_preserve_ty : forall Gstore, preserve_ty Gstore to_proj_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    repeat invert_type_of_clear.
+    invert_type_of_op.
+    econstructor; eauto.
+  Qed.
+
+  Lemma to_proj_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store to_proj_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl.
+    case_match; auto.
+  Qed.
+
+  Lemma to_proj_head_sound : expr_transf_sound (locals:=locals) to_proj_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply to_proj_head_preserve_ty; auto.
+    eapply to_proj_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 #[export] Hint Resolve to_filter_head_sound : transf_hints.
+#[export] Hint Resolve to_proj_head_sound : transf_hints.

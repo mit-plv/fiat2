@@ -426,7 +426,7 @@ Section WithHole.
 
           Definition eq_filter_to_lookup_head (e : expr) :=
             (* filter (tbl[id_tag]) (fun row => row.attr == e') -->
-           match (lookup idx e') with none => nil | some p => fst p ++ [snd p] *)
+           match (lookup idx e') with none => emptybag | some b => b *)
             match e with
             | EFilter LikeBag
                 (EBagOf (EAccess (ELoc tbl0) (id_tag0)))
