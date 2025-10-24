@@ -4,6 +4,11 @@ Require Import coqutil.Word.Interface coqutil.Map.Interface coqutil.Datatypes.Re
 
 Local Open Scope Z_scope.
 
+Fixpoint flat_map2 {A B C : Type} (f : A -> B -> list C) (l1 : list A) (l2 : list B) : list C :=
+  match l1, l2 with
+  | nil, _ | _, nil => nil
+  | x1 :: l1, x2 :: l2 => f x1 x2 ++ flat_map2 f l1 l2
+  end.
 
 Section WithWord.
   Context {width: Z} {word: word.word width}.
@@ -258,6 +263,19 @@ Section WithWord.
                                                         end) (bag_to_list l1)))
               | _ => VUnit
               end
+          end
+      | EFlatmap2 e1 e2 x1 x2 e3 =>
+          match interp_expr store env e1 with
+          | VList l1 =>
+              match interp_expr store env e2 with
+              | VList l2 =>
+                  VList (flat_map2 (fun v1 v2 => match interp_expr store (map.put (map.put env x1 v1) x2 v2) e3 with
+                                           | VList l3 => l3
+                                           | _ => nil
+                                                 end) l1 l2)
+              | _ => VUnit
+              end
+          | _ => VUnit
           end
       | EFold e1 e2 x y e3 =>
           match interp_expr store env e1 with

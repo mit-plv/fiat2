@@ -62,6 +62,7 @@ Section fold_expr.
       | EIf e1 e2 e3 => EIf (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | ELet e1 x e2 => ELet (fold_expr e1) x (fold_expr e2)
       | EFlatmap tag e1 x e2 => EFlatmap tag (fold_expr e1) x (fold_expr e2)
+      | EFlatmap2 e1 e2 x1 x2 e3 => EFlatmap2 (fold_expr e1) (fold_expr e2) x1 x2 (fold_expr e3)
       | EFold e1 e2 x y e3 => EFold (fold_expr e1) (fold_expr e2) x y (fold_expr e3)
       | EACFold ag e => EACFold ag (fold_expr e)
       | ERecord l => ERecord (List.map (fun '(s, e) => (s, fold_expr e)) l)
@@ -141,6 +142,16 @@ Section WithMap.
         apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         apply locals_wf_step; auto.
         type_of_bag_entry. }
+    1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty;
+        repeat apply tenv_wf_step; eauto with fiat2_hints.
+        apply_type_sound e1; apply_type_sound e2.
+        simpl; repeat (apply_fold_expr_preserve_sem_IH; case_match; auto).
+        f_equal. apply In_flat_map2_ext; intros.
+        repeat (invert_type_of_value_clear; apply_Forall_In).
+        apply_fold_expr_preserve_sem_IH;
+          try apply tenv_wf_step; try apply locals_wf_step;
+          eauto with fiat2_hints. }
     1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
         repeat apply tenv_wf_step; eauto with fiat2_hints.

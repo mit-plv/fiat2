@@ -229,6 +229,10 @@ Section WithMap.
   | TyEFlatmap_Bag e1 t1 x e2 t2 : type_of Gstore Genv e1 (TBag t1) ->
                                type_of Gstore (map.put Genv x t1) e2 (TBag t2) ->
                                type_of Gstore Genv (EFlatmap LikeBag e1 x e2) (TBag t2)
+  | TyEFlatmap2 e1 t1 e2 t2 x1 x2 e3 t3 : type_of Gstore Genv e1 (TList t1) ->
+                                 type_of Gstore Genv e2 (TList t2) ->
+                                 type_of Gstore (map.put (map.put Genv x1 t1) x2 t2) e3 (TList t3) ->
+                                 type_of Gstore Genv (EFlatmap2 e1 e2 x1 x2 e3) (TList t3)
   | TyEFold e1 t1 e2 t2 x y e3 : type_of Gstore Genv e1 (TList t1) ->
                                  type_of Gstore Genv e2 t2 ->
                                  type_of Gstore (map.put (map.put Genv x t1) y t2) e3 t2 ->
@@ -331,6 +335,12 @@ Section WithMap.
     Hypothesis (f_flatmap_bag : forall Genv e1 t1 x e2 t2, type_of Gstore Genv e1 (TBag t1) -> P Genv e1 (TBag t1) ->
                                                        type_of Gstore (map.put Genv x t1) e2 (TBag t2) -> P (map.put Genv x t1) e2 (TBag t2) ->
                                                        P Genv (EFlatmap LikeBag e1 x e2) (TBag t2)).
+    Hypothesis (f_flatmap2 : forall Genv e1 t1 e2 t2 x1 x2 e3 t3,
+                   type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
+                   type_of Gstore Genv e2 (TList t2) -> P Genv e2 (TList t2) ->
+                   type_of Gstore (map.put (map.put Genv x1 t1) x2 t2) e3 (TList t3) ->
+                   P (map.put (map.put Genv x1 t1) x2 t2) e3 (TList t3) ->
+                   P Genv (EFlatmap2 e1 e2 x1 x2 e3) (TList t3)).
     Hypothesis (f_fold : forall Genv e1 t1 e2 t2 x y e3,
                    type_of Gstore Genv e1 (TList t1) -> P Genv e1 (TList t1) ->
                    type_of Gstore Genv e2 t2 -> P Genv e2 t2 ->
@@ -416,6 +426,8 @@ Section WithMap.
       | TyELet _ _ e1 t1 x e2 t2 He1 He2 => f_let Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 t1 He1) He2 (type_of_IH (map.put Genv x t1) e2 t2 He2)
       | TyEFlatmap_List _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap_list Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TList t2) He2)
       | TyEFlatmap_Bag _ _ e1 t1 x e2 t2 He1 He2 => f_flatmap_bag Genv e1 t1 x e2 t2 He1 (type_of_IH Genv e1 (TBag t1) He1) He2 (type_of_IH (map.put Genv x t1) e2 (TBag t2) He2)
+      | TyEFlatmap2 _ _ e1 t1 e2 t2 x1 x2 e3 t3 He1 He2 He3 =>
+          f_flatmap2 Genv e1 t1 e2 t2 x1 x2 e3 t3 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 (TList t2) He2) He3 (type_of_IH (map.put (map.put Genv x1 t1) x2 t2) e3 (TList t3) He3)
       | TyEFold _ _ e1 t1 e2 t2 x y e3 He1 He2 He3 => f_fold Genv e1 t1 e2 t2 x y e3 He1 (type_of_IH Genv e1 (TList t1) He1) He2 (type_of_IH Genv e2 t2 He2) He3 (type_of_IH (map.put (map.put Genv x t1) y t2) e3 t2 He3)
       | TyEACFold _ _ ag e t1 t2 Hag He => f_acfold Genv ag e t1 t2 Hag He (type_of_IH Genv e (TBag t1) He)
       | TyERecord _ _ l tl tl' Hname Hfield Hpermu Hnodup Hsort => f_record Genv l tl tl' Hname Hfield (record_type_of_IH type_of_IH Genv (List.map snd l) (List.map snd tl) Hfield) Hpermu Hnodup Hsort
@@ -746,6 +758,23 @@ Section WithMap.
             | _ => error:(e "is a bag but expected" expected)
             end
         end
+    | EFlatmap2 e1 e2 x1 x2 e3 =>
+        match expected with
+        | TList t3 =>
+            '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+            '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
+            match t1 with
+            | TList t1 =>
+                match t2 with
+                | TList t2 =>
+                    e3' <- analyze_expr Gstore (map.put (map.put Genv x1 t1) x2 t2) (TList t3) e3 ;;
+                    Success (EFlatmap2 e1' e2' x1 x2 e3')
+                | t2 => error:(e2 "has type" t2 "but expected a list")
+                end
+            | t1 => error:(e1 "has type" t1 "but expected a list")
+            end
+        | _ => error:(e "is a list but expected" expected)
+        end
     | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                             match t1 with
                             | TList t1 => e2' <- analyze_expr Gstore Genv expected e2 ;;
@@ -1011,6 +1040,22 @@ Section WithMap.
                                end
                  | t1 => error:(e1 "has type" t1 "but expected a bag")
                  end
+             end
+         | EFlatmap2 e1 e2 x1 x2 e3 =>
+             '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+             '(t2, e2') <- synthesize_expr Gstore Genv e2 ;;
+             match t1 with
+             | TList t1 =>
+                 match t2 with
+                 | TList t2 =>
+                     '(t3, e3') <- synthesize_expr Gstore (map.put (map.put Genv x1 t1) x2 t2) e3 ;;
+                     match t3 with
+                     | TList t3 => Success (TList t3, EFlatmap2 e1' e2' x1 x2 e3')
+                     | t3 => error:(e3 "has type" t3 "but expected a list")
+                     end
+                 | t2 => error:(e2 "has type" t2 "but expected a list")
+                 end
+             | t1 => error:(e1 "has type" t1 "but expected a list")
              end
          | EFold e1 e2 x y e3 => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
                                  match t1 with

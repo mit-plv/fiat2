@@ -131,6 +131,9 @@ Section WithWord.
       | EIf e1 e2 e3 => option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | ELet e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
       | EFlatmap _ e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
+      | EFlatmap2 e1 e2 x1 x2 e3 => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2)
+                                    then option_append (cols x e1) (cols x e2)
+                                    else option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | EFold e1 e2 x1 x2 e3 => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | EACFold _ e => cols x e
       | ERecord l => fold_right (fun val acc => option_append (cols x (snd val)) acc) (Some nil) l
@@ -302,6 +305,30 @@ Section WithWord.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
           * eapply H1; eauto.
           * eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (Sumbool.sumbool_or (x = x1) (x <> x1) (x = x2) (x <> x2) (string_dec x x1) (string_dec x x2)) as [b1|b2].
+        + repeat destruct_match_hyp; try congruence.
+          do_injection. unfold incl in *. intros.
+          lazymatch goal with
+            H: In _ (dedup _ _) |- _ =>
+              apply dedup_In, in_app_or in H
+          end; intuition idtac; eauto.
+        + repeat destruct_match_hyp; try congruence; intuition idtac.
+          do_injection. unfold incl in *.
+          intros.
+          lazymatch goal with
+            H: In _ (dedup _ _) |- _ =>
+              apply dedup_In, in_app_or in H
+          end; intuition idtac.
+          * eapply IHtype_of3; eauto. rewrite !map.get_put_diff; try assumption.
+          * clear_refl; do_injection.
+            lazymatch goal with
+              H: In _ (dedup _ _) |- _ =>
+                apply dedup_In, in_app_or in H
+            end; intuition idtac;
+            lazymatch goal with
+            | H: forall _, Some ?l = _ -> _, H': In ?a ?l |- In ?a _ =>
+       eapply H, H'
+     end; auto.
       - destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1 | b2].
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H4 as H4. rewrite <- H4.
           unfold incl in *. intros. apply dedup_In in H5. apply in_app_or in H5. destruct H5; eauto.
@@ -396,7 +423,7 @@ Section WithWord.
          and the relation holds between a a' and the expression's columns
          (columns of expression incl in a', a' included in a), then can replace a with a' when interpreting e *)
       induction e using expr_IH.
-      13: {
+      14: {
           intros columns ? ? env ? ? HC HR. simpl in *. destruct e eqn:E; try now (erewrite IHe; eauto). simpl. destruct (string_dec x0 x).
           + subst. unfold get_local. rewrite !map.get_put_same. unfold relation in HR. destruct a,a'; intuition. inversion H. subst.
             inversion H0. subst. clear H6 H9. injection HC as HC. rewrite <- HC in H2. simpl in *. unfold incl in H2. simpl in *.
@@ -460,6 +487,28 @@ Section WithWord.
           * repeat destruct_match_goal; try reflexivity; [ do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
             rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption; erewrite IHe2; eauto; eapply rel_step; eauto.
           * eapply rel_step; eauto.
+      - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
+        destruct_match_hyp.
+        + repeat destruct_match_hyp; try congruence. injection HC as HC. apply dedup_incl in HC; intuition idtac.
+          subst. erewrite IHe1, IHe2; eauto using rel_step.
+          repeat case_match; auto. f_equal. apply In_flat_map2_ext; intros.
+          unfold Sumbool.sumbool_or in *. destruct_match_hyp.
+          * subst. rewrite !Properties.map.put_put_same; reflexivity.
+          * destruct_match_hyp; try congruence.
+            rewrite !Properties.map.put_put_diff with (k1:=x) (k2:=x1); auto.
+            subst. rewrite !Properties.map.put_put_same; reflexivity.
+        + destruct_match_hyp; try congruence.
+          dcols e1 x. dcols e2 x.
+          lazymatch goal with
+            H: Some (dedup _ _) = Some _ |- _ =>
+              injection H as H; apply dedup_incl in H end; intuition idtac.
+          lazymatch goal with
+            H: incl (dedup _ _) _ |- _ => apply incl_dedup in H end; intuition idtac.
+          subst. erewrite IHe1, IHe2; eauto using rel_step.
+          repeat case_match; auto. f_equal. apply In_flat_map2_ext; intros.
+          unfold Sumbool.sumbool_or in *. repeat destruct_match_hyp; try congruence.
+          rewrite !Properties.map.put_put_diff with (k1:=x); auto.
+          erewrite IHe3; eauto using rel_step.
       - cbn; intros. erewrite IHe; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
         destruct (Sumbool.sumbool_or (x=x0)(x<>x0)(x=y)(x<>y)
@@ -1330,18 +1379,18 @@ Import Permutation.
       - rewrite Properties.map.put_put_diff; auto. rewrite <- not_free_immut_put_sem with (x:=x2)(e:=r); auto.
     Qed.
 
-    Theorem efilter_efilter: forall (store env: locals) (Gstore Genv: tenv) (tb p p2: expr) (x y: string) (f1: list (string*type)),
+    Theorem efilter_efilter: forall (store env: locals) (Gstore Genv: tenv) (tb p p2: expr) (x y: string) t,
         tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
-        type_of Gstore (map.put Genv x (TRecord f1)) p TBool ->
-        type_of Gstore (map.put Genv y (TRecord f1)) p2 TBool ->
-        type_of Gstore Genv tb (TList (TRecord f1)) ->
+        type_of Gstore (map.put Genv x t) p TBool ->
+        type_of Gstore (map.put Genv y t) p2 TBool ->
+        type_of Gstore Genv tb (TList t) ->
         free_immut_in x p2 = false ->
         let pnew := EBinop OAnd p (ELet (EVar x) y p2) in
         interp_expr store env (EFilter LikeList (EFilter LikeList tb y p2) x p) =
         interp_expr store env (EFilter LikeList tb x pnew).
     Proof.
-      intros store env Gstore Genv tb p p2 x y f1 WF1 WF2 L1 L2 TP TP2 T H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
-      assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T; auto. inversion T; auto. }
+      intros store env Gstore Genv tb p p2 x y t WF1 WF2 L1 L2 TP TP2 T H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
+      assert (TW1: type_wf t). 1: { apply type_of__type_wf in T; auto. inversion T; auto. }
       rewrite filter_filter. apply In_filter_ext. intros a LA. unfold get_local. rewrite map.get_put_same.
       eapply type_sound in T; eauto. inversion T. rewrite H1 in H0. injection H0 as H0. subst l0 t. apply Forall_In with (x:=a) in H3; auto.
       eapply type_sound with (env:=map.put env x a) in TP; eauto.

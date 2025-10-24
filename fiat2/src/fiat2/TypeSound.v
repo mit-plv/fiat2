@@ -63,9 +63,11 @@ Section WithWord.
 
     Ltac apply_type_of__type_wf_IH_hyp :=
       lazymatch goal with
-        IH: ?c -> _, H: ?c |- _ =>
+      | IH: ?c -> _, H: ?c |- _ =>
           let H' := fresh "H'" in
           apply IH in H as H'; clear IH
+      | H: _ -> type_wf ?x |- type_wf ?x =>
+          eapply H
       end.
 
     Lemma type_of__type_wf : forall Gstore Genv e t,
@@ -81,6 +83,8 @@ Section WithWord.
                 apply_type_of__type_wf_IH_hyp; invert_type_wf; auto).
       - inversion H; repeat constructor; auto; subst;
           repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
+      - repeat apply_type_of__type_wf_IH_hyp; repeat apply tenv_wf_step;
+          auto; invert_type_wf; auto.
       - constructor; auto.
         + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
         + apply Permutation_map with (f := snd), Permutation_sym in H2.
@@ -410,6 +414,8 @@ Section WithWord.
         H: synthesize_expr _ _ ?e = Success (?t, _) |- context[?t] => eapply IH in H; eauto
     | IH: (forall _ _ _ _, _ -> _ -> _ /\ (analyze_expr _ _ _ ?e = _ -> _)),
         H: analyze_expr _ _ ?t ?e = Success _ |- context[?t] => eapply IH in H; eauto
+    | IH: (forall _ _ _ _, _ -> _ -> (synthesize_expr _ _ ?e = _ -> _) /\ _),
+        H: synthesize_expr _ _ ?e = Success (TList ?t, _) |- context[?t] => eapply IH in H
     end.
 
 (*  Set Ltac Profiling. *)
@@ -450,6 +456,11 @@ Section WithWord.
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto;
                   try apply tenv_wf_step; auto).
       - (* EFlatmap *)
+        split; intros; unfold_fold_typechecker; repeat destruct_match;
+          repeat (try apply_typechecker_IH; try invert_result; try econstructor; eauto;
+                  try apply_type_of__type_wf; auto; try invert_type_wf; auto;
+                  try apply tenv_wf_step; auto).
+      - (* EFlatmap2 *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try econstructor; eauto;
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto;
@@ -1099,6 +1110,20 @@ Section WithWord.
     eapply incl_Forall; eauto using incl_filter.
   Qed.
 
+  Ltac clear_expr_value :=
+    lazymatch goal with
+      H: VList _ = _ |- _ =>
+        clear H
+    end.
+
+  Ltac invert_type_of_value_clear :=
+    lazymatch goal with
+    | H: type_of_value (_ _) _ |- _ =>
+        inversion H; subst; clear H
+    | H: type_of_value _ (_ _) |- _ =>
+        inversion H; subst; clear H
+    end.
+
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1188,6 +1213,19 @@ Section WithWord.
         repeat rewrite_sym_asm.
         Forall_fst__Forall_bag_to_list.
         apply_Forall_In.
+      - (* TyEFlatmap2 *)
+        repeat apply_type_sound_IH;
+          repeat clear_expr_value. constructor.
+        generalize dependent l. induction l0; auto.
+        destruct l; auto.
+        intros. repeat invert_Forall. cbn.
+        apply IHl0 in H7; auto.
+        apply Forall_app; split; auto.
+        assert (type_of_value (interp_expr store (map.put (map.put env x1 a) x2 v) e3) (TList t3)).
+        { apply_type_sound_IH; auto; try apply tenv_wf_step;
+            try apply_type_of__type_wf; try apply locals_wf_step;
+            try invert_type_wf; auto. }
+        invert_type_of_value_clear; auto.
       - (* TyEFold *)
         repeat apply_type_sound_IH;
           try (match goal with

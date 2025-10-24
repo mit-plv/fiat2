@@ -364,6 +364,16 @@ Section WithMap.
               H: In _ _ |- _ => apply bag_to_list_incl in H end.
             apply_Forall_In.
             use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ repeat
+              (use_transf_to_idx_preserve_sem''_IH; eauto;
+               case_match; auto; f_equal;
+               lazymatch goal with
+                 _: interp_expr _ _ ?e = _ |- _ =>
+                   apply_type_sound e
+               end; eauto; rewrite_l_to_r;
+               invert_type_of_value_clear).
+            apply In_flat_map2_ext; intros. repeat apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; try apply tenv_wf_step; eauto with fiat2_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             case_match; auto.
             revert IHtype_of3;

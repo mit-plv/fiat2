@@ -59,6 +59,11 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
       let x' := fresh_var x free_vars in
       EFlatmap tag (substitute sub free_vars e1) x'
         (substitute ((x, EVar x') :: sub) (x' :: free_vars) e2)
+  | EFlatmap2 e1 e2 x1 x2 e3 =>
+      let x1' := fresh_var x1 free_vars in
+      let x2' := fresh_var x2 (x1' :: free_vars) in
+      EFlatmap2 (substitute sub free_vars e1) (substitute sub free_vars e2)
+                x1' x2' (substitute ((x2, EVar x2') :: (x1, EVar x1') :: sub) (x2' :: x1' :: free_vars) e3)
   | EFold e1 e2 v acc e3 =>
       let v' := fresh_var v free_vars in
       let acc' := fresh_var acc (v' :: free_vars) in
@@ -336,7 +341,6 @@ Section WithMap.
               [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
                 auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
               | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-
       1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
           apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
           invert_type_of_value. do 2 f_equal.
@@ -353,6 +357,29 @@ Section WithMap.
               [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
                 auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
               | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
+      1:{ repeat
+            (use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto;
+             lazymatch goal with
+               |- _ = match interp_expr _ _ ?e with _ => _ end =>
+                 apply_type_sound e
+             end; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
+             invert_type_of_value).
+          f_equal. apply In_flat_map2_ext; intros; repeat apply_Forall_In.
+          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
+          8: eapply locals_wf_step; eauto.
+          all: repeat apply locals_wf_step; eauto with fiat2_hints.
+          all: try apply tenv_wf_step; eauto with fiat2_hints.
+          all: [> | repeat (simpl; intros; case_match_string_eqb;
+                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
+               | repeat apply_incl_lemmas ].
+          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; try apply tenv_wf_step;
+            eauto using locals_equiv_refl with fiat2_hints.
+          1: repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto.
+          repeat apply locals_equiv_step.
+          2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
+          eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
+          repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
+          all: auto using locals_equiv_refl, incl_tl. }
       1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
           apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
           invert_type_of_value.
@@ -583,7 +610,9 @@ Fixpoint free_immuts_in (e : expr) : list string :=
   | EIf e1 e2 e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
   | ELet e1 x e2 | EFlatmap _ e1 x e2 =>
-      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
+                     free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
+  | EFlatmap2 e1 e2 x1 x2 e3 =>
+      free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x1 (remove string_dec x2 (free_immuts_in e3))
   | EFold e1 e2 v acc e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec v (remove string_dec acc (free_immuts_in e3))
   | EACFold _ e => free_immuts_in e
