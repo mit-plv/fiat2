@@ -16,12 +16,6 @@ Section ConcreteExample.
   Instance clocals : map.map string value := SortedListString.map _.
   Instance clocals_ok : map.ok clocals := SortedListString.ok _.
 
-  Instance caenv : map.map string collection_tag := SortedListString.map _.
-  Instance caenv_ok : map.ok caenv := SortedListString.ok _.
-
-  Instance cRenv : map.map string (value -> value -> Prop) := SortedListString.map _.
-  Instance cRenv_ok : map.ok cRenv := SortedListString.ok _.
-
   Definition attr := "department".
 
   Notation idx_wf := (idx_wf "hole" attr "tup" "acc" "x").

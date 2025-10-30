@@ -16,12 +16,6 @@ Section ConcreteExample.
   Instance clocals : map.map string value := SortedListString.map _.
   Instance clocals_ok : map.ok clocals := SortedListString.ok _.
 
-  Instance caenv : map.map string collection_tag := SortedListString.map _.
-  Instance caenv_ok : map.ok caenv := SortedListString.ok _.
-
-  Instance cRenv : map.map string (value -> value -> Prop) := SortedListString.map _.
-  Instance cRenv_ok : map.ok cRenv := SortedListString.ok _.
-
   Definition sum_agg_attr := "salary".
 
   Notation sum_agg_wf := (SumAgg.idx_wf "hole" sum_agg_attr "x").
@@ -48,16 +42,16 @@ Section ConcreteExample.
   Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr "tup" "acc" "x" "y").
   Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" "dict_idx_tag" tbl).
 
+  Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply SumAgg.to_idx_ty : transf_hints.
+  Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply DictIndexImpl2.to_idx_ty : transf_hints.
+  Hint Extern 5 (type_wf (IndexInterface2.idx_ty _)) => apply DictIndexImpl2.idx_ty_wf : transf_hints.
+
   Notation idxs := [("sum_agg_tag", csum_agg, sum_agg_wf); ("dict_idx_tag", cdict_idx, dict_idx_wf)].
   Instance ccompo_idx : IndexInterface2.index := compo_idx idxs "hole" (word:=word).
   Instance ccompo_idx_ok : IndexInterface2.ok ccompo_idx (compo_idx_wf idxs).
-  apply compo_idx_ok; repeat constructor; auto; intros.
-  1: apply SumAgg.to_idx_ty; auto with transf_hints.
-  1: apply DictIndexImpl2.idx_ty_wf; auto.
-  1: apply DictIndexImpl2.to_idx_ty; auto with transf_hints.
-  1: cbn; rewrite <- eqb_eq; intuition idtac; discriminate.
+  apply compo_idx_ok; repeat constructor; intros; auto with transf_hints.
+  cbn; rewrite <- eqb_eq; intuition idtac; discriminate.
   Qed.
-  (* ??? Automation *)
 
   Definition ex_transf (Gstore Genv : ctenv) :=
     Basics.compose (apply_idx_related_transfs (idx:=ccompo_idx) "id_tag" "aux_tag"
@@ -147,3 +141,5 @@ Section ConcreteExample.
   Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
   Compute ex1_transformed.
 End ConcreteExample.
+
+Print Assumptions ex1_transformed.
