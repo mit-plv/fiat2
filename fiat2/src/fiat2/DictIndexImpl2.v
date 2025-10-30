@@ -887,7 +887,7 @@ Section WithHole.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
             invert_type_of_value_clear.
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2).
-            repeat destruct_subexpr. unfold eq_filter_to_lookup_head.
+            repeat destruct_subexpr.
             cbn [use_idx_head]; repeat (case_match; auto; []). cbn [all_eqb all_eqb' all_neqb all_neqb'] in * |-.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
             rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.

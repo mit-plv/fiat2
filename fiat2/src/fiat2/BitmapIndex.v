@@ -444,14 +444,13 @@ Section WithTags.
     Notation value := (value (width:=width)).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
+    Notation eto_pk_idx tup0 tup1 acc0 acc1 acc2 acc3 e :=
+      (EFold e (ERecord [("0", EAtom (AInt 0)); ("1", EAtom (AEmptyDict None))])
+         tup0 acc0
+         (ERecord [("0", EBinop OPlus (EAccess (EVar acc1) "0") (EAtom (AInt 1))); ("1", ETernop OInsert (EAccess (EVar acc2) "1") (EAccess (EVar acc3) "0") (EVar tup1))])).
 
     Section cons_to_pk_idx_update.
       Context (y : string).
-
-      Notation eto_pk_idx tup0 tup1 acc0 acc1 acc2 acc3 e :=
-        (EFold e (ERecord [("0", EAtom (AInt 0)); ("1", EAtom (AEmptyDict None))])
-           tup0 acc0
-           (ERecord [("0", EBinop OPlus (EAccess (EVar acc1) "0") (EAtom (AInt 1))); ("1", ETernop OInsert (EAccess (EVar acc2) "1") (EAccess (EVar acc3) "0") (EVar tup1))])).
 
       Definition cons_to_pk_idx_update_head (e : expr) :=
         match e with
@@ -559,6 +558,164 @@ Section WithTags.
       Qed.
     End cons_to_pk_idx_update.
 
+    Definition aux_ty_for_idx idx_tag idx_ty (aux_ty : type -> type) : Prop :=
+      forall t,
+        match aux_ty t with
+        | TRecord tl =>
+            access_record tl id_tag = Success t /\
+              match access_record tl aux_tag with
+              | Success (TRecord aux_tl) =>
+                  access_record aux_tl idx_tag = Success (idx_ty t)
+              | _ => False
+              end
+        | _ => False
+        end.
+
+    Definition aux_wf_for_idx idx_tag idx_wf (v : value) : Prop :=
+      match v with
+      | VRecord rv =>
+          match access_record rv id_tag with
+          | Success v_id =>
+              match access_record rv aux_tag with
+              | Success (VRecord rv_aux) =>
+                  match access_record rv_aux idx_tag with
+                  | Success v_idx =>
+                      idx_wf v_id v_idx
+                  | _ => False
+                  end
+              | _ => False
+              end
+          | _ => False
+          end
+      | _ => False
+      end.
+
+    (* ??? TODO: move *)
+    Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
+        Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
+        access_record l x = Success a ->
+        access_record l' x = Success a' ->
+        P a a'.
+    Proof.
+      induction 1; cbn; try discriminate; auto.
+      repeat case_match; cbn in *; intuition idtac;
+        repeat (try clear_refl; do_injection); subst; auto;
+        congruence.
+    Qed.
+
+    Ltac use_Forall2_access_record tag :=
+      lazymatch goal with
+        H: Forall2 _ ?l ?tl, H1: access_record ?l tag = _,
+            H2: access_record ?tl tag = _ |- _ =>
+          pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H H1 H2)
+      end.
+
+    Section use_pk_idx.
+      Context (tbl : string).
+      Definition use_pk_idx_head (e : expr) :=
+        match e with
+        | eto_pk_idx tup0 tup1 acc0 acc1 acc2 acc3 (EAccess (ELoc tbl0) id_tag0) =>
+            if (all_eqb [(tup0, [tup1]); (acc0, [acc1; acc2; acc3]); (tbl, [tbl0]); (id_tag, [id_tag0])] && (negb (String.eqb tup0 acc0)))%bool
+            then EAccess (EAccess (ELoc tbl) aux_tag) pk_idx_tag
+            else e
+        | _ => e
+        end.
+
+      Lemma use_pk_idx_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+          type_wf t -> is_pk_tbl_ty t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord aux_tl) ->
+          access_record aux_tl pk_idx_tag = Success (pk_idx_ty t) ->
+          preserve_ty Gstore use_pk_idx_head.
+      Proof.
+        unfold preserve_ty, is_pk_tbl_ty. intros.
+        repeat destruct_match_hyp; try congruence.
+        repeat destruct_subexpr. simpl.
+        repeat (case_match; auto; []). repeat rewrite Bool.andb_true_r in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+        repeat (clear_refl; repeat do_injection2).
+        repeat (rewrite_l_to_r; do_injection2).
+        repeat lazymatch goal with
+                 H: type_of_atom _ _ |- _ =>
+                   inversion H; subst; clear H
+               end.
+        repeat (econstructor; eauto).
+        lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
+        f_equal; unfold pk_idx_ty; f_equal.
+        repeat (destruct tl0; cbn in *; try discriminate).
+        repeat (destruct tl1; cbn in *; try discriminate).
+        destruct p, p0, p1, p2; cbn in *. repeat (invert_cons; clear_refl).
+        lazymatch goal with
+          H: Permutation [_; _] _ |- _ =>
+            apply Permutation_length_2_inv in H end; destruct_or; subst.
+        2:{ invert_SSorted. invert_Forall. discriminate. }
+         lazymatch goal with
+          H: Permutation [_; _] _ |- _ =>
+            apply Permutation_length_2 in H end; intuition idtac; try discriminate.
+        repeat invert_pair. repeat invert_Forall2.
+        repeat invert_type_of_clear; invert_type_of_op_clear.
+        repeat rewrite_map_get_put_hyp. repeat (do_injection; clear_refl).
+        cbn in *. repeat (clear_refl; do_injection). invert_type_of_op_clear.
+        reflexivity.
+      Qed.
+
+      Lemma use_pk_idx_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+          type_wf t -> is_pk_tbl_ty t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord aux_tl) ->
+          access_record aux_tl pk_idx_tag = Success (pk_idx_ty t) ->
+          match map.get store tbl with
+          | Some v => aux_wf_for_idx pk_idx_tag pk_idx_wf v
+          | _ => False
+          end ->
+              preserve_sem Gstore store use_pk_idx_head.
+      Proof.
+        unfold preserve_sem, aux_wf_for_idx, pk_idx_wf; intros.
+            unfold is_pk_tbl_ty, pk_idx_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            repeat destruct_subexpr.
+            cbn [use_pk_idx_head]; repeat (case_match; auto; []). cbn [all_eqb all_eqb' all_neqb all_neqb'] in * |-.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
+            repeat clear_refl.
+            rewrite fold_to_pk_idx; auto.
+            cbn [interp_expr].
+            unfold get_local, record_proj; repeat rewrite_l_to_r.
+            rewrite fiat2_gallina_to_pk_idx; auto.
+      Qed.
+    End use_pk_idx.
+
+    Ltac invert_tenv_wf_with_globals :=
+      lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
+
+    Lemma use_pk_idx_head_sound : forall is_tbl_ty' aux_ty aux_wf,
+        aux_ty_for_idx pk_idx_tag pk_idx_ty aux_ty ->
+        (forall t, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
+        (forall (v : value), aux_wf v -> aux_wf_for_idx pk_idx_tag pk_idx_wf v) ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf use_pk_idx_head.
+    Proof.
+      unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+      invert_tenv_wf_with_globals.
+      specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+      1: eapply use_pk_idx_head_preserve_ty; eauto.
+      1: eapply use_pk_idx_head_preserve_sem; eauto.
+      lazymatch goal with
+        H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+          apply H in H'
+      end.
+      destruct_match_hyp; intuition idtac.
+      lazymatch goal with
+        H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+          apply H in H'
+      end.
+      unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+    Qed.
+
     Section cons_to_bitmap_update.
       Definition cons_to_bitmap_update_head (e : expr) :=
         match e with
@@ -616,6 +773,95 @@ Section WithTags.
         1: eapply cons_to_bitmap_update_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
     End cons_to_bitmap_update.
+
+    Section use_bitmap.
+      Context (tbl : string).
+      Definition use_bitmap_head (e : expr) :=
+        match e with
+        | EFlatmap LikeList (EAccess (ELoc tbl0) id_tag0) tup0
+            (EBinop OCons
+               (EBinop OEq (EAccess (EVar tup1) attr0) (EAtom (AString str0)))
+               (EAtom (ANil (Some TBool))))  =>
+            if all_eqb [(tup0, [tup1]); (attr, [attr0]); (str, [str0]); (tbl, [tbl0]); (id_tag, [id_tag0])]
+            then EAccess (EAccess (ELoc tbl) aux_tag) bm_tag
+            else e
+        | _ => e
+        end.
+
+       Lemma use_bitmap_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+          type_wf t -> is_bitmap_tbl_ty t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord aux_tl) ->
+          access_record aux_tl bm_tag = Success (bitmap_ty t) ->
+          preserve_ty Gstore use_bitmap_head.
+      Proof.
+        unfold preserve_ty, is_bitmap_tbl_ty. intros.
+        repeat destruct_match_hyp; try congruence.
+        repeat destruct_subexpr. simpl.
+        repeat (case_match; auto; []). repeat rewrite Bool.andb_true_r in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+        repeat (clear_refl; repeat do_injection2).
+        repeat (rewrite_l_to_r; do_injection2).
+        repeat lazymatch goal with
+                 H: type_of_atom _ _ |- _ =>
+                   inversion H; subst; clear H
+               end.
+        repeat (econstructor; eauto).
+      Qed.
+
+      Lemma use_bitmap_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+          type_wf t -> is_bitmap_tbl_ty t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord aux_tl) ->
+          access_record aux_tl bm_tag = Success (bitmap_ty t) ->
+          match map.get store tbl with
+          | Some v => aux_wf_for_idx bm_tag bitmap_wf v
+          | _ => False
+          end ->
+              preserve_sem Gstore store use_bitmap_head.
+      Proof.
+        unfold preserve_sem, aux_wf_for_idx, bitmap_wf; intros.
+            unfold is_bitmap_tbl_ty, bitmap_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            repeat destruct_subexpr.
+            cbn [use_bitmap_head]; repeat (case_match; auto; []). cbn [all_eqb all_eqb' all_neqb all_neqb'] in * |-.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite eqb_eq in *; subst.
+            repeat clear_refl.
+            repeat (cbn; unfold get_local, record_proj; repeat rewrite_l_to_r).
+            rewrite_map_get_put_goal. case_match; auto.
+            f_equal. apply In_flat_map_ext; intros. repeat f_equal.
+            repeat rewrite_map_get_put_goal. reflexivity.
+      Qed.
+    End use_bitmap.
+
+    Lemma use_bitmap_head_sound : forall is_tbl_ty' aux_ty aux_wf,
+        aux_ty_for_idx bm_tag bitmap_ty aux_ty ->
+        (forall t, is_tbl_ty' t = true -> is_bitmap_tbl_ty t = true) ->
+        (forall (v : value), aux_wf v -> aux_wf_for_idx bm_tag bitmap_wf v) ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf use_bitmap_head.
+    Proof.
+      unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+      invert_tenv_wf_with_globals.
+      specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+      1: eapply use_bitmap_head_preserve_ty; eauto.
+      1: eapply use_bitmap_head_preserve_sem; eauto.
+      lazymatch goal with
+        H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+          apply H in H'
+      end.
+      destruct_match_hyp; intuition idtac.
+      lazymatch goal with
+        H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+          apply H in H'
+      end.
+      unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+    Qed.
 
     Section filter_to_bitmap_lookup.
       Context (x b acc : string).
@@ -684,58 +930,6 @@ Section WithTags.
             use_is_NoDup. }
         cbn; reflexivity.
       Qed.
-
-      Definition aux_ty_for_idx idx_tag idx_ty (aux_ty : type -> type) : Prop :=
-        forall t,
-          match aux_ty t with
-          | TRecord tl =>
-              access_record tl id_tag = Success t /\
-                match access_record tl aux_tag with
-                | Success (TRecord aux_tl) =>
-                    access_record aux_tl idx_tag = Success (idx_ty t)
-                | _ => False
-                end
-          | _ => False
-          end.
-
-      Definition aux_wf_for_idx idx_tag idx_wf (v : value) : Prop :=
-        match v with
-        | VRecord rv =>
-            match access_record rv id_tag with
-            | Success v_id =>
-                match access_record rv aux_tag with
-                | Success (VRecord rv_aux) =>
-                    match access_record rv_aux idx_tag with
-                    | Success v_idx =>
-                        idx_wf v_id v_idx
-                    | _ => False
-                    end
-                | _ => False
-                end
-            | _ => False
-            end
-        | _ => False
-        end.
-
-      (* ??? TODO: move *)
-      Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
-          Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
-          access_record l x = Success a ->
-          access_record l' x = Success a' ->
-          P a a'.
-      Proof.
-        induction 1; cbn; try discriminate; auto.
-        repeat case_match; cbn in *; intuition idtac;
-          repeat (try clear_refl; do_injection); subst; auto;
-          congruence.
-      Qed.
-
-      Ltac use_Forall2_access_record tag :=
-        lazymatch goal with
-          H: Forall2 _ ?l ?tl, H1: access_record ?l tag = _,
-              H2: access_record ?tl tag = _ |- _ =>
-            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H H1 H2)
-        end.
 
       Lemma fiat2_gallina_use_bitmap : forall (store env : locals) bm d,
           free_immut_in b d = false ->
@@ -1014,9 +1208,6 @@ Section WithTags.
 
     Context (x b acc : string).
     Context (H_NoDup : is_NoDup_opaque [x; b; acc]).
-
-    Ltac invert_tenv_wf_with_globals :=
-      lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
 
     Lemma filter_to_bitmap_lookup_head_sound : forall is_tbl_ty' aux_ty aux_wf,
         aux_ty_for_idx pk_idx_tag pk_idx_ty aux_ty ->
