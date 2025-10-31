@@ -1503,7 +1503,7 @@ Ltac use_is_NoDup :=
   simpl in *; intuition idtac; try congruence.
 
 Create HintDb transf_hints.
-#[export] Hint Extern 5 (is_NoDup_opaque _) => apply is_NoDup_to_transparent : transf_hints.
+#[export] Hint Resolve <- is_NoDup_to_transparent : transf_hints.
 #[export] Hint Extern 5 (is_NoDup _) => simpl; intuition discriminate : transf_hints.
 #[export] Hint Extern 5 (word.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 (map.ok _) => typeclasses eauto : transf_hints.

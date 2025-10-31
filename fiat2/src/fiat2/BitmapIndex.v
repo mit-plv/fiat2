@@ -424,8 +424,6 @@ Section WithHole.
 End WithHole.
 
 Section WithTags.
-  Context (id_tag aux_tag pk_idx_tag bm_tag : string).
-
   Context (pk_hole pk_tup pk_acc : string).
   Context (H_NoDup_pk : is_NoDup_opaque [pk_tup; pk_acc]).
 
@@ -434,6 +432,8 @@ Section WithTags.
   Context (attr str : string).
   Context (bm_hole : string).
   Context (bm_tup : string).
+
+  Context (id_tag aux_tag pk_idx_tag bm_tag : string).
 
   Notation is_bitmap_tbl_ty := (is_bitmap_tbl_ty attr).
   Notation bitmap_wf := (bitmap_wf attr str bm_hole bm_tup).
@@ -1212,15 +1212,18 @@ Section WithTags.
     Lemma filter_to_bitmap_lookup_head_sound : forall is_tbl_ty' aux_ty aux_wf,
         aux_ty_for_idx pk_idx_tag pk_idx_ty aux_ty ->
         aux_ty_for_idx bm_tag bitmap_ty aux_ty ->
-        (forall t, is_tbl_ty' t = true -> is_pk_tbl_ty t = true /\ is_bitmap_tbl_ty t = true) ->
-        (forall (v : value), aux_wf v -> aux_wf_for_idx pk_idx_tag pk_idx_wf v /\ aux_wf_for_idx bm_tag bitmap_wf v) ->
+        (forall t, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
+        (forall t, is_tbl_ty' t = true -> is_bitmap_tbl_ty t = true) ->
+        (forall (v : value), aux_wf v -> aux_wf_for_idx pk_idx_tag pk_idx_wf v) ->
+        (forall (v : value), aux_wf v -> aux_wf_for_idx bm_tag bitmap_wf v) ->
         expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (filter_to_bitmap_lookup_head x b acc).
     Proof.
       unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
       invert_tenv_wf_with_globals.
-      lazymatch goal with
-        H: forall _, is_tbl_ty' _ = _ -> _, H': is_tbl_ty' _ = _ |- _ =>
-        apply H in H' end; destruct_and.
+      repeat lazymatch goal with
+               H: forall _, is_tbl_ty' _ = _ -> _, H': is_tbl_ty' _ = _ |- _ =>
+        let H_tbl_ty := fresh "H_tbl_ty" in
+        apply H in H' as H_tbl_ty; clear H end.
       specialize (H tbl_ty). specialize (H0 tbl_ty).
       repeat destruct_match_hyp; intuition idtac.
       1: eapply filter_to_bitmap_lookup_head_preserve_ty; eauto.
@@ -1235,9 +1238,47 @@ Section WithTags.
                apply H in H'
            end.
       all: unfold value_wf_with_globals in *; invert_Forall; intuition idtac.
-      all: lazymatch goal with
-             H: context[?f _ _]|- ?f _ _ _ =>
-               apply H end; auto.
+      all: repeat lazymatch goal with
+               H: context[?f _ _]|- ?f _ _ _ =>
+                 apply H end; auto.
     Qed.
   End WithMap.
 End WithTags.
+
+Lemma filter_to_bitmap_lookup_head_sound2 : forall pk_hole pk_tup pk_acc : string,
+  forall (attr str bm_hole bm_tup id_tag aux_tag pk_idx_tag bm_tag : string) (tenv : map.map string type),
+    map.ok tenv ->
+    forall (width : Z) (word : word width),
+      word.ok word ->
+      forall locals : map.map string (value (width:=width)),
+        map.ok locals ->
+        forall x b acc : string,
+          is_NoDup_opaque [x; b; acc] ->
+          forall (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : (value (width:=width)) -> Prop),
+            aux_ty_for_idx id_tag aux_tag pk_idx_tag pk_idx_ty aux_ty ->
+            aux_ty_for_idx id_tag aux_tag bm_tag bitmap_ty aux_ty ->
+            (forall t : type, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
+            (forall t : type, is_tbl_ty' t = true -> is_bitmap_tbl_ty attr t = true) ->
+            (forall v : (value (width:=width)), aux_wf v -> aux_wf_for_idx id_tag aux_tag pk_idx_tag (pk_idx_wf pk_hole pk_tup pk_acc) v) ->
+            (forall v : (value (width:=width)), aux_wf v -> aux_wf_for_idx id_tag aux_tag bm_tag (bitmap_wf attr str bm_hole bm_tup) v) ->
+            is_NoDup_opaque [pk_tup; pk_acc] ->
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
+              (filter_to_bitmap_lookup_head attr str id_tag aux_tag pk_idx_tag bm_tag x b acc).
+Proof.
+  intros; eapply filter_to_bitmap_lookup_head_sound; eauto.
+Qed.
+
+Lemma use_pk_idx_head_sound2 : forall pk_hole pk_tup pk_acc : string,
+  forall (id_tag aux_tag pk_idx_tag : string) (tenv : map.map string type),
+    map.ok tenv ->
+    forall (width : Z) (word : Interface.word width) (locals : map.map string (value (width:=width))),
+      map.ok locals ->
+      forall (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : Value.value -> Prop),
+        aux_ty_for_idx id_tag aux_tag pk_idx_tag pk_idx_ty aux_ty ->
+        (forall t : type, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
+        (forall v : (value (width:=width)), aux_wf v -> aux_wf_for_idx id_tag aux_tag pk_idx_tag (BitmapIndex.pk_idx_wf pk_hole pk_tup pk_acc) v) ->
+        is_NoDup_opaque [pk_tup; pk_acc] ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (use_pk_idx_head id_tag aux_tag pk_idx_tag).
+Proof.
+  intros; eapply use_pk_idx_head_sound; eauto.
+Qed.

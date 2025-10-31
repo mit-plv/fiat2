@@ -974,3 +974,39 @@ Section WithHole.
     End WithMap.
   End WithVars.
 End WithHole.
+
+Lemma use_idx_head_sound2 : forall hole attr tup acc x : string,
+       forall tenv : map.map string type,
+       map.ok tenv ->
+       forall (width : Z) (word : Interface.word width),
+       word.ok word ->
+       forall locals : map.map string (Value.value (word:=word)),
+       map.ok locals ->
+       forall (id_tag aux_tag idx_tag : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : Value.value -> Prop),
+       (forall v : (Value.value (word:=word)), aux_wf v -> DictIndexImpl2.aux_wf_for_idx hole attr tup acc x id_tag aux_tag idx_tag v) ->
+       DictIndexImpl2.aux_ty_for_idx attr id_tag aux_tag idx_tag aux_ty ->
+       (forall t : type, is_tbl_ty' t = true -> DictIndexImpl2.is_tbl_ty attr t = true) ->
+       is_NoDup_opaque [tup; acc; x] ->
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (use_idx_head attr id_tag aux_tag idx_tag).
+Proof.
+  intros; eapply use_idx_head_sound; eauto.
+Qed.
+
+Lemma eq_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
+       forall tenv : map.map string type,
+       map.ok tenv ->
+       forall (width : Z) (word : Interface.word width),
+       word.ok word ->
+       forall locals : map.map string (Value.value (word:=word)),
+       map.ok locals ->
+       forall (id_tag aux_tag idx_tag b : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : Value.value -> Prop),
+       DictIndexImpl2.aux_ty_for_idx attr id_tag aux_tag idx_tag aux_ty ->
+       (forall t : type, is_tbl_ty' t = true -> DictIndexImpl2.is_tbl_ty attr t = true) ->
+       (forall v : (Value.value (word:=word)), aux_wf v -> DictIndexImpl2.aux_wf_for_idx hole attr tup acc x id_tag aux_tag idx_tag v) ->
+       is_NoDup_opaque [tup; acc; x] ->
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
+Proof.
+  intros; eapply eq_filter_to_lookup_head_sound; eauto.
+Qed.
+
+(* ??? Change the order of the antecedants for eauto to work *)

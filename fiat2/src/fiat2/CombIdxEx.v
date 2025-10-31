@@ -64,8 +64,8 @@ Section ConcreteExample.
                                                    (cons_to_add_transf tbl))))))) Gstore Genv)
       (Basics.compose push_down_collection_transf
          (Basics.compose push_down_collection_transf
-            (Basics.compose annotate_collection_transf to_proj_transf))).
-
+            (Basics.compose annotate_collection_transf
+               (Basics.compose to_filter_transf to_proj_transf)))).
 
   Ltac apply_transf_sound_lemmas :=
     lazymatch goal with
