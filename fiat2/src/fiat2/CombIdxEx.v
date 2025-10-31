@@ -67,47 +67,14 @@ Section ConcreteExample.
             (Basics.compose annotate_collection_transf
                (Basics.compose to_filter_transf to_proj_transf)))).
 
-  Ltac apply_transf_sound_lemmas :=
-    lazymatch goal with
-    | |- transf_sound (apply_idx_related_transfs _ _ _) => apply apply_idx_related_transfs_sound
-    | |- aug_transf_sound _ _ _ (fun _ => Basics.compose _ _) => apply aug_transf_sound_compose
-    | |- transf_sound (fun _ _ => Basics.compose _ _) => apply transf_sound_compose
-    | |- aug_transf_sound _ _ _ _ => apply fold_command_with_globals_sound
-    | |- transf_sound ?x => unfold x
-    end.
-
-  Hint Extern 5 ((_ : string) <> _) => apply eqb_neq; auto : transf_hints.
-  Hint Resolve push_down_collection_sound : transf_hints.
-  Hint Resolve annotate_collection_sound : transf_hints.
-  Hint Extern 5 (forall v, aux_wf _ _ v -> SumAgg.aux_wf_for_idx _ _ _ _ _ _ v) =>
-              intros; unfold aux_wf, aux_wf_for_idx, compo_idx_wf in *;
-              repeat destruct_match_hyp; intuition idtac;
-              repeat invert_Forall; unfold SumAgg.idx_wf, record_proj in *;
-                             destruct_match_hyp; intuition eauto : transf_hints.
-  Hint Extern 5 (SumAgg.aux_ty_for_idx _ _ _ _) => unfold SumAgg.aux_ty_for_idx, aux_ty; cbn; auto : transf_hints.
-  Hint Extern 5 (forall t, IndexInterface2.is_tbl_ty t = true -> _ = true) =>
-         unfold IndexInterface2.is_tbl_ty; cbn; intros;
-  rewrite Bool.andb_true_iff in *; intuition auto : transf_hints.
-  Hint Resolve cons_to_add_head_sound : transf_hints.
-  Hint Resolve sum_to_agg_lookup_head_sound : transf_hints.
-  Hint Resolve cons_to_insert_head_sound : transf_hints.
-  Hint Extern 5 (expr_aug_transf_sound _ _ _ (DictIndexImpl2.use_idx_head _ _ _ _)) =>
-         eapply use_idx_head_sound; [ | | | | | | eauto with transf_hints ]; auto with transf_hints : transf_hints.
+  Hint Resolve use_idx_head_sound2 : transf_hints.
   Hint Extern 5 (expr_aug_transf_sound _ _ _ (DictIndexImpl2.eq_filter_to_lookup_head _ _ _ _ _)) =>
          eapply eq_filter_to_lookup_head_sound; [ | | | | | | eauto with transf_hints ]; auto with transf_hints : transf_hints.
-  Hint Extern 5 (forall v, aux_wf _ _ v -> DictIndexImpl2.aux_wf_for_idx _ _ _ _ _ _ _ _ v) =>
-         intros; unfold aux_wf, DictIndexImpl2.aux_wf_for_idx, compo_idx_wf in *;
-                 repeat destruct_match_hyp; intuition idtac;
-  repeat invert_Forall; unfold DictIndexImpl2.idx_wf, record_proj in *;
-                 destruct_match_hyp; intuition eauto : transf_hints.
-  Hint Extern 5 (DictIndexImpl2.aux_ty_for_idx _ _ _ _ _) => unfold DictIndexImpl2.aux_ty_for_idx, aux_ty; cbn; auto : transf_hints.
-  Hint Extern 5 (forall t, IndexInterface2.is_tbl_ty t = true -> _ = true) =>
-               cbn; intros; rewrite !Bool.andb_true_iff in *; intuition idtac : transf_hints.
   Hint Extern 5 string => pose proof ("":string). (* ??? : transf_hints doesn't work; how to find the cause of this extra arg? *)
 
   Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
   Proof.
-    repeat (apply_transf_sound_lemmas; eauto with transf_hints).
+    repeat (apply_transf_sound_lemmas; eauto 6 with transf_hints).
   Qed.
 
   Require Import fiat2.Notations.

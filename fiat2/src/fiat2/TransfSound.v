@@ -314,6 +314,21 @@ Section WithMap.
         apply H in H5; intuition auto.
     Qed.
   End WithIndex.
+
+  Fixpoint repeat_transf (f : command -> command) (n : nat) :=
+    match n with
+    | O => id
+    | S n => Basics.compose f (repeat_transf f n)
+    end.
+
+  Lemma repeat_transf_preserve_aug_transf_sound : forall is_tbl_ty aux_ty aux_wf f n,
+      aug_transf_sound is_tbl_ty aux_ty aux_wf f ->
+      aug_transf_sound is_tbl_ty aux_ty aux_wf (fun tbl => repeat_transf (f tbl) n).
+  Proof.
+    induction n; cbn.
+    1:{ intros _. unfold aug_transf_sound; auto. }
+    1:{ intros; cbn. apply aug_transf_sound_compose; auto. }
+  Qed.
 End WithMap.
 
 #[export] Hint Resolve transf_sound_compose : transf_hints.

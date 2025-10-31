@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface2.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Morphisms.
 Import ListNotations.
 
@@ -672,4 +672,43 @@ Section WithMap.
   Proof.
     unfold sem_eq; intuition auto.
   Qed.
+End WithMap.
+
+Section WithMap.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (width:=width)).
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+  Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+  Definition aux_ty_for_idx id_tag aux_tag idx_tag idx_ty (aux_ty : type -> type) : Prop :=
+    forall t,
+      match aux_ty t with
+      | TRecord tl =>
+          access_record tl id_tag = Success t /\
+            match access_record tl aux_tag with
+            | Success (TRecord aux_tl) =>
+                access_record aux_tl idx_tag = Success (idx_ty t)
+            | _ => False
+            end
+      | _ => False
+      end.
+
+  Definition aux_wf_for_idx id_tag aux_tag idx_tag idx_wf (v : value) : Prop :=
+    match v with
+    | VRecord rv =>
+        match access_record rv id_tag with
+        | Success v_id =>
+            match access_record rv aux_tag with
+            | Success (VRecord rv_aux) =>
+                match access_record rv_aux idx_tag with
+                | Success v_idx =>
+                    idx_wf v_id v_idx
+                | _ => False
+                end
+            | _ => False
+            end
+        | _ => False
+        end
+    | _ => False
+    end.
 End WithMap.

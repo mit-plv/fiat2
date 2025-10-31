@@ -319,3 +319,6 @@ Section WithWord.
     Qed.
   End WithMap.
 End WithWord.
+
+#[export] Hint Resolve push_down_collection_sound : transf_hints.
+#[export] Hint Resolve annotate_collection_sound : transf_hints.

@@ -438,6 +438,9 @@ Section WithTags.
   Notation is_bitmap_tbl_ty := (is_bitmap_tbl_ty attr).
   Notation bitmap_wf := (bitmap_wf attr str bm_hole bm_tup).
 
+  Notation aux_ty_for_idx := (aux_ty_for_idx id_tag aux_tag).
+  Notation aux_wf_for_idx := (aux_wf_for_idx id_tag aux_tag).
+
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
     Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
@@ -557,38 +560,6 @@ Section WithTags.
         1: eapply cons_to_pk_idx_update_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
     End cons_to_pk_idx_update.
-
-    Definition aux_ty_for_idx idx_tag idx_ty (aux_ty : type -> type) : Prop :=
-      forall t,
-        match aux_ty t with
-        | TRecord tl =>
-            access_record tl id_tag = Success t /\
-              match access_record tl aux_tag with
-              | Success (TRecord aux_tl) =>
-                  access_record aux_tl idx_tag = Success (idx_ty t)
-              | _ => False
-              end
-        | _ => False
-        end.
-
-    Definition aux_wf_for_idx idx_tag idx_wf (v : value) : Prop :=
-      match v with
-      | VRecord rv =>
-          match access_record rv id_tag with
-          | Success v_id =>
-              match access_record rv aux_tag with
-              | Success (VRecord rv_aux) =>
-                  match access_record rv_aux idx_tag with
-                  | Success v_idx =>
-                      idx_wf v_id v_idx
-                  | _ => False
-                  end
-              | _ => False
-              end
-          | _ => False
-          end
-      | _ => False
-      end.
 
     (* ??? TODO: move *)
     Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
@@ -1282,3 +1253,13 @@ Lemma use_pk_idx_head_sound2 : forall pk_hole pk_tup pk_acc : string,
 Proof.
   intros; eapply use_pk_idx_head_sound; eauto.
 Qed.
+
+#[export] Hint Resolve cons_to_pk_idx_update_head_sound : transf_hints.
+#[export] Hint Resolve cons_to_bitmap_update_head_sound : transf_hints.
+#[export] Hint Resolve use_bitmap_head_sound : transf_hints.
+#[export] Hint Resolve filter_to_bitmap_lookup_head_sound2 : transf_hints.
+#[export] Hint Resolve use_pk_idx_head_sound2 : transf_hints.
+
+#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply to_pk_idx_ty : transf_hints.
+#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply to_bitmap_ty : transf_hints.
+#[export] Hint Extern 5 (type_wf (IndexInterface2.idx_ty _)) => apply pk_idx_ty_wf : transf_hints.

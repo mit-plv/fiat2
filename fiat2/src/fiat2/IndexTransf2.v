@@ -891,3 +891,24 @@ Section WithMap.
       Qed.
     End WithIndex.
 End WithMap.
+
+Ltac apply_transf_sound_lemmas :=
+  lazymatch goal with
+  | |- transf_sound (apply_idx_related_transfs _ _ _) => apply apply_idx_related_transfs_sound
+  | |- aug_transf_sound _ _ _ (fun _ => Basics.compose _ _) => apply aug_transf_sound_compose
+  | |- transf_sound (fun _ _ => Basics.compose _ _) => apply transf_sound_compose
+  | |- aug_transf_sound _ _ _ (fun _ => repeat_transf _ _) => apply repeat_transf_preserve_aug_transf_sound
+  | |- aug_transf_sound _ _ _ _ => apply fold_command_with_globals_sound
+  | |- transf_sound ?x => unfold x
+  end.
+
+#[export] Hint Extern 5 (aux_wf_for_idx _ _ _ _ _) =>
+  intros; unfold aux_wf, aux_wf_for_idx, compo_idx_wf in *;
+  repeat destruct_match_hyp; intuition idtac;
+  repeat invert_Forall;
+  destruct_match_hyp; intuition idtac : transf_hints.
+#[export] Hint Extern 5 (aux_ty_for_idx _ _ _ _ _) =>
+  unfold aux_ty_for_idx, aux_ty; cbn : transf_hints.
+#[export] Hint Extern 5 (forall t, IndexInterface2.is_tbl_ty t = true -> _ = true) =>
+  unfold IndexInterface2.is_tbl_ty; cbn; intros;
+  rewrite !Bool.andb_true_iff in *; intuition idtac : transf_hints.

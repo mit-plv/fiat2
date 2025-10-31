@@ -389,36 +389,8 @@ Section WithHole.
       Section WithTags.
         Context (id_tag aux_tag idx_tag: string).
 
-        Definition aux_ty_for_idx (aux_ty : type -> type) : Prop :=
-          forall t,
-            match aux_ty t with
-            | TRecord tl =>
-                access_record tl id_tag = Success t /\
-                  match access_record tl aux_tag with
-                  | Success (TRecord aux_tl) => access_record aux_tl idx_tag = Success (idx_ty t)
-                  | _ => False
-                  end
-            | _ => False
-            end.
-
-        Definition aux_wf_for_idx (v : value) : Prop :=
-          match v with
-          | VRecord rv =>
-              match access_record rv id_tag with
-              | Success v_id =>
-                  match access_record rv aux_tag with
-                  | Success (VRecord rv_aux) =>
-                      match access_record rv_aux idx_tag with
-                      | Success v_idx =>
-                          idx_wf v_id v_idx
-                      | _ => False
-                      end
-                  | _ => False
-                  end
-              | _ => False
-              end
-          | _ => False
-          end.
+        Notation aux_ty_for_idx := (aux_ty_for_idx id_tag aux_tag idx_tag idx_ty).
+        Notation aux_wf_for_idx := (aux_wf_for_idx id_tag aux_tag idx_tag idx_wf).
 
         Section eq_filter_to_lookup.
           Context (b : string).
@@ -980,11 +952,11 @@ Lemma use_idx_head_sound2 : forall hole attr tup acc x : string,
        map.ok tenv ->
        forall (width : Z) (word : Interface.word width),
        word.ok word ->
-       forall locals : map.map string (Value.value (word:=word)),
+       forall locals : map.map string (value (word:=word)),
        map.ok locals ->
-       forall (id_tag aux_tag idx_tag : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : Value.value -> Prop),
-       (forall v : (Value.value (word:=word)), aux_wf v -> DictIndexImpl2.aux_wf_for_idx hole attr tup acc x id_tag aux_tag idx_tag v) ->
-       DictIndexImpl2.aux_ty_for_idx attr id_tag aux_tag idx_tag aux_ty ->
+       forall (id_tag aux_tag idx_tag : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
+         (forall v : (value (word:=word)),
+             aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) -> aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl2.is_tbl_ty attr t = true) ->
        is_NoDup_opaque [tup; acc; x] ->
        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (use_idx_head attr id_tag aux_tag idx_tag).
@@ -997,16 +969,21 @@ Lemma eq_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
        map.ok tenv ->
        forall (width : Z) (word : Interface.word width),
        word.ok word ->
-       forall locals : map.map string (Value.value (word:=word)),
+       forall locals : map.map string (value (word:=word)),
        map.ok locals ->
-       forall (id_tag aux_tag idx_tag b : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : Value.value -> Prop),
-       DictIndexImpl2.aux_ty_for_idx attr id_tag aux_tag idx_tag aux_ty ->
+       forall (id_tag aux_tag idx_tag b : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
+       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl2.is_tbl_ty attr t = true) ->
-       (forall v : (Value.value (word:=word)), aux_wf v -> DictIndexImpl2.aux_wf_for_idx hole attr tup acc x id_tag aux_tag idx_tag v) ->
+       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
 Proof.
   intros; eapply eq_filter_to_lookup_head_sound; eauto.
 Qed.
 
-(* ??? Change the order of the antecedants for eauto to work *)
+#[export] Hint Resolve use_idx_head_sound2 : transf_hints.
+#[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
+#[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
+
+#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply to_idx_ty : transf_hints.
+#[export] Hint Extern 5 (type_wf (IndexInterface2.idx_ty _)) => apply idx_ty_wf : transf_hints.

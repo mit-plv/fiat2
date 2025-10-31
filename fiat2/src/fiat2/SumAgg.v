@@ -87,36 +87,8 @@ Section WithHole.
       Section WithTags.
         Context (id_tag aux_tag idx_tag: string).
 
-        Definition aux_ty_for_idx (aux_ty : type -> type) : Prop :=
-          forall t,
-            match aux_ty t with
-            | TRecord tl =>
-                access_record tl id_tag = Success t /\
-                  match access_record tl aux_tag with
-                  | Success (TRecord aux_tl) => access_record aux_tl idx_tag = Success (idx_ty t)
-                  | _ => False
-                  end
-            | _ => False
-            end.
-
-        Definition aux_wf_for_idx (v : value) : Prop :=
-          match v with
-          | VRecord rv =>
-              match access_record rv id_tag with
-              | Success v_id =>
-                  match access_record rv aux_tag with
-                  | Success (VRecord rv_aux) =>
-                      match access_record rv_aux idx_tag with
-                      | Success v_idx =>
-                          idx_wf v_id v_idx
-                      | _ => False
-                      end
-                  | _ => False
-                  end
-              | _ => False
-              end
-          | _ => False
-          end.
+        Notation aux_ty_for_idx := (aux_ty_for_idx id_tag aux_tag idx_tag idx_ty).
+        Notation aux_wf_for_idx := (aux_wf_for_idx id_tag aux_tag idx_tag idx_wf).
 
         Section sum_to_agg_lookup.
           Context (tbl : string).
@@ -288,3 +260,8 @@ Section WithHole.
     End WithMap.
   End WithVars.
 End WithHole.
+
+#[export] Hint Resolve cons_to_add_head_sound : transf_hints.
+#[export] Hint Resolve sum_to_agg_lookup_head_sound : transf_hints.
+
+#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply SumAgg.to_idx_ty : transf_hints.

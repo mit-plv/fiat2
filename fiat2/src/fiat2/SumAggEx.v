@@ -52,30 +52,6 @@ Section ConcreteExample.
                          (Basics.compose push_down_collection_transf
                             (Basics.compose annotate_collection_transf to_proj_transf))).
 
-  Hint Extern 5 ((_ : string) <> _) => apply eqb_neq; auto : transf_hints.
-  Hint Resolve push_down_collection_sound : transf_hints.
-  Hint Resolve annotate_collection_sound : transf_hints.
-  Hint Extern 5 (forall v, aux_wf _ _ v -> SumAgg.aux_wf_for_idx _ _ _ _ _ _ v) =>
-              intros; unfold aux_wf, aux_wf_for_idx, compo_idx_wf in *;
-              repeat destruct_match_hyp; intuition idtac;
-              invert_Forall; unfold idx_wf, record_proj in *;
-                             destruct_match_hyp; intuition eauto : transf_hints.
-  Hint Extern 5 (aux_ty_for_idx _ _ _ _) => unfold aux_ty_for_idx, aux_ty; cbn; auto : transf_hints.
-  Hint Extern 5 (forall t, IndexInterface2.is_tbl_ty t = true -> _ = true) =>
-         unfold IndexInterface2.is_tbl_ty; cbn; intros;
-  rewrite Bool.andb_true_iff in *; intuition auto : transf_hints.
-  Hint Resolve cons_to_add_head_sound : transf_hints.
-  Hint Resolve sum_to_agg_lookup_head_sound : transf_hints.
-
-  Ltac apply_transf_sound_lemmas :=
-    lazymatch goal with
-    | |- transf_sound (apply_idx_related_transfs _ _ _) => apply apply_idx_related_transfs_sound
-    | |- aug_transf_sound _ _ _ (fun _ => Basics.compose _ _) => apply aug_transf_sound_compose
-    | |- transf_sound (fun _ _ => Basics.compose _ _) => apply transf_sound_compose
-    | |- aug_transf_sound _ _ _ _ => apply fold_command_with_globals_sound
-    | |- transf_sound ?x => unfold x
-    end.
-
   Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
   Proof.
     repeat (apply_transf_sound_lemmas; eauto with transf_hints).
@@ -101,19 +77,11 @@ Section ConcreteExample.
   Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
   Compute ex1_transformed.
 
-  Ltac resolve_NoDup := repeat constructor; simpl; intuition idtac; congruence.
-
-  Ltac resolve_tenv_wf := repeat apply tenv_wf_step; try apply tenv_wf_empty; repeat constructor; resolve_NoDup.
-
-  Hint Extern 5 (well_typed _ _ _) => simple eapply command_typechecker_sound.
-  Hint Extern 5 (tenv_wf _) => resolve_tenv_wf.
-  Hint Extern 5 (typecheck _ _ _ = Success _) => reflexivity.
-
   Theorem ex1_transformed_sem : forall (store env : clocals),
       locals_wf init_Gstore store ->
       locals_wf init_Genv env ->
       interp_command store env ex1_transformed = interp_command store env ex1.
   Proof.
-    eauto using transf_sound__preserve_sem, ex_transf_sound.
+    eauto using transf_sound__preserve_sem, ex_transf_sound with transf_hints.
   Qed.
 End ConcreteExample.

@@ -1505,8 +1505,18 @@ Ltac use_is_NoDup :=
 Create HintDb transf_hints.
 #[export] Hint Resolve <- is_NoDup_to_transparent : transf_hints.
 #[export] Hint Extern 5 (is_NoDup _) => simpl; intuition discriminate : transf_hints.
+#[export] Hint Extern 5 ((_ : string) <> _) => apply eqb_neq : transf_hints.
 #[export] Hint Extern 5 (word.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 (map.ok _) => typeclasses eauto : transf_hints.
+#[export] Hint Extern 5 string => exact (EmptyString:string).
+
+Ltac resolve_NoDup := repeat constructor; simpl; intuition idtac; congruence.
+
+Ltac resolve_tenv_wf := repeat apply tenv_wf_step; try apply tenv_wf_empty; repeat constructor; resolve_NoDup.
+
+Hint Extern 5 (well_typed _ _ _) => simple eapply command_typechecker_sound : transf_hints.
+Hint Extern 5 (tenv_wf _) => resolve_tenv_wf : transf_hints.
+Hint Extern 5 (typecheck _ _ _ = Success _) => reflexivity : transf_hints.
 
 Fixpoint free_immut_in (x : string) (e : expr) : bool :=
   match e with
@@ -1767,7 +1777,6 @@ Section WithMap.
            rewrite Properties.map.put_put_diff with (k1 := x0); auto ]).
   Qed.
 End WithMap.
-
 
 Open Scope string_scope.
 
