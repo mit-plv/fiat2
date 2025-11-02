@@ -72,14 +72,14 @@ Section ConcreteExample.
 
   Unset Printing Notations.
   Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
-  Compute ex1_transformed.
+  (* Compute ex1_transformed. *)
 
   Theorem ex1_transformed_sem : forall (store env : clocals),
       locals_wf init_Gstore store ->
       locals_wf init_Genv env ->
       interp_command store env ex1_transformed = interp_command store env ex1.
   Proof.
-    eauto using transf_sound__preserve_sem, ex_transf_sound.
+     apply transf_sound__preserve_sem; auto using ex_transf_sound with transf_hints.
   Qed.
 End ConcreteExample.
 

@@ -67,7 +67,6 @@ Section ConcreteExample.
 
   Definition build_responses1 := <{ set "responses" := row1 :: row2 :: mut "responses" }>.
   Definition query := CAssign "sum" (EFold (<["row" <- mut "responses" ; ret "row"["salary"]]>) (EAtom (AInt 0)) "v" "acc" (EBinop OPlus (EVar "v") (EVar "acc"))).
-  Compute query.
   Definition ex1' := CSeq build_responses1 query.
   Definition ex1 := CLetMut (EAtom (ANil (Some (row_ty)))) "responses" ex1'.
 
@@ -75,7 +74,7 @@ Section ConcreteExample.
   Definition init_Genv : ctenv := map.put (map.put map.empty "row1" row_ty) "row2" row_ty.
 
   Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
-  Compute ex1_transformed.
+  (* Compute ex1_transformed. *)
 
   Theorem ex1_transformed_sem : forall (store env : clocals),
       locals_wf init_Gstore store ->
