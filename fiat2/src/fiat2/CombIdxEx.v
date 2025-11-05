@@ -67,11 +67,6 @@ Section ConcreteExample.
             (Basics.compose annotate_collection_transf
                (Basics.compose to_filter_transf to_proj_transf)))).
 
-  Hint Resolve use_idx_head_sound2 : transf_hints.
-  Hint Extern 5 (expr_aug_transf_sound _ _ _ (DictIndexImpl2.eq_filter_to_lookup_head _ _ _ _ _)) =>
-         eapply eq_filter_to_lookup_head_sound; [ | | | | | | eauto with transf_hints ]; auto with transf_hints : transf_hints.
-  Hint Extern 5 string => pose proof ("":string). (* ??? : transf_hints doesn't work; how to find the cause of this extra arg? *)
-
   Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
   Proof.
     repeat (apply_transf_sound_lemmas; eauto 6 with transf_hints).
