@@ -26,6 +26,7 @@ Section WithWord.
     | ANil _ => VList nil
     | AEmptyDict _ => VDict nil
     | AEmptyBag _ => VBag nil
+    | AEmptySet _ => VSet nil
     | AUnit => VUnit
     end.
 
@@ -116,24 +117,22 @@ Section WithWord.
                            else (v', n') :: bag_insert v l
     end.
 
-  (* ??? remove
-  Fixpoint bag_union (l l' : list (value * nat)) : list (value * nat) :=
-    match l with
-    | nil => l'
-    | (v, n) :: l => bag_insert v n (bag_union l l')
-    end.
-
-  Fixpoint bag_flat_map (f : value -> list (value * nat)) (l : list (value * nat)) : list (value * nat) :=
-    match l with
-    | nil => nil
-    | (v, n) :: l => bag_union (List.map (fun p => (fst p, n * snd p)%nat) (f v)) (bag_flat_map f l)
-    end. *)
-
   Definition list_to_bag : list value -> list (value * nat):=
     fold_right bag_insert nil.
 
   Definition bag_to_list : list (value * nat) -> list value :=
     flat_map (fun p => repeat (fst p) (snd p)).
+
+  Fixpoint set_insert (v : value) (l : list value) :=
+    match l with
+    | nil => v :: nil
+    | v' :: l' => if value_ltb v v' then v :: v' :: l'
+                  else if value_eqb v v' then l
+                       else v' :: set_insert v l'
+    end.
+
+  Definition list_to_set : list value -> list value :=
+    fold_right set_insert nil.
 
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
@@ -188,6 +187,10 @@ Section WithWord.
                     | VBag l => VBag (bag_insert b l)
                     | _ => VUnit
                     end
+    | OSetInsert => match a with
+                    | VSet l => VSet (set_insert b l)
+                    | _ => VUnit
+                    end
     | OLookup => match a, b with
                  | VDict d, k => VOption (dict_lookup k d)
                  | _, _ => VUnit
@@ -210,6 +213,28 @@ Section WithWord.
     match ag with
     | AGSum => (VInt 0, apply_int_binop Z.add)
     | AGCount => (VInt 0, fun _ => apply_int_binop Z.add (VInt 1))
+    end.
+
+  Definition interp_aci_aggr (ag : aci_aggr) : (value * (value -> value -> value)) :=
+    match ag with
+    | AGMin => (VOption None, fun v acc => match acc with
+                                           | VOption None => VOption (Some v)
+                                           | VOption (Some (VInt v')) =>
+                                               match v with
+                                               | VInt v => VOption (Some (VInt (Z.min v v')))
+                                               | _ => VUnit
+                                               end
+                                           | _ => VUnit
+                                           end)
+    | AGMax => (VOption None, fun v acc => match acc with
+                                           | VOption None => VOption (Some v)
+                                           | VOption (Some (VInt v')) =>
+                                               match v with
+                                               | VInt v => VOption (Some (VInt (Z.max v v')))
+                                               | _ => VUnit
+                                               end
+                                           | _ => VUnit
+                                           end)
     end.
 
   Definition record_proj (s : string) (l : list (string * value)) : value :=
@@ -263,6 +288,14 @@ Section WithWord.
                                                         end) (bag_to_list l1)))
               | _ => VUnit
               end
+          | LikeSet =>
+              match interp_expr store env e1 with
+              | VSet l1 => VSet (list_to_set (flat_map (fun v => match interp_expr store (map.put env x v) e2 with
+                                                        | VSet l2 => l2
+                                                        | _ => nil
+                                                        end) l1))
+              | _ => VUnit
+              end
           end
       | EFlatmap2 e1 e2 x1 x2 e3 =>
           match interp_expr store env e1 with
@@ -289,6 +322,13 @@ Section WithWord.
           match interp_expr store env e with
           | VBag l =>
               fold_right op zr (bag_to_list l)
+          | _ => VUnit
+          end
+      | EACIFold ag e =>
+          let '(zr, op) := interp_aci_aggr ag in
+          match interp_expr store env e with
+          | VSet l =>
+              fold_right op zr l
           | _ => VUnit
           end
       | ERecord l => VRecord (record_sort
@@ -320,6 +360,11 @@ Section WithWord.
               | VBag l => VList (bag_to_list l)
               | _ => VUnit
               end
+          | LikeSet =>
+              match interp_expr store env l with
+              | VSet l => VList l
+              | _ => VUnit
+              end
           end
       | EFilter tag l x p =>
           match tag with
@@ -343,6 +388,17 @@ Section WithWord.
                                        | VBool b => b
                                        | _ => false
                                        end) l)
+              | _ => VUnit
+              end
+          | LikeSet =>
+              match interp_expr store env l with
+              | VSet l => VSet (List.filter
+                                  (fun v =>
+                                     let env' := map.put env x v in
+                                     match interp_expr store env' p with
+                                     | VBool b => b
+                                     | _ => false
+                                     end) l)
               | _ => VUnit
               end
           end
@@ -387,6 +443,26 @@ Section WithWord.
                   end
               | _ => VUnit
               end
+          | LikeSet =>
+              match interp_expr store env l1 with
+              | VSet l1 =>
+                  match interp_expr store env l2 with
+                  | VSet l2 => VSet (list_to_set
+                                       (flat_map
+                                          (fun v1 =>
+                                             List.map
+                                               (fun v2 => interp_expr store (map.put (map.put env x v1) y v2) r)
+                                               (List.filter
+                                                  (fun v2 => match interp_expr store (map.put (map.put env x v1) y v2) p with
+                                                             | VBool b => b
+                                                             | _ => false
+                                                             end)
+                                                  l2))
+                                          l1))
+                  | _ => VUnit
+                  end
+              | _ => VUnit
+              end
           end
       | EProj tag l x r =>
           match tag with
@@ -403,9 +479,21 @@ Section WithWord.
                                      (bag_to_list l)))
               | _ => VUnit
             end
+          | LikeSet =>
+              match interp_expr store env l with
+              | VSet l => VSet (list_to_set
+                                  (List.map
+                                     (fun v => interp_expr store (map.put env x v) r)
+                                     l))
+              | _ => VUnit
+            end
           end
       | EBagOf l => match interp_expr store env l with
                     | VList l => VBag (list_to_bag l)
+                    | _ => VUnit
+                    end
+      | ESetOf l => match interp_expr store env l with
+                    | VList l => VSet (list_to_set l)
                     | _ => VUnit
                     end
       end.

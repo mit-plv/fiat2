@@ -14,6 +14,9 @@ Ltac apply_type_of__type_wf :=
   | H: type_of _ _ _ (TBag ?t) |- type_wf ?t =>
       let H' := fresh "H'" in
       apply type_of__type_wf in H as H'
+  | H: type_of _ _ _ (TSet ?t) |- type_wf ?t =>
+      let H' := fresh "H'" in
+      apply type_of__type_wf in H as H'
   | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
       let H' := fresh "H'" in
       apply type_of__type_wf in H as H'
@@ -35,7 +38,7 @@ Ltac trans_of_eq :=
 
 Ltac type_of_list_entry :=
   lazymatch goal with
-  | H1: type_of _ _ ?e _, _: interp_expr _ _ ?e = VList ?l,
+  | H1: type_of _ _ ?e _, _: interp_expr _ _ ?e = _ ?l,
         _: In ?x ?l |- type_of_value ?x _ =>
       eapply type_sound in H1; eauto; inversion H1; subst;
       trans_of_eq;
@@ -65,6 +68,7 @@ Section fold_expr.
       | EFlatmap2 e1 e2 x1 x2 e3 => EFlatmap2 (fold_expr e1) (fold_expr e2) x1 x2 (fold_expr e3)
       | EFold e1 e2 x y e3 => EFold (fold_expr e1) (fold_expr e2) x y (fold_expr e3)
       | EACFold ag e => EACFold ag (fold_expr e)
+      | EACIFold ag e => EACIFold ag (fold_expr e)
       | ERecord l => ERecord (List.map (fun '(s, e) => (s, fold_expr e)) l)
       | EAccess e x => EAccess (fold_expr e) x
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
@@ -74,6 +78,7 @@ Section fold_expr.
       | EJoin tag e1 e2 x y p r => EJoin tag (fold_expr e1) (fold_expr e2) x y (fold_expr p) (fold_expr r)
       | EProj tag e x r => EProj tag (fold_expr e) x (fold_expr r)
       | EBagOf e => EBagOf (fold_expr e)
+      | ESetOf e => ESetOf (fold_expr e)
       end.
 End fold_expr.
 
@@ -143,6 +148,13 @@ Section WithMap.
         apply locals_wf_step; auto.
         type_of_bag_entry. }
     1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
+        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
+        do 2 f_equal. apply In_flat_map_ext; intros.
+        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
+        apply locals_wf_step; auto.
+        type_of_list_entry. }
+    1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty;
         repeat apply tenv_wf_step; eauto with fiat2_hints.
         apply_type_sound e1; apply_type_sound e2.
@@ -210,13 +222,13 @@ Section WithMap.
         f_equal. apply In_filter_ext; intros.
         apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         apply locals_wf_step; auto. type_of_list_entry. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        f_equal. apply In_filter_ext; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        apply locals_wf_step; auto. apply_type_sound e1. rewrite_l_to_r.
-        invert_type_of_value. apply_Forall_In. }
+    1,2: erewrite H_sem; eauto;
+        [ | econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints ];
+        simpl; apply_fold_expr_preserve_sem_IH; case_match; auto;
+        f_equal; apply In_filter_ext; intros;
+        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints;
+        apply locals_wf_step; auto; apply_type_sound e1; rewrite_l_to_r;
+        invert_type_of_value; apply_Forall_In.
     1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty;
         repeat apply tenv_wf_step; eauto with fiat2_hints.
@@ -243,6 +255,19 @@ Section WithMap.
                    apply filter_In in H; intuition end;
         type_of_bag_entry. }
     1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty;
+        repeat apply tenv_wf_step; eauto with fiat2_hints.
+        simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
+        do 2 f_equal. apply In_flat_map_ext; intros. erewrite In_filter_ext.
+        1: apply map_ext_in; intros.
+        2: simpl; intros.
+        all: apply_fold_expr_preserve_sem_IH;
+          [ repeat apply tenv_wf_step | repeat apply locals_wf_step ]; eauto with fiat2_hints.
+        all: try lazymatch goal with
+                 H: In _ (filter _ _) |- _ =>
+                   apply filter_In in H; intuition end;
+        type_of_list_entry. }
+    1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
         simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
         f_equal. apply map_ext_in; intros.
@@ -254,6 +279,12 @@ Section WithMap.
         do 2 f_equal. apply map_ext_in; intros.
         apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         repeat apply locals_wf_step; auto. type_of_bag_entry. }
+    1:{ erewrite H_sem; eauto.
+        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
+        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
+        do 2 f_equal. apply map_ext_in; intros.
+        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
+        repeat apply locals_wf_step; auto. type_of_list_entry. }
   Qed.
 
   Lemma fold_expr_sound : forall f,

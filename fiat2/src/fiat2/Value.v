@@ -16,6 +16,7 @@ Section WithWord.
   | VRecord (l : list (string * value))
   | VDict (l : list (value * value))
   | VBag (l : list (value * nat))
+  | VSet (l : list value)
   | VUnit.
 
   Section ValueIH.
@@ -26,6 +27,7 @@ Section WithWord.
       (f_record : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l))
       (f_dict : forall l : list (value * value), Forall (fun v => P (fst v) /\ P (snd v)) l -> P (VDict l))
       (f_bag : forall l : list (value * nat), Forall (fun v => P (fst v)) l -> P (VBag l))
+      (f_set : forall l : list value, Forall P l -> P (VSet l))
       (f_unit : P VUnit).
     Section __.
       Context (value_IH : forall v, P v).
@@ -62,6 +64,7 @@ Section WithWord.
       | VRecord l => f_record l (record_value_IH value_IH l)
       | VDict l => f_dict l (dict_value_IH value_IH l)
       | VBag l => f_bag l (bag_value_IH value_IH l)
+      | VSet l => f_set l (list_value_IH value_IH l)
       | VUnit => f_unit
       end.
   End ValueIH.
@@ -129,6 +132,7 @@ Section WithWord.
     | VRecord a, VRecord b => record_compare value_compare a b
     | VDict a, VDict b => dict_compare value_compare a b
     | VBag a, VBag b => bag_compare value_compare a b
+    | VSet a, VSet b => list_compare value_compare a b
     | VUnit, VUnit => Eq
     | VUnit, _ => Lt | _, VUnit => Gt
     | VBool _, _ => Lt | _, VBool _ => Gt
@@ -139,6 +143,7 @@ Section WithWord.
     | VList _, _ => Lt | _, VList _ => Gt
     | VRecord _, _ => Lt | _, VRecord _ => Gt
     | VDict _, _ => Lt | _, VDict _ => Gt
+    | VBag _, _ => Lt | _, VBag _ => Gt
     end.
 
   Definition value_eqb (a b : value) : bool :=
@@ -203,6 +208,8 @@ Section WithWord.
     - induction l; auto. destruct a; simpl.
       inversion H; subst; simpl in *. rewrite H2, Nat.compare_refl.
       auto.
+    - induction l; auto. simpl. inversion H; subst; auto.
+      rewrite H2. auto.
   Qed.
 
   Lemma value_compare_antisym : is_antisym value_compare.
@@ -237,6 +244,11 @@ Section WithWord.
       simpl. inversion H; subst. pose proof (H2 sb) as H2. simpl in *. rewrite H2.
       destruct (value_compare sb sa); simpl; auto.
       rewrite Nat.compare_antisym. destruct (Nat.compare vb va); simpl; auto.
+    - revert l0. induction l; destruct l0; auto.
+      simpl. inversion H; subst. pose proof (H2 v) as H2. destruct (value_compare v a) eqn:E.
+      + rewrite H2. simpl. apply IHl. assumption.
+      + rewrite H2. trivial.
+      + rewrite H2. trivial.
   Qed.
 
   Local Ltac destruct_match :=
@@ -308,6 +320,7 @@ Section WithWord.
         rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto.
         eapply pair_compare_Eq_eq; eauto; intuition.
       - eapply bag_compare_Eq_eq; eauto.
+      - eapply list_compare_Eq_eq; eauto.
   Qed.
 
   Lemma eq_value_compare_Eq : forall v v', v = v' -> value_compare v v' = Eq.
@@ -437,6 +450,7 @@ Section WithWord.
         apply pair_compare_trans; simpl;
           unfold trans_at; eauto using value_compare_Eq_eq, value_compare_refl.
         rewrite !Nat.compare_lt_iff. apply Nat.lt_trans.
+    - eapply list_compare_trans; eauto using value_compare_Eq_eq, value_compare_refl.
   Qed.
 
   Local Coercion is_true : bool >-> Sortclass.

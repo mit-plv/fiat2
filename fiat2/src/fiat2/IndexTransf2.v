@@ -364,6 +364,12 @@ Section WithMap.
               H: In _ _ |- _ => apply bag_to_list_incl in H end.
             apply_Forall_In.
             use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            case_match; auto. do 2 f_equal.
+            apply_type_sound e1. rewrite_l_to_r; invert_type_of_value_clear.
+            apply In_flat_map_ext; intros.
+            apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
         1:{ repeat
               (use_transf_to_idx_preserve_sem''_IH; eauto;
                case_match; auto; f_equal;
@@ -413,7 +419,7 @@ Section WithMap.
               use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
             2: eapply type_sound; eauto with fiat2_hints.
             all: repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        1,2: use_transf_to_idx_preserve_sem''_IH; eauto;
+        1,2,3: use_transf_to_idx_preserve_sem''_IH; eauto;
         apply_type_sound e; invert_type_of_value_clear;
         f_equal; apply In_filter_ext; intros; apply_Forall_In;
         use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
@@ -458,6 +464,23 @@ Section WithMap.
                 use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
                 repeat apply tenv_wf_step; eauto with fiat2_hints. } }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e1. invert_type_of_value_clear.
+            use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e2. invert_type_of_value_clear.
+            do 2 f_equal. apply In_flat_map_ext; intros.
+            apply_Forall_In. apply In_map_ext2.
+            1:{ apply In_filter_ext; intros.
+                apply_Forall_In.
+                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+                repeat apply tenv_wf_step; eauto with fiat2_hints. }
+            1:{ intros.
+                lazymatch goal with
+                  H: In _ (filter _ _) |- _ =>
+                    apply filter_In in H as [H _] end.
+                apply_Forall_In.
+                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+                repeat apply tenv_wf_step; eauto with fiat2_hints. } }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e. invert_type_of_value_clear.
             f_equal. apply map_ext_in.
             intros; apply_Forall_In.
@@ -469,6 +492,12 @@ Section WithMap.
             lazymatch goal with
               H: In _ (bag_to_list _) |- _ => apply bag_to_list_incl in H end.
             rewrite Forall_map_fst with (P:=fun v => type_of_value v t1) in *.
+            apply_Forall_In.
+            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
+            apply_type_sound e. invert_type_of_value_clear.
+            do 2 f_equal.
+            apply map_ext_in; intros.
             apply_Forall_In.
             use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
       Qed.

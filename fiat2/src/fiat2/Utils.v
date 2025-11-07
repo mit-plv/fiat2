@@ -10,6 +10,7 @@ Ltac invert_type_wf :=
   lazymatch goal with
   | H: type_wf (TList ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TBag ?t) |- _ => inversion H; clear H; subst
+  | H: type_wf (TSet ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TOption ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TDict ?t _) |- _ => inversion H; clear H; subst
   | H: type_wf (TDict _ ?t) |- _ => inversion H; clear H; subst
@@ -22,6 +23,11 @@ Proof.
 Qed.
 
 Lemma invert_TBag_wf: forall t, type_wf (TBag t) -> type_wf t.
+Proof.
+  intros. invert_type_wf; auto.
+Qed.
+
+Lemma invert_TSet_wf: forall t, type_wf (TSet t) -> type_wf t.
 Proof.
   intros. invert_type_wf; auto.
 Qed.
@@ -50,6 +56,7 @@ Create HintDb fiat2_hints.
 #[export] Hint Resolve type_of__type_wf : fiat2_hints.
 #[export] Hint Resolve invert_TList_wf : fiat2_hints.
 #[export] Hint Resolve invert_TBag_wf : fiat2_hints.
+#[export] Hint Resolve invert_TSet_wf : fiat2_hints.
 #[export] Hint Resolve invert_TOption_wf : fiat2_hints.
 #[export] Hint Resolve invert_TDict_wf_l : fiat2_hints.
 #[export] Hint Resolve invert_TDict_wf_r : fiat2_hints.
@@ -936,6 +943,11 @@ Section WithMap.
         apply In_flat_map_ext; intros.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
+        apply_type_sound e1; invert_type_of_value. do 2 f_equal.
+        apply In_flat_map_ext; intros.
+        apply_Forall_In.
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
     1:{ repeat (use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto).
         apply_type_sound e1; invert_type_of_value.
         apply_type_sound e2; invert_type_of_value.
@@ -975,10 +987,10 @@ Section WithMap.
             apply_type_sound e3;
               [ repeat apply tenv_wf_step; eauto with fiat2_hints
               | repeat apply locals_wf_step; apply_Forall_In; intuition auto ]. } }
-    1,2: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto;
+    1,2,3: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto;
         apply_type_sound e1; invert_type_of_value;
         f_equal; apply In_filter_ext; auto; intros; apply_Forall_In;
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+    use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
@@ -994,12 +1006,28 @@ Section WithMap.
         apply_Forall_In.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
         repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{  use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
+    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e2; invert_type_of_value.
         do 2 f_equal. apply In_flat_map_ext; intros.
         repeat Forall_fst__Forall_bag_to_list. apply_Forall_In.
+        erewrite In_filter_ext; eauto.
+        2:{ intros. apply_Forall_In.
+            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+            1: reflexivity.
+            repeat apply tenv_wf_step; eauto with fiat2_hints. }
+        apply map_ext_in; intros.
+        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
+        apply_Forall_In.
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+        repeat apply tenv_wf_step; eauto with fiat2_hints. }
+    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
+        apply_type_sound e1; invert_type_of_value.
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
+        apply_type_sound e2; invert_type_of_value.
+        do 2 f_equal. apply In_flat_map_ext; intros.
+        apply_Forall_In.
         erewrite In_filter_ext; eauto.
         2:{ intros. apply_Forall_In.
             use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
@@ -1018,6 +1046,11 @@ Section WithMap.
         apply_type_sound e1; invert_type_of_value.
         do 2 f_equal. apply map_ext_in; intros.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
+        apply_type_sound e1; invert_type_of_value.
+        do 2 f_equal. apply map_ext_in; intros.
+        apply_Forall_In.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
   Qed.
 
@@ -1148,6 +1181,12 @@ Section WithMap.
         repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
         lazymatch goal with
           H: type_of_aggr _ _ _ |- _ => inversion H; subst
+        end; auto. }
+    1:{ repeat destruct_match_hyp; try congruence;
+        try do_injection;
+        repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
+        lazymatch goal with
+          H: type_of_aci_aggr _ _ _ |- _ => inversion H; subst
         end; auto. }
     1:{ generalize dependent tl. generalize dependent tl'.
         generalize dependent t'. revert e'.
@@ -1532,6 +1571,7 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
         (negb (String.eqb x x1) && negb (String.eqb x x2) && free_immut_in x e3)
   | EFold e1 e2 y z e3 => free_immut_in x e1 || free_immut_in x e2 || (negb (String.eqb x y) && negb (String.eqb x z) && free_immut_in x e3)
   | EACFold _ e => free_immut_in x e
+  | EACIFold _ e => free_immut_in x e
   | ERecord l => existsb (fun '(_, e) => free_immut_in x e) l
   | EAccess e _ => free_immut_in x e
   | EOptMatch e e_none y e_some => free_immut_in x e || free_immut_in x e_none || (negb (String.eqb x y) && free_immut_in x e_some)
@@ -1543,7 +1583,7 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
   | EJoin _ e1 e2 x1 x2 p r => free_immut_in x e1 || free_immut_in x e2 ||
                                (negb (String.eqb x x1) && negb (String.eqb x x2) && (free_immut_in x p || free_immut_in x r))
   | EProj _ e y r => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x r)
-  | EBagOf e => free_immut_in x e
+  | EBagOf e | ESetOf e => free_immut_in x e
   end.
 
 Section WithMap.
@@ -1577,8 +1617,8 @@ Section WithMap.
         * apply IHe2; intuition.
           rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
     - inversion H0; subst; econstructor.
-      1,3: apply IHe1; eauto; intuition idtac.
-      1,2: destruct (x =? x0) eqn:Ex;
+      1,3,5: apply IHe1; eauto; intuition idtac.
+      1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | apply IHe2; intuition idtac;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
@@ -1628,22 +1668,22 @@ Section WithMap.
              ++ apply IHe3; intuition.
                 rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
     - inversion H0; subst; constructor.
-      1,3: apply IHe1; auto; intuition.
-      1,2: destruct (x =? x0) eqn:Ex;
+      1,3,5: apply IHe1; auto; intuition.
+      1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | apply IHe2; intuition;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
     - inversion H0; subst; econstructor.
-      1,5: apply IHe1; eauto; intuition.
-      1,4: apply IHe2; eauto; intuition.
-      1,3: destruct (x =? x0) eqn:Ex;
+      1,5,9: apply IHe1; eauto; intuition.
+      1,4,7: apply IHe2; eauto; intuition.
+      1,3,5: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
       (destruct (x =? y) eqn:Ey;
        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
        | apply IHe3; simpl in *; rewrite Bool.orb_false_iff in *; intuition; rewrite eqb_neq in *;
          rewrite Properties.map.put_put_diff; auto ]).
-      1,2: destruct (x =? x0) eqn:Ex;
+      1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
       (destruct (x =? y) eqn:Ey;
@@ -1651,8 +1691,8 @@ Section WithMap.
        | apply IHe4; simpl in *; rewrite Bool.orb_false_iff in *; intuition; rewrite eqb_neq in *;
          rewrite Properties.map.put_put_diff; auto ]).
     - inversion H0; subst; econstructor.
-      1,3: apply IHe1; eauto; intuition.
-      1,2: destruct (x =? x0) eqn:Ex;
+      1,3,5: apply IHe1; eauto; intuition.
+      1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | apply IHe2; intuition;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
@@ -1674,11 +1714,11 @@ Section WithMap.
       + rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
         erewrite IHe1, IHe2; intuition.
     - destruct tag; auto;
-        rewrite <- IHe1; intuition; case_match; auto; [do 2 f_equal | f_equal ];
+        rewrite <- IHe1; intuition; case_match; auto; [ do 2 f_equal | do 2 f_equal | f_equal ];
         apply flat_map_ext; intros; destruct (x0 =? x) eqn:E'.
-      1,3: rewrite eqb_eq in *; subst;
+      1,3,5: rewrite eqb_eq in *; subst;
       rewrite Properties.map.put_put_same; auto.
-      1,2: rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto;
+      1,2,3: rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto;
       erewrite IHe2; intuition.
     - rewrite <- IHe1; intuition idtac.
       rewrite <- IHe2; intuition idtac.
@@ -1734,9 +1774,11 @@ Section WithMap.
     - destruct tag; auto;
         rewrite <- IHe1, <- IHe2; intuition idtac; repeat case_match; auto.
       1: do 2 f_equal; apply flat_map_ext; intros; clear E E0;
+      induction l0; auto; simpl.
+      2: do 2 f_equal; apply flat_map_ext; intros; clear E E0;
       remember (bag_to_list l0) as l0'; clear Heql0';
       induction l0'; auto; simpl.
-      2: f_equal; apply flat_map_ext; intros; clear E E0;
+      3: f_equal; apply flat_map_ext; intros; clear E E0;
       induction l0; auto; simpl.
       all: enough (interp_expr store (map.put (map.put (map.put env x0 v) x a) y a0) e3 = interp_expr store (map.put (map.put env x a) y a0) e3);
         [ | (destruct (x0 =? x) eqn:Ex;
@@ -1751,9 +1793,11 @@ Section WithMap.
                  rewrite Properties.map.put_put_diff; auto;
                  simpl in H1; rewrite Bool.orb_false_iff in *;
                  rewrite <- IHe3; intuition idtac ]) ]) ].
-      1: rewrite H0; destruct_one_match; simpl; try apply IHl0';
+      1: rewrite H0; destruct_one_match; simpl; try apply IHl0;
+      f_equal; try apply IHl0.
+      2: rewrite H0; destruct_one_match; simpl; try apply IHl0';
       f_equal; try apply IHl0'.
-      2: rewrite H0; destruct_one_match; simpl; try apply IHl0;
+      3: rewrite H0; destruct_one_match; simpl; try apply IHl0;
       f_equal; try apply IHl0.
       all: destruct (x0 =? x) eqn:Ex;
         [ rewrite eqb_eq in *; subst;
@@ -1769,7 +1813,7 @@ Section WithMap.
              rewrite <- (IHe4 x0); intuition idtac ]) ].
     - destruct tag; auto;
         rewrite <- IHe1; intuition idtac; case_match; auto.
-      all: [> do 2 f_equal | f_equal ]; apply map_ext; intro;
+      all: [> do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext; intro;
         (destruct (x0 =? x) eqn:Ex;
          [ rewrite eqb_eq in *; subst;
            rewrite Properties.map.put_put_same; auto

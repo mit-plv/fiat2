@@ -135,7 +135,7 @@ Section WithWord.
                                     then option_append (cols x e1) (cols x e2)
                                     else option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | EFold e1 e2 x1 x2 e3 => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x e3) (option_append (cols x e1) (cols x e2))
-      | EACFold _ e => cols x e
+      | EACFold _ e | EACIFold _ e => cols x e
       | ERecord l => fold_right (fun val acc => option_append (cols x (snd val)) acc) (Some nil) l
       | EAccess (EVar x1) y => if string_dec x1 x then Some (y :: nil) else Some nil
       | EAccess e y => cols x e
@@ -145,9 +145,8 @@ Section WithWord.
       | EFilter _ e x1 p => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x p)
       | EJoin _ e1 e2 x1 x2 p r => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x r) (option_append (cols x p) (option_append (cols x e1) (cols x e2)))
       | EProj _ e x1 r => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x r)
-      | EBagOf l => cols x l
+      | EBagOf l | ESetOf l => cols x l
       end.
-
 
     Theorem proj_into_join: forall (store env: locals) (Gstore Genv: tenv) (t1 t2 p r rp: expr) (x y xp: string),
        x <> y ->
@@ -305,6 +304,10 @@ Section WithWord.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
           * eapply H1; eauto.
           * eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e1); try congruence. destruct (cols x e2); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+          * eapply H1; eauto.
+          * eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
       - destruct (Sumbool.sumbool_or (x = x1) (x <> x1) (x = x2) (x <> x2) (string_dec x x1) (string_dec x x2)) as [b1|b2].
         + repeat destruct_match_hyp; try congruence.
           do_injection. unfold incl in *. intros.
@@ -378,7 +381,21 @@ Section WithWord.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
         + eapply H1; eauto.
         + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x p); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+        + eapply H1; eauto.
+        + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
       - destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1|b2].
+        + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H5 as H5. rewrite <- H5.
+          unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+        + destruct (cols x r); try congruence. destruct (cols x p); try congruence. destruct (cols x e1); try congruence.
+          destruct (cols x e2); try congruence. destruct b2 as [b2 b3]. injection H5 as H5. rewrite <- H5. unfold incl in *.
+          intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6.
+          * eapply IHtype_of4; eauto. rewrite !map.get_put_diff; try assumption.
+          * apply dedup_In in H6. apply in_app_or in H6. destruct H6.
+            -- eapply IHtype_of3; eauto. rewrite !map.get_put_diff; try assumption.
+            -- apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+      -  destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1|b2].
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H5 as H5. rewrite <- H5.
           unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
         + destruct (cols x r); try congruence. destruct (cols x p); try congruence. destruct (cols x e1); try congruence.
@@ -406,6 +423,10 @@ Section WithWord.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
         + eapply H1; eauto.
         + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x r); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+        + eapply H1; eauto.
+        + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
     Qed.
 
     Ltac destruct_match_goal := lazymatch goal with |-context [match ?x with _ => _ end] => destruct x end.
@@ -423,7 +444,7 @@ Section WithWord.
          and the relation holds between a a' and the expression's columns
          (columns of expression incl in a', a' included in a), then can replace a with a' when interpreting e *)
       induction e using expr_IH.
-      14: {
+      15: {
           intros columns ? ? env ? ? HC HR. simpl in *. destruct e eqn:E; try now (erewrite IHe; eauto). simpl. destruct (string_dec x0 x).
           + subst. unfold get_local. rewrite !map.get_put_same. unfold relation in HR. destruct a,a'; intuition. inversion H. subst.
             inversion H0. subst. clear H6 H9. injection HC as HC. rewrite <- HC in H2. simpl in *. unfold incl in H2. simpl in *.
@@ -480,11 +501,11 @@ Section WithWord.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0).
         + subst. erewrite IHe1; eauto. repeat destruct_match_goal; try reflexivity;
-            [ do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
+            [ do 2 f_equal | do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
             rewrite !Properties.map.put_put_same; reflexivity.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
-          * repeat destruct_match_goal; try reflexivity; [ do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
+          * repeat destruct_match_goal; try reflexivity; [ do 2 f_equal | do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
             rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption; erewrite IHe2; eauto; eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
@@ -509,6 +530,7 @@ Section WithWord.
           unfold Sumbool.sumbool_or in *. repeat destruct_match_hyp; try congruence.
           rewrite !Properties.map.put_put_diff with (k1:=x); auto.
           erewrite IHe3; eauto using rel_step.
+      - cbn; intros. erewrite IHe; eauto.
       - cbn; intros. erewrite IHe; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
         destruct (Sumbool.sumbool_or (x=x0)(x<>x0)(x=y)(x<>y)
@@ -595,7 +617,18 @@ Section WithWord.
                      --- rewrite !Properties.map.put_put_same. reflexivity.
                      --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
             -- eapply rel_step; eauto.
-
+            -- destruct_match_goal; try reflexivity. do 2 f_equal; apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+               ++ intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+            -- eapply rel_step; eauto.
             -- destruct_match_goal; try reflexivity. f_equal; apply In_flat_map_ext. intros. apply map_ext_in_eq.
                ++ apply In_filter_ext. intros. destruct b1; subst.
                   ** rewrite !Properties.map.put_put_same. reflexivity.
@@ -619,7 +652,12 @@ Section WithWord.
                ++ intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
                   eapply IHe4; eauto. eapply rel_step; eauto.
             -- eapply rel_step; eauto.
-
+            -- destruct_match_goal; try reflexivity. do 2 f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  erewrite IHe3; eauto. eapply rel_step; eauto.
+               ++ intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  eapply IHe4; eauto. eapply rel_step; eauto.
+            -- eapply rel_step; eauto.
             -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
                ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
                   erewrite IHe3; eauto. eapply rel_step; eauto.
@@ -629,13 +667,14 @@ Section WithWord.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0); subst.
         + erewrite IHe1; eauto.
-          do 2 destruct_match_goal; try reflexivity; [ do 2 f_equal | f_equal ]; apply map_ext_in;
+          do 2 destruct_match_goal; try reflexivity; [ do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext_in;
           intros; rewrite !Properties.map.put_put_same; reflexivity.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto; try eapply rel_step; eauto. repeat destruct_match_goal; try reflexivity;
-            [ do 2 f_equal | f_equal ]; apply map_ext_in;
+            [ do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext_in;
             intros; rewrite !Properties.map.put_put_diff with (k1:=x); try assumption;
             erewrite IHe2; eauto; eapply rel_step; eauto.
+      - cbn; intros; erewrite IHe; eauto.
       - cbn; intros; erewrite IHe; eauto.
     Qed.
 
