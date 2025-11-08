@@ -65,19 +65,6 @@ Section WithHole.
       Instance sum_agg_ok : IndexInterface2.ok sum_agg idx_wf :=
         IndexInterface2.Build_ok sum_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
-      (* ??? move to utils *)
-      Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
-          Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
-          access_record l x = Success a ->
-          access_record l' x = Success a' ->
-          P a a'.
-      Proof.
-        induction 1; cbn; try discriminate; auto.
-        repeat case_match; cbn in *; intuition idtac;
-          repeat (try clear_refl; do_injection); subst; auto;
-          congruence.
-      Qed.
-
       Ltac invert_type_of_aggr_clear :=
         lazymatch goal with
         | H: type_of_aggr _ _ _ |- _ =>

@@ -5,31 +5,6 @@ Import ListNotations.
 
 Open Scope string_scope.
 
-Section WithMap.
-  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
-  Context {locals : map.map string value} {locals_ok : map.ok locals}.
-
-  Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
-      free_immut_in x e = false ->
-      type_of Gstore Genv e t ->
-      type_of Gstore (map.put Genv x t') e t.
-  Proof.
-    intros. destruct (map.get Genv x) eqn:E.
-    1:{ rewrite <- Properties.map.put_remove_same.
-        eapply type_of_strengthen;
-          [
-          | apply map_incl_refl
-          | apply map_incl_step_r; try apply map_incl_refl;
-            apply map.get_remove_same ].
-        eapply not_free_immut_put_ty; eauto.
-        rewrite Properties.map.put_remove_same, Properties.map.put_noop; eauto. }
-    1:{ eapply type_of_strengthen; eauto using map_incl_refl.
-        apply map_incl_step_r; auto using map_incl_refl. }
-  Qed.
-End WithMap.
-
 Ltac access_record_Success__is_tbl_ty :=
   cbn; apply inb_true_iff;
   lazymatch goal with
@@ -436,18 +411,6 @@ Section WithHole.
                 eapply not_free_immut_put_ty; eauto. }
             1-3: repeat invert_type_wf; auto.
             1: rewrite map.get_put_same; trivial.
-          Qed.
-
-          Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
-              Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
-              access_record l x = Success a ->
-              access_record l' x = Success a' ->
-              P a a'.
-          Proof.
-            induction 1; cbn; try discriminate; auto.
-            repeat case_match; cbn in *; intuition idtac;
-              repeat (try clear_refl; do_injection); subst; auto;
-              congruence.
           Qed.
 
           Lemma bag_insert_min : forall (v : value) l,

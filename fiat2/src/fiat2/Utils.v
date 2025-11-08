@@ -448,6 +448,18 @@ Proof.
     + rewrite eqb_neq in *. intuition. congruence.
 Qed.
 
+Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
+    Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
+    access_record l x = Success a ->
+    access_record l' x = Success a' ->
+    P a a'.
+Proof.
+  induction 1; cbn; try discriminate; auto.
+  repeat case_match; cbn in *; intuition idtac;
+    repeat (try clear_refl; do_injection); subst; auto;
+    congruence.
+Qed.
+
 Lemma get_attr_type_ty_wf : forall rt attr,
     type_wf (TRecord rt) ->
     type_wf (get_attr_type rt attr).
@@ -486,6 +498,75 @@ Lemma In_fold_right_ext : forall A B a l (f : B -> A -> A) g P,
 Proof.
   apply In_fold_right_ext'.
 Qed.
+
+Section fold_right_aci.
+  Context (A R : Type) (f : A -> R -> R).
+  Context (H_comm : forall (a1 a2 : A) (r : R),
+              f a1 (f a2 r) = f a2 (f a1 r)).
+
+  Lemma fold_right__fold_left : forall l r,
+      fold_right f r l = fold_left (fun x y => f y x) l r.
+  Proof.
+    intros; rewrite <- fold_left_rev_right.
+    apply List.fold_right_change_order; auto using Permutation_rev.
+  Qed.
+
+  Context (H_idem : forall (a : A) (r : R),
+              f a (f a r) = f a r).
+
+  Lemma In_fold_right_idem : forall l r a,
+      In a l -> fold_right f (f a r) l = fold_right f r l.
+  Proof.
+    induction l; cbn; intuition idtac.
+    1:{ change (?f ?a (fold_right ?f ?r ?l)) with (fold_right f r (a :: l)).
+        rewrite !fold_right__fold_left; cbn; subst.
+        congruence. }
+    1: rewrite IHl; auto.
+  Qed.
+
+  Lemma fold_right_change_order_idem' :
+    forall l1 l2 l' : list A,
+      incl l1 l2 -> incl l2 (l' ++ l1) ->
+      forall r0 : R,
+        (forall a, In a l' -> f a r0 = r0) ->
+        fold_right f r0 l1 = fold_right f r0 l2.
+  Proof.
+    induction l1; cbn; intros * H1 H2 ? H_aux.
+    1:{ induction l2; cbn in *; auto.
+        rewrite app_nil_r in *.
+        apply incl_cons_inv in H2; intuition idtac.
+        rewrite <- IHl2; auto using incl_nil_l.
+        rewrite H_aux; auto. }
+    1:{ apply incl_cons_inv in H1; intuition idtac.
+        change (?f ?a (fold_right ?f ?r ?l)) with (fold_right f r (a :: l)).
+        rewrite fold_right__fold_left; cbn.
+        rewrite <- fold_right__fold_left.
+        lazymatch goal with
+          _: incl _ (?l' ++ ?a :: _) |- _ =>
+            erewrite IHl1 with (l':=app l' [a]) end; eauto.
+        2: rewrite <- app_assoc; auto.
+        2:{ intros. rewrite H_comm.
+            rewrite in_app_iff in *; intuition idtac.
+            1: rewrite H_aux; auto.
+            destruct_In; auto.
+            lazymatch goal with
+              H: In _ [] |- _ =>
+                apply in_nil in H end; intuition idtac. }
+        apply In_fold_right_idem; auto. }
+  Qed.
+
+  Lemma fold_right_change_order_idem :
+    forall l1 l2 : list A,
+      incl l1 l2 -> incl l2 l1 ->
+      forall r0 : R,
+        fold_right f r0 l1 = fold_right f r0 l2.
+  Proof.
+    intros; apply fold_right_change_order_idem' with (l':=nil); auto.
+    intros;
+      lazymatch goal with H: In _ nil |- _ => apply in_nil in H end;
+      intuition idtac.
+  Qed.
+End fold_right_aci.
 
 Lemma flat_map_eq : forall A B (f : A -> list B) g l, Forall (fun x => f x = g x) l -> flat_map f l = flat_map g l.
 Proof.
@@ -1696,6 +1777,24 @@ Section WithMap.
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | apply IHe2; intuition;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
+  Qed.
+
+  Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
+      free_immut_in x e = false ->
+      type_of Gstore Genv e t ->
+      type_of Gstore (map.put Genv x t') e t.
+  Proof.
+    intros. destruct (map.get Genv x) eqn:E.
+    1:{ rewrite <- Properties.map.put_remove_same.
+        eapply type_of_strengthen;
+          [
+          | apply map_incl_refl
+          | apply map_incl_step_r; try apply map_incl_refl;
+            apply map.get_remove_same ].
+        eapply not_free_immut_put_ty; eauto.
+        rewrite Properties.map.put_remove_same, Properties.map.put_noop; eauto. }
+    1:{ eapply type_of_strengthen; eauto using map_incl_refl.
+        apply map_incl_step_r; auto using map_incl_refl. }
   Qed.
 
   Lemma not_free_immut_put_sem: forall e x (store env : locals) v,

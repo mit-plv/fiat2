@@ -97,11 +97,11 @@ Section ConcreteExample.
   Definition init_Genv : ctenv := map.put (map.put map.empty "row1" row_ty) "row2" row_ty.
 
 
-  Compute typecheck init_Gstore init_Genv ex1.
+  (* Compute typecheck init_Gstore init_Genv ex1. *)
 
   Unset Printing Notations.
   Definition ex1_transformed := ex_transf init_Gstore init_Genv ex1.
-  Compute ex1_transformed.
+  (* Compute ex1_transformed. *)
 End ConcreteExample.
 
 Print Assumptions ex1_transformed.

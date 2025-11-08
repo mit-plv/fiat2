@@ -561,19 +561,6 @@ Section WithTags.
       Qed.
     End cons_to_pk_idx_update.
 
-    (* ??? TODO: move *)
-    Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
-        Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
-        access_record l x = Success a ->
-        access_record l' x = Success a' ->
-        P a a'.
-    Proof.
-      induction 1; cbn; try discriminate; auto.
-      repeat case_match; cbn in *; intuition idtac;
-        repeat (try clear_refl; do_injection); subst; auto;
-        congruence.
-    Qed.
-
     Ltac use_Forall2_access_record tag :=
       lazymatch goal with
         H: Forall2 _ ?l ?tl, H1: access_record ?l tag = _,
