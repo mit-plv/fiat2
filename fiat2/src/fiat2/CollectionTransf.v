@@ -10,7 +10,7 @@ Definition annotate_collection (e : expr) : expr :=
       if (negb (v =? acc) && (v =? v') && (acc =? acc'))%bool then EACFold AGSum (EBagOf l)
       else e
   | EUnop OLength l => EACFold AGCount (EBagOf l)
-  | EFold l (EAtom (ANone None)) v0 acc0
+  | EFold l (EAtom (ANone _)) v0 acc0
       (EOptMatch (EVar acc1) (EUnop OSome (EVar v1))
          x0 (EIf (EBinop OLess (EVar v2) (EVar x1)) (EUnop OSome (EVar v3)) (EVar acc2))) =>
       if (all_neqb [v0; acc0; x0] && all_eqb [(v0, [v1; v2; v3]); (acc0, [acc1; acc2]); (x0, [x1])])%bool

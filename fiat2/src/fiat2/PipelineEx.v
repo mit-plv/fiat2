@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2
-  fiat2.CollectionTransf fiat2.DictIndexImpl2 fiat2.SumAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf2 fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+  fiat2.CollectionTransf fiat2.DictIndexImpl2 fiat2.SumAgg fiat2.MinAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf2 fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith.
 Import ListNotations.
@@ -30,6 +30,17 @@ Section WithConcreteMaps.
 
     Definition sum_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (sum_to_agg_lookup_head sum_agg_attr "id_tag" "aux_tag" "sum_agg_tag" tbl).
     Definition cons_to_add_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_add_head).
+
+    Context (min_agg_attr : string).
+
+    Notation min_agg_wf := (MinAgg.idx_wf (locals:=clocals) "hole" min_agg_attr "x").
+    Instance cmin_agg : IndexInterface2.index := (min_agg "hole" min_agg_attr "x").
+    Instance cmin_agg_ok : IndexInterface2.ok cmin_agg min_agg_wf.
+    apply min_agg_ok.
+    Qed.
+
+    Definition min_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (min_to_agg_lookup_head min_agg_attr "id_tag" "aux_tag" "min_agg_tag" tbl).
+    Definition cons_to_min_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_min_head "y").
 
     Context (dict_idx_attr : string).
 
@@ -73,6 +84,7 @@ Section WithConcreteMaps.
 
 
     Notation idxs := [("sum_agg_tag", csum_agg, sum_agg_wf);
+                      ("min_agg_tag", cmin_agg, min_agg_wf);
                       ("dict_idx_tag", cdict_idx, dict_idx_wf);
                       ("pk_idx_tag", cpk_idx, pk_idx_wf);
                       ("bm_tag", bitmap, bitmap_wf)].
@@ -94,15 +106,17 @@ Section WithConcreteMaps.
                              (Basics.compose (dict_lookup_transf tbl)
                                 (Basics.compose (use_dict_idx_transf tbl)
                                    (Basics.compose (repeat_transf (cons_to_insert_transf tbl) 10000)
-                                      (Basics.compose (sum_agg_lookup_transf tbl)
-                                         (Basics.compose (repeat_transf (cons_to_add_transf tbl) 10000)
-                                            (cons_to_add_transf tbl)))))))))))) Gstore Genv)
-        (Basics.compose push_down_collection_transf
+                                      (Basics.compose (min_agg_lookup_transf tbl)
+                                         (Basics.compose (repeat_transf (cons_to_min_transf tbl) 10000)
+                                            (Basics.compose (sum_agg_lookup_transf tbl)
+                                               (repeat_transf (cons_to_add_transf tbl) 10000)
+              )))))))))))) Gstore Genv)
            (Basics.compose push_down_collection_transf
-              (Basics.compose annotate_collection_transf
-                 (Basics.compose to_filter_transf to_proj_transf)))).
+              (Basics.compose push_down_collection_transf
+                 (Basics.compose annotate_collection_transf
+                    (Basics.compose to_filter_transf to_proj_transf)))).
 
-    Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
+         Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
     Proof.
       repeat (repeat apply_transf_sound_lemmas; eauto 10 with transf_hints).
     Qed.
@@ -110,23 +124,22 @@ Section WithConcreteMaps.
 
   Section Example1.
     Definition sum_agg_attr1 := "salary".
+    Definition min_agg_attr1 := "salary".
     Definition dict_idx_attr1 := "department".
     Definition bitmap_attr1 := "location".
     Definition bitmap_str1 := "A".
 
-    Definition ex_transf1 := ex_transf sum_agg_attr1 dict_idx_attr1 bitmap_attr1 bitmap_str1.
+    Definition ex_transf1 := ex_transf sum_agg_attr1 min_agg_attr1 dict_idx_attr1 bitmap_attr1 bitmap_str1.
 
     Definition row_ty := TRecord (record_sort [("name", TString); ("department", TString); ("feedback", TString); ("salary", TInt); ("location", TString)]).
     (* Two Arbitrary well_typed rows *)
     Definition row1 := EVar "row1".
     Definition row2 := EVar "row2".
-    (* ??? change the names *)
 
     Definition build_responses1 := <{ set "responses" := row1 :: row2 :: mut "responses" }>.
     Definition filter_responses dpt : expr := ESort LikeList <[ "row" <- mut "responses" ;
                                                                 check("row"["department"] == << EAtom (AString dpt) >>);
                                                                 ret "row" ]>.
-    (* ??? foreach from another table to update this table e.g. purchase of items*)
     Definition filter_responses2 : expr := <[ "row" <- mut "responses" ;
                                               check("row"["location"] == << EAtom (AString "A") >>);
                                               ret "row" ]>.
@@ -163,11 +176,12 @@ Section WithConcreteMaps.
 
   Section Example2.
     Definition sum_agg_attr2 := "price".
+    Definition min_agg_attr2 := "price".
     Definition dict_idx_attr2 := "color".
     Definition bitmap_attr2 := "name".
     Definition bitmap_str2 := "shirt_1".
 
-    Definition ex_transf2 := ex_transf sum_agg_attr2 dict_idx_attr2 bitmap_attr2 bitmap_str2.
+    Definition ex_transf2 := ex_transf sum_agg_attr2 min_agg_attr2 dict_idx_attr2 bitmap_attr2 bitmap_str2.
 
     Definition outfits_row_ty := TRecord (record_sort [("outfit_name", TString); ("shirt_name", TString); ("shirt_color", TString); ("shirt_price", TInt); ("pants_name", TString); ("pants_color", TString); ("pants_price", TInt)]).
 
@@ -196,11 +210,18 @@ Section WithConcreteMaps.
     Definition query2_2 :=
       CAssign "total_shirt_price" (EFold (<["row" <- mut "shirts" ; ret "row"["price"]]>) (EAtom (AInt 0)) "v" "acc" (EBinop OPlus (EVar "v") (EVar "acc"))).
 
+    Definition query2_3 :=
+      CAssign "min_shirt_price"
+        (EFold (<["row" <- mut "shirts" ; ret "row"["price"]]>) (EAtom (ANone (Some TInt))) "v" "acc"
+           (EOptMatch (EVar "acc") (EUnop OSome (EVar "v"))
+              "x" (EIf (EBinop OLess (EVar "v") (EVar "x")) (EUnop OSome (EVar "v")) (EVar "acc")))).
+
     Definition ex2 := CLetMut (EAtom (ANil (Some (shirts_row_ty)))) "shirts"
                         (CSeq populate_shirts_from_outfits
-                           (CSeq query2_1 query2_2)).
+                           (CSeq query2_1
+                              (CSeq query2_2 query2_3))).
 
-    Definition init_Gstore2 : ctenv := map.put (map.put map.empty "outfits" (TList outfits_row_ty)) "total_shirt_price" TInt.
+    Definition init_Gstore2 : ctenv := map.put (map.put (map.put map.empty "outfits" (TList outfits_row_ty)) "total_shirt_price" TInt) "min_shirt_price" (TOption TInt).
     Definition init_Genv2 : ctenv := map.empty.
 
     (* Compute typecheck init_Gstore2 init_Genv2 ex2. *)
