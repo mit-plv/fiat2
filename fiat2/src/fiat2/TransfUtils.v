@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface2.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Morphisms.
 Import ListNotations.
@@ -580,7 +580,7 @@ Section WithMap.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Section WithIndex.
-    Context {idx : IndexInterface2.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
+    Context {idx : IndexInterface.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
     Context (is_tbl_ty : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop).
 
     Notation expr_aug_transf_sound := (expr_aug_transf_sound is_tbl_ty aux_ty aux_wf).

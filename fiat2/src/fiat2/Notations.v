@@ -155,11 +155,11 @@ Local Open Scope Z_scope.
 Local Open Scope string_scope.
 
   Context (x : string).
-  Print Notation "_ ; _" in custom fiat2_comm.
+(*  Print Notation "_ ; _" in custom fiat2_comm.
   Print Scope fiat2_scope.
   Compute (<[ [] ++ [ 2 ] ]>).
   Compute (<[ x <- <<EAtom AUnit>> :: [ ] ; ret x ]>).
-  Compute (<{ let "x" = <<EAtom AUnit>> in set x := "x" }>).
+  Compute (<{ let "x" = <<EAtom AUnit>> in set x := "x" }>). *)
 
    Goal <{ skip }> = CSkip. reflexivity. Abort.
    Goal <{ skip; skip }> = CSeq CSkip CSkip. reflexivity. Abort.

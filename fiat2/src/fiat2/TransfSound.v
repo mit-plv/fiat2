@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface2.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Morphisms.
 Import ListNotations.

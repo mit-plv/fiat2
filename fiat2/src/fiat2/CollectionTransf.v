@@ -49,13 +49,13 @@ Definition push_down_collection (e : expr) : expr :=
 Definition ex : expr :=
   ESort LikeList (EFilter LikeList (ELoc "tbl") "x"
     (EBinop OEq (EAccess (EVar "x") "attr") (EAtom (AInt 0)))).
-Compute fold_expr push_down_collection (fold_expr annotate_collection ex).
+(* Compute fold_expr push_down_collection (fold_expr annotate_collection ex). *)
 
 Definition ex1 : expr :=
   EFold (EProj LikeList (ELoc "tbl") "r" (EAccess (EVar "r") "attr")) (EAtom (ANone None)) "v" "acc"
       (EOptMatch (EVar "acc") (EUnop OSome (EVar "v"))
          "x" (EIf (EBinop OLess (EVar "v") (EVar "x")) (EUnop OSome (EVar "v")) (EVar "acc"))).
-Compute fold_expr push_down_collection (fold_expr annotate_collection ex1).
+(* Compute fold_expr push_down_collection (fold_expr annotate_collection ex1). *)
 
 Section WithWord.
   Context {width: Z} {word: word.word width}.

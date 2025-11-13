@@ -80,8 +80,7 @@ Section WithConcreteMaps.
     Definition to_filter_transf := fold_command id to_filter_head.
     Definition annotate_collection_transf := fold_command id annotate_collection.
     Definition push_down_collection_transf := fold_command id push_down_collection.
-
-
+    Definition filter_pushdown_transf := fold_command id filter_pushdown_head.
 
     Notation idxs := [("sum_agg_tag", csum_agg, sum_agg_wf);
                       ("min_agg_tag", cmin_agg, min_agg_wf);
@@ -112,8 +111,10 @@ Section WithConcreteMaps.
                                                (repeat_transf (cons_to_add_transf tbl) 10000)
               )))))))))))) Gstore Genv)
            (Basics.compose push_down_collection_transf
-                 (Basics.compose annotate_collection_transf
-                    (Basics.compose to_filter_transf to_proj_transf))).
+              (Basics.compose annotate_collection_transf
+                 (Basics.compose filter_pushdown_transf
+                    (Basics.compose to_filter_transf to_proj_transf)))).
+Hint Resolve filter_pushdown_head_sound : transf_hints.
 
          Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
     Proof.
