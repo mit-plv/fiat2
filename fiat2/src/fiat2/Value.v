@@ -15,6 +15,8 @@ Section WithWord.
   | VList (l : list value)
   | VRecord (l : list (string * value))
   | VDict (l : list (value * value))
+  | VBag (l : list (value * nat))
+  | VSet (l : list value)
   | VUnit.
 
   Section ValueIH.
@@ -23,7 +25,10 @@ Section WithWord.
       (f_option : forall m : option value, match m with Some v => P v | None => True end -> P (VOption m))
       (f_list : forall l : list value, Forall P l -> P (VList l))
       (f_record : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l))
-      (f_dict : forall l : list (value * value), Forall (fun v => P (fst v) /\ P (snd v)) l -> P (VDict l)) (f_unit : P VUnit).
+      (f_dict : forall l : list (value * value), Forall (fun v => P (fst v) /\ P (snd v)) l -> P (VDict l))
+      (f_bag : forall l : list (value * nat), Forall (fun v => P (fst v)) l -> P (VBag l))
+      (f_set : forall l : list value, Forall P l -> P (VSet l))
+      (f_unit : P VUnit).
     Section __.
       Context (value_IH : forall v, P v).
       Fixpoint list_value_IH (l : list value) : Forall P l :=
@@ -41,6 +46,11 @@ Section WithWord.
         | nil => Forall_nil (fun v => P (fst v) /\ P (snd v))
         | v :: l' => Forall_cons v (conj (value_IH (fst v)) (value_IH (snd v)))(dict_value_IH l')
         end.
+      Fixpoint bag_value_IH (l : list (value * nat)) : Forall (fun v => P (fst v)) l :=
+        match l as l0 return Forall (fun v => P (fst v)) l0 with
+        | nil => Forall_nil (fun v => P (fst v))
+        | v :: l' => Forall_cons v (value_IH (fst v)) (bag_value_IH l')
+        end.
     End __.
 
     Fixpoint value_IH (v : value) {struct v} : P v :=
@@ -53,6 +63,8 @@ Section WithWord.
       | VList l => f_list l (list_value_IH value_IH l)
       | VRecord l => f_record l (record_value_IH value_IH l)
       | VDict l => f_dict l (dict_value_IH value_IH l)
+      | VBag l => f_bag l (bag_value_IH value_IH l)
+      | VSet l => f_set l (list_value_IH value_IH l)
       | VUnit => f_unit
       end.
   End ValueIH.
@@ -96,6 +108,9 @@ Section WithWord.
 
     Definition dict_compare : list (value * value) -> list (value * value) -> comparison :=
       list_compare (pair_compare value_compare value_compare).
+
+    Definition bag_compare : list (value * nat) -> list (value * nat) -> comparison :=
+      list_compare (pair_compare value_compare Nat.compare).
   End WithValueCompare.
 
   Fixpoint value_compare (a b : value) : comparison :=
@@ -116,6 +131,8 @@ Section WithWord.
     | VList a, VList b => list_compare value_compare a b
     | VRecord a, VRecord b => record_compare value_compare a b
     | VDict a, VDict b => dict_compare value_compare a b
+    | VBag a, VBag b => bag_compare value_compare a b
+    | VSet a, VSet b => list_compare value_compare a b
     | VUnit, VUnit => Eq
     | VUnit, _ => Lt | _, VUnit => Gt
     | VBool _, _ => Lt | _, VBool _ => Gt
@@ -125,6 +142,8 @@ Section WithWord.
     | VOption _, _ => Lt | _, VOption _ => Gt
     | VList _, _ => Lt | _, VList _ => Gt
     | VRecord _, _ => Lt | _, VRecord _ => Gt
+    | VDict _, _ => Lt | _, VDict _ => Gt
+    | VBag _, _ => Lt | _, VBag _ => Gt
     end.
 
   Definition value_eqb (a b : value) : bool :=
@@ -179,13 +198,18 @@ Section WithWord.
     - apply string_compare_refl.
     - destruct m; auto.
     - induction l; auto. simpl. inversion H; subst; auto.
-      rewrite H2. apply IHl. assumption.
+      rewrite H2. auto.
     - induction l; auto. destruct a. simpl.
       rewrite string_compare_refl. inversion H; subst; simpl in *.
-      rewrite H2. apply IHl. assumption.
+      rewrite H2. auto.
     - induction l; auto. destruct a; simpl.
       inversion H; subst; simpl in *. destruct H2.
-      rewrite H0, H1. apply IHl. assumption.
+      rewrite H0, H1. auto.
+    - induction l; auto. destruct a; simpl.
+      inversion H; subst; simpl in *. rewrite H2, Nat.compare_refl.
+      auto.
+    - induction l; auto. simpl. inversion H; subst; auto.
+      rewrite H2. auto.
   Qed.
 
   Lemma value_compare_antisym : is_antisym value_compare.
@@ -216,6 +240,15 @@ Section WithWord.
     - revert l0. induction l as [| a l IHl]; destruct l0 as [| b l0]; auto. destruct a as [ka va], b as [kb vb].
       simpl. inversion H; subst. destruct H2 as [H2L H2R]. pose proof (H2L kb) as H2L. pose proof (H2R vb) as H2R.
       simpl in *. rewrite H2L, H2R. destruct (value_compare kb ka), (value_compare vb va); simpl; auto.
+    - revert l0. induction l as [| a l IHl]; destruct l0 as [| b l0]; auto. destruct a as [sa va], b as [sb vb].
+      simpl. inversion H; subst. pose proof (H2 sb) as H2. simpl in *. rewrite H2.
+      destruct (value_compare sb sa); simpl; auto.
+      rewrite Nat.compare_antisym. destruct (Nat.compare vb va); simpl; auto.
+    - revert l0. induction l; destruct l0; auto.
+      simpl. inversion H; subst. pose proof (H2 v) as H2. destruct (value_compare v a) eqn:E.
+      + rewrite H2. simpl. apply IHl. assumption.
+      + rewrite H2. trivial.
+      + rewrite H2. trivial.
   Qed.
 
   Local Ltac destruct_match :=
@@ -258,6 +291,19 @@ Section WithWord.
     apply compare_eq_iff.
   Qed.
 
+  Lemma bag_compare_Eq_eq : forall value_compare l l',
+      Forall (fun v =>
+                forall v', value_compare (fst v) v' = Eq -> fst v = v') l ->
+      bag_compare value_compare l l' = Eq ->
+      l = l'.
+  Proof.
+    intros. generalize dependent l'.
+    induction H; simpl; intros; destruct l'; try discriminate; auto.
+    destruct_match; try discriminate. erewrite IHForall; eauto.
+    f_equal. eapply pair_compare_Eq_eq; eauto.
+    apply Nat.compare_eq_iff.
+  Qed.
+
   Lemma value_compare_Eq_eq : forall v v', value_compare v v' = Eq -> v = v'.
   Proof.
     intros. generalize dependent v'. induction v using value_IH; intros;
@@ -273,6 +319,8 @@ Section WithWord.
       - unfold dict_compare in *. eapply list_compare_Eq_eq; eauto.
         rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto.
         eapply pair_compare_Eq_eq; eauto; intuition.
+      - eapply bag_compare_Eq_eq; eauto.
+      - eapply list_compare_Eq_eq; eauto.
   Qed.
 
   Lemma eq_value_compare_Eq : forall v v', v = v' -> value_compare v v' = Eq.
@@ -390,10 +438,19 @@ Section WithWord.
     - unfold dict_compare. eapply list_compare_trans; eauto.
       + intros; apply pair_compare_refl; auto using value_compare_refl.
       + intros; eapply pair_compare_Eq_eq; eauto using value_compare_Eq_eq, value_compare_refl.
-      + rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto; intuition.
+      + rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto; intuition idtac.
         apply pair_compare_trans; simpl; auto using value_compare_Eq_eq, value_compare_refl.
         * unfold trans_at; apply H3.
         * unfold trans_at; apply H4.
+    - eapply list_compare_trans; intros; eauto.
+      + auto using pair_compare_refl, Nat.compare_refl, value_compare_refl.
+      + eapply pair_compare_Eq_eq; eauto using value_compare_Eq_eq, Nat.compare_eq.
+      + apply Forall_forall; intros.
+        eapply List.Forall_In in H; eauto; intuition idtac.
+        apply pair_compare_trans; simpl;
+          unfold trans_at; eauto using value_compare_Eq_eq, value_compare_refl.
+        rewrite !Nat.compare_lt_iff. apply Nat.lt_trans.
+    - eapply list_compare_trans; eauto using value_compare_Eq_eq, value_compare_refl.
   Qed.
 
   Local Coercion is_true : bool >-> Sortclass.
@@ -534,11 +591,54 @@ Section WithWord.
   Qed.
 
   Lemma StronglySorted_dict_sort : forall l, StronglySorted (dict_entry_leb) (dict_sort l).
-    Proof.
-      intros. apply Sectioned.StronglySorted_sort.
-      - apply dict_entry_leb_total.
-      - apply dict_entry_leb_trans.
-    Qed.
+  Proof.
+    intros. apply Sectioned.StronglySorted_sort.
+    - apply dict_entry_leb_total.
+    - apply dict_entry_leb_trans.
+  Qed.
+
+
+  Definition bag_entry_leb (p p' : (value * nat)) : bool := value_leb (fst p) (fst p').
+
+  Definition bag_sort := Sectioned.sort bag_entry_leb.
+
+  Lemma bag_entry_leb_total : is_total bag_entry_leb.
+  Proof.
+    unfold is_total. intros p p'. destruct p as [s t], p' as [s' t'].
+    unfold bag_entry_leb; simpl. apply value_leb_total.
+  Qed.
+
+  Lemma LocallySorted_bag_sort : forall l, LocallySorted bag_entry_leb (bag_sort l).
+  Proof.
+    exact (Sectioned.LocallySorted_sort _ bag_entry_leb bag_entry_leb_total).
+  Qed.
+
+  Lemma Permuted_bag_sort : forall l, Permutation l (bag_sort l).
+  Proof.
+    apply Sectioned.Permuted_sort.
+  Qed.
+
+  Lemma bag_entry_leb_trans : RelationClasses.Transitive bag_entry_leb.
+  Proof.
+    unfold RelationClasses.Transitive. destruct x, y, z. unfold bag_entry_leb. simpl.
+    unfold value_leb, leb_from_compare.
+    repeat lazymatch goal with
+           | |- context[match ?x with _ => _ end] =>
+               let E := fresh "E" in
+               destruct x eqn:E
+           end; intuition.
+    all: try apply value_compare_Eq_eq in E; try apply value_compare_Eq_eq in E0; subst;
+      try congruence.
+    - rewrite value_compare_refl in E1. discriminate.
+    - erewrite value_compare_trans in E1; eauto. discriminate.
+  Qed.
+
+  Lemma StronglySorted_bag_sort : forall l, StronglySorted (bag_entry_leb) (bag_sort l).
+  Proof.
+    intros. apply Sectioned.StronglySorted_sort.
+    - apply bag_entry_leb_total.
+    - apply bag_entry_leb_trans.
+  Qed.
 End WithWord.
 
 Arguments list_beq {A}.

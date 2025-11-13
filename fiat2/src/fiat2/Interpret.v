@@ -4,6 +4,12 @@ Require Import coqutil.Word.Interface coqutil.Map.Interface coqutil.Datatypes.Re
 
 Local Open Scope Z_scope.
 
+Fixpoint flat_map2 {A B C : Type} (f : A -> B -> list C) (l1 : list A) (l2 : list B) : list C :=
+  match l1, l2 with
+  | nil, _ | _, nil => nil
+  | x1 :: l1, x2 :: l2 => f x1 x2 ++ flat_map2 f l1 l2
+  end.
+
 Section WithWord.
   Context {width: Z} {word: word.word width}.
   Context {word_ok: word.ok word}.
@@ -19,6 +25,8 @@ Section WithWord.
     | ANone _ => VOption None
     | ANil _ => VList nil
     | AEmptyDict _ => VDict nil
+    | AEmptyBag _ => VBag nil
+    | AEmptySet _ => VSet nil
     | AUnit => VUnit
     end.
 
@@ -101,6 +109,31 @@ Section WithWord.
     | (k', v) :: l => if value_eqb k k' then Some v else dict_lookup k l
     end.
 
+  Fixpoint bag_insert (v : value) (l : list (value * nat)) :=
+    match l with
+    | nil => (v, S 0) :: nil
+    | (v', n') :: l => if value_ltb v v' then (v, S 0) :: (v', n') :: l
+                      else if value_eqb v v' then (v, (S n')%nat) :: l
+                           else (v', n') :: bag_insert v l
+    end.
+
+  Definition list_to_bag : list value -> list (value * nat):=
+    fold_right bag_insert nil.
+
+  Definition bag_to_list : list (value * nat) -> list value :=
+    flat_map (fun p => repeat (fst p) (snd p)).
+
+  Fixpoint set_insert (v : value) (l : list value) :=
+    match l with
+    | nil => v :: nil
+    | v' :: l' => if value_ltb v v' then v :: v' :: l'
+                  else if value_eqb v v' then l
+                       else v' :: set_insert v l'
+    end.
+
+  Definition list_to_set : list value -> list value :=
+    fold_right set_insert nil.
+
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
     | OWPlus => apply_word_binop word.add a b
@@ -138,10 +171,6 @@ Section WithWord.
                | _, _ => VUnit
                end
     | OEq => VBool (value_eqb a b)
-    | ORepeat => match a, b with
-                 | VList l, VInt n => VList (concat (repeat l (Z.to_nat n)))
-                 | _, _ => VUnit
-                 end
     | OCons => match b with
                | VList l => VList (cons a l)
                | _ => VUnit
@@ -154,6 +183,14 @@ Section WithWord.
                  | VWord s, VWord e => VList (eval_range_word s (Z.to_nat (word.unsigned e - word.unsigned s)))
                  | _, _ => VUnit
                  end
+    | OBagInsert => match a with
+                    | VBag l => VBag (bag_insert b l)
+                    | _ => VUnit
+                    end
+    | OSetInsert => match a with
+                    | VSet l => VSet (set_insert b l)
+                    | _ => VUnit
+                    end
     | OLookup => match a, b with
                  | VDict d, k => VOption (dict_lookup k d)
                  | _, _ => VUnit
@@ -170,6 +207,34 @@ Section WithWord.
                  | VDict d, k, v => VDict (dict_insert k v d)
                  | _, _, _ => VUnit
                  end
+    end.
+
+  Definition interp_aggr (ag : aggr) : (value * (value -> value -> value)) :=
+    match ag with
+    | AGSum => (VInt 0, apply_int_binop Z.add)
+    | AGCount => (VInt 0, fun _ => apply_int_binop Z.add (VInt 1))
+    end.
+
+  Definition interp_aci_aggr (ag : aci_aggr) : (value * (value -> value -> value)) :=
+    match ag with
+    | AGMin => (VOption None, fun v acc => match acc with
+                                           | VOption None => VOption (Some v)
+                                           | VOption (Some (VInt v')) =>
+                                               match v with
+                                               | VInt v => VOption (Some (VInt (Z.min v v')))
+                                               | _ => VUnit
+                                               end
+                                           | _ => VUnit
+                                           end)
+    | AGMax => (VOption None, fun v acc => match acc with
+                                           | VOption None => VOption (Some v)
+                                           | VOption (Some (VInt v')) =>
+                                               match v with
+                                               | VInt v => VOption (Some (VInt (Z.max v v')))
+                                               | _ => VUnit
+                                               end
+                                           | _ => VUnit
+                                           end)
     end.
 
   Definition record_proj (s : string) (l : list (string * value)) : value :=
@@ -205,12 +270,44 @@ Section WithWord.
                         | _ => VUnit
                         end
       | ELet e1 x e2 => interp_expr store (map.put env x (interp_expr store env e1)) e2
-      | EFlatmap e1 x e2 =>
+      | EFlatmap tag e1 x e2 =>
+          match tag with
+          | LikeList =>
+              match interp_expr store env e1 with
+              | VList l1 => VList (flat_map (fun v => match interp_expr store (map.put env x v) e2 with
+                                                      | VList l2 => l2
+                                                      | _ => nil
+                                                      end) l1)
+              | _ => VUnit
+              end
+          | LikeBag =>
+              match interp_expr store env e1 with
+              | VBag l1 => VBag (list_to_bag (flat_map (fun v => match interp_expr store (map.put env x v) e2 with
+                                                        | VBag l2 => bag_to_list l2
+                                                        | _ => nil
+                                                        end) (bag_to_list l1)))
+              | _ => VUnit
+              end
+          | LikeSet =>
+              match interp_expr store env e1 with
+              | VSet l1 => VSet (list_to_set (flat_map (fun v => match interp_expr store (map.put env x v) e2 with
+                                                        | VSet l2 => l2
+                                                        | _ => nil
+                                                        end) l1))
+              | _ => VUnit
+              end
+          end
+      | EFlatmap2 e1 e2 x1 x2 e3 =>
           match interp_expr store env e1 with
-          | VList l1 => VList (flat_map (fun v => match interp_expr store (map.put env x v) e2 with
-                                                  | VList l2 => l2
-                                                  | _ => nil
-                                                  end) l1)
+          | VList l1 =>
+              match interp_expr store env e2 with
+              | VList l2 =>
+                  VList (flat_map2 (fun v1 v2 => match interp_expr store (map.put (map.put env x1 v1) x2 v2) e3 with
+                                           | VList l3 => l3
+                                           | _ => nil
+                                                 end) l1 l2)
+              | _ => VUnit
+              end
           | _ => VUnit
           end
       | EFold e1 e2 x y e3 =>
@@ -218,6 +315,20 @@ Section WithWord.
           | VList l1 => let a := interp_expr store env e2 in
                         let f := fun v acc => interp_expr store (map.put (map.put env x v) y acc) e3 in
                         fold_right f a l1
+          | _ => VUnit
+          end
+      | EACFold ag e =>
+          let '(zr, op) := interp_aggr ag in
+          match interp_expr store env e with
+          | VBag l =>
+              fold_right op zr (bag_to_list l)
+          | _ => VUnit
+          end
+      | EACIFold ag e =>
+          let '(zr, op) := interp_aci_aggr ag in
+          match interp_expr store env e with
+          | VSet l =>
+              fold_right op zr l
           | _ => VUnit
           end
       | ERecord l => VRecord (record_sort
@@ -237,46 +348,154 @@ Section WithWord.
           | VDict l => fold_right (fun v acc => interp_expr store (map.put (map.put (map.put env x (fst v)) y (snd v)) z acc) e) (interp_expr store env e0) l
           | _ => VUnit
           end
-      | ESort l =>
-          match interp_expr store env l with
-          | VList l => VList (value_sort l)
-          | _ => VUnit
-          end
-      | EFilter l x p =>
-          match interp_expr store env l with
-          | VList l => VList (List.filter
-                                (fun v =>
-                                   let env' := map.put env x v in
-                                   match interp_expr store env' p with
-                                   | VBool b => b
-                                   | _ => false
-                                   end) l)
-          | _ => VUnit
-          end
-      | EJoin l1 l2 x y p r =>
-          match interp_expr store env l1 with
-          | VList l1 =>
-              match interp_expr store env l2 with
-              | VList l2 => VList (flat_map
-                                     (fun v1 =>
-                                        List.map
-                                          (fun v2 => interp_expr store (map.put (map.put env x v1) y v2) r)
-                                          (List.filter
-                                             (fun v2 => match interp_expr store (map.put (map.put env x v1) y v2) p with
-                                                        | VBool b => b
-                                                        | _ => false
-                                                        end)
-                                             l2))
-                                     l1)
+      | ESort tag l =>
+          match tag with
+          | LikeList =>
+              match interp_expr store env l with
+              | VList l => VList (value_sort l)
+              | _ => VUnit
+            end
+          | LikeBag =>
+              match interp_expr store env l with
+              | VBag l => VList (bag_to_list l)
               | _ => VUnit
               end
-          | _ => VUnit
+          | LikeSet =>
+              match interp_expr store env l with
+              | VSet l => VList l
+              | _ => VUnit
+              end
           end
-      | EProj l x r =>
-          match interp_expr store env l with
-          | VList l => VList (List.map (fun v => interp_expr store (map.put env x v) r) l)
-          | _ => VUnit
+      | EFilter tag l x p =>
+          match tag with
+          | LikeList =>
+              match interp_expr store env l with
+              | VList l => VList (List.filter
+                                    (fun v =>
+                                       let env' := map.put env x v in
+                                       match interp_expr store env' p with
+                                       | VBool b => b
+                                       | _ => false
+                                       end) l)
+              | _ => VUnit
+              end
+          | LikeBag =>
+              match interp_expr store env l with
+              | VBag l => VBag (List.filter
+                                    (fun v =>
+                                       let env' := map.put env x (fst v) in
+                                       match interp_expr store env' p with
+                                       | VBool b => b
+                                       | _ => false
+                                       end) l)
+              | _ => VUnit
+              end
+          | LikeSet =>
+              match interp_expr store env l with
+              | VSet l => VSet (List.filter
+                                  (fun v =>
+                                     let env' := map.put env x v in
+                                     match interp_expr store env' p with
+                                     | VBool b => b
+                                     | _ => false
+                                     end) l)
+              | _ => VUnit
+              end
           end
+      | EJoin tag l1 l2 x y p r =>
+          match tag with
+          | LikeList =>
+              match interp_expr store env l1 with
+              | VList l1 =>
+                  match interp_expr store env l2 with
+                  | VList l2 => VList (flat_map
+                                         (fun v1 =>
+                                            List.map
+                                              (fun v2 => interp_expr store (map.put (map.put env x v1) y v2) r)
+                                              (List.filter
+                                                 (fun v2 => match interp_expr store (map.put (map.put env x v1) y v2) p with
+                                                            | VBool b => b
+                                                            | _ => false
+                                                            end)
+                                                 l2))
+                                         l1)
+                  | _ => VUnit
+                  end
+              | _ => VUnit
+              end
+          | LikeBag =>
+              match interp_expr store env l1 with
+              | VBag l1 =>
+                  match interp_expr store env l2 with
+                  | VBag l2 => VBag (list_to_bag
+                                       (flat_map
+                                          (fun v1 =>
+                                             List.map
+                                               (fun v2 => interp_expr store (map.put (map.put env x v1) y v2) r)
+                                               (List.filter
+                                                  (fun v2 => match interp_expr store (map.put (map.put env x v1) y v2) p with
+                                                             | VBool b => b
+                                                             | _ => false
+                                                             end)
+                                                  (bag_to_list l2)))
+                                          (bag_to_list l1)))
+                  | _ => VUnit
+                  end
+              | _ => VUnit
+              end
+          | LikeSet =>
+              match interp_expr store env l1 with
+              | VSet l1 =>
+                  match interp_expr store env l2 with
+                  | VSet l2 => VSet (list_to_set
+                                       (flat_map
+                                          (fun v1 =>
+                                             List.map
+                                               (fun v2 => interp_expr store (map.put (map.put env x v1) y v2) r)
+                                               (List.filter
+                                                  (fun v2 => match interp_expr store (map.put (map.put env x v1) y v2) p with
+                                                             | VBool b => b
+                                                             | _ => false
+                                                             end)
+                                                  l2))
+                                          l1))
+                  | _ => VUnit
+                  end
+              | _ => VUnit
+              end
+          end
+      | EProj tag l x r =>
+          match tag with
+          | LikeList =>
+            match interp_expr store env l with
+            | VList l => VList (List.map (fun v => interp_expr store (map.put env x v) r) l)
+            | _ => VUnit
+            end
+          | LikeBag =>
+              match interp_expr store env l with
+              | VBag l => VBag (list_to_bag
+                                  (List.map
+                                     (fun v => interp_expr store (map.put env x v) r)
+                                     (bag_to_list l)))
+              | _ => VUnit
+            end
+          | LikeSet =>
+              match interp_expr store env l with
+              | VSet l => VSet (list_to_set
+                                  (List.map
+                                     (fun v => interp_expr store (map.put env x v) r)
+                                     l))
+              | _ => VUnit
+            end
+          end
+      | EBagOf l => match interp_expr store env l with
+                    | VList l => VBag (list_to_bag l)
+                    | _ => VUnit
+                    end
+      | ESetOf l => match interp_expr store env l with
+                    | VList l => VSet (list_to_set l)
+                    | _ => VUnit
+                    end
       end.
 
     Fixpoint interp_command (store env : locals) (c : command) : locals :=

@@ -97,8 +97,6 @@ Notation "x < y"              := (EBinop OLess x y)
    (in custom fiat2_expr at level 70, left associativity).
 Notation "x == y"             := (EBinop OEq x y)
    (in custom fiat2_expr at level 70, left associativity).
-Notation "'repeat(' list ',' cnt ')'"       := (EBinop ORepeat list cnt)
-   (in custom fiat2_expr at level 10, left associativity).
 Notation "x :: y"             := (EBinop OCons x y)
    (in custom fiat2_expr at level 55, right associativity).
 Notation "'range(' x ',' y ')'"  := (EBinop ORange x y)
@@ -109,7 +107,6 @@ Notation "[ ]" := (EAtom (ANil None))
    (in custom fiat2_expr).
 Notation "'nil[' t ']'"        := (EAtom (ANil (Some t)))
    (in custom fiat2_expr at level 10, t constr).
-(* ??? TODO: Notations for types *)
 
 Notation "<( x , y )>" := (ERecord (("0"%string, x) :: ("1"%string, y) :: nil))
    (in custom fiat2_expr at level 0, x custom fiat2_expr at level 99,
@@ -125,7 +122,7 @@ Notation "'if' e1 'then' e2 'else' e3" := (EIf e1 e2 e3)
    (in custom fiat2_expr at level 99).
 Notation "'let' x = e1 'in' e2"        := (ELet e1 x e2)
    (in custom fiat2_expr at level 100, x constr at level 0, e1 custom fiat2_expr, e2 custom fiat2_expr).
-Notation "'flatmap' e1 x e2"           := (EFlatmap e1 x e2)
+Notation "'flatmap' e1 x e2"           := (EFlatmap LikeList e1 x e2)
    (in custom fiat2_expr at level 99, x constr at level 0).
 Notation "'fold' e1 e2 x y e3"           := (EFold e1 e2 x y e3)
    (in custom fiat2_expr at level 99, x constr at level 0, y constr at level 0).
@@ -144,7 +141,7 @@ Notation "'delete(' d , k ')'" := (EBinop ODelete d k)
 Notation "'lookup(' d , k ')'" := (EBinop OLookup d k)
    (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr).
 
-Notation "x <- e1 ; e2" := (EFlatmap e1 x e2)
+Notation "x <- e1 ; e2" := (EFlatmap LikeList e1 x e2)
    (in custom fiat2_expr at level 0, e1 custom fiat2_expr at level 100, e2 custom fiat2_expr at level 100).
 Notation "'check(' e1 ')' ; e2" := (EIf e1 e2 (EAtom (ANil None)))
    (in custom fiat2_expr at level 100, e1 custom fiat2_expr, e2 custom fiat2_expr).
@@ -185,10 +182,6 @@ Local Open Scope string_scope.
    Goal <{ set "_" := <((1 + 3) * 4, 2)> }> = CAssign "_" <[ {"0" : (<<EBinop OTimes (EBinop OPlus 1 3) 4>>) , "1" : 2} ]>.
    reflexivity. Abort.
 
-(* ??? The "a" and "b" on the LHS are parsed and inferred to be strings. Need a way to coerce them into expr. c.f. Notation definition of "<( x , y )>".
-   Goal <{ set "_" := <("a", "b")> }> = CAssign "_" <[ {"0" : <<EAtom (AString "a") >> , "1" : <<EAtom (AString "b") >>} ]>.
-   reflexivity. Abort.
-*)
    Goal <{ set "_" := [1, 2, 3] }> = CAssign "_" (EBinop OCons 1 (EBinop OCons 2 (EBinop OCons 3 (EAtom (ANil None))))).
    reflexivity. Abort.
 

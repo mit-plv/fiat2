@@ -6,9 +6,9 @@ Open Scope string_scope.
 
 Definition to_filter_head (e : expr) :=
   match e with
-  | EFlatmap e' x
+  | EFlatmap LikeList e' x
       (EIf p (EBinop OCons (EVar y) (EAtom (ANil _))) (EAtom (ANil _))) =>
-      if String.eqb x y then EFilter e' x p else e
+      if String.eqb x y then EFilter LikeList e' x p else e
   | _ => e
   end.
 
@@ -22,7 +22,7 @@ Section WithMap.
   Proof.
     unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
     repeat destruct_subexpr.
-    simpl. case_match; auto.
+    simpl. repeat (case_match; auto).
     rewrite eqb_eq in *; subst. repeat invert_type_of_clear.
     invert_type_of_op. rewrite_map_get_put_hyp. do_injection.
     constructor; auto.
@@ -32,10 +32,12 @@ Section WithMap.
       preserve_sem Gstore store to_filter_head.
   Proof.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    repeat destruct_subexpr. simpl. case_match; auto. simpl.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
     case_match; auto. f_equal.
     rewrite eqb_eq in *; subst.
-    clear E0; induction l; auto.
+    lazymatch goal with
+      H: _ = VList _ |- _ => clear H
+    end. induction l; auto.
     simpl. repeat (case_match; auto).
     unfold get_local. rewrite map.get_put_same. simpl. f_equal. auto.
   Qed.
@@ -50,12 +52,12 @@ End WithMap.
 
 Definition to_join_head (e : expr) :=
   match e with
-  | EFlatmap tbl1 x
-      (EFlatmap tbl2 y
+  | EFlatmap LikeList tbl1 x
+      (EFlatmap LikeList tbl2 y
          (EIf p (EBinop OCons r (EAtom (ANil _))) (EAtom (ANil _)))) =>
       if ((x =? y) || free_immut_in x tbl2)%bool
       then e
-      else EJoin tbl1 tbl2 x y p r
+      else EJoin LikeList tbl1 tbl2 x y p r
   | _ => e
   end.
 
@@ -69,11 +71,11 @@ Section WithMap.
   Proof.
     unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
     repeat destruct_subexpr.
-    simpl. case_match; auto.
+    simpl. repeat (case_match; auto).
     repeat invert_type_of_clear. invert_type_of_op.
     econstructor; eauto.
     rewrite Bool.orb_false_iff in *.
-    eapply not_free_immut_put_ty; eauto. intuition.
+    eapply not_free_immut_put_ty; eauto. intuition idtac.
   Qed.
 
   Lemma to_join_head_preserve_sem' : forall (store env: locals) (Gstore Genv: tenv) (tbl1 tbl2 p r : expr) (x y : string) (t1 t2 t3 : type) (t t' : option type),
@@ -84,10 +86,10 @@ Section WithMap.
       type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool ->
       locals_wf Gstore store ->
       locals_wf Genv env ->
-      interp_expr store env (EFlatmap tbl1 x
-                               (EFlatmap tbl2 y
+      interp_expr store env (EFlatmap LikeList tbl1 x
+                               (EFlatmap LikeList tbl2 y
                                   (EIf p (EBinop OCons r (EAtom (ANil t))) (EAtom (ANil t'))))) =
-        interp_expr store env (EJoin tbl1 tbl2 x y p r).
+        interp_expr store env (EJoin LikeList tbl1 tbl2 x y p r).
   Proof.
     intros store env Gstore Genv tbl1 tbl2 p r x y t1 t2 t3 t t' H_Gstore H_Genv H_tbl1 H_tbl2 H_free H_p H_str H_env.
     simpl. apply type_of__type_wf in H_tbl1 as H_wf1; auto. apply type_of__type_wf in H_tbl2 as H_wf2; auto;
@@ -118,10 +120,10 @@ Section WithMap.
   Proof.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
       repeat destruct_subexpr.
-      unfold to_join_head. case_match; auto.
+      unfold to_join_head. repeat (case_match; auto).
       repeat invert_type_of_clear. invert_type_of_op.
       rewrite Bool.orb_false_iff in *.
-      erewrite to_join_head_preserve_sem' with (Gstore := Gstore); eauto; intuition.
+      erewrite to_join_head_preserve_sem' with (Gstore := Gstore); eauto; intuition idtac.
   Qed.
 
   Lemma to_join_head_sound : expr_transf_sound (locals:=locals) to_join_head.
@@ -134,10 +136,10 @@ End WithMap.
 
 Definition filter_pushdown_head (e : expr) :=
   match e with
-  | EJoin tbl1 tbl2 r1 r2 (EBinop OAnd p1 p) r =>
+  | EJoin LikeList tbl1 tbl2 r1 r2 (EBinop OAnd p1 p) r =>
       if free_immut_in r2 p1
       then e
-      else EJoin (EFilter tbl1 r1 p1) tbl2 r1 r2 p r
+      else EJoin LikeList (EFilter LikeList tbl1 r1 p1) tbl2 r1 r2 p r
   | _ => e
   end.
 
@@ -152,7 +154,7 @@ Section WithMap.
   Proof.
     unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
     repeat destruct_subexpr.
-    simpl. case_match; auto.
+    simpl. repeat (case_match; auto).
     repeat invert_type_of_clear. invert_type_of_op.
     econstructor; eauto. constructor; auto.
     eapply not_free_immut_put_ty; eauto.
@@ -162,7 +164,7 @@ Section WithMap.
       preserve_sem Gstore store filter_pushdown_head.
   Proof.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    destruct e; auto. destruct e3; auto. destruct o; auto.
+    destruct e; auto. destruct tag; auto. destruct e3; auto. destruct o; auto.
     unfold filter_pushdown_head. destruct (free_immut_in y e3_1) eqn:E; auto.
     simpl. destruct (interp_expr store env e1) eqn:E1; auto.
     destruct (interp_expr store env e2) eqn:E2; auto. f_equal.
@@ -194,4 +196,45 @@ Section WithMap.
   Qed.
 End WithMap.
 
+Definition to_proj_head (e : expr) :=
+  match e with
+  | EFlatmap LikeList e x
+      (EBinop OCons e' (EAtom (ANil _))) =>
+      EProj LikeList e x e'
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma to_proj_head_preserve_ty : forall Gstore, preserve_ty Gstore to_proj_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    repeat invert_type_of_clear.
+    invert_type_of_op.
+    econstructor; eauto.
+  Qed.
+
+  Lemma to_proj_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store to_proj_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl.
+    case_match; auto.
+  Qed.
+
+  Lemma to_proj_head_sound : expr_transf_sound (locals:=locals) to_proj_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply to_proj_head_preserve_ty; auto.
+    eapply to_proj_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 #[export] Hint Resolve to_filter_head_sound : transf_hints.
+#[export] Hint Resolve to_proj_head_sound : transf_hints.

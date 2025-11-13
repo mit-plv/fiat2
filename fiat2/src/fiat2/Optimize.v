@@ -130,19 +130,23 @@ Section WithWord.
       | ETernop _ e1 e2 e3 => option_append (cols x e1) (option_append (cols x e2) (cols x e3))
       | EIf e1 e2 e3 => option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | ELet e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
-      | EFlatmap e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
+      | EFlatmap _ e1 x1 e2 => if string_dec x x1 then (cols x e1) else option_append (cols x e1) (cols x e2)
+      | EFlatmap2 e1 e2 x1 x2 e3 => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2)
+                                    then option_append (cols x e1) (cols x e2)
+                                    else option_append (cols x e3) (option_append (cols x e1) (cols x e2))
       | EFold e1 e2 x1 x2 e3 => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x e3) (option_append (cols x e1) (cols x e2))
+      | EACFold _ e | EACIFold _ e => cols x e
       | ERecord l => fold_right (fun val acc => option_append (cols x (snd val)) acc) (Some nil) l
       | EAccess (EVar x1) y => if string_dec x1 x then Some (y :: nil) else Some nil
       | EAccess e y => cols x e
       | EOptMatch e en x1 es => if string_dec x x1 then option_append (cols x e) (cols x en) else option_append (cols x e) (option_append (cols x en) (cols x es))
       | EDictFold d e0 x1 x2 x3 e => if Sumbool.sumbool_or _ _ _ _ (Sumbool.sumbool_or _ _ _ _ (string_dec x x2) (string_dec x x3)) (string_dec x x1) then option_append (cols x d) (cols x e0) else option_append (cols x e) (option_append (cols x d) (cols x e0))
-      | ESort l => cols x l
-      | EFilter e x1 p => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x p)
-      | EJoin e1 e2 x1 x2 p r => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x r) (option_append (cols x p) (option_append (cols x e1) (cols x e2)))
-      | EProj e x1 r => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x r)
+      | ESort _ l => cols x l
+      | EFilter _ e x1 p => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x p)
+      | EJoin _ e1 e2 x1 x2 p r => if Sumbool.sumbool_or _ _ _ _ (string_dec x x1) (string_dec x x2) then option_append (cols x e1) (cols x e2) else option_append (cols x r) (option_append (cols x p) (option_append (cols x e1) (cols x e2)))
+      | EProj _ e x1 r => if string_dec x x1 then (cols x e) else option_append (cols x e) (cols x r)
+      | EBagOf l | ESetOf l => cols x l
       end.
-
 
     Theorem proj_into_join: forall (store env: locals) (Gstore Genv: tenv) (t1 t2 p r rp: expr) (x y xp: string),
        x <> y ->
@@ -151,8 +155,8 @@ Section WithWord.
        free_immut_in x rp = false ->
        free_immut_in y rp = false ->
        let rnew := ELet r xp rp in
-       interp_expr store env (EProj (EJoin t1 t2 x y p r) xp rp) =
-       interp_expr store env (EJoin t1 t2 x y p rnew).
+       interp_expr store env (EProj LikeList (EJoin LikeList t1 t2 x y p r) xp rp) =
+       interp_expr store env (EJoin LikeList t1 t2 x y p rnew).
     Proof.
       intros store env Gstore Genv t1 t2 p r rp x y xp XY XPX XPY HX HY. simpl.
       destruct (interp_expr store env t1) eqn:T1; auto.
@@ -296,6 +300,38 @@ Section WithWord.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
           * eapply H1; eauto.
           * eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e1); try congruence. destruct (cols x e2); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+          * eapply H1; eauto.
+          * eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e1); try congruence. destruct (cols x e2); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+          * eapply H1; eauto.
+          * eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (Sumbool.sumbool_or (x = x1) (x <> x1) (x = x2) (x <> x2) (string_dec x x1) (string_dec x x2)) as [b1|b2].
+        + repeat destruct_match_hyp; try congruence.
+          do_injection. unfold incl in *. intros.
+          lazymatch goal with
+            H: In _ (dedup _ _) |- _ =>
+              apply dedup_In, in_app_or in H
+          end; intuition idtac; eauto.
+        + repeat destruct_match_hyp; try congruence; intuition idtac.
+          do_injection. unfold incl in *.
+          intros.
+          lazymatch goal with
+            H: In _ (dedup _ _) |- _ =>
+              apply dedup_In, in_app_or in H
+          end; intuition idtac.
+          * eapply IHtype_of3; eauto. rewrite !map.get_put_diff; try assumption.
+          * clear_refl; do_injection.
+            lazymatch goal with
+              H: In _ (dedup _ _) |- _ =>
+                apply dedup_In, in_app_or in H
+            end; intuition idtac;
+            lazymatch goal with
+            | H: forall _, Some ?l = _ -> _, H': In ?a ?l |- In ?a _ =>
+       eapply H, H'
+     end; auto.
       - destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1 | b2].
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H4 as H4. rewrite <- H4.
           unfold incl in *. intros. apply dedup_In in H5. apply in_app_or in H5. destruct H5; eauto.
@@ -341,6 +377,14 @@ Section WithWord.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
         + eapply H1; eauto.
         + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x p); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+        + eapply H1; eauto.
+        + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x p); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+        + eapply H1; eauto.
+        + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
       - destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1|b2].
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H5 as H5. rewrite <- H5.
           unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
@@ -351,6 +395,34 @@ Section WithWord.
           * apply dedup_In in H6. apply in_app_or in H6. destruct H6.
             -- eapply IHtype_of3; eauto. rewrite !map.get_put_diff; try assumption.
             -- apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+      -  destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1|b2].
+        + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H5 as H5. rewrite <- H5.
+          unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+        + destruct (cols x r); try congruence. destruct (cols x p); try congruence. destruct (cols x e1); try congruence.
+          destruct (cols x e2); try congruence. destruct b2 as [b2 b3]. injection H5 as H5. rewrite <- H5. unfold incl in *.
+          intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6.
+          * eapply IHtype_of4; eauto. rewrite !map.get_put_diff; try assumption.
+          * apply dedup_In in H6. apply in_app_or in H6. destruct H6.
+            -- eapply IHtype_of3; eauto. rewrite !map.get_put_diff; try assumption.
+            -- apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+      -  destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1|b2].
+        + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection H5 as H5. rewrite <- H5.
+          unfold incl in *. intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+        + destruct (cols x r); try congruence. destruct (cols x p); try congruence. destruct (cols x e1); try congruence.
+          destruct (cols x e2); try congruence. destruct b2 as [b2 b3]. injection H5 as H5. rewrite <- H5. unfold incl in *.
+          intros. apply dedup_In in H6. apply in_app_or in H6. destruct H6.
+          * eapply IHtype_of4; eauto. rewrite !map.get_put_diff; try assumption.
+          * apply dedup_In in H6. apply in_app_or in H6. destruct H6.
+            -- eapply IHtype_of3; eauto. rewrite !map.get_put_diff; try assumption.
+            -- apply dedup_In in H6. apply in_app_or in H6. destruct H6; eauto.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x r); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+        + eapply H1; eauto.
+        + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
+      - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x r); try congruence.
+        injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
+        + eapply H1; eauto.
+        + eapply IHtype_of2; eauto. rewrite map.get_put_diff; assumption.
       - destruct (string_dec x x0); try eauto. destruct (cols x e); try congruence. destruct (cols x r); try congruence.
         injection H2 as H2. rewrite <- H2. unfold incl in *. intros. apply dedup_In in H3. apply in_app_or in H3. destruct H3.
         + eapply H1; eauto.
@@ -372,7 +444,7 @@ Section WithWord.
          and the relation holds between a a' and the expression's columns
          (columns of expression incl in a', a' included in a), then can replace a with a' when interpreting e *)
       induction e using expr_IH.
-      12: {
+      15: {
           intros columns ? ? env ? ? HC HR. simpl in *. destruct e eqn:E; try now (erewrite IHe; eauto). simpl. destruct (string_dec x0 x).
           + subst. unfold get_local. rewrite !map.get_put_same. unfold relation in HR. destruct a,a'; intuition. inversion H. subst.
             inversion H0. subst. clear H6 H9. injection HC as HC. rewrite <- HC in H2. simpl in *. unfold incl in H2. simpl in *.
@@ -428,13 +500,38 @@ Section WithWord.
           * rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption. eapply IHe2; eauto. eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0).
-        + subst. erewrite IHe1; eauto. destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros.
-          rewrite !Properties.map.put_put_same. reflexivity.
+        + subst. erewrite IHe1; eauto. repeat destruct_match_goal; try reflexivity;
+            [ do 2 f_equal | do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
+            rewrite !Properties.map.put_put_same; reflexivity.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros.
-            rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption. erewrite IHe2; eauto. eapply rel_step; eauto.
+          * repeat destruct_match_goal; try reflexivity; [ do 2 f_equal | do 2 f_equal | f_equal ]; apply In_flat_map_ext; intros;
+            rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption; erewrite IHe2; eauto; eapply rel_step; eauto.
           * eapply rel_step; eauto.
+      - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
+        destruct_match_hyp.
+        + repeat destruct_match_hyp; try congruence. injection HC as HC. apply dedup_incl in HC; intuition idtac.
+          subst. erewrite IHe1, IHe2; eauto using rel_step.
+          repeat case_match; auto. f_equal. apply In_flat_map2_ext; intros.
+          unfold Sumbool.sumbool_or in *. destruct_match_hyp.
+          * subst. rewrite !Properties.map.put_put_same; reflexivity.
+          * destruct_match_hyp; try congruence.
+            rewrite !Properties.map.put_put_diff with (k1:=x) (k2:=x1); auto.
+            subst. rewrite !Properties.map.put_put_same; reflexivity.
+        + destruct_match_hyp; try congruence.
+          dcols e1 x. dcols e2 x.
+          lazymatch goal with
+            H: Some (dedup _ _) = Some _ |- _ =>
+              injection H as H; apply dedup_incl in H end; intuition idtac.
+          lazymatch goal with
+            H: incl (dedup _ _) _ |- _ => apply incl_dedup in H end; intuition idtac.
+          subst. erewrite IHe1, IHe2; eauto using rel_step.
+          repeat case_match; auto. f_equal. apply In_flat_map2_ext; intros.
+          unfold Sumbool.sumbool_or in *. repeat destruct_match_hyp; try congruence.
+          rewrite !Properties.map.put_put_diff with (k1:=x); auto.
+          erewrite IHe3; eauto using rel_step.
+      - cbn; intros. erewrite IHe; eauto.
+      - cbn; intros. erewrite IHe; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
         destruct (Sumbool.sumbool_or (x=x0)(x<>x0)(x=y)(x<>y)
         (string_dec x x0)(string_dec x y)) as [b1|b2].
@@ -495,19 +592,44 @@ Section WithWord.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. erewrite IHe; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0).
-        + subst. erewrite IHe1; eauto. destruct_match_goal; try reflexivity. f_equal. apply In_filter_ext. intros b L.
-          rewrite !Properties.map.put_put_same. reflexivity.
+        + subst. erewrite IHe1; eauto. repeat destruct_match_goal; try reflexivity;
+            f_equal; apply In_filter_ext; intros b L;
+            rewrite !Properties.map.put_put_same; reflexivity.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. f_equal. apply In_filter_ext. intros b L.
-            rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption. erewrite IHe2; eauto. eapply rel_step; eauto.
+          * repeat destruct_match_goal; try reflexivity; f_equal; apply In_filter_ext; intros b L;
+            rewrite !Properties.map.put_put_diff with (k2:=x0); try assumption; erewrite IHe2; eauto; eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC.
         destruct (Sumbool.sumbool_or (x = x0) (x <> x0) (x = y) (x <> y) (string_dec x x0) (string_dec x y)) as [b1|b2].
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
           destruct HC. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. erewrite IHe2; eauto.
-            -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
+          * do 2 destruct_match_goal; try reflexivity; erewrite IHe2; eauto.
+            -- destruct_match_goal; try reflexivity. do 2 f_equal; apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+               ++ intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+            -- eapply rel_step; eauto.
+            -- destruct_match_goal; try reflexivity. do 2 f_equal; apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+               ++ intros. destruct b1; subst.
+                  ** rewrite !Properties.map.put_put_same. reflexivity.
+                  ** destruct (string_dec x0 y); subst.
+                     --- rewrite !Properties.map.put_put_same. reflexivity.
+                     --- rewrite !Properties.map.put_put_diff with (k1:=x0); auto. rewrite !Properties.map.put_put_same. auto.
+            -- eapply rel_step; eauto.
+            -- destruct_match_goal; try reflexivity. f_equal; apply In_flat_map_ext. intros. apply map_ext_in_eq.
                ++ apply In_filter_ext. intros. destruct b1; subst.
                   ** rewrite !Properties.map.put_put_same. reflexivity.
                   ** destruct (string_dec x0 y); subst.
@@ -523,7 +645,19 @@ Section WithWord.
         + destruct (cols x e4); try congruence. destruct (cols x e3); try congruence. destruct (cols x e1); try congruence.
           destruct (cols x e2); try congruence. destruct b2 as [b1 b2]. injection HC as HC. apply dedup_incl in HC. destruct HC.
           apply incl_dedup in H0. destruct H0. apply incl_dedup in H1. destruct H1. erewrite IHe1; eauto.
-          * destruct_match_goal; try reflexivity. erewrite IHe2; eauto.
+          * do 2 destruct_match_goal; try reflexivity; erewrite IHe2; eauto.
+            -- destruct_match_goal; try reflexivity. do 2 f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  erewrite IHe3; eauto. eapply rel_step; eauto.
+               ++ intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  eapply IHe4; eauto. eapply rel_step; eauto.
+            -- eapply rel_step; eauto.
+            -- destruct_match_goal; try reflexivity. do 2 f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
+               ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  erewrite IHe3; eauto. eapply rel_step; eauto.
+               ++ intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
+                  eapply IHe4; eauto. eapply rel_step; eauto.
+            -- eapply rel_step; eauto.
             -- destruct_match_goal; try reflexivity. f_equal. apply In_flat_map_ext. intros. apply map_ext_in_eq.
                ++ apply In_filter_ext. intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption.
                   erewrite IHe3; eauto. eapply rel_step; eauto.
@@ -532,11 +666,16 @@ Section WithWord.
             -- eapply rel_step; eauto.
           * eapply rel_step; eauto.
       - intros columns ? ? env HT1 HT2 HC HR. simpl in *. unfold option_append in HC. destruct (string_dec x x0); subst.
-        + erewrite IHe1; eauto. destruct_match_goal; try reflexivity. f_equal. apply map_ext_in. intros.
-          rewrite !Properties.map.put_put_same. reflexivity.
+        + erewrite IHe1; eauto.
+          do 2 destruct_match_goal; try reflexivity; [ do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext_in;
+          intros; rewrite !Properties.map.put_put_same; reflexivity.
         + destruct (cols x e1); try congruence. destruct (cols x e2); try congruence. injection HC as HC. apply dedup_incl in HC.
-          destruct HC. erewrite IHe1; eauto; try eapply rel_step; eauto. destruct_match_goal; try reflexivity. f_equal. apply map_ext_in.
-          intros. rewrite !Properties.map.put_put_diff with (k1:=x); try assumption. erewrite IHe2; eauto; eapply rel_step; eauto.
+          destruct HC. erewrite IHe1; eauto; try eapply rel_step; eauto. repeat destruct_match_goal; try reflexivity;
+            [ do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext_in;
+            intros; rewrite !Properties.map.put_put_diff with (k1:=x); try assumption;
+            erewrite IHe2; eauto; eapply rel_step; eauto.
+      - cbn; intros; erewrite IHe; eauto.
+      - cbn; intros; erewrite IHe; eauto.
     Qed.
 
     Lemma record_proj_lemma: forall (l: list (string*value)) (x: string),
@@ -835,8 +974,8 @@ Section WithWord.
       cols x r = Some rcols ->
       let columns := dedup String.eqb (pcols ++ rcols) in
       let rp := make_record xp columns in
-      interp_expr store env (EJoin tb1 tb2 x y p r) =
-      interp_expr store env (EJoin (EProj tb1 xp rp) tb2 x y p r).
+      interp_expr store env (EJoin LikeList tb1 tb2 x y p r) =
+      interp_expr store env (EJoin LikeList (EProj LikeList tb1 xp rp) tb2 x y p r).
     Proof.
       intros store env Gstore Genv tb1 tb2 p r x y xp pcols rcols f1 f2 t WF1 WF2 L1 L2 TP TR T XY HP HR. simpl.
       destruct (interp_expr store env tb1) eqn:H; auto. destruct (interp_expr store env tb2); auto. f_equal.
@@ -903,8 +1042,8 @@ Section WithWord.
       cols y r = Some rcols ->
       let columns := dedup String.eqb (pcols ++ rcols) in
       let rp := make_record xp columns in
-      interp_expr store env (EJoin tb1 tb2 x y p r) =
-      interp_expr store env (EJoin tb1 (EProj tb2 xp rp) x y p r).
+      interp_expr store env (EJoin LikeList tb1 tb2 x y p r) =
+      interp_expr store env (EJoin LikeList tb1 (EProj LikeList tb2 xp rp) x y p r).
     Proof.
       intros store env Gstore Genv tb1 tb2 p r x y xp pcols rcols f1 f2 t WF1 WF2 L1 L2 TP TR T XY HP HR. simpl.
       destruct (interp_expr store env tb1); auto. destruct (interp_expr store env tb2) eqn:H; auto. f_equal.
@@ -957,8 +1096,8 @@ Section WithWord.
       cols xp r = Some rcols ->
       let columns := dedup String.eqb (pcols ++ rcols) in
       let ri := make_record xi columns in
-      interp_expr store env (EProj (EFilter tbl x p) xp r) =
-      interp_expr store env (EProj (EFilter (EProj tbl xi ri) x p) xp r).
+      interp_expr store env (EProj LikeList (EFilter LikeList tbl x p) xp r) =
+      interp_expr store env (EProj LikeList (EFilter LikeList (EProj LikeList tbl xi ri) x p) xp r).
     Proof.
       intros store env Gstore Genv tbl p r x xi xp pcols rcols f1 t WF1 WF2 L1 L2 TP TR T HP HR. simpl.
       destruct (interp_expr store env tbl) eqn:H; auto. f_equal.
@@ -1002,8 +1141,8 @@ Section WithWord.
       incl rcols (map fst f1) ->
       NoDup rcols ->
       let r := make_record xp rcols in
-      interp_expr store env (EProj (EFilter tbl x p) xp r) =
-      interp_expr store env (EFilter (EProj tbl xp r) x p).
+      interp_expr store env (EProj LikeList (EFilter LikeList tbl x p) xp r) =
+      interp_expr store env (EFilter LikeList (EProj LikeList tbl xp r) x p).
     Proof.
       intros store env Gstore Genv tbl p x xp pcols rcols f1 t WF1 WF2 L1 L2 T HP HC HI2 HD. simpl.
       destruct (interp_expr store env tbl) eqn:H1; auto. f_equal. rewrite filter_map_commute. f_equal. apply In_filter_ext. intros a LA.
@@ -1035,8 +1174,8 @@ Section WithWord.
       let r := make_record xp rcols in
       cols xp r = Some rcols ->
       type_of Gstore (map.put Genv xp (TRecord f1)) r t ->
-      interp_expr store env (EProj (EFilter tbl x p) xp r) =
-      interp_expr store env (EFilter (EProj tbl xp r) x p).
+      interp_expr store env (EProj LikeList (EFilter LikeList tbl x p) xp r) =
+      interp_expr store env (EFilter LikeList (EProj LikeList tbl xp r) x p).
     Proof.
       intros store env Gstore Genv tbl p x xp pcols rcols f1 t WF1 WF2 L1 L2 T HP HPC HD r HC TR. subst r. simpl.
       destruct (interp_expr store env tbl) eqn:H1; auto. f_equal. rewrite filter_map_commute. f_equal. apply In_filter_ext. intros a LA.
@@ -1069,8 +1208,8 @@ Section WithWord.
         free_immut_in x pf = false ->
         free_immut_in y pf = false ->
         let pnew := EBinop OAnd p (ELet r xf pf) in
-        interp_expr store env (EFilter (EJoin tb1 tb2 x y p r) xf pf)
-        = interp_expr store env (EJoin tb1 tb2 x y pnew r).
+        interp_expr store env (EFilter LikeList (EJoin LikeList tb1 tb2 x y p r) xf pf)
+        = interp_expr store env (EJoin LikeList tb1 tb2 x y pnew r).
     Proof.
       intros store env Gstore Genv tb1 tb2 p r pf x y xf f1 f2 WF1 WF2 L1 L2 TP T1 T2 FX FY. simpl.
       assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T1; auto. inversion T1; auto. }
@@ -1108,8 +1247,8 @@ Section WithWord.
         free_immut_in y pf = false ->
         x <> y ->
         let pnew := EBinop OAnd p (ELet (EVar x) xf pf) in
-        interp_expr store env (EJoin (EFilter tb1 xf pf) tb2 x y p r)
-        = interp_expr store env (EJoin tb1 tb2 x y pnew r).
+        interp_expr store env (EJoin LikeList (EFilter LikeList tb1 xf pf) tb2 x y p r)
+        = interp_expr store env (EJoin LikeList tb1 tb2 x y pnew r).
     Proof.
       intros store env Gstore Genv tb1 tb2 p r pf x y xf f1 f2 WF1 WF2 L1 L2 TP TPF T1 T2 FX FY XY. simpl.
       assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T1; auto. inversion T1; auto. }
@@ -1153,8 +1292,8 @@ Section WithWord.
         free_immut_in y pf = false ->
         x <> y ->
         let pnew := EBinop OAnd p (ELet (EVar y) yf pf) in
-        interp_expr store env (EJoin tb1 (EFilter tb2 yf pf) x y p r)
-        = interp_expr store env (EJoin tb1 tb2 x y pnew r).
+        interp_expr store env (EJoin LikeList tb1 (EFilter LikeList tb2 yf pf) x y p r)
+        = interp_expr store env (EJoin LikeList tb1 tb2 x y pnew r).
     Proof.
       intros store env Gstore Genv tb1 tb2 p r pf x y yf f1 f2 WF1 WF2 L1 L2 TP TPF T1 T2 FX FY XY. simpl.
       assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T1; auto. inversion T1; auto. }
@@ -1216,8 +1355,8 @@ Import Permutation.
 
     Theorem join_comm: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 p r: expr) (x y: string) (l1 l2: list value),
         x <> y ->
-        interp_expr store env (EJoin tb1 tb2 x y p r) = VList l1 ->
-        interp_expr store env (EJoin tb2 tb1 y x p r) = VList l2 ->
+        interp_expr store env (EJoin LikeList tb1 tb2 x y p r) = VList l1 ->
+        interp_expr store env (EJoin LikeList tb2 tb1 y x p r) = VList l2 ->
         Permutation.Permutation l1 l2.
     Proof.
       intros store env Gstore Genv tb1 tb2 p r x y l1 l2 XY H1 H2. simpl in *.
@@ -1255,8 +1394,8 @@ Import Permutation.
         let p23 := EBinop OAnd p1 p12let in
         let r23 := (ELet z_yz z (ELet (EBinop OConcat (EVar x) y_yz) xy r12)) in
         x <> y -> y <> z -> x <> z ->
-        interp_expr store env (EJoin (EJoin tb1 tb2 x y p1 rxy) tb3 xy z p12 r12) = VList l1 ->
-        interp_expr store env (EJoin tb1 (EJoin tb2 tb3 y z (EAtom (ABool true)) ryz) x yz p23 r23) = VList l2 ->
+        interp_expr store env (EJoin LikeList (EJoin LikeList tb1 tb2 x y p1 rxy) tb3 xy z p12 r12) = VList l1 ->
+        interp_expr store env (EJoin LikeList tb1 (EJoin LikeList tb2 tb3 y z (EAtom (ABool true)) ryz) x yz p23 r23) = VList l2 ->
         Permutation.Permutation l1 l2.
     Proof.
       intros. cbn [interp_expr] in *.
@@ -1270,8 +1409,8 @@ Import Permutation.
     Theorem proj_proj: forall (store env: locals) (Gstore Genv: tenv) (tb r r2: expr) (x x2: string) (r2cols rcols: list string),
         free_immut_in x2 r = false ->
         let rnew := ELet r2 x r in
-        interp_expr store env (EProj (EProj tb x2 r2) x r) =
-        interp_expr store env (EProj tb x2 rnew).
+        interp_expr store env (EProj LikeList (EProj LikeList tb x2 r2) x r) =
+        interp_expr store env (EProj LikeList tb x2 rnew).
     Proof.
       intros store env Gstore Genv tb r r2 x x2 r2cols rcols H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
       rewrite map_map. apply map_ext_in. intros a LA. destruct (string_dec x2 x).
@@ -1279,18 +1418,18 @@ Import Permutation.
       - rewrite Properties.map.put_put_diff; auto. rewrite <- not_free_immut_put_sem with (x:=x2)(e:=r); auto.
     Qed.
 
-    Theorem efilter_efilter: forall (store env: locals) (Gstore Genv: tenv) (tb p p2: expr) (x y: string) (f1: list (string*type)),
+    Theorem efilter_efilter: forall (store env: locals) (Gstore Genv: tenv) (tb p p2: expr) (x y: string) t,
         tenv_wf Gstore -> tenv_wf Genv -> locals_wf Gstore store -> locals_wf Genv env ->
-        type_of Gstore (map.put Genv x (TRecord f1)) p TBool ->
-        type_of Gstore (map.put Genv y (TRecord f1)) p2 TBool ->
-        type_of Gstore Genv tb (TList (TRecord f1)) ->
+        type_of Gstore (map.put Genv x t) p TBool ->
+        type_of Gstore (map.put Genv y t) p2 TBool ->
+        type_of Gstore Genv tb (TList t) ->
         free_immut_in x p2 = false ->
         let pnew := EBinop OAnd p (ELet (EVar x) y p2) in
-        interp_expr store env (EFilter (EFilter tb y p2) x p) =
-        interp_expr store env (EFilter tb x pnew).
+        interp_expr store env (EFilter LikeList (EFilter LikeList tb y p2) x p) =
+        interp_expr store env (EFilter LikeList tb x pnew).
     Proof.
-      intros store env Gstore Genv tb p p2 x y f1 WF1 WF2 L1 L2 TP TP2 T H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
-      assert (TW1: type_wf (TRecord f1)). 1: { apply type_of__type_wf in T; auto. inversion T; auto. }
+      intros store env Gstore Genv tb p p2 x y t WF1 WF2 L1 L2 TP TP2 T H. simpl. destruct (interp_expr store env tb) eqn:H1; auto. f_equal.
+      assert (TW1: type_wf t). 1: { apply type_of__type_wf in T; auto. inversion T; auto. }
       rewrite filter_filter. apply In_filter_ext. intros a LA. unfold get_local. rewrite map.get_put_same.
       eapply type_sound in T; eauto. inversion T. rewrite H1 in H0. injection H0 as H0. subst l0 t. apply Forall_In with (x:=a) in H3; auto.
       eapply type_sound with (env:=map.put env x a) in TP; eauto.

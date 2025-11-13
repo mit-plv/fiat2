@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface2.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Morphisms.
 Import ListNotations.
@@ -145,6 +145,69 @@ Section WithMap.
         eapply parameterized_wf__well_typed; eauto. }
   Qed.
 
+  Definition iff2 {A B} (P Q : A -> B -> Prop) :=
+    forall a b, P a b <-> Q a b.
+
+  Lemma iff2_refl : forall A B (P : A -> B -> Prop),
+      iff2 P P.
+  Proof.
+    unfold iff2; intros; intuition auto.
+  Qed.
+
+  Lemma iff2_sym : forall A B (P Q : A -> B -> Prop),
+      iff2 P Q -> iff2 Q P.
+  Proof.
+    unfold iff2; intros; apply iff_sym; auto.
+  Qed.
+
+  Lemma iff2_trans : forall A B (P Q R : A -> B -> Prop),
+      iff2 P Q -> iff2 Q R -> iff2 P R.
+  Proof.
+    unfold iff2; split; intros.
+    1: apply H0, H; auto.
+    1: apply H, H0; auto.
+  Qed.
+
+  Add Parametric Relation A B : (A -> B -> Prop) iff2
+      reflexivity proved by (iff2_refl A B)
+      symmetry proved by (iff2_sym A B)
+      transitivity proved by (iff2_trans A B)
+      as iff2_rel.
+
+  Instance rm_from_pred_Proper : Proper (iff2 ==> eq ==> iff2) rm_from_pred.
+  Proof.
+    intros P Q H x x' Hx.
+    unfold iff2, rm_from_pred; intros.
+    subst; intuition auto.
+    all: right; apply H; auto.
+  Qed.
+
+  Instance holds_for_all_entries_Proper {A : Type} {m : map.map string A} : Proper (iff2 ==> eq ==> iff) (holds_for_all_entries (m:=m)).
+  Proof.
+    intros P Q H x x' Hx.
+    unfold holds_for_all_entries. split; intros.
+    all: subst; apply H, H0; auto.
+  Qed.
+
+  Lemma iff2_parameterized_wf : forall x y z P Q,
+      iff2 P Q ->
+      parameterized_wf x y P z -> parameterized_wf x y Q z.
+  Proof.
+    intros * H_iff2 H_wf. generalize dependent Q.
+    induction H_wf; intros.
+    all: econstructor; eauto.
+    1:{ apply IHH_wf. erewrite H_iff2; auto using iff2_refl. }
+    1:{ intros. apply H_iff2, H; auto.
+        rewrite H_iff2; auto. }
+  Qed.
+
+  Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> iff) parameterized_wf.
+  Proof.
+    intros x x' Hx y y' Hy P Q H z z' Hz.
+    split; subst; apply iff2_parameterized_wf;
+      auto using iff2_sym.
+  Qed.
+
   Section WithPv.
     Context (Pv : value -> Prop).
 
@@ -160,69 +223,6 @@ Section WithMap.
       unfold value_wf_with_globals in *.
       destruct (String.eqb k x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp.
       rewrite Forall_forall; intros. left; intro contra; subst; auto.
-    Qed.
-
-    Definition iff2 {A B} (P Q : A -> B -> Prop) :=
-      forall a b, P a b <-> Q a b.
-
-    Lemma iff2_refl : forall A B (P : A -> B -> Prop),
-        iff2 P P.
-    Proof.
-      unfold iff2; intros; intuition auto.
-    Qed.
-
-    Lemma iff2_sym : forall A B (P Q : A -> B -> Prop),
-        iff2 P Q -> iff2 Q P.
-    Proof.
-      unfold iff2; intros; apply iff_sym; auto.
-    Qed.
-
-    Lemma iff2_trans : forall A B (P Q R : A -> B -> Prop),
-        iff2 P Q -> iff2 Q R -> iff2 P R.
-    Proof.
-      unfold iff2; split; intros.
-      1: apply H0, H; auto.
-      1: apply H, H0; auto.
-    Qed.
-
-    Add Parametric Relation A B : (A -> B -> Prop) iff2
-        reflexivity proved by (iff2_refl A B)
-        symmetry proved by (iff2_sym A B)
-        transitivity proved by (iff2_trans A B)
-        as iff2_rel.
-
-    Instance rm_from_pred_Proper : Proper (iff2 ==> eq ==> iff2) rm_from_pred.
-    Proof.
-      intros P Q H x x' Hx.
-      unfold iff2, rm_from_pred; intros.
-      subst; intuition auto.
-      all: right; apply H; auto.
-    Qed.
-
-    Instance holds_for_all_entries_Proper {A : Type} {m : map.map string A} : Proper (iff2 ==> eq ==> iff) (holds_for_all_entries (m:=m)).
-    Proof.
-      intros P Q H x x' Hx.
-      unfold holds_for_all_entries. split; intros.
-      all: subst; apply H, H0; auto.
-    Qed.
-
-    Lemma iff2_parameterized_wf : forall x y z P Q,
-        iff2 P Q ->
-        parameterized_wf x y P z -> parameterized_wf x y Q z.
-    Proof.
-      intros * H_iff2 H_wf. generalize dependent Q.
-      induction H_wf; intros.
-      all: econstructor; eauto.
-      1:{ apply IHH_wf. erewrite H_iff2; auto using iff2_refl. }
-      1:{ intros. apply H_iff2, H; auto.
-          rewrite H_iff2; auto. }
-    Qed.
-
-    Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> iff) parameterized_wf.
-    Proof.
-      intros x x' Hx y y' Hy P Q H z z' Hz.
-      split; subst; apply iff2_parameterized_wf;
-        auto using iff2_sym.
     Qed.
 
     Lemma rm_not_in_globals : forall x globals,
@@ -268,34 +268,32 @@ Section WithMap.
   End WithGlobals.
 
   Section WithIndex.
-    Context {consistency : Type} (consistent : consistency -> value -> value -> Prop).
-    Context {to_from_con from_to_con : consistency}.
-    Context {idx : IndexInterface.index} {idx_wf : value -> Prop} {idx_ok : ok to_from_con from_to_con idx idx_wf consistent}.
+    Context (is_tbl_ty : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop).
 
-    Definition expr_aug_transf_sound (f : string -> expr -> expr) : Prop :=
-      forall Gstore Genv tbl tbl_ty e t,
-        tenv_wf Gstore -> tenv_wf Genv ->
-        type_wf tbl_ty -> is_tbl_ty tbl_ty = true ->
-        tenv_wf_with_globals [tbl] [idx_ty tbl_ty] Gstore ->
-        type_of Gstore Genv e t ->
-        type_of Gstore Genv (f tbl e) t /\
-          forall store env,
-            locals_wf Gstore store -> locals_wf Genv env ->
-            holds_for_all_entries (value_wf_with_globals idx_wf [tbl]) store ->
-            interp_expr store env (f tbl e) = interp_expr store env e.
+  Definition expr_aug_transf_sound (f : string -> expr -> expr) : Prop :=
+    forall Gstore Genv tbl tbl_ty e t,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      type_wf tbl_ty -> is_tbl_ty tbl_ty = true ->
+      tenv_wf_with_globals [tbl] [aux_ty tbl_ty] Gstore ->
+      type_of Gstore Genv e t ->
+      type_of Gstore Genv (f tbl e) t /\
+        forall store env,
+          locals_wf Gstore store -> locals_wf Genv env ->
+          holds_for_all_entries (value_wf_with_globals aux_wf [tbl]) store ->
+          interp_expr store env (f tbl e) = interp_expr store env e.
 
     Definition aug_transf_sound (f : string -> command -> command) : Prop :=
       forall Gstore Genv tbl t c,
         tenv_wf Gstore -> tenv_wf Genv ->
         type_wf t -> is_tbl_ty t = true ->
-        tenv_wf_with_globals [tbl] [idx_ty t] Gstore ->
+        tenv_wf_with_globals [tbl] [aux_ty t] Gstore ->
         well_typed Gstore Genv c ->
-        parameterized_wf Gstore Genv (value_wf_with_globals idx_wf [tbl]) c ->
+        parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) c ->
         well_typed Gstore Genv (f tbl c) /\
-          parameterized_wf Gstore Genv (value_wf_with_globals idx_wf [tbl]) (f tbl c) /\
+          parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) (f tbl c) /\
           forall store env,
             locals_wf Gstore store -> locals_wf Genv env ->
-            holds_for_all_entries (value_wf_with_globals idx_wf [tbl]) store ->
+            holds_for_all_entries (value_wf_with_globals aux_wf [tbl]) store ->
             interp_command store env (f tbl c) = interp_command store env c.
 
     Lemma aug_transf_sound_compose : forall f g,
@@ -307,8 +305,32 @@ Section WithMap.
       eapply H_f in H4; eauto; intuition idtac.
       rewrite H10; auto.
     Qed.
+
+    Lemma expr_transf_sound__expr_aug_transf_sound : forall (f : expr -> expr),
+        expr_transf_sound f ->
+        expr_aug_transf_sound (fun _ => f).
+    Proof.
+      unfold expr_transf_sound, expr_aug_transf_sound; intros;
+        apply H in H5; intuition auto.
+    Qed.
   End WithIndex.
+
+  Fixpoint repeat_transf (f : command -> command) (n : nat) :=
+    match n with
+    | O => id
+    | S n => Basics.compose f (repeat_transf f n)
+    end.
+
+  Lemma repeat_transf_preserve_aug_transf_sound : forall is_tbl_ty aux_ty aux_wf f n,
+      aug_transf_sound is_tbl_ty aux_ty aux_wf f ->
+      aug_transf_sound is_tbl_ty aux_ty aux_wf (fun tbl => repeat_transf (f tbl) n).
+  Proof.
+    induction n; cbn.
+    1:{ intros _. unfold aug_transf_sound; auto. }
+    1:{ intros; cbn. apply aug_transf_sound_compose; auto. }
+  Qed.
 End WithMap.
 
 #[export] Hint Resolve transf_sound_compose : transf_hints.
 #[export] Hint Resolve aug_transf_sound_compose : transf_hints.
+#[export] Hint Resolve expr_transf_sound__expr_aug_transf_sound : transf_hints.
