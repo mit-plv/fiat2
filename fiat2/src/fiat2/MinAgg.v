@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2 fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -59,10 +59,10 @@ Section WithHole.
       Qed.
 
 
-      Instance min_agg : IndexInterface2.index := IndexInterface2.mk hole to_idx idx_ty is_tbl_ty.
+      Instance min_agg : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance min_agg_ok : IndexInterface2.ok min_agg idx_wf :=
-        IndexInterface2.Build_ok min_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance min_agg_ok : IndexInterface.ok min_agg idx_wf :=
+        IndexInterface.Build_ok min_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
       Ltac invert_type_of_aci_aggr_clear :=
         lazymatch goal with
@@ -296,4 +296,4 @@ End WithHole.
 #[export] Hint Resolve cons_to_min_head_sound : transf_hints.
 #[export] Hint Resolve min_to_agg_lookup_head_sound : transf_hints.
 
-#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply MinAgg.to_idx_ty : transf_hints.
+#[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply MinAgg.to_idx_ty : transf_hints.

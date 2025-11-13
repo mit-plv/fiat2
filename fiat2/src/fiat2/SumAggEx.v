@@ -1,8 +1,11 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2
-fiat2.CollectionTransf fiat2.SumAgg fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf2 fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
+fiat2.CollectionTransf fiat2.SumAgg fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith.
 Import ListNotations.
+
+Require Import fiat2.Notations.
+Open Scope fiat2_scope.
 
 Section ConcreteExample.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
@@ -25,8 +28,8 @@ Section ConcreteExample.
   Definition attr := "salary".
 
   Notation idx_wf := (idx_wf "hole" attr "x").
-  Instance csum_agg : IndexInterface2.index := (sum_agg "hole" attr "x").
-  Instance csum_agg_ok : IndexInterface2.ok csum_agg idx_wf.
+  Instance csum_agg : IndexInterface.index := (sum_agg "hole" attr "x").
+  Instance csum_agg_ok : IndexInterface.ok csum_agg idx_wf.
   apply sum_agg_ok.
   Qed.
 
@@ -37,8 +40,8 @@ Section ConcreteExample.
   Definition cons_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_add_head).
 
   Notation idxs := [("sum_agg_tag", csum_agg, idx_wf)].
-  Instance ccompo_idx : IndexInterface2.index := compo_idx idxs "hole" (word:=word).
-  Instance ccompo_idx_ok : IndexInterface2.ok ccompo_idx (compo_idx_wf idxs).
+  Instance ccompo_idx : IndexInterface.index := compo_idx idxs "hole" (word:=word).
+  Instance ccompo_idx_ok : IndexInterface.ok ccompo_idx (compo_idx_wf idxs).
   apply compo_idx_ok; repeat constructor; auto; intros.
   apply to_idx_ty; auto with transf_hints.
   Qed.
@@ -56,9 +59,6 @@ Section ConcreteExample.
   Proof.
     repeat (apply_transf_sound_lemmas; eauto with transf_hints).
   Qed.
-
-  Require Import fiat2.Notations.
-  Open Scope fiat2_scope.
 
   Definition row_ty := TRecord (record_sort [("name", TString); ("department", TString); ("feedback", TString); ("salary", TInt)]).
   (* two arbitrary well_typed rows *)
@@ -84,3 +84,5 @@ Section ConcreteExample.
     eauto using transf_sound__preserve_sem, ex_transf_sound with transf_hints.
   Qed.
 End ConcreteExample.
+
+Print Assumptions ex1_transformed_sem.

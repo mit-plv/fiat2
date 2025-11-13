@@ -1,5 +1,5 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2
-fiat2.CollectionTransf fiat2.DictIndexImpl2 fiat2.SumAgg fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf2 fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
+fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith.
 Import ListNotations.
@@ -19,16 +19,16 @@ Section ConcreteExample.
   Definition sum_agg_attr := "salary".
 
   Notation sum_agg_wf := (SumAgg.idx_wf "hole" sum_agg_attr "x").
-  Instance csum_agg : IndexInterface2.index := (sum_agg "hole" sum_agg_attr "x").
-  Instance csum_agg_ok : IndexInterface2.ok csum_agg sum_agg_wf.
+  Instance csum_agg : IndexInterface.index := (sum_agg "hole" sum_agg_attr "x").
+  Instance csum_agg_ok : IndexInterface.ok csum_agg sum_agg_wf.
   apply sum_agg_ok.
   Qed.
 
   Definition dict_idx_attr := "department".
 
-  Notation dict_idx_wf := (DictIndexImpl2.idx_wf "hole" dict_idx_attr "tup" "acc" "x").
-  Instance cdict_idx : IndexInterface2.index := (dict_idx "hole" dict_idx_attr "tup" "acc" "x").
-  Instance cdict_idx_ok : IndexInterface2.ok cdict_idx dict_idx_wf.
+  Notation dict_idx_wf := (DictIndexImpl.idx_wf "hole" dict_idx_attr "tup" "acc" "x").
+  Instance cdict_idx : IndexInterface.index := (dict_idx "hole" dict_idx_attr "tup" "acc" "x").
+  Instance cdict_idx_ok : IndexInterface.ok cdict_idx dict_idx_wf.
   apply dict_idx_ok. auto with transf_hints.
   Qed.
 
@@ -42,13 +42,13 @@ Section ConcreteExample.
   Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr "tup" "acc" "x" "y").
   Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" "dict_idx_tag" tbl).
 
-  Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply SumAgg.to_idx_ty : transf_hints.
-  Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply DictIndexImpl2.to_idx_ty : transf_hints.
-  Hint Extern 5 (type_wf (IndexInterface2.idx_ty _)) => apply DictIndexImpl2.idx_ty_wf : transf_hints.
+  Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply SumAgg.to_idx_ty : transf_hints.
+  Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply DictIndexImpl.to_idx_ty : transf_hints.
+  Hint Extern 5 (type_wf (IndexInterface.idx_ty _)) => apply DictIndexImpl.idx_ty_wf : transf_hints.
 
   Notation idxs := [("sum_agg_tag", csum_agg, sum_agg_wf); ("dict_idx_tag", cdict_idx, dict_idx_wf)].
-  Instance ccompo_idx : IndexInterface2.index := compo_idx idxs "hole" (word:=word).
-  Instance ccompo_idx_ok : IndexInterface2.ok ccompo_idx (compo_idx_wf idxs).
+  Instance ccompo_idx : IndexInterface.index := compo_idx idxs "hole" (word:=word).
+  Instance ccompo_idx_ok : IndexInterface.ok ccompo_idx (compo_idx_wf idxs).
   apply compo_idx_ok; repeat constructor; intros; auto with transf_hints.
   cbn; rewrite <- eqb_eq; intuition idtac; discriminate.
   Qed.

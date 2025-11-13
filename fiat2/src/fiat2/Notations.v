@@ -107,7 +107,6 @@ Notation "[ ]" := (EAtom (ANil None))
    (in custom fiat2_expr).
 Notation "'nil[' t ']'"        := (EAtom (ANil (Some t)))
    (in custom fiat2_expr at level 10, t constr).
-(* ??? TODO: Notations for types *)
 
 Notation "<( x , y )>" := (ERecord (("0"%string, x) :: ("1"%string, y) :: nil))
    (in custom fiat2_expr at level 0, x custom fiat2_expr at level 99,
@@ -183,10 +182,6 @@ Local Open Scope string_scope.
    Goal <{ set "_" := <((1 + 3) * 4, 2)> }> = CAssign "_" <[ {"0" : (<<EBinop OTimes (EBinop OPlus 1 3) 4>>) , "1" : 2} ]>.
    reflexivity. Abort.
 
-(* ??? The "a" and "b" on the LHS are parsed and inferred to be strings. Need a way to coerce them into expr. c.f. Notation definition of "<( x , y )>".
-   Goal <{ set "_" := <("a", "b")> }> = CAssign "_" <[ {"0" : <<EAtom (AString "a") >> , "1" : <<EAtom (AString "b") >>} ]>.
-   reflexivity. Abort.
-*)
    Goal <{ set "_" := [1, 2, 3] }> = CAssign "_" (EBinop OCons 1 (EBinop OCons 2 (EBinop OCons 3 (EAtom (ANil None))))).
    reflexivity. Abort.
 

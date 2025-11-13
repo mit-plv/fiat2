@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2 fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -60,10 +60,10 @@ Section WithHole.
       Qed.
 
 
-      Instance sum_agg : IndexInterface2.index := IndexInterface2.mk hole to_idx idx_ty is_tbl_ty.
+      Instance sum_agg : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance sum_agg_ok : IndexInterface2.ok sum_agg idx_wf :=
-        IndexInterface2.Build_ok sum_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance sum_agg_ok : IndexInterface.ok sum_agg idx_wf :=
+        IndexInterface.Build_ok sum_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
       Ltac invert_type_of_aggr_clear :=
         lazymatch goal with
@@ -251,4 +251,4 @@ End WithHole.
 #[export] Hint Resolve cons_to_add_head_sound : transf_hints.
 #[export] Hint Resolve sum_to_agg_lookup_head_sound : transf_hints.
 
-#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply SumAgg.to_idx_ty : transf_hints.
+#[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply SumAgg.to_idx_ty : transf_hints.

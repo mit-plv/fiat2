@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2 fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -17,15 +17,6 @@ Section WithHole.
       tup acc
       (ERecord [("0", EBinop OPlus n (EAtom (AInt 1))); ("1", ETernop OInsert d n (EVar tup))]).
 
-  (* ??? remove
-  Definition to_pk_idx :=
-    let n := EAccess (EVar acc) "0" in
-    let l := EAccess (EVar acc) "1" in
-    let d := EAccess (EVar acc) "2" in
-    EFold (EVar hole) (ERecord [("0", EAtom (AInt 0)); ("1", EAtom (ANil (Some TInt))); ("2", EAtom (AEmptyDict None))])
-      tup acc
-      (ERecord [("0", EBinop OPlus n (EAtom (AInt 1))); ("1", EBinop OCons n l); ("2", ETernop OInsert d n (EVar tup))]).
-   *)
   Definition is_pk_tbl_ty (t : type) : bool :=
     match t with
     | TList _ => true
@@ -325,10 +316,10 @@ Section WithHole.
           1: apply StronglySorted_dict_sort. }
     Qed.
 
-    Instance pk_idx : IndexInterface2.index := IndexInterface2.mk hole to_pk_idx pk_idx_ty is_pk_tbl_ty.
+    Instance pk_idx : IndexInterface.index := IndexInterface.mk hole to_pk_idx pk_idx_ty is_pk_tbl_ty.
 
-    Instance pk_idx_ok : IndexInterface2.ok pk_idx pk_idx_wf :=
-      IndexInterface2.Build_ok pk_idx pk_idx_wf pk_idx_ty_wf to_pk_idx_ty to_pk_idx_wf.
+    Instance pk_idx_ok : IndexInterface.ok pk_idx pk_idx_wf :=
+      IndexInterface.Build_ok pk_idx pk_idx_wf pk_idx_ty_wf to_pk_idx_ty to_pk_idx_wf.
   End WithMap.
 End WithHole.
 
@@ -416,10 +407,10 @@ Section WithHole.
       reflexivity.
     Qed.
 
-    Instance bitmap : IndexInterface2.index := IndexInterface2.mk hole to_bitmap bitmap_ty is_bitmap_tbl_ty.
+    Instance bitmap : IndexInterface.index := IndexInterface.mk hole to_bitmap bitmap_ty is_bitmap_tbl_ty.
 
-    Instance bitmap_ok : IndexInterface2.ok bitmap bitmap_wf :=
-      IndexInterface2.Build_ok bitmap bitmap_wf bitmap_ty_wf to_bitmap_ty to_bitmap_wf.
+    Instance bitmap_ok : IndexInterface.ok bitmap bitmap_wf :=
+      IndexInterface.Build_ok bitmap bitmap_wf bitmap_ty_wf to_bitmap_ty to_bitmap_wf.
   End WithMap.
 End WithHole.
 
@@ -465,25 +456,6 @@ Section WithTags.
             else e
         | _ => e
         end.
-
-      (* ??? move *)
-      Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
-          free_immut_in x e = false ->
-          type_of Gstore Genv e t ->
-          type_of Gstore (map.put Genv x t') e t.
-      Proof.
-        intros. destruct (map.get Genv x) eqn:E.
-        1:{ rewrite <- Properties.map.put_remove_same.
-            eapply type_of_strengthen;
-              [
-              | apply map_incl_refl
-              | apply map_incl_step_r; try apply map_incl_refl;
-                apply map.get_remove_same ].
-            eapply not_free_immut_put_ty; eauto.
-            rewrite Properties.map.put_remove_same, Properties.map.put_noop; eauto. }
-        1:{ eapply type_of_strengthen; eauto using map_incl_refl.
-            apply map_incl_step_r; auto using map_incl_refl. }
-      Qed.
 
       Lemma cons_to_pk_idx_update_head_preserve_ty : forall (Gstore : tenv),
               preserve_ty Gstore cons_to_pk_idx_update_head.
@@ -1247,6 +1219,6 @@ Qed.
 #[export] Hint Resolve filter_to_bitmap_lookup_head_sound2 : transf_hints.
 #[export] Hint Resolve use_pk_idx_head_sound2 : transf_hints.
 
-#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply to_pk_idx_ty : transf_hints.
-#[export] Hint Extern 5 (type_of _ _ IndexInterface2.to_idx _) => apply to_bitmap_ty : transf_hints.
-#[export] Hint Extern 5 (type_wf (IndexInterface2.idx_ty _)) => apply pk_idx_ty_wf : transf_hints.
+#[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_pk_idx_ty : transf_hints.
+#[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_bitmap_ty : transf_hints.
+#[export] Hint Extern 5 (type_wf (IndexInterface.idx_ty _)) => apply pk_idx_ty_wf : transf_hints.

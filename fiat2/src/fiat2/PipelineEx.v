@@ -1,5 +1,5 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface2
-  fiat2.CollectionTransf fiat2.DictIndexImpl2 fiat2.SumAgg fiat2.MinAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf2 fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
+  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith.
 Import ListNotations.
@@ -23,8 +23,8 @@ Section WithConcreteMaps.
     Context (sum_agg_attr : string).
 
     Notation sum_agg_wf := (SumAgg.idx_wf (locals:=clocals) "hole" sum_agg_attr "x").
-    Instance csum_agg : IndexInterface2.index := (sum_agg "hole" sum_agg_attr "x").
-    Instance csum_agg_ok : IndexInterface2.ok csum_agg sum_agg_wf.
+    Instance csum_agg : IndexInterface.index := (sum_agg "hole" sum_agg_attr "x").
+    Instance csum_agg_ok : IndexInterface.ok csum_agg sum_agg_wf.
     apply sum_agg_ok.
     Qed.
 
@@ -34,8 +34,8 @@ Section WithConcreteMaps.
     Context (min_agg_attr : string).
 
     Notation min_agg_wf := (MinAgg.idx_wf (locals:=clocals) "hole" min_agg_attr "x").
-    Instance cmin_agg : IndexInterface2.index := (min_agg "hole" min_agg_attr "x").
-    Instance cmin_agg_ok : IndexInterface2.ok cmin_agg min_agg_wf.
+    Instance cmin_agg : IndexInterface.index := (min_agg "hole" min_agg_attr "x").
+    Instance cmin_agg_ok : IndexInterface.ok cmin_agg min_agg_wf.
     apply min_agg_ok.
     Qed.
 
@@ -44,9 +44,9 @@ Section WithConcreteMaps.
 
     Context (dict_idx_attr : string).
 
-    Notation dict_idx_wf := (DictIndexImpl2.idx_wf "hole" dict_idx_attr "tup" "acc" "x").
-    Instance cdict_idx : IndexInterface2.index := (dict_idx "hole" dict_idx_attr "tup" "acc" "x").
-    Instance cdict_idx_ok : IndexInterface2.ok cdict_idx dict_idx_wf.
+    Notation dict_idx_wf := (DictIndexImpl.idx_wf "hole" dict_idx_attr "tup" "acc" "x").
+    Instance cdict_idx : IndexInterface.index := (dict_idx "hole" dict_idx_attr "tup" "acc" "x").
+    Instance cdict_idx_ok : IndexInterface.ok cdict_idx dict_idx_wf.
     apply dict_idx_ok. auto with transf_hints.
     Qed.
 
@@ -55,16 +55,16 @@ Section WithConcreteMaps.
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" "dict_idx_tag" tbl).
 
     Notation pk_idx_wf := (BitmapIndex.pk_idx_wf "hole" "tup" "acc").
-    Instance cpk_idx : IndexInterface2.index := (pk_idx "hole" "tup" "acc").
-    Instance cpk_idx_ok : IndexInterface2.ok cpk_idx pk_idx_wf.
+    Instance cpk_idx : IndexInterface.index := (pk_idx "hole" "tup" "acc").
+    Instance cpk_idx_ok : IndexInterface.ok cpk_idx pk_idx_wf.
     apply pk_idx_ok. auto with transf_hints.
     Qed.
 
     Context (bitmap_attr : string).
     Context (bitmap_str : string).
     Notation bitmap_wf := (bitmap_wf bitmap_attr bitmap_str "hole" "tup").
-    Instance bitmap : IndexInterface2.index := (bitmap bitmap_attr bitmap_str "hole" "tup").
-    Instance bitmap_ok : IndexInterface2.ok bitmap bitmap_wf.
+    Instance bitmap : IndexInterface.index := (bitmap bitmap_attr bitmap_str "hole" "tup").
+    Instance bitmap_ok : IndexInterface.ok bitmap bitmap_wf.
     apply bitmap_ok.
     Qed.
 
@@ -88,8 +88,8 @@ Section WithConcreteMaps.
                       ("dict_idx_tag", cdict_idx, dict_idx_wf);
                       ("pk_idx_tag", cpk_idx, pk_idx_wf);
                       ("bm_tag", bitmap, bitmap_wf)].
-    Instance ccompo_idx : IndexInterface2.index := compo_idx idxs "hole" (word:=word).
-    Instance ccompo_idx_ok : IndexInterface2.ok ccompo_idx (compo_idx_wf idxs).
+    Instance ccompo_idx : IndexInterface.index := compo_idx idxs "hole" (word:=word).
+    Instance ccompo_idx_ok : IndexInterface.ok ccompo_idx (compo_idx_wf idxs).
     apply compo_idx_ok; repeat constructor; intros; auto with transf_hints.
     all: cbn; rewrite <- eqb_eq; intuition idtac; discriminate.
     Qed.
@@ -112,9 +112,8 @@ Section WithConcreteMaps.
                                                (repeat_transf (cons_to_add_transf tbl) 10000)
               )))))))))))) Gstore Genv)
            (Basics.compose push_down_collection_transf
-              (Basics.compose push_down_collection_transf
                  (Basics.compose annotate_collection_transf
-                    (Basics.compose to_filter_transf to_proj_transf)))).
+                    (Basics.compose to_filter_transf to_proj_transf))).
 
          Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
     Proof.
