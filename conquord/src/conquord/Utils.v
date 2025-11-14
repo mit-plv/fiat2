@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -52,18 +52,18 @@ Proof.
   intros. invert_type_wf; auto.
 Qed.
 
-Create HintDb fiat2_hints.
-#[export] Hint Resolve type_of__type_wf : fiat2_hints.
-#[export] Hint Resolve invert_TList_wf : fiat2_hints.
-#[export] Hint Resolve invert_TBag_wf : fiat2_hints.
-#[export] Hint Resolve invert_TSet_wf : fiat2_hints.
-#[export] Hint Resolve invert_TOption_wf : fiat2_hints.
-#[export] Hint Resolve invert_TDict_wf_l : fiat2_hints.
-#[export] Hint Resolve invert_TDict_wf_r : fiat2_hints.
-#[export] Hint Resolve invert_TRecord_wf : fiat2_hints.
-#[export] Hint Resolve tenv_wf_step : fiat2_hints.
-#[export] Hint Resolve locals_wf_step : fiat2_hints.
-#[export] Hint Resolve type_sound : fiat2_hints.
+Create HintDb conquord_hints.
+#[export] Hint Resolve type_of__type_wf : conquord_hints.
+#[export] Hint Resolve invert_TList_wf : conquord_hints.
+#[export] Hint Resolve invert_TBag_wf : conquord_hints.
+#[export] Hint Resolve invert_TSet_wf : conquord_hints.
+#[export] Hint Resolve invert_TOption_wf : conquord_hints.
+#[export] Hint Resolve invert_TDict_wf_l : conquord_hints.
+#[export] Hint Resolve invert_TDict_wf_r : conquord_hints.
+#[export] Hint Resolve invert_TRecord_wf : conquord_hints.
+#[export] Hint Resolve tenv_wf_step : conquord_hints.
+#[export] Hint Resolve locals_wf_step : conquord_hints.
+#[export] Hint Resolve type_sound : conquord_hints.
 
 Ltac invert_pair :=
   lazymatch goal with
@@ -978,7 +978,7 @@ Section WithMap.
     erewrite H; eauto.
   Qed.
 
-  #[local] Hint Resolve locals_equiv_step : fiat2_hints.
+  #[local] Hint Resolve locals_equiv_step : conquord_hints.
 
   Ltac apply_locals_equiv :=
     lazymatch goal with
@@ -1012,40 +1012,40 @@ Section WithMap.
     1,2: unfold get_local; apply_locals_equiv; rewrite_l_to_r; auto.
     all: try now (repeat (use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto)).
     1:{ revert IHe2. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; intros;
-        eauto using locals_equiv_refl with fiat2_hints.
+        eauto using locals_equiv_refl with conquord_hints.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ];
-          eauto using locals_equiv_refl with fiat2_hints. }
+          eauto using locals_equiv_refl with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value. f_equal.
         apply In_flat_map_ext; intros; apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value. do 2 f_equal.
         apply In_flat_map_ext; intros.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value. do 2 f_equal.
         apply In_flat_map_ext; intros.
         apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
     1:{ repeat (use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto).
         apply_type_sound e1; invert_type_of_value.
         apply_type_sound e2; invert_type_of_value.
         f_equal.
         apply In_flat_map2_ext; intros. repeat apply_Forall_In.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ];
-          try apply tenv_wf_step; try apply locals_wf_step; eauto with fiat2_hints. }
+          try apply tenv_wf_step; try apply locals_wf_step; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         revert IHe3. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto; intros.
         eapply In_fold_right_ext with (P:=fun v => type_of_value v t); intros.
         1: apply_type_sound e2.
-        1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            2: repeat apply tenv_wf_step; eauto with fiat2_hints.
+        1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
+            2: repeat apply tenv_wf_step; eauto with conquord_hints.
             2: repeat apply locals_wf_step; apply_Forall_In; intuition auto.
             apply_type_sound e3;
-              [ repeat apply tenv_wf_step; eauto with fiat2_hints
+              [ repeat apply tenv_wf_step; eauto with conquord_hints
               | repeat apply locals_wf_step; apply_Forall_In; intuition auto ]. } }
     1:{ do 2 f_equal. lazymatch goal with
         H1: type_of _ _ _ _, H2: Permutation _ _, H3: NoDup _, H4: List.map fst _ = _ |- _ =>
@@ -1056,22 +1056,22 @@ Section WithMap.
         1: eapply IHl; eauto. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
-        all: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        all: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         revert IHe3. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto; intros.
         eapply In_fold_right_ext with (P:=fun v => type_of_value v t); intros.
         1: apply_type_sound e2.
-        1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            2: repeat apply tenv_wf_step; eauto with fiat2_hints.
+        1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
+            2: repeat apply tenv_wf_step; eauto with conquord_hints.
             2: repeat apply locals_wf_step; apply_Forall_In; intuition auto.
             apply_type_sound e3;
-              [ repeat apply tenv_wf_step; eauto with fiat2_hints
+              [ repeat apply tenv_wf_step; eauto with conquord_hints
               | repeat apply locals_wf_step; apply_Forall_In; intuition auto ]. } }
     1,2,3: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto;
         apply_type_sound e1; invert_type_of_value;
         f_equal; apply In_filter_ext; auto; intros; apply_Forall_In;
-    use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+    use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
@@ -1079,14 +1079,14 @@ Section WithMap.
         f_equal. apply In_flat_map_ext; intros. apply_Forall_In.
         erewrite In_filter_ext; eauto.
         2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
             1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
+            repeat apply tenv_wf_step; eauto with conquord_hints. }
         apply map_ext_in; intros.
         lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
         apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
+        repeat apply tenv_wf_step; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
@@ -1095,14 +1095,14 @@ Section WithMap.
         repeat Forall_fst__Forall_bag_to_list. apply_Forall_In.
         erewrite In_filter_ext; eauto.
         2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
             1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
+            repeat apply tenv_wf_step; eauto with conquord_hints. }
         apply map_ext_in; intros.
         lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
         apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
+        repeat apply tenv_wf_step; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
@@ -1111,28 +1111,28 @@ Section WithMap.
         apply_Forall_In.
         erewrite In_filter_ext; eauto.
         2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
+            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
             1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
+            repeat apply tenv_wf_step; eauto with conquord_hints. }
         apply map_ext_in; intros.
         lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
         apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints.
+        repeat apply tenv_wf_step; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         f_equal. apply map_ext_in; intros. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         do 2 f_equal. apply map_ext_in; intros.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         do 2 f_equal. apply map_ext_in; intros.
         apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
+        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with conquord_hints. }
   Qed.
 
   Lemma map_incl__locals_equiv : forall G l l',
@@ -1177,11 +1177,11 @@ Section WithMap.
     1:{ erewrite IHc2. 4: eauto. all: auto.
         2: eapply command_type_sound; eauto.
         eapply IHc1. 4: eauto. all: eauto. }
-    1:{ erewrite IHc. 4: eauto. all: eauto with fiat2_hints. }
+    1:{ erewrite IHc. 4: eauto. all: eauto with conquord_hints. }
     1:{ destruct_String_eqb x0 x.
         1: rewrite Properties.map.get_update_same; reflexivity.
         1: rewrite Properties.map.get_update_diff; auto.
-        erewrite IHc. 4: eauto. all: eauto with fiat2_hints.
+        erewrite IHc. 4: eauto. all: eauto with conquord_hints.
         all: rewrite_map_get_put_goal. }
     1:{ destruct_get_put_strings; try congruence. }
     1:{ case_match; auto. case_match; subst; eauto. }
@@ -1189,9 +1189,9 @@ Section WithMap.
         lazymatch goal with H: VList _ = _ |- _ => clear H end.
         generalize dependent store. induction l; simpl; auto; intros.
         rewrite IHl; auto; invert_Forall.
-        1: eapply IHc. 3: eauto. all: eauto with fiat2_hints.
-        1: eapply command_type_sound; eauto with fiat2_hints.
-        1:{ apply_type_sound e. eapply command_type_sound; eauto with fiat2_hints. }}
+        1: eapply IHc. 3: eauto. all: eauto with conquord_hints.
+        1: eapply command_type_sound; eauto with conquord_hints.
+        1:{ apply_type_sound e. eapply command_type_sound; eauto with conquord_hints. }}
   Qed.
 
   Local Ltac unfold_typechecker :=
@@ -1253,19 +1253,19 @@ Section WithMap.
         use_synthesize_ty_unique_IH; congruence. }
     all: try now (repeat destruct_match_hyp; try congruence;
                   try do_injection;
-                  repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
+                  repeat (use_synthesize_ty_unique_IH; eauto with conquord_hints);
                   try congruence; repeat (try clear_refl; do_injection); subst; eauto; repeat (try clear_refl; do_injection); try (f_equal; use_synthesize_ty_unique_IH);
-                  repeat apply tenv_wf_step; eauto with fiat2_hints).
+                  repeat apply tenv_wf_step; eauto with conquord_hints).
     1:{ do_injection. inversion H; subst; eauto. }
     1:{ repeat destruct_match_hyp; try congruence;
         try do_injection;
-        repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
+        repeat (use_synthesize_ty_unique_IH; eauto with conquord_hints);
         lazymatch goal with
           H: type_of_aggr _ _ _ |- _ => inversion H; subst
         end; auto. }
     1:{ repeat destruct_match_hyp; try congruence;
         try do_injection;
-        repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
+        repeat (use_synthesize_ty_unique_IH; eauto with conquord_hints);
         lazymatch goal with
           H: type_of_aci_aggr _ _ _ |- _ => inversion H; subst
         end; auto. }
@@ -1299,8 +1299,8 @@ Section WithMap.
   Qed.
 End WithMap.
 
-#[export] Hint Resolve tenv_wf_empty : fiat2_hints.
-#[export] Hint Resolve locals_wf_empty : fiat2_hints.
+#[export] Hint Resolve tenv_wf_empty : conquord_hints.
+#[export] Hint Resolve locals_wf_empty : conquord_hints.
 
 Lemma dedup_nil : forall A A_eqb (l : list A),
     List.dedup A_eqb l = nil -> l = nil.

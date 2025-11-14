@@ -1,5 +1,5 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-  fiat2.Utils fiat2.TransfSound fiat2.Substitute fiat2.TransfUtils.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface
+  conquord.Utils conquord.TransfSound conquord.Substitute conquord.TransfUtils.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
@@ -213,8 +213,8 @@ Section WithMap.
       Proof.
         unfold aux_ty.
         induction 5 using type_of_IH; simpl; intros.
-        all: try (econstructor; eauto; apply_transf_to_idx_preserve_ty''_IH; apply tenv_wf_step; eauto with fiat2_hints).
-        3: repeat apply tenv_wf_step; eauto with fiat2_hints.
+        all: try (econstructor; eauto; apply_transf_to_idx_preserve_ty''_IH; apply tenv_wf_step; eauto with conquord_hints).
+        3: repeat apply tenv_wf_step; eauto with conquord_hints.
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ repeat rewrite_l_to_r; do_injection.
                 repeat econstructor; try rewrite_map_get_put_goal; eauto.
@@ -253,13 +253,13 @@ Section WithMap.
         induction c; simpl; intros; try invert_well_typed; try now (constructor; auto).
         1: econstructor; eauto using transf_to_idx_preserve_ty''.
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
-            use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints.
+            use_transf_to_idx_preserve_ty'_IH; eauto with conquord_hints.
             eauto using incl_tran, incl_cons_step, get_free_vars_put. }
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
             case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
               [ rewrite Properties.map.put_put_same in *; auto
               | rewrite Properties.map.put_put_diff in *; auto;
-                use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints ].
+                use_transf_to_idx_preserve_ty'_IH; eauto with conquord_hints ].
             rewrite_map_get_put_goal. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ econstructor; [ rewrite_map_get_put_goal; eauto | ].
@@ -271,7 +271,7 @@ Section WithMap.
                         repeat rewrite_l_to_r; repeat (do_injection; clear_refl).
                         eauto using transf_to_idx_preserve_ty''. }
                     1:{ eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty);
-                        eauto using idx_ty_wf with fiat2_hints.
+                        eauto using idx_ty_wf with conquord_hints.
                         1:{ apply tenv_wf_step; auto. constructor; auto using StronglySorted_record_sort.
                             1: NoDup_map_record_sort.
                             1:{ eapply Permutation_Forall;
@@ -289,7 +289,7 @@ Section WithMap.
                     rewrite_map_get_put_goal; eauto. } }
             1: constructor; eauto using transf_to_idx_preserve_ty''.
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
-            use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints.
+            use_transf_to_idx_preserve_ty'_IH; eauto with conquord_hints.
             eauto using incl_tran, incl_cons_step, get_free_vars_put. }
       Qed.
 
@@ -348,13 +348,13 @@ Section WithMap.
             destruct_and.
             lazymatch goal with
               H: context[map.get _ _ = _] |- _ => rewrite H end; auto. }
-        all: try now (repeat (use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints)).
+        all: try now (repeat (use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints)).
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             case_match; auto; f_equal.
             apply_type_sound e1; eauto. rewrite_l_to_r.
             invert_type_of_value_clear.
             apply In_flat_map_ext; intros. apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             case_match; auto. do 2 f_equal.
             apply_type_sound e1. rewrite_l_to_r; invert_type_of_value_clear.
@@ -363,13 +363,13 @@ Section WithMap.
             lazymatch goal with
               H: In _ _ |- _ => apply bag_to_list_incl in H end.
             apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             case_match; auto. do 2 f_equal.
             apply_type_sound e1. rewrite_l_to_r; invert_type_of_value_clear.
             apply In_flat_map_ext; intros.
             apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
         1:{ repeat
               (use_transf_to_idx_preserve_sem''_IH; eauto;
                case_match; auto; f_equal;
@@ -379,7 +379,7 @@ Section WithMap.
                end; eauto; rewrite_l_to_r;
                invert_type_of_value_clear).
             apply In_flat_map2_ext; intros. repeat apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; try apply tenv_wf_step; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; try apply tenv_wf_step; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             case_match; auto.
             revert IHtype_of3;
@@ -388,12 +388,12 @@ Section WithMap.
             eapply In_fold_right_ext with (P:=fun v => type_of_value v t2);
               intros; intuition idtac; try apply_Forall_In.
             1: eapply type_sound; eauto.
-            1: use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints;
-            eapply tenv_wf_step; eauto with fiat2_hints.
-            1:{ use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-                2: eapply tenv_wf_step; eauto with fiat2_hints.
-                eapply type_sound; eauto with fiat2_hints.
-                eapply tenv_wf_step; eauto with fiat2_hints. } }
+            1: use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints;
+            eapply tenv_wf_step; eauto with conquord_hints.
+            1:{ use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+                2: eapply tenv_wf_step; eauto with conquord_hints.
+                eapply type_sound; eauto with conquord_hints.
+                eapply tenv_wf_step; eauto with conquord_hints. } }
         1:{ do 2 f_equal. rewrite map_map.
             lazymatch goal with
               H1: Permutation _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
@@ -409,20 +409,20 @@ Section WithMap.
             use_transf_to_idx_preserve_sem''_IH; eauto. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e. invert_type_of_value_clear;
-              use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+              use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound d. invert_type_of_value_clear.
             revert IHtype_of3.
             use_transf_to_idx_preserve_sem''_IH; eauto; intros.
-            apply In_fold_right_ext with (P:=fun v => type_of_value v t); eauto with fiat2_hints.
+            apply In_fold_right_ext with (P:=fun v => type_of_value v t); eauto with conquord_hints.
             intros. apply_Forall_In. intuition idtac;
-              use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-            2: eapply type_sound; eauto with fiat2_hints.
-            all: repeat apply tenv_wf_step; eauto with fiat2_hints. }
+              use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+            2: eapply type_sound; eauto with conquord_hints.
+            all: repeat apply tenv_wf_step; eauto with conquord_hints. }
         1,2,3: use_transf_to_idx_preserve_sem''_IH; eauto;
         apply_type_sound e; invert_type_of_value_clear;
         f_equal; apply In_filter_ext; intros; apply_Forall_In;
-        use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
+        use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e1. invert_type_of_value_clear.
             use_transf_to_idx_preserve_sem''_IH; eauto.
@@ -432,12 +432,12 @@ Section WithMap.
                      H: VList _ = _ |- _ => clear H
                    end.
             induction l0; cbn; auto. invert_Forall.
-            erewrite IHtype_of3; eauto with fiat2_hints.
-            2: repeat apply tenv_wf_step; eauto with fiat2_hints.
+            erewrite IHtype_of3; eauto with conquord_hints.
+            2: repeat apply tenv_wf_step; eauto with conquord_hints.
             do 2 (case_match; auto). cbn.
             rewrite IHl0; auto.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+            repeat apply tenv_wf_step; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e1. invert_type_of_value_clear.
             use_transf_to_idx_preserve_sem''_IH; eauto.
@@ -452,8 +452,8 @@ Section WithMap.
                   H: In _ (bag_to_list _) |- _ => apply bag_to_list_incl in H end.
                 rewrite Forall_map_fst with (P:=fun v => type_of_value v t2) in *.
                 apply_Forall_In.
-                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-                repeat apply tenv_wf_step; eauto with fiat2_hints. }
+                use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+                repeat apply tenv_wf_step; eauto with conquord_hints. }
             1:{ intros.
                 lazymatch goal with
                   H: In _ (filter _ (bag_to_list _)) |- _ =>
@@ -461,8 +461,8 @@ Section WithMap.
                     apply bag_to_list_incl in H end.
                 rewrite Forall_map_fst with (P:=fun v => type_of_value v t2) in *.
                 apply_Forall_In.
-                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-                repeat apply tenv_wf_step; eauto with fiat2_hints. } }
+                use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+                repeat apply tenv_wf_step; eauto with conquord_hints. } }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e1. invert_type_of_value_clear.
             use_transf_to_idx_preserve_sem''_IH; eauto.
@@ -471,20 +471,20 @@ Section WithMap.
             apply_Forall_In. apply In_map_ext2.
             1:{ apply In_filter_ext; intros.
                 apply_Forall_In.
-                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-                repeat apply tenv_wf_step; eauto with fiat2_hints. }
+                use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+                repeat apply tenv_wf_step; eauto with conquord_hints. }
             1:{ intros.
                 lazymatch goal with
                   H: In _ (filter _ _) |- _ =>
                     apply filter_In in H as [H _] end.
                 apply_Forall_In.
-                use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-                repeat apply tenv_wf_step; eauto with fiat2_hints. } }
+                use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints.
+                repeat apply tenv_wf_step; eauto with conquord_hints. } }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e. invert_type_of_value_clear.
             f_equal. apply map_ext_in.
             intros; apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e. invert_type_of_value_clear.
             do 2 f_equal.
@@ -493,13 +493,13 @@ Section WithMap.
               H: In _ (bag_to_list _) |- _ => apply bag_to_list_incl in H end.
             rewrite Forall_map_fst with (P:=fun v => type_of_value v t1) in *.
             apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e. invert_type_of_value_clear.
             do 2 f_equal.
             apply map_ext_in; intros.
             apply_Forall_In.
-            use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
+            use_transf_to_idx_preserve_sem''_IH; eauto with conquord_hints. }
       Qed.
 
       Lemma consistent_with_global_update : forall (l0 l0' l l' : locals),
@@ -558,7 +558,7 @@ Section WithMap.
         1:{ use_transf_to_idx_preserve_sem'_IH; auto.
             eapply command_type_sound; eauto. }
         1:{ erewrite transf_to_idx_preserve_sem''; eauto.
-            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+            use_transf_to_idx_preserve_sem'_IH; eauto with conquord_hints.
             eauto using incl_tran, incl_cons_step, get_free_vars_put. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ unfold consistent_with_global.
@@ -570,7 +570,7 @@ Section WithMap.
                 erewrite transf_to_idx_preserve_sem''; eauto.
                 unfold consistent_with_global; auto. }
             1:{ apply consistent_with_global_update; auto.
-                use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+                use_transf_to_idx_preserve_sem'_IH; eauto with conquord_hints.
                 1: rewrite_map_get_put_goal.
                 apply consistent_with_global_put_local; auto.
                 erewrite transf_to_idx_preserve_sem''; eauto. } }
@@ -596,8 +596,8 @@ Section WithMap.
             generalize dependent store; generalize dependent store'.
             induction l; cbn; auto. invert_Forall; intros.
             apply IHl; auto.
-            1: eapply command_type_sound; eauto with fiat2_hints.
-            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+            1: eapply command_type_sound; eauto with conquord_hints.
+            use_transf_to_idx_preserve_sem'_IH; eauto with conquord_hints.
             eauto using incl_tran, incl_cons_step, get_free_vars_put. }
       Qed.
 
@@ -625,13 +625,13 @@ Section WithMap.
       Proof.
         induction 3; intros.
         all: try now (constructor; auto).
-        1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints. }
-        1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints.
+        1:{ econstructor; eauto. apply IHwell_typed; eauto with conquord_hints. }
+        1:{ econstructor; eauto. apply IHwell_typed; eauto with conquord_hints.
             intros. split.
             1: constructor.
             1:{ unfold rm_from_pred. intros; right. rewrite H3. constructor. } }
         1:{ econstructor; eauto. intros. rewrite H3; constructor. }
-        1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints. }
+        1:{ econstructor; eauto. apply IHwell_typed; eauto with conquord_hints. }
       Qed.
 
       Lemma rm_from_aux_wf__aux_wf_nil : forall (x : string) (v : value),
@@ -670,7 +670,7 @@ Section WithMap.
       intros. erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole t).
       5: eauto. 8,9: eauto. all: auto.
       3: eapply type_of_strengthen; try apply to_idx_ty.
-      all: eauto with fiat2_hints.
+      all: eauto with conquord_hints.
       3: apply map_incl_step; try apply string_dec.
       2,3: apply map_incl_empty.
       2:{ unfold sub_wf; intros. simpl.
@@ -681,7 +681,7 @@ Section WithMap.
       unfold make_sub_env.
       erewrite interp_expr_strengthen with (e:=to_idx); [ eapply to_idx_wf | .. ].
       6: apply to_idx_ty.
-      all: eauto with fiat2_hints.
+      all: eauto with conquord_hints.
       1: apply map_incl_empty.
       1: simpl; apply map_incl_step; auto using string_dec, map_incl_refl.
     Qed.
@@ -705,19 +705,19 @@ Section WithMap.
         induction c; simpl; intros; try invert_well_typed; try now (constructor; auto).
         1:{ econstructor.
             1: apply transf_to_idx_preserve_ty''; eauto.
-            apply_transf_to_idx'_index_wf_IH; eauto with fiat2_hints.
+            apply_transf_to_idx'_index_wf_IH; eauto with conquord_hints.
             eauto using incl_tran, incl_cons_step, get_free_vars_put. }
         1:{ econstructor.
             1: apply transf_to_idx_preserve_ty''; eauto.
             case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ rewrite Properties.map.put_put_same.
-                apply well_typed__aux_wf_nil; eauto with fiat2_hints.
+                apply well_typed__aux_wf_nil; eauto with conquord_hints.
                 apply rm_from_aux_wf__aux_wf_nil. }
             1:{ rewrite Properties.map.put_put_diff; auto.
               eapply parameterized_wf_Proper; try reflexivity; auto.
               1:{ apply rm_not_in_globals.
                   intro contra. inversion contra; auto. }
-              apply IHc; eauto with fiat2_hints.
+              apply IHc; eauto with conquord_hints.
               rewrite_map_get_put_goal. } }
       1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
           1:{ econstructor.
@@ -726,9 +726,9 @@ Section WithMap.
                   econstructor; [ | | apply Permuted_record_sort | .. ]; auto using StronglySorted_record_sort.
                   1:{ repeat constructor; eauto using transf_to_idx_preserve_ty''.
                       eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole t);
-                        eauto using aux_ty_wf with fiat2_hints.
+                        eauto using aux_ty_wf with conquord_hints.
                       1:{ eapply type_of_strengthen.
-                          1: apply to_idx_ty; eauto with fiat2_hints.
+                          1: apply to_idx_ty; eauto with conquord_hints.
                           1: apply map_incl_empty.
                           1: apply map_incl_refl. }
                       1:{ unfold sub_wf; intros; simpl.
@@ -747,7 +747,7 @@ Section WithMap.
                   eapply to_idx_satisfy_idx_wf.
                   3: apply transf_to_idx_preserve_ty'';
                   [ | | eauto .. ]; auto.
-                  all: eauto using aux_ty_wf with fiat2_hints. } }
+                  all: eauto using aux_ty_wf with conquord_hints. } }
           1:{ econstructor.
               2: rewrite_map_get_put_goal; eauto.
               2: apply transf_to_idx_preserve_ty''; auto.
@@ -756,7 +756,7 @@ Section WithMap.
           apply transf_to_idx_preserve_ty''; auto. }
       1:{ econstructor; eauto.
           1: apply transf_to_idx_preserve_ty''; eauto.
-          apply_transf_to_idx'_index_wf_IH; eauto with fiat2_hints.
+          apply_transf_to_idx'_index_wf_IH; eauto with conquord_hints.
           eauto using incl_tran, incl_cons_step, get_free_vars_put. }
       Qed.
       End WithGlobal.
@@ -781,7 +781,7 @@ Section WithMap.
         1:{ econstructor.
             1: instantiate (1:=[(id_tag, tbl_ty); (aux_tag, idx_ty tbl_ty)]); reflexivity.
             1:{ cbn; repeat constructor; auto.
-                eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto using incl_refl with fiat2_hints.
+                eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto using incl_refl with conquord_hints.
             1: eapply type_of_strengthen; [ apply to_idx_ty; eauto | apply map_incl_empty | apply map_incl_refl ].
             1: eapply type_of__type_wf; [ | | eauto ]; auto.
             1:{ unfold sub_wf. simpl; intros.
@@ -792,7 +792,7 @@ Section WithMap.
             1:{ cbn; repeat constructor; intuition auto. inversion H5; auto using in_nil. }
             1: apply StronglySorted_record_sort. }
         1:{ erewrite <- Properties.map.put_put_same.
-            eapply transf_to_idx_preserve_ty'; try reflexivity; eauto using incl_refl with fiat2_hints.
+            eapply transf_to_idx_preserve_ty'; try reflexivity; eauto using incl_refl with conquord_hints.
             rewrite_map_get_put_goal; auto. }
       Qed.
 
@@ -809,7 +809,7 @@ Section WithMap.
         simpl; intros.
         apply stores_eq_except__update_eq. symmetry.
         eapply consistent_with_global__store_eq_except; eauto.
-        eapply transf_to_idx_preserve_sem'; eauto with fiat2_hints.
+        eapply transf_to_idx_preserve_sem'; eauto with conquord_hints.
         1: rewrite_map_get_put_goal; auto.
         unfold consistent_with_global; intuition idtac; repeat rewrite_map_get_put_goal.
         erewrite NoDup_In_access_record; eauto.
@@ -848,7 +848,7 @@ Section WithMap.
           [ | | eapply type_of_strengthen; eauto using to_idx_ty | .. ]; auto.
         2: apply map_incl_empty.
         2: apply map_incl_refl.
-        1: eauto with fiat2_hints.
+        1: eauto with conquord_hints.
         1:{ unfold sub_wf; simpl; intros.
             case_match_string_eqb; try congruence.
             rewrite map.get_empty in *; discriminate. }
@@ -859,7 +859,7 @@ Section WithMap.
         auto using StronglySorted_record_sort;
         cbn; auto; repeat constructor; intuition idtac;
         try destruct_In; eauto;
-        apply to_idx_preserve_ty; eauto using incl_refl with fiat2_hints.
+        apply to_idx_preserve_ty; eauto using incl_refl with conquord_hints.
 
       Lemma apply_idx_related_transfs_sound : forall f,
           aug_transf_sound is_tbl_ty aux_ty aux_wf f ->
@@ -872,13 +872,13 @@ Section WithMap.
         { erewrite <- Properties.map.put_put_same.
           eapply transf_to_idx_preserve_ty'; try reflexivity; [ | eauto using incl_refl .. ].
           2: rewrite_map_get_put_goal; eauto.
-          1: eauto with fiat2_hints. }
+          1: eauto with conquord_hints. }
         assert (H_wf : parameterized_wf (map.put Gstore x (aux_ty t)) Genv (value_wf_with_globals aux_wf [x]) (transf_to_idx' x (get_free_vars Genv) c0)).
         { erewrite <- Properties.map.put_put_same.
-          apply transf_to_idx'_index_wf; eauto using incl_refl with fiat2_hints.
+          apply transf_to_idx'_index_wf; eauto using incl_refl with conquord_hints.
           rewrite_map_get_put_goal; auto. }
         eapply H in H_wf. 5: eauto.
-        all: eauto using aux_ty_wf with fiat2_hints.
+        all: eauto using aux_ty_wf with conquord_hints.
         2: constructor;  try eapply map.get_put_same; auto.
         split.
         1:{ econstructor.
@@ -891,7 +891,7 @@ Section WithMap.
                 intuition idtac. erewrite H11; auto.
                 2:{ resolve_locals_wf. eapply type_sound.
                     1: apply_to_aux_preserve_ty.
-                all: resolve_locals_wf; eauto using incl_refl with fiat2_hints. }
+                all: resolve_locals_wf; eauto using incl_refl with conquord_hints. }
                 2:{ constructor; auto. destruct (String.eqb k x) eqn:E_kx;
                     rewrite ?eqb_eq, ?eqb_neq in *; subst; auto; right.
                     rewrite_map_get_put_hyp; do_injection.
@@ -903,7 +903,7 @@ Section WithMap.
                             cbn; auto ]).
                     eapply to_idx_satisfy_idx_wf; [ | | eauto .. ]; auto using incl_refl. }
                 eapply transf_to_idx_preserve_sem' with (Gstore:=map.put Gstore x t); eauto.
-                all: try rewrite_map_get_put_goal; eauto using incl_refl with fiat2_hints.
+                all: try rewrite_map_get_put_goal; eauto using incl_refl with conquord_hints.
                 unfold consistent_with_global; intuition idtac; repeat rewrite_map_get_put_goal.
                 cbn [interp_expr].
                 erewrite NoDup_In_access_record;
@@ -913,8 +913,8 @@ Section WithMap.
                     cbn; auto ]. reflexivity. }
             1:{ repeat erewrite command_preserve_untouched_store. 4: eauto.
                 9: apply H_wf.
-                all: repeat rewrite_map_get_put_goal; eauto with fiat2_hints.
-                1:{ apply tenv_wf_step; eauto with fiat2_hints. apply aux_ty_wf; eauto with fiat2_hints. }
+                all: repeat rewrite_map_get_put_goal; eauto with conquord_hints.
+                1:{ apply tenv_wf_step; eauto with conquord_hints. apply aux_ty_wf; eauto with conquord_hints. }
                 apply locals_wf_step; auto. eapply type_sound. 1: apply_to_aux_preserve_ty.
                 all: auto. } }
       Qed.

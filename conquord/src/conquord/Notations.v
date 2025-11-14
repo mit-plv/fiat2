@@ -1,17 +1,17 @@
-Require Import fiat2.Language.
+Require Import conquord.Language.
 Require Import String ZArith.
 
-Declare Scope fiat2_scope.
+Declare Scope conquord_scope.
 
-Declare Custom Entry fiat2_comm.
-Declare Custom Entry fiat2_expr.
+Declare Custom Entry conquord_comm.
+Declare Custom Entry conquord_expr.
 Declare Custom Entry record_entry.
 Declare Custom Entry dict_entry.
 
-Delimit Scope fiat2_scope with fiat2.
+Delimit Scope conquord_scope with conquord.
 
-Bind Scope fiat2_scope with command.
-Bind Scope fiat2_scope with expr.
+Bind Scope conquord_scope with command.
+Bind Scope conquord_scope with expr.
 
 (* Notations *)
 Coercion EVar : string >-> expr.
@@ -26,137 +26,137 @@ Definition EAtom_AInt_inv (e : expr) : option Z :=
   | _ => None
   end.
 
-Number Notation expr EAtom_AInt EAtom_AInt_inv : fiat2_scope.
+Number Notation expr EAtom_AInt EAtom_AInt_inv : conquord_scope.
 
-Notation "<{ c }>" := c%fiat2
-   (at level 0, c custom fiat2_comm at level 100) : fiat2_scope.
-Notation "<[ e ]>" := e%fiat2
-   (at level 0, e custom fiat2_expr) : fiat2_scope.
+Notation "<{ c }>" := c%conquord
+   (at level 0, c custom conquord_comm at level 100) : conquord_scope.
+Notation "<[ e ]>" := e%conquord
+   (at level 0, e custom conquord_expr) : conquord_scope.
 Notation "( x )" := x
-   (in custom fiat2_comm at level 0, x custom fiat2_comm).
+   (in custom conquord_comm at level 0, x custom conquord_comm).
 Notation "( x )" := x
-                      (in custom fiat2_expr at level 0, x custom fiat2_expr).
+                      (in custom conquord_expr at level 0, x custom conquord_expr).
 (* Rules that work with the Number Notation above
    since Number Notations do not work with custom non-terminals in the grammar *)
 Notation "x" := x
-   (in custom fiat2_comm at level 0, x constr at level 0).
+   (in custom conquord_comm at level 0, x constr at level 0).
 Notation "x" := x
-   (in custom fiat2_expr at level 0, x constr at level 0).
+   (in custom conquord_expr at level 0, x constr at level 0).
 (* Escape to constr with special symbols only for easier notation overloading *)
 Notation "<< x >>" := x
-   (in custom fiat2_comm at level 0, x constr).
+   (in custom conquord_comm at level 0, x constr).
 Notation "<< x >>" := x
-   (in custom fiat2_expr at level 0, x constr).
+   (in custom conquord_expr at level 0, x constr).
 
 (* Command parsing *)
 Notation "'skip'" := CSkip
-   (in custom fiat2_comm at level 0).
+   (in custom conquord_comm at level 0).
 Notation "c1 ; c2" := (CSeq c1 c2)
-   (in custom fiat2_comm at level 90, right associativity, c1 custom fiat2_comm, c2 custom fiat2_comm).
+   (in custom conquord_comm at level 90, right associativity, c1 custom conquord_comm, c2 custom conquord_comm).
 Notation "'let' x = e 'in' c"        := (CLet e x c)
-   (in custom fiat2_comm at level 100, x constr at level 0, e custom fiat2_expr, c custom fiat2_comm).
+   (in custom conquord_comm at level 100, x constr at level 0, e custom conquord_expr, c custom conquord_comm).
 Notation "'let' 'mut' x := e 'in' c"    := (CLetMut e x c)
-   (in custom fiat2_comm at level 100, x constr at level 0, e custom fiat2_expr, c custom fiat2_comm).
+   (in custom conquord_comm at level 100, x constr at level 0, e custom conquord_expr, c custom conquord_comm).
 Notation "'set' x := e"                     := (CAssign x e)
-   (in custom fiat2_comm at level 50, x constr at level 0, e custom fiat2_expr).
+   (in custom conquord_comm at level 50, x constr at level 0, e custom conquord_expr).
 Notation "'if' e 'then' c1 'else' c2 'end'" := (CIf e c1 c2)
-   (in custom fiat2_comm at level 80, e custom fiat2_expr, c1 custom fiat2_comm, c2 custom fiat2_comm).
+   (in custom conquord_comm at level 80, e custom conquord_expr, c1 custom conquord_comm, c2 custom conquord_comm).
 Notation "'for' x 'in' e : c 'end'"  := (CForeach e x c)
-   (in custom fiat2_comm at level 80, x constr at level 0, e custom fiat2_expr, c custom fiat2_comm).
+   (in custom conquord_comm at level 80, x constr at level 0, e custom conquord_expr, c custom conquord_comm).
 
 (* Expression parsing *)
 
 (* Unary operations *)
-Notation "- x" := (EUnop ONeg x) (in custom fiat2_expr at level 10).
-Notation "! x" := (EUnop ONot x) (in custom fiat2_expr at level 10).
-Notation "'len(' x ')'"   := (EUnop OLength x) (in custom fiat2_expr at level 10).
-Notation "'strLen(' x ')'" := (EUnop OLengthString x) (in custom fiat2_expr at level 10).
-Notation "'toStr(' n ')'" := (EUnop OIntToString n) (in custom fiat2_expr at level 10).
-Notation "'some(' x ')'" := (EUnop OSome x) (in custom fiat2_expr at level 10).
+Notation "- x" := (EUnop ONeg x) (in custom conquord_expr at level 10).
+Notation "! x" := (EUnop ONot x) (in custom conquord_expr at level 10).
+Notation "'len(' x ')'"   := (EUnop OLength x) (in custom conquord_expr at level 10).
+Notation "'strLen(' x ')'" := (EUnop OLengthString x) (in custom conquord_expr at level 10).
+Notation "'toStr(' n ')'" := (EUnop OIntToString n) (in custom conquord_expr at level 10).
+Notation "'some(' x ')'" := (EUnop OSome x) (in custom conquord_expr at level 10).
 
 (* Binary operators *)
 Notation "x + y"              := (EBinop OPlus x y)
-   (in custom fiat2_expr at level 50, left associativity).
+   (in custom conquord_expr at level 50, left associativity).
 Notation "x - y"              := (EBinop OMinus x y)
-   (in custom fiat2_expr at level 50, left associativity).
+   (in custom conquord_expr at level 50, left associativity).
 Notation "x * y"              := (EBinop OTimes x y)
-   (in custom fiat2_expr at level 40, left associativity).
+   (in custom conquord_expr at level 40, left associativity).
 Notation "x / y"              := (EBinop ODiv x y)
-   (in custom fiat2_expr at level 40, left associativity).
+   (in custom conquord_expr at level 40, left associativity).
 Notation "x % y"              := (EBinop OMod x y)
-   (in custom fiat2_expr at level 40, left associativity).
+   (in custom conquord_expr at level 40, left associativity).
 Notation "x && y"             := (EBinop OAnd x y)
-   (in custom fiat2_expr at level 80, left associativity).
+   (in custom conquord_expr at level 80, left associativity).
 Notation "x || y"             := (EBinop OOr x y)
-   (in custom fiat2_expr at level 90, left associativity).
+   (in custom conquord_expr at level 90, left associativity).
 Notation "x ++ y"             := (EBinop OConcat x y)
-   (in custom fiat2_expr at level 60, left associativity).
+   (in custom conquord_expr at level 60, left associativity).
 Notation "x +++ y"             := (EBinop OConcatString x y)
-   (in custom fiat2_expr at level 60, left associativity).
+   (in custom conquord_expr at level 60, left associativity).
 Notation "x < y"              := (EBinop OLess x y)
-   (in custom fiat2_expr at level 70, left associativity).
+   (in custom conquord_expr at level 70, left associativity).
 Notation "x == y"             := (EBinop OEq x y)
-   (in custom fiat2_expr at level 70, left associativity).
+   (in custom conquord_expr at level 70, left associativity).
 Notation "x :: y"             := (EBinop OCons x y)
-   (in custom fiat2_expr at level 55, right associativity).
+   (in custom conquord_expr at level 55, right associativity).
 Notation "'range(' x ',' y ')'"  := (EBinop ORange x y)
-   (in custom fiat2_expr at level 10, left associativity).
+   (in custom conquord_expr at level 10, left associativity).
 Notation "[ x , .. , y ]"   := (EBinop OCons x .. (EBinop OCons y (EAtom (ANil None))) ..)
-   (in custom fiat2_expr at level 0, left associativity).
+   (in custom conquord_expr at level 0, left associativity).
 Notation "[ ]" := (EAtom (ANil None))
-   (in custom fiat2_expr).
+   (in custom conquord_expr).
 Notation "'nil[' t ']'"        := (EAtom (ANil (Some t)))
-   (in custom fiat2_expr at level 10, t constr).
+   (in custom conquord_expr at level 10, t constr).
 
 Notation "<( x , y )>" := (ERecord (("0"%string, x) :: ("1"%string, y) :: nil))
-   (in custom fiat2_expr at level 0, x custom fiat2_expr at level 99,
-       y custom fiat2_expr at level 99, left associativity).
+   (in custom conquord_expr at level 0, x custom conquord_expr at level 99,
+       y custom conquord_expr at level 99, left associativity).
 Notation "'fst(' x ')'" := (EAccess x "0")
-   (in custom fiat2_expr at level 10, format "fst( x )").
+   (in custom conquord_expr at level 10, format "fst( x )").
 Notation "'snd(' x ')'" := (EAccess x "1")
-   (in custom fiat2_expr at level 10, format "snd( x )").
+   (in custom conquord_expr at level 10, format "snd( x )").
 
 Notation "'mut' x" := (ELoc x)
-   (in custom fiat2_expr at level 0, x constr at level 0).
+   (in custom conquord_expr at level 0, x constr at level 0).
 Notation "'if' e1 'then' e2 'else' e3" := (EIf e1 e2 e3)
-   (in custom fiat2_expr at level 99).
+   (in custom conquord_expr at level 99).
 Notation "'let' x = e1 'in' e2"        := (ELet e1 x e2)
-   (in custom fiat2_expr at level 100, x constr at level 0, e1 custom fiat2_expr, e2 custom fiat2_expr).
+   (in custom conquord_expr at level 100, x constr at level 0, e1 custom conquord_expr, e2 custom conquord_expr).
 Notation "'flatmap' e1 x e2"           := (EFlatmap LikeList e1 x e2)
-   (in custom fiat2_expr at level 99, x constr at level 0).
+   (in custom conquord_expr at level 99, x constr at level 0).
 Notation "'fold' e1 e2 x y e3"           := (EFold e1 e2 x y e3)
-   (in custom fiat2_expr at level 99, x constr at level 0, y constr at level 0).
+   (in custom conquord_expr at level 99, x constr at level 0, y constr at level 0).
 Notation "{ x , .. , y }" := (ERecord (cons x .. (cons y nil)..))
-   (in custom fiat2_expr at level 99, x custom record_entry, y custom record_entry).
+   (in custom conquord_expr at level 99, x custom record_entry, y custom record_entry).
 Notation "k : v" := (k, v)
-                      (in custom record_entry at level 0, k constr at level 0, v custom fiat2_expr, no associativity).
+                      (in custom record_entry at level 0, k constr at level 0, v custom conquord_expr, no associativity).
 Notation "x [ k ]" := (EAccess x k)
-   (in custom fiat2_expr at level 10).
+   (in custom conquord_expr at level 10).
 Notation "k : v" := (k, v)
-   (in custom dict_entry at level 0, k custom fiat2_expr, v custom fiat2_expr, no associativity).
+   (in custom dict_entry at level 0, k custom conquord_expr, v custom conquord_expr, no associativity).
 Notation "'insert(' d , k -> v ')'" := (ETernop OInsert d k v)
-   (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr, v custom fiat2_expr).
+   (in custom conquord_expr at level 99, d custom conquord_expr, k custom conquord_expr, v custom conquord_expr).
 Notation "'delete(' d , k ')'" := (EBinop ODelete d k)
-   (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr).
+   (in custom conquord_expr at level 99, d custom conquord_expr, k custom conquord_expr).
 Notation "'lookup(' d , k ')'" := (EBinop OLookup d k)
-   (in custom fiat2_expr at level 99, d custom fiat2_expr, k custom fiat2_expr).
+   (in custom conquord_expr at level 99, d custom conquord_expr, k custom conquord_expr).
 
 Notation "x <- e1 ; e2" := (EFlatmap LikeList e1 x e2)
-   (in custom fiat2_expr at level 0, e1 custom fiat2_expr at level 100, e2 custom fiat2_expr at level 100).
+   (in custom conquord_expr at level 0, e1 custom conquord_expr at level 100, e2 custom conquord_expr at level 100).
 Notation "'check(' e1 ')' ; e2" := (EIf e1 e2 (EAtom (ANil None)))
-   (in custom fiat2_expr at level 100, e1 custom fiat2_expr, e2 custom fiat2_expr).
+   (in custom conquord_expr at level 100, e1 custom conquord_expr, e2 custom conquord_expr).
 Notation "'ret' e" := (EBinop OCons e (EAtom (ANil None)))
-   (in custom fiat2_expr at level 100, e custom fiat2_expr).
+   (in custom conquord_expr at level 100, e custom conquord_expr).
 
 
 Section Tests.
-Local Open Scope fiat2_scope.
+Local Open Scope conquord_scope.
 Local Open Scope Z_scope.
 Local Open Scope string_scope.
 
   Context (x : string).
-(*  Print Notation "_ ; _" in custom fiat2_comm.
-  Print Scope fiat2_scope.
+(*  Print Notation "_ ; _" in custom conquord_comm.
+  Print Scope conquord_scope.
   Compute (<[ [] ++ [ 2 ] ]>).
   Compute (<[ x <- <<EAtom AUnit>> :: [ ] ; ret x ]>).
   Compute (<{ let "x" = <<EAtom AUnit>> in set x := "x" }>). *)

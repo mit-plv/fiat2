@@ -1,6 +1,6 @@
 default_target: all
 
-.PHONY: update_all clone_all bedrock2_noex fiat2 all clean_bedrock2 clean_fiat2 clean clean_deps clean_all install_bedrock2_noex install_fiat2 install
+.PHONY: update_all clone_all bedrock2_noex conquord all clean_bedrock2 clean_conquord clean clean_deps clean_all install_bedrock2_noex install_conquord install
 
 clone_all:
 	git submodule update --init --recursive
@@ -32,21 +32,21 @@ sorting:
 clean_sorting:
 	$(MAKE) -C $(SORTING_DIR) clean
 
-fiat2: bedrock2_noex sorting
-	$(MAKE) -C $(ABS_ROOT_DIR)/fiat2
+conquord: bedrock2_noex sorting
+	$(MAKE) -C $(ABS_ROOT_DIR)/conquord
 
-clean_fiat2:
-	$(MAKE) -C $(ABS_ROOT_DIR)/fiat2 clean
+clean_conquord:
+	$(MAKE) -C $(ABS_ROOT_DIR)/conquord clean
 
-install_fiat2:
-	$(MAKE) -C $(ABS_ROOT_DIR)/fiat2 install
+install_conquord:
+	$(MAKE) -C $(ABS_ROOT_DIR)/conquord install
 
-all: bedrock2_noex fiat2
+all: bedrock2_noex conquord
 
-clean: clean_fiat2
+clean: clean_conquord
 
 clean_deps: clean_bedrock2 clean_sorting
 
 clean_all: clean_deps clean
 
-install: install_bedrock2_noex install_fiat2
+install: install_bedrock2_noex install_conquord

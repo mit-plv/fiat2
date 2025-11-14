@@ -1,4 +1,4 @@
-Require Import fiat2.Value fiat2.Language fiat2.Interpret fiat2.TypeSystem.
+Require Import conquord.Value conquord.Language conquord.Interpret conquord.TypeSystem.
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.Result.

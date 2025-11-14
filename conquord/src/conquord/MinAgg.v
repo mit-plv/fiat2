@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface conquord.CollectionTransf conquord.Utils conquord.TransfSound conquord.TransfUtils conquord.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -199,16 +199,16 @@ Section WithHole.
                 rewrite Forall_forall; intros; apply_Forall_In.
                 rewrite Properties.map.put_put_diff_comm; auto.
                 rewrite <- not_free_immut_put_sem; auto.
-                apply_type_sound e0_2; eauto with fiat2_hints. }
+                apply_type_sound e0_2; eauto with conquord_hints. }
             rewrite aci_aggr_alt.
             2:{ eapply incl_Forall; [ apply list_to_set_incl | ].
                 eapply incl_Forall; [ apply incl_map, list_to_set_incl | ].
                 rewrite Forall_map.
                 constructor.
                 1: apply_type_sound e1_1;
-                apply_type_sound e0_2; eauto with fiat2_hints.
+                apply_type_sound e0_2; eauto with conquord_hints.
                 rewrite Forall_forall; intros; apply_Forall_In.
-                apply_type_sound e0_2; eauto with fiat2_hints. }
+                apply_type_sound e0_2; eauto with conquord_hints. }
             erewrite fold_right_change_order_idem.
             2:{ intros. repeat case_match; auto; do 3 f_equal.
                 1: rewrite !Z.min_assoc;
@@ -233,7 +233,7 @@ Section WithHole.
             2:{ eapply incl_tran; [ apply incl_map, list_to_set_incl_r | ].
                 apply list_to_set_incl_r. }
             cbn. apply_type_sound e1_1.
-            apply_type_sound e0_2; eauto with fiat2_hints.
+            apply_type_sound e0_2; eauto with conquord_hints.
             lazymatch goal with
               H: type_of_value _ TInt |- _ =>
                 inversion H; subst

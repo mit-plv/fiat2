@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
+Require Import conquord.Language conquord.Value conquord.Interpret conquord.TypeSystem conquord.TypeSound conquord.Utils.
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.List.

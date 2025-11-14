@@ -1,6 +1,6 @@
 Require Import String ZArith List.
 
-(* Fiat2 types *)
+(* conquord types *)
 Inductive type : Type :=
 | TWord
 | TInt
@@ -48,8 +48,8 @@ End TypeIH.
 
 Scheme Boolean Equality for type. (* creates type_beq *)
 
-Declare Scope fiat2_scope. Local Open Scope fiat2_scope.
-Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
+Declare Scope conquord_scope. Local Open Scope conquord_scope.
+Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : conquord_scope.
 
 (* Abstract syntax tree *)
 

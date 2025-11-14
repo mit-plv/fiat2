@@ -1,11 +1,11 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface
+conquord.CollectionTransf conquord.DictIndexImpl conquord.TransfUtils conquord.RelTransf conquord.IndexTransf conquord.TransfSound conquord.Utils conquord.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith.
 Import ListNotations.
 
-Require Import fiat2.Notations.
-Open Scope fiat2_scope.
+Require Import conquord.Notations.
+Open Scope conquord_scope.
 
 Section WithConcreteMaps.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.

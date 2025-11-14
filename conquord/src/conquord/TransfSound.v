@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.Utils conquord.IndexInterface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Morphisms.
 Import ListNotations.
@@ -123,12 +123,12 @@ Section WithMap.
     induction H1; simpl; auto; intros.
     1:{ apply IHparameterized_wf2; auto. eapply command_type_sound; eauto.
         eapply parameterized_wf__well_typed; eauto. }
-    1:{ apply IHparameterized_wf; eauto with fiat2_hints. }
+    1:{ apply IHparameterized_wf; eauto with conquord_hints. }
     1:{ unfold holds_for_all_entries. intros. get_update_same_diff x k.
         1:{ rewrite Properties.map.get_update_same in *. auto. }
         1:{ rewrite Properties.map.get_update_diff in *; try congruence.
             unfold rm_from_pred in *.
-            apply IHparameterized_wf in H6; eauto with fiat2_hints.
+            apply IHparameterized_wf in H6; eauto with conquord_hints.
             1:{ intuition auto. congruence. }
             unfold holds_for_all_entries; intros.
             get_put_same_diff x k0; rewrite_map_get_put_hyp. } }
@@ -139,9 +139,9 @@ Section WithMap.
     1:{ apply_type_sound e. invert_type_of_value. clear H' H6.
         generalize dependent store. induction l; simpl; auto; intros.
         invert_Forall; apply IHl; auto.
-        2:{ apply IHparameterized_wf; eauto with fiat2_hints. }
+        2:{ apply IHparameterized_wf; eauto with conquord_hints. }
         eapply command_type_sound.
-        5: apply locals_wf_step. all: eauto with fiat2_hints.
+        5: apply locals_wf_step. all: eauto with conquord_hints.
         eapply parameterized_wf__well_typed; eauto. }
   Qed.
 

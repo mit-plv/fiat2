@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface conquord.CollectionTransf conquord.Utils conquord.TransfSound conquord.TransfUtils conquord.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -113,7 +113,7 @@ Section WithHole.
         | _ => VDict nil
         end.
 
-      Lemma fiat2_gallina_to_idx : forall (v : value) t,
+      Lemma conquord_gallina_to_idx : forall (v : value) t,
           type_wf t -> is_tbl_ty t = true ->
           type_of_value v t ->
           interp_expr map.empty (map.put map.empty hole v) to_idx = gallina_to_idx v.
@@ -260,7 +260,7 @@ Section WithHole.
           idx_wf tbl_v idx_v -> idx_chara tbl_v idx_v.
       Proof.
         unfold idx_wf, idx_chara.
-        intros; subst; erewrite fiat2_gallina_to_idx; eauto.
+        intros; subst; erewrite conquord_gallina_to_idx; eauto.
         unfold is_tbl_ty, idx_wf, gallina_to_idx in *.
         repeat destruct_match_hyp; try discriminate.
         invert_type_of_value_clear. intros.
@@ -332,11 +332,11 @@ Section WithHole.
             repeat invert_type_wf.
             repeat (econstructor; simpl; intuition eauto).
             all: repeat rewrite_map_get_put_goal; try congruence; eauto.
-            1: apply get_attr_type_ty_wf; eauto with fiat2_hints.
+            1: apply get_attr_type_ty_wf; eauto with conquord_hints.
             1,2: unfold get_attr_type; apply_In_access_record; destruct_exists; rewrite_l_to_r; auto. }
         1:{ eapply substitute_preserve_ty; auto.
             2: use_to_idx_ty.
-            1,2: eauto using idx_ty_wf with fiat2_hints.
+            1,2: eauto using idx_ty_wf with conquord_hints.
             1: prove_sub_wf. }
         erewrite substitute_preserve_sem with (t0:=idx_ty (TList (TRecord l))).
         1:{ simpl.
@@ -352,7 +352,7 @@ Section WithHole.
         6-8: eauto.
         all: auto.
         2: use_to_idx_ty.
-        all: eauto using idx_ty_wf with fiat2_hints.
+        all: eauto using idx_ty_wf with conquord_hints.
         prove_sub_wf.
       Qed.
 
@@ -507,8 +507,8 @@ Section WithHole.
             assert (type_of_value (VOption (dict_lookup (interp_expr store env e2_2) l2)) (TOption (TBag (TRecord l1)))).
             1:{ apply_type_sound e2_2.
                 eapply dict_lookup_sound; [ | | | eauto ];
-                  eauto with fiat2_hints.
-                1: constructor; eauto with fiat2_hints.
+                  eauto with conquord_hints.
+                1: constructor; eauto with conquord_hints.
                 1:{ constructor; auto. rewrite_l_to_r; do_injection.
                     unfold get_attr_type in *. rewrite_l_to_r. auto. } }
             rewrite filter_list_to_bag with
@@ -603,7 +603,7 @@ Section WithHole.
             all: repeat eapply not_free_immut_put_ty2; eauto.
           Qed.
 
-          Lemma fiat2_gallina_to_idx2: forall (store env : locals) v t,
+          Lemma conquord_gallina_to_idx2: forall (store env : locals) v t,
               type_wf t -> is_tbl_ty t = true ->
               type_of_value v t ->
               map.get env hole = Some v ->
@@ -611,9 +611,9 @@ Section WithHole.
           Proof.
             intros.
             erewrite interp_expr_strengthen.
-            1: eapply fiat2_gallina_to_idx.
+            1: eapply conquord_gallina_to_idx.
             6: apply to_idx_ty.
-            all: eauto with fiat2_hints.
+            all: eauto with conquord_hints.
             2: eapply map_incl_step_l; eauto using Decidable.String.eqb_spec.
             all: apply map_incl_empty.
           Qed.
@@ -650,32 +650,32 @@ Section WithHole.
                 1: use_is_NoDup.
                 1: access_record_Success__is_tbl_ty.
                 1: repeat econstructor; eauto. }
-            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with conquord_hints.
             3: prove_sub_wf.
             2:{ eapply type_of_strengthen;
                 [
                 | apply map_incl_empty
                 | apply map_incl_refl ].
-                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                apply to_idx_ty; cbn; eauto with conquord_hints;
                   access_record_Success__is_tbl_ty. }
-            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with conquord_hints.
             3:{ prove_sub_wf.
                 do_injection. repeat econstructor; eauto. }
             2:{ eapply type_of_strengthen;
                 [
                 | apply map_incl_empty
                 | apply map_incl_refl ].
-                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                apply to_idx_ty; cbn; eauto with conquord_hints;
                   access_record_Success__is_tbl_ty. }
-            erewrite fiat2_gallina_to_idx2;
+            erewrite conquord_gallina_to_idx2;
               [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
-              [ | | | eapply type_sound; eauto ]; eauto with fiat2_hints;
+              [ | | | eapply type_sound; eauto ]; eauto with conquord_hints;
               [ | access_record_Success__is_tbl_ty ].
-            erewrite fiat2_gallina_to_idx2;
+            erewrite conquord_gallina_to_idx2;
               [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
               [ | | | apply_type_sound e1_2; invert_type_of_value_clear;
-                      repeat constructor; eauto with fiat2_hints ];
-              eauto with fiat2_hints;
+                      repeat constructor; eauto with conquord_hints ];
+              eauto with conquord_hints;
               [ | access_record_Success__is_tbl_ty ].
             apply_type_sound e1_2; invert_type_of_value_clear. cbn.
             unfold get_local; rewrite_map_get_put_goal.
@@ -690,8 +690,8 @@ Section WithHole.
                 1: constructor; auto using NoDup_nil, SSorted_nil.
                 intros. apply_Forall_In. repeat invert_type_of_value_clear.
                 apply dict_insert_sound.
-                1: apply get_attr_type_ty_wf; eauto with fiat2_hints.
-                1: constructor; eauto with fiat2_hints.
+                1: apply get_attr_type_ty_wf; eauto with conquord_hints.
+                1: constructor; eauto with conquord_hints.
                 1: constructor; auto.
                 1:{ eapply record_proj_sound; eauto.
                     1: lazymatch goal with
@@ -711,8 +711,8 @@ Section WithHole.
                       enough (H_dict2: type_of_value (VDict d) (TDict (get_attr_type tl attr) (TBag (TRecord tl)))); [ | constructor; auto ];
                       eapply dict_lookup_sound with (k:=k0) in H_dict2
                   end.
-                    2: apply get_attr_type_ty_wf; eauto with fiat2_hints.
-                    2: constructor; eauto with fiat2_hints.
+                    2: apply get_attr_type_ty_wf; eauto with conquord_hints.
+                    2: constructor; eauto with conquord_hints.
                     2:{ eapply record_proj_sound; eauto.
                         1: lazymatch goal with
                              H: context[Forall2] |- _ =>
@@ -741,8 +741,8 @@ Section WithHole.
                            constructor; auto);
                       apply_Forall_In. } }
             eapply dict_lookup_sound with (k:=record_proj attr l0) in H7.
-            2: apply get_attr_type_ty_wf; eauto with fiat2_hints.
-            2: constructor; eauto with fiat2_hints.
+            2: apply get_attr_type_ty_wf; eauto with conquord_hints.
+            2: constructor; eauto with conquord_hints.
             2:{ eapply record_proj_sound; eauto.
                 1: lazymatch goal with
                      H: context[Forall2] |- _ =>
@@ -832,7 +832,7 @@ Section WithHole.
             2:{ apply fold_to_idx; eauto using incl_refl.
                 1: use_is_NoDup.
                 1: repeat econstructor; eauto. }
-            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord l1))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord l1))); [ | | | | eauto .. ]; eauto using incl_refl with conquord_hints.
             2: eapply type_of_strengthen; eauto using to_idx_ty;
             [ apply map_incl_empty | apply map_incl_refl ].
             2:{ prove_sub_wf. do_injection.
@@ -842,8 +842,8 @@ Section WithHole.
             unfold get_local, record_proj; repeat rewrite_l_to_r.
             symmetry; eapply interp_expr_strengthen;
               [ | | | eauto using map_incl_empty, map_incl_refl .. ];
-              [ | | apply to_idx_ty | | apply locals_wf_step; eauto with fiat2_hints ];
-              eauto with fiat2_hints.
+              [ | | apply to_idx_ty | | apply locals_wf_step; eauto with conquord_hints ];
+              eauto with conquord_hints.
           Qed.
         End use_idx.
 

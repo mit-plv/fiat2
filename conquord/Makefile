@@ -14,7 +14,7 @@ DEPS_DIR?=../bedrock2/deps
 DEPFLAGS_COQUTIL_NL:=-Q $(DEPS_DIR)/coqutil/src/coqutil coqutil\n
 DEPFLAGS_SORTING_NL:=-Q ../coq-stdlib-edits/src/Std Std\n
 DEPFLAGS_NL:=
-CURFLAGS_NL:=-Q ../bedrock2/bedrock2/src/bedrock2 bedrock2\n-Q src/fiat2 fiat2\n
+CURFLAGS_NL:=-Q ../bedrock2/bedrock2/src/bedrock2 bedrock2\n-Q src/conquord conquord\n
 
 EXTERNAL_DEPENDENCIES?=
 EXTERNAL_COQUTIL?=
@@ -37,7 +37,7 @@ all: Makefile.coq $(VFILES)
 	rm -f .coqdeps.d
 	$(MAKE) -f Makefile.coq
 
-COQ_MAKEFILE := $(COQBIN)coq_makefile -f _CoqProject -docroot fiat2 $(COQMF_ARGS)
+COQ_MAKEFILE := $(COQBIN)coq_makefile -f _CoqProject -docroot conquord $(COQMF_ARGS)
 
 Makefile.coq: force _CoqProject
 	@echo "Generating Makefile.coq"

@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface conquord.CollectionTransf conquord.Utils conquord.TransfSound conquord.TransfUtils conquord.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -33,7 +33,7 @@ Section WithHole.
   Proof.
     destruct t; simpl; intros; try congruence.
     repeat constructor; cbn; intuition idtac; try congruence.
-    auto with fiat2_hints.
+    auto with conquord_hints.
   Qed.
 
   Section WithMap.
@@ -108,7 +108,7 @@ Section WithHole.
       | _ => VUnit
       end.
 
-    Lemma fiat2_gallina_to_pk_idx : forall tbl_v, interp_expr (word:=word) map.empty (map.put map.empty hole tbl_v) to_pk_idx = gallina_to_pk_idx tbl_v.
+    Lemma conquord_gallina_to_pk_idx : forall tbl_v, interp_expr (word:=word) map.empty (map.put map.empty hole tbl_v) to_pk_idx = gallina_to_pk_idx tbl_v.
     Proof.
       intros. cbn.
       unfold gallina_to_pk_idx, get_local; rewrite_map_get_put_goal.
@@ -270,7 +270,7 @@ Section WithHole.
         pk_idx_wf tbl_v idx_v -> pk_idx_chara tbl_v idx_v.
     Proof.
       intros *. unfold pk_idx_wf.
-      rewrite fiat2_gallina_to_pk_idx.
+      rewrite conquord_gallina_to_pk_idx.
       unfold gallina_to_pk_idx, pk_idx_chara, is_pk_tbl_ty.
       intro. destruct_match_hyp; try discriminate.
       intros; invert_type_of_value_clear.
@@ -616,7 +616,7 @@ Section WithTags.
             rewrite fold_to_pk_idx; auto.
             cbn [interp_expr].
             unfold get_local, record_proj; repeat rewrite_l_to_r.
-            rewrite fiat2_gallina_to_pk_idx; auto.
+            rewrite conquord_gallina_to_pk_idx; auto.
       Qed.
     End use_pk_idx.
 
@@ -861,7 +861,7 @@ Section WithTags.
         cbn; reflexivity.
       Qed.
 
-      Lemma fiat2_gallina_use_bitmap : forall (store env : locals) bm d,
+      Lemma conquord_gallina_use_bitmap : forall (store env : locals) bm d,
           free_immut_in b d = false ->
           free_immut_in acc d = false ->
           interp_expr store env (use_bitmap bm d) =
@@ -1044,7 +1044,7 @@ Section WithTags.
                                         end) l))].
       Proof.
         unfold bitmap_chara. intros; cbn in * |-.
-        rewrite fiat2_gallina_use_bitmap; auto.
+        rewrite conquord_gallina_use_bitmap; auto.
         destruct_match_hyp; intuition idtac.
         lazymatch goal with
           H: is_pk_idx _ _ _ |- _ =>

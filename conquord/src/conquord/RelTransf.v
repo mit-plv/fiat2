@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.Utils conquord.TransfSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Permutation.
 

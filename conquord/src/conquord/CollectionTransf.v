@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfUtils fiat2.TransfSound.
+Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.Utils conquord.TransfUtils conquord.TransfSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -387,8 +387,8 @@ Section WithWord.
             auto using list_to_bag_to_list_Permutation.
           apply_type_sound e1. rewrite_l_to_r. invert_type_of_value.
           eapply Permutation_in in H5; [ | apply list_to_bag_to_list_Permutation ].
-          apply_Forall_In. erewrite IHtype_of2; eauto with fiat2_hints.
-          apply_type_sound e2; eauto with fiat2_hints. invert_type_of_value.
+          apply_Forall_In. erewrite IHtype_of2; eauto with conquord_hints.
+          apply_type_sound e2; eauto with conquord_hints. invert_type_of_value.
           apply list_to_bag_to_list_Permutation. }
       1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
           apply filter_list_to_bag with
@@ -533,7 +533,7 @@ Section WithWord.
               apply flat_map_incl_in; intros.
               apply_type_sound e1. rewrite_l_to_r.
               invert_type_of_value_clear. apply_Forall_In.
-              rewrite IHtype_of2; eauto with fiat2_hints.
+              rewrite IHtype_of2; eauto with conquord_hints.
               case_match; auto using incl_refl, list_to_set_incl. }
           1:{ eapply incl_tran; [ | apply list_to_set_incl_r ].
               eapply incl_tran; [ | apply incl_flat_map, list_to_set_incl_r ].
@@ -541,7 +541,7 @@ Section WithWord.
               apply flat_map_incl_in; intros.
               apply_type_sound e1. rewrite_l_to_r.
               invert_type_of_value_clear. apply_Forall_In.
-              rewrite IHtype_of2; eauto with fiat2_hints.
+              rewrite IHtype_of2; eauto with conquord_hints.
               case_match; auto using incl_refl, list_to_set_incl_r. } }
       1:{ cbn. use_set_of_sem_IH; auto.
           case_match; auto. f_equal.
