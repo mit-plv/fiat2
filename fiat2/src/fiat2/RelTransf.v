@@ -238,4 +238,5 @@ End WithMap.
 
 #[export] Hint Resolve to_filter_head_sound : transf_hints.
 #[export] Hint Resolve to_proj_head_sound : transf_hints.
+#[export] Hint Resolve to_join_head_sound : transf_hints.
 #[export] Hint Resolve filter_pushdown_head_sound : transf_hints.

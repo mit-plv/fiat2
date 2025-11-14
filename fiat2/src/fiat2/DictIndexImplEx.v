@@ -29,6 +29,7 @@ Section WithConcreteMaps.
     Qed.
 
     Definition to_filter_transf := fold_command id to_filter_head.
+    Definition to_proj_transf := fold_command id to_proj_head.
     Definition annotate_collection_transf := fold_command id annotate_collection.
     Definition push_down_collection_transf := fold_command id push_down_collection.
     Definition lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head attr "id_tag" "aux_tag" "dict_idx_tag" "b" tbl).
@@ -44,7 +45,7 @@ Section WithConcreteMaps.
     Qed.
 
     Definition ex_transf (Gstore Genv : ctenv) :=
-      Basics.compose (apply_idx_related_transfs (idx:=ccompo_idx) "id_tag" "aux_tag" (fun tbl => Basics.compose (use_dict_idx_transf tbl) (Basics.compose (repeat_transf (cons_transf tbl) 1000) (lookup_transf tbl))) Gstore Genv) (Basics.compose push_down_collection_transf (Basics.compose annotate_collection_transf to_filter_transf)).
+      Basics.compose (apply_idx_related_transfs (idx:=ccompo_idx) "id_tag" "aux_tag" (fun tbl => Basics.compose (use_dict_idx_transf tbl) (Basics.compose (repeat_transf (cons_transf tbl) 1000) (lookup_transf tbl))) Gstore Genv) (Basics.compose push_down_collection_transf (Basics.compose annotate_collection_transf (Basics.compose to_filter_transf to_proj_transf))).
 
     Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
     Proof.
@@ -66,7 +67,7 @@ Section WithConcreteMaps.
     Definition filter_responses dpt : expr := ESort LikeList <[ "row" <- mut "responses" ;
                                                                 check("row"["department"] == << EAtom (AString dpt) >>);
                                                                 ret "row" ]>.
-    Definition query := CForeach (filter_responses "EECS") "r"
+    Definition query := CForeach (filter_responses "CS") "r"
                         <{ let "name" = "r"["name"] +++ << EAtom (AString ": ") >> in
                            let "feedback" = "r"["feedback"] +++ << EAtom (AString "\n") >> in
                            let "line" = "name" +++ "feedback" in

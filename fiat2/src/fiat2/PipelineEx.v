@@ -114,9 +114,8 @@ Section WithConcreteMaps.
               (Basics.compose annotate_collection_transf
                  (Basics.compose filter_pushdown_transf
                     (Basics.compose to_filter_transf to_proj_transf)))).
-Hint Resolve filter_pushdown_head_sound : transf_hints.
 
-         Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
+    Lemma ex_transf_sound : transf_sound (locals:=clocals) ex_transf.
     Proof.
       repeat (repeat apply_transf_sound_lemmas; eauto 10 with transf_hints).
     Qed.

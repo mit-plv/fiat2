@@ -84,7 +84,7 @@ Section ConcreteExample.
   Definition filter_responses dpt : expr := ESort LikeList <[ "row" <- mut "responses" ;
                                                        check("row"["department"] == << EAtom (AString dpt) >>);
                                                        ret "row" ]>.
-  Definition query1 := CForeach (filter_responses "EECS") "r"
+  Definition query1 := CForeach (filter_responses "CS") "r"
                       <{ let "name" = "r"["name"] +++ << EAtom (AString ": ") >> in
                          let "feedback" = "r"["feedback"] +++ << EAtom (AString "\n") >> in
                          let "line" = "name" +++ "feedback" in
