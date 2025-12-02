@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith Permutation Sorted.
+From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 Require Import Ltac2.Ltac2 Ltac2.Control Ltac2.Constr.
 
@@ -144,7 +144,7 @@ Ltac rewrite_map_get_put_hyp :=
   | H: context[map.get (map.put _ ?x _) ?x] |- _ =>
       rewrite map.get_put_same in H
   | H: context[map.get (map.put _ _ _) _] |- _ =>
-      rewrite map.get_put_diff in H; try now (simpl in *; intuition)
+      rewrite map.get_put_diff in H; try now (simpl in *; intuition auto)
   end.
 
 Ltac rewrite_map_get_put_goal :=
@@ -152,7 +152,7 @@ Ltac rewrite_map_get_put_goal :=
   | |- context[map.get (map.put _ ?x _) ?x] =>
       rewrite map.get_put_same
   | |- context[map.get (map.put _ _ _) _] =>
-      rewrite map.get_put_diff; try now (simpl in *; intuition)
+      rewrite map.get_put_diff; try now (simpl in *; intuition auto)
   end.
 
 Ltac case_match' c :=
@@ -445,7 +445,7 @@ Proof.
   - intuition eauto.
   - destruct a; simpl in *. destruct (eqb attr s) eqn:E.
     + exists a. reflexivity.
-    + rewrite eqb_neq in *. intuition. congruence.
+    + rewrite eqb_neq in *. intuition auto. congruence.
 Qed.
 
 Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
@@ -474,7 +474,7 @@ Lemma In_flat_map_ext : forall A B l (f : A -> list B) g,
     (forall a, In a l -> f a = g a) ->
     flat_map f l = flat_map g l.
 Proof.
-  induction l; simpl; intuition. f_equal; auto.
+  induction l; simpl; intuition idtac. f_equal; auto.
 Qed.
 
 Lemma In_fold_right_ext' : forall A B a l (f : B -> A -> A) g P,
@@ -485,10 +485,10 @@ Proof.
   intros. induction l as [| b l]; auto.
   simpl. split.
   - assert (H' : fold_right f a l = fold_right g a l).
-    { apply IHl. intros a' b' H_a' H_b'. apply H0; intuition. }
-    rewrite H'. apply H0; intuition. rewrite <- H'; apply IHl.
-    intros. apply H0; intuition.
-  - apply H0; intuition. apply IHl. intros. apply H0; intuition.
+    { apply IHl. intros a' b' H_a' H_b'. apply H0; intuition auto with *. }
+    rewrite H'. apply H0; intuition auto with *. rewrite <- H'; apply IHl.
+    intros. apply H0; intuition auto with *.
+  - apply H0; intuition auto with *. apply IHl. intros. apply H0; intuition auto with *.
 Qed.
 
 Lemma In_fold_right_ext : forall A B a l (f : B -> A -> A) g P,
@@ -590,9 +590,9 @@ Qed.
 
 Lemma In_filter_ext : forall A (l : list A) f g, (forall x, In x l -> f x = g x) -> filter f l = filter g l.
 Proof.
-  induction l; intuition.
-  simpl. rewrite H; intuition.
-  erewrite IHl; eauto. intuition.
+  induction l; intuition idtac.
+  simpl. rewrite H; intuition auto with *.
+  erewrite IHl; eauto. intuition auto with *.
 Qed.
 
 Lemma Forall_false__filter : forall A f (l : list A), Forall (fun x => f x = false) l -> filter f l = nil.
@@ -738,7 +738,7 @@ Section WithWord.
     apply_Forall_In; unfold dict_entry_leb in *; simpl in *.
     unfold value_leb, leb_from_compare in *.
     lazymatch goal with |- ?x = _ => destruct x eqn:E end; try congruence.
-    apply value_compare_Eq_eq in E; subst. apply in_map with (f:=fst) in H1; intuition.
+    apply value_compare_Eq_eq in E; subst. apply in_map with (f:=fst) in H1; intuition fail.
   Qed.
 
   Lemma dict_lookup_Lt : forall d k,
@@ -750,22 +750,22 @@ Section WithWord.
     simpl. destruct a; simpl in *.
     case_match.
     - unfold value_eqb in *. pose proof (H0 (v, v0)).
-      intuition; simpl in *. rewrite H1 in E; discriminate.
+      intuition idtac; simpl in *. rewrite H1 in E; discriminate.
     - apply IHd; inversion H; auto.
   Qed.
 
   Lemma not_In__dict_lookup : forall (v : value) d, ~ In v (List.map fst d) -> dict_lookup (word:=word) v d = None.
   Proof.
     intros * H. induction d; simpl; auto.
-    destruct a; simpl in *. intuition. case_match; auto.
-    apply value_eqb_eq in E; subst; intuition.
+    destruct a; simpl in *. intuition idtac. case_match; auto.
+    apply value_eqb_eq in E; subst; intuition fail.
   Qed.
 
   Lemma not_In__dict_delete : forall (k : value) d, ~ In k (List.map fst d) -> dict_delete (word:=word) k d = d.
   Proof.
     induction d; intros; simpl; auto.
     destruct a; case_match; simpl in *.
-    1:apply value_eqb_eq in E; subst; intuition.
+    1:apply value_eqb_eq in E; subst; intuition idtac.
     f_equal. auto.
   Qed.
 
@@ -1233,8 +1233,7 @@ Section WithMap.
       t = t'.
   Proof.
     induction 1 using type_of_IH; simpl; intros.
-    1,2: apply_typechecker_sound; auto;
-    invert_type_of; congruence.
+    1,2: rewrite_l_to_r; do_injection; reflexivity.
     all: unfold_fold_typechecker.
     all: repeat (destruct_match_hyp; try congruence; []).
     1:{ do_injection.
@@ -1628,7 +1627,7 @@ Create HintDb transf_hints.
 #[export] Hint Extern 5 ((_ : string) <> _) => apply eqb_neq : transf_hints.
 #[export] Hint Extern 5 (word.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 (map.ok _) => typeclasses eauto : transf_hints.
-#[export] Hint Extern 5 string => exact (EmptyString:string).
+#[export] Hint Extern 5 string => exact (EmptyString:string) : transf_hints.
 
 Ltac resolve_NoDup := repeat constructor; simpl; intuition idtac; congruence.
 
@@ -1692,10 +1691,10 @@ Section WithMap.
       try now (inversion H0; subst; econstructor; eauto; intuition auto).
     - inversion H0; subst; constructor. rewrite eqb_neq in *. rewrite map.get_put_diff in *; auto.
     - inversion H0; subst; econstructor.
-      + apply IHe1; eauto; intuition.
+      + apply IHe1; eauto; intuition fail.
       + destruct (x =? x0) eqn:Ex.
         * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-        * apply IHe2; intuition.
+        * apply IHe2; intuition idtac.
           rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
     - inversion H0; subst; econstructor.
       1,3,5: apply IHe1; eauto; intuition idtac.
@@ -1714,30 +1713,30 @@ Section WithMap.
         | apply IHe3; intuition idtac;
           rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
     - inversion H0; subst; econstructor.
-      + apply IHe1; eauto; intuition.
-      + apply IHe2; intuition.
+      + apply IHe1; eauto; intuition fail.
+      + apply IHe2; intuition fail.
       + destruct (x =? x0) eqn:Ex.
         * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
         * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
           destruct (x =? y) eqn:Ey.
           -- rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-          -- apply IHe3; intuition.
+          -- apply IHe3; intuition idtac.
              rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
     - inversion H1; subst. econstructor; eauto. revert H0 H H4; clear; intros.
-      generalize dependent tl. induction l; intros; destruct tl; intuition; inversion H4.
+      generalize dependent tl. induction l; intros; destruct tl; intuition auto; inversion H4.
       subst. simpl in H; rewrite Bool.orb_false_iff in *. constructor; inversion H0; subst.
-      + apply H3; destruct a; intuition.
-      + fold (map snd l) (map snd tl). apply IHl; intuition.
+      + apply H3; destruct a; intuition fail.
+      + fold (map snd l) (map snd tl). apply IHl; intuition fail.
     - inversion H0; subst. econstructor.
-      + apply IHe1; eauto; intuition.
-      + apply IHe2; eauto; intuition.
+      + apply IHe1; eauto; intuition fail.
+      + apply IHe2; eauto; intuition fail.
       + destruct (x =? x0) eqn:Ex.
         * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-        * apply IHe3; intuition.
+        * apply IHe3; intuition idtac.
           rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
     - inversion H0; subst; econstructor.
-      + apply IHe1; eauto; intuition.
-      + apply IHe2; intuition.
+      + apply IHe1; eauto; intuition fail.
+      + apply IHe2; intuition fail.
       + destruct (x =? k) eqn:Ek.
         * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
         * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
@@ -1746,36 +1745,36 @@ Section WithMap.
           -- rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
              destruct (x =? acc) eqn:Eacc.
              ++ rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-             ++ apply IHe3; intuition.
+             ++ apply IHe3; intuition idtac.
                 rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
     - inversion H0; subst; constructor.
-      1,3,5: apply IHe1; auto; intuition.
+      1,3,5: apply IHe1; auto; intuition fail.
       1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | apply IHe2; intuition;
+      | apply IHe2; intuition idtac;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
     - inversion H0; subst; econstructor.
-      1,5,9: apply IHe1; eauto; intuition.
-      1,4,7: apply IHe2; eauto; intuition.
+      1,5,9: apply IHe1; eauto; intuition fail.
+      1,4,7: apply IHe2; eauto; intuition fail.
       1,3,5: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
       (destruct (x =? y) eqn:Ey;
        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-       | apply IHe3; simpl in *; rewrite Bool.orb_false_iff in *; intuition; rewrite eqb_neq in *;
+       | apply IHe3; simpl in *; rewrite Bool.orb_false_iff in *; intuition idtac; rewrite eqb_neq in *;
          rewrite Properties.map.put_put_diff; auto ]).
       1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
       (destruct (x =? y) eqn:Ey;
        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-       | apply IHe4; simpl in *; rewrite Bool.orb_false_iff in *; intuition; rewrite eqb_neq in *;
+       | apply IHe4; simpl in *; rewrite Bool.orb_false_iff in *; intuition idtac; rewrite eqb_neq in *;
          rewrite Properties.map.put_put_diff; auto ]).
     - inversion H0; subst; econstructor.
-      1,3,5: apply IHe1; eauto; intuition.
+      1,3,5: apply IHe1; eauto; intuition fail.
       1,2,3: destruct (x =? x0) eqn:Ex;
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | apply IHe2; intuition;
+      | apply IHe2; intuition idtac;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
   Qed.
 
@@ -1809,16 +1808,17 @@ Section WithMap.
     - erewrite IHe1, IHe2, IHe3; intuition idtac.
     - destruct (x0 =? x) eqn:E.
       + rewrite eqb_eq in *; subst.
-        rewrite Properties.map.put_put_same. erewrite IHe1; intuition.
+        rewrite Properties.map.put_put_same. erewrite IHe1; intuition fail.
       + rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
-        erewrite IHe1, IHe2; intuition.
+        erewrite IHe1, IHe2; intuition fail.
     - destruct tag; auto;
-        rewrite <- IHe1; intuition; case_match; auto; [ do 2 f_equal | do 2 f_equal | f_equal ];
+        rewrite <- IHe1; intuition idtac; case_match; auto.
+      all: [> do 2 f_equal | do 2 f_equal | f_equal ];
         apply flat_map_ext; intros; destruct (x0 =? x) eqn:E'.
       1,3,5: rewrite eqb_eq in *; subst;
       rewrite Properties.map.put_put_same; auto.
       1,2,3: rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto;
-      erewrite IHe2; intuition.
+      erewrite IHe2; intuition fail.
     - rewrite <- IHe1; intuition idtac.
       rewrite <- IHe2; intuition idtac.
       repeat case_match; auto. f_equal.
@@ -1830,36 +1830,36 @@ Section WithMap.
         [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto
         | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac ].
       rewrite <- (IHe3 x); auto.
-    - rewrite <- IHe1; intuition. case_match; auto. rewrite <- IHe2; auto.
+    - rewrite <- IHe1; intuition idtac. case_match; auto. rewrite <- IHe2; auto.
       apply In_fold_right_ext with (P := fun _ => True); auto.
       intros. destruct (x0 =? x) eqn:Ex.
       + rewrite eqb_eq in *; subst.
         rewrite Properties.map.put_put_same. auto.
-      + rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition.
+      + rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition idtac.
         destruct (x0 =? y) eqn:Ey.
         * rewrite eqb_eq in *; subst.
           rewrite Properties.map.put_put_same. auto.
-        * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition.
+        * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition auto.
     - do 2 f_equal. induction l; auto. simpl in *. rewrite Bool.orb_false_iff in *.
-      destruct a; intuition. f_equal.
-      + f_equal. inversion H; subst. apply H4; intuition.
-      + inversion H; apply IHl; intuition.
-    - rewrite <- IHe1, <- IHe2; auto; intuition. repeat case_match; auto.
+      destruct a; intuition idtac. f_equal.
+      + f_equal. inversion H; subst. apply H4; intuition fail.
+      + inversion H; apply IHl; intuition fail.
+    - rewrite <- IHe1, <- IHe2; auto; intuition idtac. repeat case_match; auto.
       destruct (x0 =? x) eqn:Ex.
       * rewrite eqb_eq in *; subst.
         rewrite Properties.map.put_put_same. auto.
-      * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition.
-    - rewrite <- IHe1; intuition. case_match; auto. rewrite <- IHe2; auto.
+      * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition auto.
+    - rewrite <- IHe1; intuition idtac. case_match; auto. rewrite <- IHe2; auto.
       apply In_fold_right_ext with (P := fun _ => True); auto.
       intros. destruct (x =? k) eqn:Ek;
         try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition.
+      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac.
       destruct (x =? v) eqn:Ev;
         try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition.
+      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac.
       destruct (x =? acc) eqn:Eacc;
         try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition.
+      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition auto.
     - destruct tag; auto;
       rewrite <- IHe1; intuition idtac; case_match; auto;
       f_equal; clear E; induction l; auto; simpl;

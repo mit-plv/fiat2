@@ -1,4 +1,4 @@
-Require Import String ZArith List.
+From Stdlib Require Import String ZArith List.
 
 (* Fiat2 types *)
 Inductive type : Type :=

@@ -3,7 +3,7 @@ Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.Result.
 Import ResultMonadNotations.
-Require Import ZArith String List Sorted Permutation.
+From Stdlib Require Import ZArith String List Sorted Permutation.
 
 Ltac case_match' c :=
   lazymatch c with
@@ -212,9 +212,9 @@ Section WithWord.
        map fst l = map fst tl /\ Forall2 (type_of Gstore Genv) (map snd l) (map snd tl) /\ NoDup (map fst l).
   Proof.
     induction l; intros.
-    - simpl in *. invert_result. intuition. apply NoDup_nil.
+    - simpl in *. invert_result. intuition auto. apply NoDup_nil.
     - simpl in *. repeat destruct_match. invert_result. destruct a. inversion E; subst; simpl.
-      inversion H; subst. apply (IHl _ _ _ _ H6) in E2; auto. intuition.
+      inversion H; subst. apply (IHl _ _ _ _ H6) in E2; auto. intuition idtac.
       + f_equal. auto.
       + constructor; auto. apply H5 in H4; auto.
       + constructor; auto. apply inb_false_iff. erewrite <- fst_map_fst. apply E4.
@@ -223,14 +223,14 @@ Section WithWord.
   Lemma NoDup_In_get_attr_type : forall tl,  NoDup (List.map fst tl) -> forall s t, In (s, t) tl -> get_attr_type tl s = t.
   Proof.
     clear. induction tl; simpl; intros.
-    - intuition.
+    - intuition idtac.
     - destruct a. unfold get_attr_type; simpl. destruct (String.eqb s s0) eqn:E.
-      + intuition; try congruence. rewrite String.eqb_eq in E; inversion H; subst.
+      + intuition idtac; try congruence. rewrite String.eqb_eq in E; inversion H; subst.
         assert (In s0 (List.map fst tl)).
         { clear H H3 H4 IHtl. induction tl; auto. destruct a; inversion H1; subst; simpl.
           - left; congruence.
           - right; auto. }
-        intuition.
+        intuition idtac.
       + inversion H; subst. apply IHtl; auto. destruct H0; auto.
         rewrite String.eqb_neq in E; inversion H0; congruence.
   Qed.
@@ -241,7 +241,7 @@ Section WithWord.
   Proof.
     intros.
     assert (exists t, In (s, t) tl').
-    { clear H H0. induction tl'; simpl in *; intuition.
+    { clear H H0. induction tl'; simpl in *; intuition idtac.
       - exists (snd a). left; subst. apply surjective_pairing.
       - destruct H0 as [t Ht]. firstorder. }
     assert (NoDup (List.map fst tl)).
@@ -253,9 +253,9 @@ Section WithWord.
 
   Lemma In_fst : forall A B x (l : list (A * B)), In x (List.map fst l) -> exists p, In p l /\ fst p = x.
   Proof.
-    induction l; simpl; intros; intuition.
-    - exists a. intuition.
-    - destruct H as [p H]; exists p; intuition.
+    induction l; simpl; intros; intuition idtac.
+    - exists a. intuition fail.
+    - destruct H as [p H]; exists p; intuition idtac.
   Qed.
 
   Lemma record_from'_sound :
@@ -276,27 +276,27 @@ Section WithWord.
       List.map fst l = List.map fst tl /\ Forall2 (type_of Gstore Genv) (List.map snd l) (List.map snd tl) /\ NoDup (List.map fst l).
   Proof.
     induction l; intros tl' el Gstore Genv H H_Gstore H_Genv H_wf H_incl H_rec.
-    - simpl in *. invert_result. intuition. apply NoDup_nil.
+    - simpl in *. invert_result. intuition auto. apply NoDup_nil.
     - simpl in *. repeat destruct_match. destruct a. inversion H; inversion E; subst.
-      invert_result. simpl in *. intuition.
+      invert_result. simpl in *. intuition idtac.
       + f_equal. rewrite fst_map_fst. auto.
       + constructor.
         * eapply H2; eauto. inversion H_wf; subst.
-          unfold incl in *. simpl in *. assert (In s (List.map fst tl')). { intuition. }
-          apply In_fst in H0 as [p H0]. intuition. destruct p; simpl in *; subst.
+          unfold incl in *. simpl in *. assert (In s (List.map fst tl')). { intuition auto. }
+          apply In_fst in H0 as [p H0]. intuition idtac. destruct p; simpl in *; subst.
           eapply NoDup_In_get_attr_type in H1; eauto.
           apply in_map with (f := snd) in H7.
           eapply List.Forall_In in H5; eauto. subst; auto.
-        * eapply IHl; eauto. unfold incl in *; intuition.
+        * eapply IHl; eauto. unfold incl in *; intuition auto with *.
       + rewrite fst_map_fst in E2. apply inb_false_iff in E2. apply NoDup_cons; auto.
         eapply IHl with (Gstore := Gstore); eauto.
-        unfold incl in *; intuition.
+        unfold incl in *; intuition auto with *.
   Qed.
 
   Lemma In_Permuted : forall A (x : A) l', In x l' -> exists l, Permutation (x :: l) l'.
   Proof.
     clear. induction l'; intros.
-    - apply in_nil in H; intuition.
+    - apply in_nil in H; intuition fail.
     - inversion H.
       + exists l'; subst; auto.
       + apply IHl' in H0 as [l Hl]. exists (a :: l). eapply perm_trans; try apply perm_swap.
@@ -320,7 +320,7 @@ Section WithWord.
     assert (NoDup (List.map fst tl')).
     { apply inclb_correct in H, H0. eapply NoDup_incl_NoDup; eauto. }
     generalize dependent tl'. induction l; simpl; intros.
-    - destruct tl'; simpl in *; intuition; discriminate.
+    - destruct tl'; simpl in *; intuition auto; discriminate.
     - destruct a; simpl in *. remember (s, get_attr_type tl' s) as p.
       rewrite Bool.andb_true_iff in H; destruct H. rewrite inb_true_iff in H.
       assert (forall s, In s (List.map fst tl') -> In (s, get_attr_type tl' s) tl').
@@ -330,7 +330,7 @@ Section WithWord.
           + rewrite String.eqb_eq in E; subst.
             unfold get_attr_type, access_record. rewrite eqb_refl; auto.
           + rewrite String.eqb_neq in E. right. apply not_eq_sym in E as E'. rewrite <- eqb_neq in E'.
-            unfold get_attr_type, access_record. rewrite E'. apply IHtl'. intuition. }
+            unfold get_attr_type, access_record. rewrite E'. apply IHtl'. intuition fail. }
       apply H5, In_Permuted in H. destruct H as [tl Htl].
       eapply Permutation_trans; [| apply Htl].
       subst; apply perm_skip.
@@ -345,23 +345,23 @@ Section WithWord.
           + simpl. destruct (String.eqb s s0) eqn:E.
             * exfalso; apply H1; left; symmetry; apply String.eqb_eq; auto.
             * unfold get_attr_type. simpl. rewrite eqb_sym, E. auto.
-          + intuition.
-        - eapply IHl; eauto. apply incl_cons_inv in H. intuition. }
+          + intuition auto with *.
+        - eapply IHl; eauto. apply incl_cons_inv in H. intuition fail. }
       erewrite H; eauto.
       + apply IHl.
         * inversion H1. auto.
         * apply Permutation_sym in Htl. apply inclb_complete. apply inclb_correct in H4. auto.
           apply Permutation_map with (f := fst) in Htl. apply Permutation_incl in Htl. unfold incl; intros.
-          apply H4 in H6 as H8. apply Htl in H8. inversion H8; auto. simpl in *; subst. inversion H1; intuition.
+          apply H4 in H6 as H8. apply Htl in H8. inversion H8; auto. simpl in *; subst. inversion H1; intuition fail.
         * apply inclb_complete. apply inclb_correct in H0.
           apply Permutation_map with (f := fst) in Htl. apply Permutation_sym in Htl. apply (Permutation_NoDup Htl) in H3.
           apply Permutation_sym in Htl. apply Permutation_incl in Htl.
           unfold incl; intros. simpl in *. apply incl_cons_inv in Htl. apply Htl in H6 as H8. apply H0 in H8. inversion H8; auto.
-          subst. inversion H3; intuition.
+          subst. inversion H3; intuition fail.
         * apply Permutation_map with (f := fst) in Htl; apply Permutation_length in Htl. simpl in Htl.
           rewrite <- Htl in H2. apply le_S_n in H2. auto.
         * apply Permutation_map with (f := fst) in Htl. apply Permutation_sym in Htl. apply (Permutation_NoDup Htl) in H3.
-          simpl in *. inversion H3; intuition.
+          simpl in *. inversion H3; intuition fail.
       + apply inclb_correct; auto.
       + inversion H1; auto.
   Qed.
@@ -489,16 +489,16 @@ Section WithWord.
         split; intros; unfold_fold_typechecker; repeat destruct_match.
         + unfold record_type_from in *. repeat destruct_match. invert_result.
           eapply record_type_from'_sound with (Gstore := Gstore) (Genv := Genv) in H; eauto.
-          apply TyERecord with (tl := l0); intuition.
+          apply TyERecord with (tl := l0); intuition auto.
           * apply Permuted_record_sort.
           * rewrite <- H2; auto.
           * apply StronglySorted_record_sort.
         + unfold record_from in *. destruct_match. invert_result.
-          rewrite Bool.andb_true_iff in E1. intuition.
+          rewrite Bool.andb_true_iff in E1. intuition idtac.
           eapply record_from'_sound with (Gstore := Gstore) in H; eauto; [| apply inclb_correct; auto].
-          apply TyERecord with (tl := List.map (fun '(s, e) => (s, get_attr_type l0 s)) l); intuition.
-          * apply double_incl_NoDup_Permuted; intuition.
-            apply leb_complete. repeat rewrite map_length. auto.
+          apply TyERecord with (tl := List.map (fun '(s, e) => (s, get_attr_type l0 s)) l); intuition idtac.
+          * apply double_incl_NoDup_Permuted; intuition idtac.
+            apply leb_complete. repeat rewrite length_map. auto.
           * rewrite fst_map_fst; auto.
           * inversion H3; auto.
       - (* EAccess *)
@@ -574,7 +574,7 @@ Section WithWord.
     Ltac apply_locals_wf :=
       match goal with
       | H : locals_wf ?G ?E, H' : map.get ?G ?x = _ |- _ =>
-          apply H in H'; unfold get_local; destruct (map.get E x); intuition
+          apply H in H'; unfold get_local; destruct (map.get E x); intuition idtac
       end.
     Ltac invert_Forall :=
       match goal with
@@ -590,11 +590,11 @@ Section WithWord.
     Lemma Forall2_In_Permuted : forall A B (R : A -> B -> Prop) l1 l2 a, Forall2 R l1 l2 -> In a l1 -> exists l1_0 b l2_0, Permutation l1 (a :: l1_0) /\ Permutation l2 (b :: l2_0) /\ R a b /\ Forall2 R l1_0 l2_0.
     Proof.
       intros A B R l1 l2 a HR. induction HR; intros.
-      - apply in_nil in H; intuition.
+      - apply in_nil in H; intuition idtac.
       - inversion H0.
-        + exists l, y, l'; subst. intuition.
+        + exists l, y, l'; subst. intuition auto.
         + apply IHHR in H1. repeat destruct_exists.
-          exists (x :: l1_0), b, (y :: l2_0); intuition.
+          exists (x :: l1_0), b, (y :: l2_0); intuition auto.
           * apply Permutation_trans with (l' := x :: a :: l1_0); auto using perm_swap.
           * apply Permutation_trans with (l' := y :: b :: l2_0); auto using perm_swap.
     Qed.
@@ -605,24 +605,24 @@ Section WithWord.
       intros A B R l1 l2 l1'; generalize dependent l2; generalize dependent l1; induction l1'; intros l1 l2 l2' HR Hnodup Hfst Hpermu1 Hpermu2 Hsorted1 Hsorted2.
       - apply Permutation_sym, Permutation_nil in Hpermu1; subst. inversion HR; subst.
         apply Permutation_nil in Hpermu2; subst; auto.
-      - assert (In a l1). { apply Permutation_in with (l := a :: l1'); auto using Permutation_sym. intuition. }
-        eapply Forall2_In_Permuted in H; eauto. repeat destruct_exists. intuition.
+      - assert (In a l1). { apply Permutation_in with (l := a :: l1'); auto using Permutation_sym. intuition auto with *. }
+        eapply Forall2_In_Permuted in H; eauto. repeat destruct_exists. intuition idtac.
         apply Permutation_sym in H. assert (Permutation (b :: l2_0) l2'). { eapply Permutation_trans; eauto. }
         destruct l2' as [| b' l2'].
         + apply Permutation_sym, Permutation_nil in H2. discriminate.
         + apply Hfst in H1 as H1'. assert (b' = b).
           { inversion Hsorted1; inversion Hsorted2; subst.
-            apply Permutation_in with (x := b) in H2; intuition. inversion H2; auto.
+            apply Permutation_in with (x := b) in H2; intuition auto with *. inversion H2; auto.
             apply (List.Forall_In H11) in H4 as H4'. unfold record_entry_leb in H4'. (* fst b' <= fst b *)
-            apply Permutation_sym, Permutation_in with (x := b') in Hpermu2 as H5; intuition.
+            apply Permutation_sym, Permutation_in with (x := b') in Hpermu2 as H5; intuition auto with *.
             apply Permutation_map with (f := fst) in Hpermu1.
             assert (List.map fst l1 = List.map fst l2).
             { generalize dependent Hfst; generalize dependent HR. clear. intros HR Hfst.
               induction HR; auto. simpl. apply Hfst in H. congruence. }
             simpl in *. rewrite H8 in Hpermu1.
             assert (forall A B (p : A * B) l, In p l -> In (fst p) (List.map fst l)). {
-              clear. intros. induction l; intuition.
-              inversion H; subst; simpl; intuition. }
+              clear. intros. induction l; intuition idtac.
+              inversion H; subst; simpl; intuition idtac. }
             apply H9 in H5. apply Permutation_in with (x := fst b') in Hpermu1; auto.
             assert (String.leb (fst b) (fst b')).
             { inversion Hpermu1.
@@ -633,11 +633,11 @@ Section WithWord.
             assert (NoDup (List.map fst (b' :: l2'))).
             { rewrite H8 in Hnodup. apply Permutation_map with (f := fst) in Hpermu2. simpl in *.
               apply Permutation_sym, Permutation_NoDup in Hpermu2; auto. }
-            inversion H14. apply H9 in H4. rewrite <- H13 in H4. intuition. }
+            inversion H14. apply H9 in H4. rewrite <- H13 in H4. intuition idtac. }
           subst.
           assert (Permutation (a :: l1_0) (a :: l1')). { apply Permutation_sym in H0; eapply Permutation_trans; eauto. }
           apply Permutation_cons_inv in H4, H2.
-          constructor; intuition; eapply IHl1'; eauto.
+          constructor; intuition auto; eapply IHl1'; eauto.
           * apply Permutation_map with (f := fst), Permutation_NoDup in H0; auto.
             simpl in *; inversion H0; auto.
           * inversion Hsorted1; auto.
@@ -646,7 +646,7 @@ Section WithWord.
 
     Lemma Forall2_split : forall A B (l : list A) (l' : list B) f g, Forall2 (fun p p' => f p p' /\ g p p') l l' -> Forall2 f l l' /\ Forall2 g l l'.
     Proof.
-      intros. induction H; intuition.
+      intros. induction H; intuition auto.
     Qed.
 
     Lemma Forall2_fst_eq : forall A B (l : list (string * A)) (l' : list (string * B)),
@@ -654,8 +654,8 @@ Section WithWord.
         List.map fst l = List.map fst l'.
     Proof.
       intros. split; intro H.
-      - induction H; intuition. simpl; congruence.
-      - generalize dependent l'. induction l; destruct l'; try discriminate; intuition.
+      - induction H; intuition idtac. simpl; congruence.
+      - generalize dependent l'. induction l; destruct l'; try discriminate; intuition auto.
         simpl in *. inversion H. constructor; auto.
     Qed.
 
@@ -663,7 +663,7 @@ Section WithWord.
     Proof.
       split; intros.
       - constructor; auto.
-      - inversion H; intuition.
+      - inversion H; intuition idtac.
     Qed.
 
     Lemma TyVDict_def : forall l kt vt, type_wf kt -> type_wf vt ->
@@ -673,7 +673,7 @@ Section WithWord.
     Proof.
       split; intros.
       - constructor; auto.
-      - inversion H3; intuition.
+      - inversion H3; intuition idtac.
     Qed.
 
     Lemma record_proj_sound : forall l, NoDup (List.map fst l) ->
@@ -682,12 +682,12 @@ Section WithWord.
                                                                type_of_value (record_proj (width := width) x l) t.
     Proof.
       intros l Hnodup tl Hvt x t Hin. generalize dependent tl. induction l; intros; simpl in *.
-      - inversion Hvt; subst. apply in_nil in Hin. intuition.
+      - inversion Hvt; subst. apply in_nil in Hin. intuition idtac.
       - inversion Hvt; subst. destruct a. inversion Hin; subst.
         + destruct H1. simpl in *. subst. unfold record_proj. simpl. rewrite eqb_refl. auto.
         + simpl in *; inversion Hnodup; subst. assert (String.eqb x s = false).
           { apply in_map with (f := fst) in H; simpl in H. apply Forall2_split in H3 as [HL HR]. apply Forall2_fst_eq in HL.
-            rewrite eqb_neq. intro contra; subst. rewrite HL in H4. intuition. }
+            rewrite eqb_neq. intro contra; subst. rewrite HL in H4. intuition idtac. }
           unfold record_proj; simpl. rewrite H0. eapply IHl; eauto.
     Qed.
 
@@ -697,20 +697,20 @@ Section WithWord.
         ~ In k (map fst (dict_insert (word := word) k' v l)).
     Proof.
       induction l; intros.
-      - simpl; intuition.
+      - simpl; intuition auto.
       - simpl in H. apply Decidable.not_or in H as [HL HR].
         pose proof IHl HR H0; auto.
         simpl. destruct a. unfold value_ltb, value_eqb.
-        destruct (value_compare k' v0); simpl; intuition.
+        destruct (value_compare k' v0); simpl; intuition auto.
     Qed.
 
     Lemma dict_insert_incl : forall k v l, incl (dict_insert (word:=word) k v l) ((k, v) :: l).
     Proof.
-      induction l; simpl; intuition.
-      unfold value_ltb, value_eqb; destruct value_compare eqn:E; intuition.
-      apply incl_cons; intuition.
+      induction l; simpl; intuition auto with *.
+      unfold value_ltb, value_eqb; destruct value_compare eqn:E; intuition auto with *.
+      apply incl_cons; intuition auto with *.
       unfold incl in *; intros. apply IHl in H.
-      inversion H; intuition. constructor; congruence.
+      inversion H; intuition auto with *. constructor; congruence.
     Qed.
 
     Ltac destruct_value_compare :=
@@ -744,7 +744,7 @@ Section WithWord.
         type_of_value (VDict (dict_insert k v l)) (TDict kt vt).
     Proof.
       intros. induction l; constructor; simpl; auto.
-      1-2: constructor; intuition.
+      1-2: constructor; intuition auto.
       1: apply NoDup_nil. 1: apply SSorted_nil.
       1-3: destruct a as [k' v']; inversion H1; subst;
       assert (Hl: type_of_value (VDict l) (TDict kt vt));
@@ -781,7 +781,7 @@ Section WithWord.
             destruct_value_compare.
             1:{ apply value_compare_Eq_eq in E0; subst. rewrite E; trivial. }
             1: erewrite value_compare_trans; eauto.
-            1: intuition.
+            1: intuition auto with *.
         + inversion Hl; subst. constructor; auto.
           rewrite Forall_forall. intros. apply dict_insert_incl in H4.
           unfold dict_entry_leb, value_leb, leb_from_compare; simpl.
@@ -795,14 +795,14 @@ Section WithWord.
     Proof.
       induction l; simpl; auto; intros.
       repeat lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
-        simpl; intuition.
+        simpl; intuition idtac.
     Qed.
 
     Lemma dict_delete_incl : forall k l, incl (dict_delete (word:=word) k l) l.
     Proof.
-      induction l; simpl; intuition.
+      induction l; simpl; intuition auto with *.
       lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
-      intuition.
+      intuition auto with *.
     Qed.
 
     Lemma dict_delete_sound : forall l kt vt k,
@@ -846,7 +846,7 @@ Section WithWord.
           match goal with
           | H: type_of_value (VDict (_ :: _)) _ |- _ => inversion H; subst
           end; invert_Forall; auto.
-        + constructor. intuition.
+        + constructor. intuition idtac.
         + apply IHl. constructor; auto;
             simpl in *; invert_NoDup; invert_SSorted; auto.
     Qed.
@@ -856,8 +856,8 @@ Section WithWord.
       induction l; simpl; intros.
       - constructor.
       - destruct (f a).
-        + constructor; inversion H; intuition.
-        + apply IHl; inversion H; intuition.
+        + constructor; inversion H; intuition auto.
+        + apply IHl; inversion H; intuition idtac.
     Qed.
 
     Lemma flat_map_type_sound : forall l t, type_of_value (VList l) (TList t) ->
@@ -875,7 +875,7 @@ Section WithWord.
                                                     type_of_value (VList (List.map f l)) (TList t').
     Proof.
       induction l; simpl; intros; repeat constructor; inversion H; inversion H3.
-      - intuition.
+      - intuition auto.
       - rewrite TyVList_def. eapply IHl; eauto. constructor. auto.
     Qed.
 
@@ -887,17 +887,17 @@ Section WithWord.
     simpl; constructor; auto. intro contra.
     pose proof (find_none _ _ E).
     assert (exists x, In x l /\ fst a = fst x).
-    { revert H contra. clear. intros; induction l; simpl in *; intuition.
+    { revert H contra. clear. intros; induction l; simpl in *; intuition idtac.
       destruct (find (P_eqb a0) l) eqn:E.
       - apply IHl in contra; firstorder.
-      - simpl in *. firstorder. exists a0; intuition. }
+      - simpl in *. firstorder. exists a0; intuition auto. }
     destruct H1 as [x [HL HR]]. apply H0 in HL. apply H in HR. congruence.
   Qed.
 
   Lemma dedup_In : forall A (x : A) f l, In x (List.dedup f l) -> In x l.
   Proof.
     induction l; simpl; auto.
-    lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end; intuition.
+    lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end; intuition idtac.
     inversion H; auto.
   Qed.
 
@@ -1026,7 +1026,7 @@ Section WithWord.
     1:{ constructor; auto. invert_SSorted.
         cbn. intuition idtac.
         1: lazymatch goal with
-             H: (?v : value) = _ |- _ =>
+             H: ?v = _ |- _ =>
                apply eq_value_compare_Eq in H;
                rewrite value_compare_antisym in H;
                revert H
@@ -1450,20 +1450,20 @@ Section WithWord.
           assert (Forall2 R (List.map (fun '(s, e0) => (s, interp_expr store env e0)) l) tl).
           { revert H_Genv H_store H_env H H1 HeqR. clear; intros; generalize dependent tl.
             induction l; simpl; intros; destruct tl; try discriminate.
-            - intuition.
+            - intuition auto.
             - destruct a, p; simpl in *; subst. constructor.
               + simpl. split; try congruence. inversion H1; auto.
-              + apply IHl; inversion H; inversion H1; intuition. }
+              + apply IHl; inversion H; inversion H1; intuition idtac. }
           eapply Forall2_Permuted_StronglySorted; eauto.
           * rewrite fst_map_fst; rewrite H; auto.
-          * subst; intuition.
+          * subst; intuition idtac.
           * apply Permuted_record_sort.
           * apply StronglySorted_record_sort.
       - (* TyEAccess *)
         repeat apply_type_sound_IH. eapply record_proj_sound; eauto.
         + rewrite <- H1 in *. assert (E: List.map fst l = List.map fst tl).
           { revert H5; clear; intros H5. induction H5; simpl; auto.
-            intuition; congruence. }
+            intuition idtac; congruence. }
           rewrite E; auto.
         + apply access_record_sound; auto.
       - (* TyEOptMatch *)
@@ -1475,20 +1475,20 @@ Section WithWord.
                   | H: VDict ?l = _ |- _ => clear H
                   end; induction l; simpl; try constructor; auto; apply_type_sound_IH; auto;
                   invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-                  try apply_type_of__type_wf; try invert_type_wf; intuition;
+                  try apply_type_of__type_wf; try invert_type_wf; intuition idtac;
                   lazymatch goal with
                   | H: _ -> _ -> ?P |- ?P => apply H
                   end;
-                  simpl in *; invert_NoDup; invert_SSorted; intuition).
+                  simpl in *; invert_NoDup; invert_SSorted; intuition idtac).
         all: try (lazymatch goal with
                   | H: VDict ?l = _ |- type_of_value (fold_right _ _ ?l) _ => clear H; induction l
                   end;
                   simpl; try constructor; auto; apply_type_sound_IH; auto;
                   invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-                  try apply_type_of__type_wf; try invert_type_wf; intuition;
+                  try apply_type_of__type_wf; try invert_type_wf; intuition idtac;
                   lazymatch goal with
                   | H: _ -> _ -> ?P |- ?P => apply H
-                  end; simpl in *; invert_NoDup; invert_SSorted; intuition).
+                  end; simpl in *; invert_NoDup; invert_SSorted; intuition idtac).
       - (* TyESort_List *)
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros.
         eapply List.Forall_In in H2; eauto. eapply Permutation_in.
@@ -1517,7 +1517,7 @@ Section WithWord.
         rewrite <- H4 in H'0. eapply flat_map_type_sound; eauto. intros.
         apply map_type_sound with (t := t2).
         + constructor; apply Forall_Forall_filter; auto.
-        + intuition. repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
+        + intuition idtac. repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
             try apply tenv_wf_step; try apply_type_of__type_wf; try invert_type_wf; auto.
       - (* TyEJoin_Bag *)
         repeat apply_type_sound_IH.
@@ -1662,7 +1662,7 @@ Section WithWord.
         apply type_of__type_wf in H as H_wf; auto.
         eapply type_sound in H; eauto. rewrite E in H. inversion H; subst. clear E H.
         generalize dependent store. induction l; simpl; auto; intros.
-        apply IHl; try invert_Forall; intuition. apply H; auto.
+        apply IHl; try invert_Forall; intuition idtac. apply H; auto.
         + apply tenv_wf_step; auto. invert_type_wf; auto.
         + apply locals_wf_step; auto.
     Qed.

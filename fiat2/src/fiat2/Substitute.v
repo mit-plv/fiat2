@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
-Require Import List String ZArith Permutation.
+From Stdlib Require Import List String ZArith Permutation.
 
 Fixpoint repeat_string (s : string) (n : nat) : string :=
   match n with

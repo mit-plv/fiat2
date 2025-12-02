@@ -1,5 +1,5 @@
 Require Import fiat2.Language.
-Require Import String ZArith.
+From Stdlib Require Import String ZArith.
 
 Declare Scope fiat2_scope.
 

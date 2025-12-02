@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
-Require Import List String ZArith Permutation.
+From Stdlib Require Import List String ZArith Permutation.
 
 Open Scope string_scope.
 
@@ -107,13 +107,13 @@ Section WithMap.
       + inversion H_p; subst. rewrite <- H2. destruct b; simpl; [f_equal |];
           inversion H3; inversion H5; apply IHl1; auto.
       + rewrite Forall_forall in *; repeat apply locals_wf_step;
-          repeat apply tenv_wf_step; intuition;
+          repeat apply tenv_wf_step; intuition idtac;
           inversion H_wf1; inversion H_wf2; auto.
       + repeat apply locals_wf_step; auto.
         * eapply List.Forall_In in H1; eauto.
         * inversion H3; auto.
     - apply tenv_wf_step; auto. inversion H_wf1; auto.
-    - rewrite Forall_forall in *; repeat apply locals_wf_step; intuition.
+    - rewrite Forall_forall in *; repeat apply locals_wf_step; intuition auto.
   Qed.
 
   Lemma to_join_head_preserve_sem : forall Gstore (store : locals), preserve_sem Gstore store to_join_head.
@@ -175,17 +175,17 @@ Section WithMap.
     destruct (interp_expr store (map.put env x a) e3_1) eqn:E3_1;
       try (clear E2 H8; induction l0; auto; simpl;
            eapply not_free_immut_put_sem in E; rewrite <- E; rewrite E3_1; simpl;
-           apply IHl0; inversion H5; intuition).
+           apply IHl0; inversion H5; intuition idtac).
     destruct b.
     - clear E2 H8; induction l0; inversion H5; auto; simpl.
       eapply not_free_immut_put_sem in E; rewrite <- E; rewrite E3_1; simpl.
       destruct (interp_expr store (map.put (map.put env x a) y a0) e3_2) eqn:E3_2; simpl;
-        try (apply IHl0; intuition).
-      destruct b; simpl; [f_equal |]; apply IHl0; intuition.
+        try (apply IHl0; intuition idtac).
+      destruct b; simpl; [f_equal |]; apply IHl0; intuition idtac.
     - clear E2 H8; induction l0; inversion H5; auto; simpl.
       eapply not_free_immut_put_sem in E; rewrite <- E; rewrite E3_1; simpl.
       destruct (interp_expr store (map.put (map.put env x a) y a0) e3_2) eqn:E3_2; simpl;
-        apply IHl0; intuition.
+        apply IHl0; intuition idtac.
   Qed.
 
   Lemma filter_pushdown_head_sound : expr_transf_sound (locals:=locals) filter_pushdown_head.

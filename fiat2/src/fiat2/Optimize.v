@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.List.
-Require Import List ZArith String.
+From Stdlib Require Import List ZArith String.
 
 (* below 6 lemmas should be moved to coq utils
        used in relational algebra filter/join conversions *)

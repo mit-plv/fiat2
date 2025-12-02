@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.IndexInterface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
-Require Import List String ZArith Morphisms.
+From Stdlib Require Import List String ZArith Morphisms.
 Import ListNotations.
 
 Section WithMap.
@@ -250,8 +250,8 @@ Section WithMap.
     Proof.
       intros * H ?. unfold tenv_wf_with_globals in *.
       induction H; auto. constructor.
-      2: apply IHForall2; intuition.
-      rewrite map.get_put_diff; intuition.
+      2: apply IHForall2; intuition auto with *.
+      rewrite map.get_put_diff; intuition idtac.
       lazymatch goal with H: _ -> False |- _ => apply H end.
       constructor; auto.
     Qed.
@@ -261,9 +261,9 @@ Section WithMap.
     Proof.
       intros * H_not_in H. unfold tenv_wf_with_globals in *.
       induction H; auto.
-      constructor. 2: apply IHForall2; intuition.
-      rewrite map.get_put_diff; intuition.
-      apply H_not_in; subst; intuition.
+      constructor. 2: apply IHForall2; intuition auto with *.
+      rewrite map.get_put_diff; intuition idtac.
+      apply H_not_in; subst; intuition auto with *.
     Qed.
   End WithGlobals.
 

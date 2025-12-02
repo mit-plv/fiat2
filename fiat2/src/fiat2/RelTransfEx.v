@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Notations
   fiat2.TransfUtils fiat2.RelTransf fiat2.TransfSound.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
-Require Import List String ZArith.
+From Stdlib Require Import List String ZArith.
 
 Open Scope Z_scope.
 Open Scope string_scope.
@@ -92,9 +92,9 @@ Definition ex1 : expr := <[ let "scores" = [ {"s": 1} ] in
       type_of Gstore Genv ex3_op t /\ interp_expr store env ex3 = interp_expr store env ex3_op.
   Proof.
     intros; unfold ex3_op. split.
-    - repeat (apply fold_expr_preserve_ty; auto using filter_pushdown_head_preserve_ty, to_join_head_preserve_ty).
-    - erewrite fold_expr_preserve_sem with (Gstore := Gstore); eauto using filter_pushdown_head_preserve_ty, filter_pushdown_head_preserve_sem.
-      + erewrite fold_expr_preserve_sem with (Gstore := Gstore); eauto using to_join_head_preserve_ty, to_join_head_preserve_sem.
-      + apply fold_expr_preserve_ty; eauto using filter_pushdown_head_preserve_ty, to_join_head_preserve_ty.
+    - repeat apply fold_expr_preserve_ty; auto using filter_pushdown_head_preserve_ty, to_join_head_preserve_ty with *.
+    - erewrite fold_expr_preserve_sem with (Gstore := Gstore); eauto using filter_pushdown_head_preserve_ty, filter_pushdown_head_preserve_sem with *.
+      + erewrite fold_expr_preserve_sem with (Gstore := Gstore); eauto using to_join_head_preserve_ty, to_join_head_preserve_sem with *.
+      + apply fold_expr_preserve_ty; eauto using filter_pushdown_head_preserve_ty, to_join_head_preserve_ty with *.
   Qed.
 End WithConcreteMap.

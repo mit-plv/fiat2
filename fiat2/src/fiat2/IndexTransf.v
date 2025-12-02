@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.Utils fiat2.TransfSound fiat2.Substitute fiat2.TransfUtils.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith Sorted Permutation.
+From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
 Lemma map_fst_map_triple : forall A B C D (l : list (A * B * C)) (f : B -> D),
@@ -89,7 +89,7 @@ Section compo_idx.
         induction H; cbn in *; auto.
         repeat invert_Forall; invert_NoDup.
         constructor; repeat case_match; auto.
-        cbn; auto using idx_ty_wf. }
+        cbn; apply idx_ty_wf; auto. }
   Qed.
 
   Lemma NoDup_In_access_record : forall A (l : list (string * A)),
@@ -655,7 +655,7 @@ Section WithMap.
         1: rewrite Forall_map.
         eapply Permutation_Forall; [ apply Permuted_record_sort | ].
         repeat constructor; intuition idtac; cbn.
-        auto using idx_ty_wf.
+        eauto using idx_ty_wf.
       Qed.
 
       Lemma to_idx_satisfy_idx_wf : forall free_vars e Gstore Genv t store env,

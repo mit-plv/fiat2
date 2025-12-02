@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith Permutation Morphisms.
+From Stdlib Require Import List String ZArith Permutation Morphisms.
 Import ListNotations.
 
 Ltac apply_type_of__type_wf :=

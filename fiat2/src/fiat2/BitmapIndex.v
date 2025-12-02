@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith Permutation Sorted.
+From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
 Open Scope string_scope.

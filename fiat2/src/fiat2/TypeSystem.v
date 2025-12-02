@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Value.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 Import ResultMonadNotations.
-Require Import String List Permutation Sorted.
+From Stdlib Require Import String List Permutation Sorted.
 
 (* Whether a is in l *)
 Fixpoint inb {A : Type} (A_eqb : A -> A -> bool) (a : A) (l : list A) : bool :=
@@ -13,19 +13,19 @@ Fixpoint inb {A : Type} (A_eqb : A -> A -> bool) (a : A) (l : list A) : bool :=
 Lemma inb_false_iff : forall s l, inb eqb s l = false <-> ~ In s l.
 Proof.
   induction l; simpl; intros.
-  - intuition.
-  - destruct (String.eqb a s) eqn:E; intuition.
-    + rewrite String.eqb_eq in E; intuition.
-    + rewrite String.eqb_neq in E; intuition.
+  - intuition idtac.
+  - destruct (String.eqb a s) eqn:E; intuition auto with *.
+    + rewrite String.eqb_eq in E; intuition idtac.
+    + rewrite String.eqb_neq in E; intuition idtac.
 Qed.
 
 Lemma inb_true_iff : forall s l, inb eqb s l = true <-> In s l.
 Proof.
   induction l; simpl; intros.
-  - split; intuition.
-  - destruct (String.eqb a s) eqn:E; intuition.
-    + rewrite String.eqb_eq in E; intuition.
-    + rewrite String.eqb_neq in E; intuition.
+  - split; intuition auto with *.
+  - destruct (String.eqb a s) eqn:E; intuition idtac.
+    + rewrite String.eqb_eq in E; intuition idtac.
+    + rewrite String.eqb_neq in E; intuition idtac.
 Qed.
 
 (* Whether l is included in m *)
@@ -38,13 +38,13 @@ Proof.
   - apply incl_nil_l.
   - rewrite Bool.andb_true_iff in H. destruct H as [HL HR].
     apply IHl in HR. rewrite inb_true_iff in HL.
-    unfold incl. intros. inversion H; subst; intuition.
+    unfold incl. intros. inversion H; subst; intuition auto.
 Qed.
 
 Lemma inclb_complete : forall l l', incl l l' -> inclb String.eqb l l' = true.
 Proof.
   intros l l' H. unfold inclb. rewrite forallb_forall; intros.
-  rewrite inb_true_iff. intuition.
+  rewrite inb_true_iff. intuition auto.
 Qed.
 
 Fixpoint NoDup_comp {A : Type} (A_eqb : A -> A -> bool) (l : list A) : bool :=
@@ -55,7 +55,7 @@ Fixpoint NoDup_comp {A : Type} (A_eqb : A -> A -> bool) (l : list A) : bool :=
 
 Lemma NoDup_comp_true_iff : forall l, NoDup_comp String.eqb l = true <-> NoDup l.
 Proof.
-  induction l; simpl in *; intuition.
+  induction l; simpl in *; intuition idtac.
   - apply NoDup_nil.
   - destruct (inb eqb a l) eqn:E; try discriminate. constructor; auto.
     apply inb_false_iff; auto.
@@ -74,7 +74,7 @@ Lemma StronglySorted_comp_true_iff : forall A (l : list (string * A)),
     StronglySorted_comp record_entry_leb l = true <-> StronglySorted record_entry_leb l.
 Proof.
   induction l.
-  - intuition. constructor.
+  - intuition idtac. constructor.
   - simpl. split; intros.
     + apply Bool.andb_true_iff in H as [HL HR]. rewrite forallb_forall in HL. constructor.
       * apply IHl; auto.
@@ -123,12 +123,12 @@ Fixpoint type_wf_comp (t : type) : bool :=
 Lemma type_wf_comp_sound : forall t, type_wf_comp t = true -> type_wf t.
 Proof.
   intros t H; induction t using type_IH; simpl in *; constructor; auto;
-    repeat rewrite Bool.andb_true_iff in *; intuition.
+    repeat rewrite Bool.andb_true_iff in *; intuition idtac.
   - apply NoDup_comp_true_iff; auto.
   - apply StronglySorted_comp_true_iff; auto.
   - clear H H3. induction l; auto. destruct a; simpl in *.
     inversion H0; subst. constructor;
-      try apply IHl; auto; rewrite Bool.andb_true_iff in *; intuition.
+      try apply IHl; auto; rewrite Bool.andb_true_iff in *; intuition idtac.
 Qed.
 
 (* Inductive typing relation *)
@@ -559,7 +559,7 @@ Proof.
       try (lazymatch goal with
              IH: context[_ -> _], H: type_eqb _ _ = _ |- _ =>
                apply IH in H end; congruence).
-      - generalize dependent l0. induction l; destruct l0; simpl in *; try discriminate; intuition.
+      - generalize dependent l0. induction l; destruct l0; simpl in *; try discriminate; intuition idtac.
         destruct (andb (fst a =? fst p)%string (type_eqb (snd a) (snd p))) eqn:E; simpl in *; try discriminate.
         inversion H; subst. apply (IHl H4) in H0. injection H0; intros; subst.
         destruct a, p; inversion H; simpl in *; subst. apply andb_prop in E as [EL ER].
