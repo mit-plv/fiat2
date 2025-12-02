@@ -8,13 +8,13 @@ SRCDIR:=$(shell cygpath -m "$$(pwd)" 2>/dev/null || pwd)/src
 
 VFILES:=$(shell find $(SRCDIR) -type f -name '*.v')
 
-DEPS_DIR?=../bedrock2/deps
+DEPS_DIR?=../deps
 
 # Note: make does not interpret "\n", and this is intended
 DEPFLAGS_COQUTIL_NL:=-Q $(DEPS_DIR)/coqutil/src/coqutil coqutil\n
-DEPFLAGS_SORTING_NL:=-Q ../coq-stdlib-edits/src/Std Std\n
+DEPFLAGS_SORTING_NL:=-Q $(DEPS_DIR)/coq-stdlib-edits/src/Std Std\n
 DEPFLAGS_NL:=
-CURFLAGS_NL:=-Q ../bedrock2/bedrock2/src/bedrock2 bedrock2\n-Q src/fiat2 fiat2\n
+CURFLAGS_NL:=-Q src/fiat2 fiat2\n
 
 EXTERNAL_DEPENDENCIES?=
 EXTERNAL_COQUTIL?=

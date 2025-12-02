@@ -1,6 +1,6 @@
-[submodule "bedrock2"]
-	path = bedrock2
-	url = git@github.com:mit-plv/bedrock2.git
 [submodule "coq-stdlib-edits"]
-	path = coq-stdlib-edits
+	path = deps/coq-stdlib-edits
 	url = git@github.com:DIJamner/coq-stdlib-edits.git
+[submodule "coqutil"]
+	path = deps/coqutil
+	url = git@github.com:mit-plv/coqutil.git

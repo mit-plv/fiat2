@@ -14,9 +14,9 @@ Search list "dup".
    Unfortunately, it doesn't return any results, because Search only looks
    at the files that have been `Require`d (as well as all transitively
    `Require`d files).
-   So let's import some random bedrock2 file that has a lot of dependencies: *)
+   So let's import some random coqutil file that has a lot of dependencies: *)
 
-Require Import bedrock2.ProgramLogic.
+Require Import coqutil.Datatypes.List.
 
 Search list "dup".
 
