@@ -1,6 +1,6 @@
 default_target: all
 
-.PHONY: update_all clone_all coqutil clean_coqutil install_coqutil fiat2 all clean_fiat2 clean clean_deps clean_all install_fiat2 install
+.PHONY: update_all clone_all coqutil clean_coqutil install_coqutil fiat2 all clean_fiat2 clean clean_deps clean_all install_fiat2 install pyrosome
 
 clone_all:
 	git submodule update --init --recursive
@@ -13,9 +13,10 @@ ABS_ROOT_DIR:=$(abspath $(dir $(REL_PATH_OF_THIS_MAKEFILE)))
 # use cygpath -m because Coq on Windows cannot handle cygwin paths
 ABS_ROOT_DIR:=$(shell cygpath -m '$(ABS_ROOT_DIR)' 2>/dev/null || echo '$(ABS_ROOT_DIR)')
 
-COQUTIL_DIR ?= $(ABS_ROOT_DIR)/deps/coqutil/
+COQUTIL_DIR ?= $(ABS_ROOT_DIR)/deps/pyrosome/coqutil/
 export COQUTIL_DIR
 SORTING_DIR ?= $(ABS_ROOT_DIR)/deps/coq-stdlib-edits/
+PYROSOME_DIR ?= $(ABS_ROOT_DIR)/deps/pyrosome
 
 coqutil:
 	$(MAKE) -C $(COQUTIL_DIR)
@@ -44,6 +45,9 @@ install_fiat2:
 deps: coqutil sorting
 
 all: deps fiat2
+
+pyrosome:
+	$(MAKE) -C $(ABS_ROOT_DIR)/deps/pyrosome
 
 clean: clean_fiat2
 

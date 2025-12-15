@@ -11,7 +11,7 @@ VFILES:=$(shell find $(SRCDIR) -type f -name '*.v')
 DEPS_DIR?=../deps
 
 # Note: make does not interpret "\n", and this is intended
-DEPFLAGS_COQUTIL_NL:=-Q $(DEPS_DIR)/coqutil/src/coqutil coqutil\n
+DEPFLAGS_COQUTIL_NL:=-Q $(DEPS_DIR)/pyrosome/coqutil/src/coqutil coqutil\n
 DEPFLAGS_SORTING_NL:=-Q $(DEPS_DIR)/coq-stdlib-edits/src/Std Std\n
 DEPFLAGS_NL:=
 CURFLAGS_NL:=-Q src/fiat2 fiat2\n

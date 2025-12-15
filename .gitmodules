@@ -1,6 +1,6 @@
 [submodule "coq-stdlib-edits"]
 	path = deps/coq-stdlib-edits
 	url = git@github.com:DIJamner/coq-stdlib-edits.git
-[submodule "coqutil"]
-	path = deps/coqutil
-	url = git@github.com:mit-plv/coqutil.git
+[submodule "deps/pyrosome"]
+	path = deps/pyrosome
+	url = git@github.com:DIJamner/pyrosome.git
