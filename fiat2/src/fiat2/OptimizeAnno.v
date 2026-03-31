@@ -10,6 +10,7 @@ Open Scope fiat2_scope.
 Variant basic_transf :=
   | SwapIfNil
   | MergeIf
+  | SplitIf
   | SwapFlatmapIf
   | IfNilIntoFlatmap
   | ToFilter
@@ -38,6 +39,7 @@ Definition push_down_collection_transf := fold_command id push_down_collection.
 Definition filter_pushdown_transf := fold_command id filter_pushdown_head.
 Definition swap_if_nil_transf := fold_command id swap_if_nil_head.
 Definition merge_if_transf := fold_command id merge_if_head.
+Definition split_if_transf := fold_command id split_if_head.
 Definition swap_flatmap_if_transf := fold_command id swap_flatmap_if_head.
 Definition if_nil_into_flatmap_transf := fold_command id if_nil_into_flatmap_head.
 Definition join_to_flatmap_filter_transf := fold_command id join_to_flatmap_filter_head.
@@ -47,6 +49,7 @@ Definition mk_basic_transf (f : basic_transf) : command -> command :=
   match f with
   | SwapIfNil => swap_if_nil_transf
   | MergeIf => merge_if_transf
+  | SplitIf => split_if_transf
   | SwapFlatmapIf => swap_flatmap_if_transf
   | IfNilIntoFlatmap => if_nil_into_flatmap_transf
   | ToFilter => to_filter_transf

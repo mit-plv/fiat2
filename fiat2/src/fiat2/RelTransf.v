@@ -88,6 +88,46 @@ Section WithMap.
   Qed.
 End WithMap.
 
+Definition split_if_head (e : expr) :=
+  match e with
+  | EIf (EBinop OAnd p1 p2) e1 (EAtom (ANil t)) =>
+      EIf p1 (EIf p2 e1 (EAtom (ANil t))) (EAtom (ANil t))
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma split_if_head_preserve_ty : forall Gstore, preserve_ty Gstore split_if_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    repeat invert_type_of_clear. invert_type_of_op_clear.
+    repeat econstructor; eauto.
+  Qed.
+
+  Lemma split_if_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store split_if_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
+    repeat invert_type_of_clear. invert_type_of_op_clear.
+    apply_type_sound e1_2; invert_type_of_value_clear.
+    cbn; destruct b, b0; reflexivity.
+  Qed.
+
+  Lemma split_if_head_sound : expr_transf_sound (locals:=locals) split_if_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply split_if_head_preserve_ty; auto.
+    eapply split_if_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 Definition swap_flatmap_if_head (e : expr) :=
   (* Push potential filter construct closer to the relevant table *)
   match e with
@@ -820,3 +860,4 @@ End WithMap.
 #[export] Hint Resolve filter_pushdown_likebag_head_sound : transf_hints.
 #[export] Hint Resolve swap_join_likebag_head_sound : transf_hints.
 #[export] Hint Resolve swap_conjuncts_head_sound : transf_hints.
+#[export] Hint Resolve split_if_head_sound : transf_hints.

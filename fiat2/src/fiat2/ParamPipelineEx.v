@@ -3,6 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
+Require Import fiat2.ToPython.
 
 Require Import fiat2.Notations.
 Open Scope fiat2_scope.
@@ -260,14 +261,14 @@ Section WithConcreteMaps.
                               set "all_feedback" := mut "all_feedback" +++ "line" }>.
     Definition ex1' := CSeq build_responses1 (CSeq query1_1 (CSeq query1_2 query1_3)).
     Definition ex1 := CLetMut (EAtom (ANil (Some (row_ty)))) "responses" ex1'.
-
+Compute (program_py ex1).
     Definition init_Gstore1 : ctenv := map.put (map.put map.empty "all_feedback" TString) "sum" TInt.
     Definition init_Genv1 : ctenv := map.put (map.put map.empty "row1" row_ty) "row2" row_ty.
 
     Definition ex1_transformed := ex_transf1 init_Gstore1 init_Genv1 ex1.
     (* Compute typecheck init_Gstore1 init_Genv1 ex1. *)
-    (* Compute ex1_transformed. *)
-
+     (* Compute ex1_transformed. *)
+Compute (program_py ex1_transformed).
     Theorem ex1_transformed_sem : forall (store env : clocals),
         locals_wf init_Gstore1 store ->
         locals_wf init_Genv1 env ->
@@ -300,7 +301,7 @@ Section WithConcreteMaps.
                                let "feedback" = "r"["feedback"] +++ << EAtom (AString "\n") >> in
                                let "line" = "name" +++ "dep" +++ "feedback" in
                                set "all_feedback" := mut "all_feedback" +++ "line" }>)).
-
+Compute (program_py ex2).
     Definition init_Gstore2 : ctenv := map.put map.empty "all_feedback" TString.
     Definition init_Genv2 : ctenv := map.put (map.put map.empty "res_tbl" (TList row_ty2_2)) "dpt_tbl" (TList row_ty2_1).
 
@@ -309,7 +310,7 @@ Section WithConcreteMaps.
     Definition ex2_transformed := ex_transf2 init_Gstore2 init_Genv2 ex2.
     (* Compute (typecheck init_Gstore1 init_Genv1 ex1). *)
     (* Compute ex2_transformed. *)
-
+Compute (program_py ex2_transformed).
     Theorem ex2_transformed_sem : forall (store env : clocals),
         locals_wf init_Gstore2 store ->
         locals_wf init_Genv2 env ->
@@ -365,14 +366,14 @@ Section WithConcreteMaps.
                         (CSeq populate_shirts_from_outfits
                            (CSeq query3_1
                               (CSeq query3_2 query3_3))).
-
+Compute (program_py ex3).
     Definition init_Gstore3 : ctenv := map.put (map.put (map.put map.empty "outfits" (TList outfits_row_ty)) "total_shirt_price" TInt) "min_shirt_price" (TOption TInt).
     Definition init_Genv3 : ctenv := map.empty.
 
     Definition ex3_transformed := ex_transf3 init_Gstore3 init_Genv3 ex3.
     (* Compute typecheck init_Gstore3 init_Genv3 ex3. *)
     (* Compute ex3_transformed. *)
-
+Compute (program_py ex3_transformed).
     Theorem ex3_transformed_sem : forall (store env : clocals),
         locals_wf init_Gstore3 store ->
         locals_wf init_Genv3 env ->
