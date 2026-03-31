@@ -8,9 +8,15 @@ Require Import fiat2.Notations.
 Open Scope fiat2_scope.
 
 Variant basic_transf :=
+  | SwapIfNil
+  | MergeIf
+  | SwapFlatmapIf
+  | IfNilIntoFlatmap
   | ToFilter
   | ToProj
   | ToJoin
+  | SwapConjuncts
+  | JoinToFlatmapFilter
   | FilterPushdown
   | AnnotateCollection
   | PushdownCollection.
@@ -24,6 +30,37 @@ Variant index_choice :=
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
 
+Definition to_proj_transf := fold_command id to_proj_head.
+Definition to_filter_transf := fold_command id to_filter_head.
+Definition to_join_transf := fold_command id to_join_head.
+Definition annotate_collection_transf := fold_command id annotate_collection.
+Definition push_down_collection_transf := fold_command id push_down_collection.
+Definition filter_pushdown_transf := fold_command id filter_pushdown_head.
+Definition swap_if_nil_transf := fold_command id swap_if_nil_head.
+Definition merge_if_transf := fold_command id merge_if_head.
+Definition swap_flatmap_if_transf := fold_command id swap_flatmap_if_head.
+Definition if_nil_into_flatmap_transf := fold_command id if_nil_into_flatmap_head.
+Definition join_to_flatmap_filter_transf := fold_command id join_to_flatmap_filter_head.
+Definition swap_conjuncts_transf := fold_command id swap_conjuncts_head.
+
+Definition mk_basic_transf (f : basic_transf) : command -> command :=
+  match f with
+  | SwapIfNil => swap_if_nil_transf
+  | MergeIf => merge_if_transf
+  | SwapFlatmapIf => swap_flatmap_if_transf
+  | IfNilIntoFlatmap => if_nil_into_flatmap_transf
+  | ToFilter => to_filter_transf
+  | ToProj => to_proj_transf
+  | ToJoin => to_join_transf
+  | SwapConjuncts => swap_conjuncts_transf
+  | JoinToFlatmapFilter => join_to_flatmap_filter_transf
+  | FilterPushdown => filter_pushdown_transf
+  | AnnotateCollection => annotate_collection_transf
+  | PushdownCollection => push_down_collection_transf
+  end.
+
+Definition compose_basic_transfs : list (command -> command) -> command -> command :=
+  fold_right Basics.compose id.
 
 Section WithConcreteMaps.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
@@ -231,26 +268,6 @@ end.
     intros. apply mk_idxs_ok in H; intuition idtac.
     apply compo_idx_ok; auto.
   Qed.
-
-  Definition to_proj_transf := fold_command id to_proj_head.
-  Definition to_filter_transf := fold_command id to_filter_head.
-  Definition to_join_transf := fold_command id to_join_head.
-  Definition annotate_collection_transf := fold_command id annotate_collection.
-  Definition push_down_collection_transf := fold_command id push_down_collection.
-  Definition filter_pushdown_transf := fold_command id filter_pushdown_head.
-
-  Definition mk_basic_transf (f : basic_transf) : command -> command :=
-    match f with
-    | ToFilter => to_filter_transf
-    | ToProj => to_proj_transf
-    | ToJoin => to_join_transf
-    | FilterPushdown => filter_pushdown_transf
-    | AnnotateCollection => annotate_collection_transf
-    | PushdownCollection => push_down_collection_transf
-    end.
-
-  Definition compose_basic_transfs : list (command -> command) -> command -> command :=
-    fold_right Basics.compose id.
 
   Definition mk_idx_use_transfs (l : list (string -> command -> command)) : string -> command -> command :=
     fun tbl => fold_right (fun f g => Basics.compose (f tbl) g) id l.
@@ -571,53 +588,4 @@ end.
     repeat destruct_match_hyp. subst.
     eapply mk_idx_related_transfs_sound; eauto.
   Qed.
-
-
-
-  Section Example2.
-    Definition attr2 := "department-id".
-
-    Definition row_ty2_1 := TRecord (record_sort [("department-id", TInt); ("department-name", TString)]).
-    Definition row_ty2_2 := TRecord (record_sort [("name", TString); ("department-id", TInt); ("feedback", TString)]).
-
-    Definition join_tables : expr := ESort LikeList <[
-          "r1" <- mut "departments" ;
-          "r3" <- ("r2" <- mut "responses" ;
-                   check("r2"["department-id"] == "r1"["department-id"]);
-                   ret "r2") ;
-          ret {"name" : "r3" ["name"],
-                "department" : "r1" ["department-name"],
-                  "feedback" : "r3" ["feedback"]} ]>.
-
-    Definition ex2 := CLetMut (EVar "dpt_tbl") "departments"
-                        (CLetMut (EVar "res_tbl") "responses"
-                           (CForeach (EBinop ORange (EAtom (AInt 0)) (EAtom (AInt 10000))) "i"
-                              (CSeq (CAssign "all_feedback" (EAtom (AString "")))
-                                    (CForeach join_tables "r"
-                                     <{ let "name" = "r"["name"] +++ << EAtom (AString " from ") >> in
-                                        let "dep" = "r"["department"] +++ << EAtom (AString " wrote: ") >> in
-                                        let "feedback" = "r"["feedback"] +++ << EAtom (AString "\n") >> in
-                                        let "line" = "name" +++ "dep" +++ "feedback" in
-                                        set "all_feedback" := mut "all_feedback" +++ "line" }>)))).
-    Definition init_Gstore2 : ctenv := map.put map.empty "all_feedback" TString.
-    Definition init_Genv2 : ctenv := map.put (map.put map.empty "res_tbl" (TList row_ty2_2)) "dpt_tbl" (TList row_ty2_1).
-
-    Definition ex2_heu := AC
-                            [PushdownCollection; AnnotateCollection; FilterPushdown; ToFilter; ToProj; ToJoin]
-                            [[DictIdx attr2]; [DictIdx attr2]] ex2.
-
-    Definition ex2_transformed := apply_optimize_anno ex2_heu init_Gstore2 init_Genv2.
-    (* Compute (typecheck init_Gstore2 init_Genv2 ex2). *)
-    Compute ex2_transformed.
-
-    Theorem ex2_transformed_sem : forall (store env : clocals),
-        locals_wf init_Gstore2 store ->
-        locals_wf init_Genv2 env ->
-        interp_command store env ex2_transformed = interp_command store env ex2.
-    Proof.
-      unfold ex2_transformed, apply_optimize_anno. unfold ex2_heu.
-      eapply transf_sound__preserve_sem;
-      eauto using apply_all_transfs_sound with transf_hints.
-    Qed.
-  End Example2.
 End WithConcreteMaps.

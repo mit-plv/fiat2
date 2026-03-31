@@ -45,7 +45,7 @@ Definition atom_py (a : atom) : string :=
   | ANone _ => "None"
   | AEmptyDict _ => "{}"
   | AEmptyBag _ => "[]"
-  | AEmptySet _ => "set()"
+  | AEmptySet _ => "[]"
   | AUnit => "None"
   end.
 
@@ -76,7 +76,8 @@ Definition binop_py (o:binop) (e1 e2:string) : string :=
   | OCons => paren ("[" ++ e1 ++ "] + " ++ e2)
   | ORange | OWRange => "list(range(" ++ e1 ++ "," ++ e2 ++ "))"
   | OBagInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
-  | OSetInsert => paren ("{" ++ e2 ++ "}" ++ " | " ++ e1)
+  | OSetInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
+  (* | OSetInsert => paren ("{" ++ e2 ++ "}" ++ " | " ++ e1) *)
   | OLookup => e1 ++ ".get(" ++ e2 ++ ")"
   | ODelete =>
       "{k:v for k,v in " ++ e1 ++ ".items() if k != " ++ e2 ++ "}"
@@ -109,8 +110,8 @@ Fixpoint expr_py (e:expr) : string :=
       let c2 := expr_py e2 in
       match tag with
       | LikeSet =>
-          "{" ++ "y for " ++ x ++ " in " ++ c1 ++
-          " for y in " ++ c2 ++ "}"
+          "[" ++ "y for " ++ x ++ " in " ++ c1 ++
+          " for y in " ++ c2 ++ "]"
       | _ =>
           "[" ++ "y for " ++ x ++ " in " ++ c1 ++
           " for y in " ++ c2 ++ "]"
@@ -120,8 +121,8 @@ Fixpoint expr_py (e:expr) : string :=
       let cp := expr_py p in
       match tag with
       | LikeSet =>
-          "{" ++ x ++ " for " ++ x ++ " in " ++ cl ++
-          " if " ++ cp ++ "}"
+          "[" ++ x ++ " for " ++ x ++ " in " ++ cl ++
+          " if " ++ cp ++ "]"
       | _ =>
           "[" ++ x ++ " for " ++ x ++ " in " ++ cl ++
           " if " ++ cp ++ "]"
@@ -131,7 +132,7 @@ Fixpoint expr_py (e:expr) : string :=
       let cr := expr_py r in
       match tag with
       | LikeSet =>
-          "{" ++ cr ++ " for " ++ x ++ " in " ++ cl ++ "}"
+          "[" ++ cr ++ " for " ++ x ++ " in " ++ cl ++ "]"
       | _ =>
           "[" ++ cr ++ " for " ++ x ++ " in " ++ cl ++ "]"
       end
@@ -142,9 +143,9 @@ Fixpoint expr_py (e:expr) : string :=
       let cr := expr_py r in
       match tag with
       | LikeSet =>
-          "{" ++ cr ++ " for " ++ x ++ " in " ++ c1 ++
+          "[" ++ cr ++ " for " ++ x ++ " in " ++ c1 ++
           " for " ++ y ++ " in " ++ c2 ++
-          " if " ++ cp ++ "}"
+          " if " ++ cp ++ "]"
       | _ =>
           "[" ++ cr ++ " for " ++ x ++ " in " ++ c1 ++
           " for " ++ y ++ " in " ++ c2 ++
@@ -165,7 +166,8 @@ Fixpoint expr_py (e:expr) : string :=
   | EBagOf l =>
       "list(" ++ expr_py l ++ ")"
   | ESetOf l =>
-      "set(" ++ expr_py l ++ ")"
+      (* Python can't have set of dicts *)
+      "list(" ++ expr_py l ++ ")"
   | ESort _ l =>
       "sorted(" ++ expr_py l ++ ")"
   | EACFold AGSum e =>
@@ -173,7 +175,7 @@ Fixpoint expr_py (e:expr) : string :=
   | EACFold AGCount e =>
       "len(" ++ expr_py e ++ ")"
   | EACIFold AGMin e =>
-      "min(" ++ expr_py e ++ ")"
+      "optmin(" ++ expr_py e ++ ")"
   | EACIFold AGMax e =>
       "max(" ++ expr_py e ++ ")"
   | EFold e1 e2 v acc e3 =>
@@ -236,4 +238,4 @@ Definition sort_key_py (tbl : string) (sorted_attrs : list string) : string :=
     line 0 ("def " ++ "sorted_" ++ tbl ++ "(l) :") ++
     line 1 ("return sorted(l, key=" ++ tbl ++ "_key)").
 
-Compute sort_key_py "res" (Mergesort.Sectioned.sort String.leb ["name"; "department"; "feedback"]).
+(* Compute sort_key_py "res" (Mergesort.Sectioned.sort String.leb ["name"; "department"; "feedback"]). *)

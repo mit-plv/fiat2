@@ -460,6 +460,48 @@ Section WithMap.
   Qed.
 End WithMap.
 
+Definition swap_conjuncts_head (e : expr) :=
+  match e with
+  | EBinop OAnd p1 p2 =>
+      EBinop OAnd p2 p1
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma swap_conjuncts_head_preserve_ty : forall Gstore,
+      preserve_ty Gstore swap_conjuncts_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    repeat invert_type_of_clear. invert_type_of_op.
+    econstructor; eauto.
+  Qed.
+
+  Lemma swap_conjuncts_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store swap_conjuncts_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
+    invert_type_of_clear. invert_type_of_op_clear.
+    apply_type_sound e1; invert_type_of_value_clear.
+    apply_type_sound e2; invert_type_of_value_clear.
+    cbn. rewrite Bool.andb_comm; reflexivity.
+  Qed.
+
+  Lemma swap_conjuncts_head_sound : expr_transf_sound (locals:=locals) swap_conjuncts_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply swap_conjuncts_head_preserve_ty; auto.
+    eapply swap_conjuncts_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 Definition filter_pushdown_likebag_head (e : expr) :=
   match e with
   | EJoin LikeBag tbl1 tbl2 r1 r2 (EBinop OAnd p1 p) r =>
@@ -770,3 +812,11 @@ End WithMap.
 #[export] Hint Resolve to_proj_head_sound : transf_hints.
 #[export] Hint Resolve to_join_head_sound : transf_hints.
 #[export] Hint Resolve filter_pushdown_head_sound : transf_hints.
+#[export] Hint Resolve swap_if_nil_head_sound : transf_hints.
+#[export] Hint Resolve merge_if_head_sound : transf_hints.
+#[export] Hint Resolve swap_flatmap_if_head_sound : transf_hints.
+#[export] Hint Resolve if_nil_into_flatmap_head_sound : transf_hints.
+#[export] Hint Resolve join_to_flatmap_filter_head_sound : transf_hints.
+#[export] Hint Resolve filter_pushdown_likebag_head_sound : transf_hints.
+#[export] Hint Resolve swap_join_likebag_head_sound : transf_hints.
+#[export] Hint Resolve swap_conjuncts_head_sound : transf_hints.
