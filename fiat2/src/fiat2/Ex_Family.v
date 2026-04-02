@@ -16,14 +16,14 @@ foreach person in queries do
     let mut result := "Grandchildren of " ++ person ++ ":\n" in
     let children =
         sort
-            [ p <- mut parents,
-            q <- mut parents,
+            [ p <- !parents,
+            q <- !parents,
             check(p.parent = person && q.parent = p.child),
             ret q.child ] in
     foreach child in children do
-        result := mut result ++ child ++ "\n"
+        result := !result ++ child ++ "\n"
     end;
-    outputs := mut result :: mut outputs
+    outputs := !result :: !outputs
 end
 *)
 
@@ -31,9 +31,15 @@ Definition prog := (CLetMut (EVar "parents_tbl") "parents" (CForeach (EVar "quer
 
 Definition heuristics :=
   [
-    AC [PushdownCollection; AnnotateCollection; FilterPushdown; ToFilter; ToJoin; ToProj] [[DictIdx "parent"]];
-    AC [AnnotateCollection; FilterPushdown; ToFilter; ToJoin; ToProj] [[DictIdx "parent"]];
-    AC [PushdownCollection; AnnotateCollection; ToFilter; ToJoin; ToProj] [[DictIdx "parent"]]
+    AC
+      [PushdownCollection; AnnotateCollection; JoinToFlatmapFilter; FilterPushdown; ToJoin]
+      [[DictIdx "parent"]];
+    AC
+      [PushdownCollection; AnnotateCollection; FilterPushdown; ToJoin]
+      [[DictIdx "parent"]];
+    AC
+      [PushdownCollection; AnnotateCollection; ToJoin]
+      [[]]
   ].
 
 Definition row_ty_parents :=

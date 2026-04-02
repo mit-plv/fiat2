@@ -1,4 +1,3 @@
-(* Materialized view and incremental computation of an aggregation *)
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.SumAgg fiat2.MinAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf
@@ -9,29 +8,37 @@ From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
 (*
+(* Materialized view and incremental computation of an aggregation *)
+
 let mut orders := orders_tbl in
 
 foreach q in queries do
     let mut output := "" in
     if q.type = 0
     then
-        let total = sum [ o <- mut orders, ret o.value ] in
+        let total = sum [ o <- !orders, ret o.value ] in
         output := "Current total value: " ++
             str(total) ++ "\n"
     else
-        orders := q.new_order :: mut orders;
+        orders := q.new_order :: !orders;
         output := "Added a new order\n"
     end;
-    outputs := mut output :: mut outputs
+    outputs := !output :: !outputs
 end
 *)
 
 Definition prog := (CLetMut (EVar "orders_tbl") "orders" (CForeach (EVar "queries") "q" (CLetMut (EAtom (AString "")) "output" (CSeq (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AInt 0))) (CLet (EFold (EFlatmap LikeList (ELoc "orders") "o" (EBinop OCons (EAccess (EVar "o") "value") (EAtom (ANil None)))) (EAtom (AInt 0)) "_v" "_acc" (EBinop OPlus (EVar "_v") (EVar "_acc"))) "total" (CAssign "output" (EBinop OConcatString (EAtom (AString "Current total value: ")) (EBinop OConcatString (EUnop OIntToString (EVar "total")) (EAtom (AString "\n")))))) (CSeq (CAssign "orders" (EBinop OCons (EAccess (EVar "q") "new_order") (ELoc "orders"))) (CAssign "output" (EAtom (AString "Added a new order\n"))))) (CAssign "outputs" (EBinop OCons (ELoc "output") (ELoc "outputs"))))))).
 
 Definition heuristics := [
-    AC [PushdownCollection; AnnotateCollection; ToProj] [[SumAgg "value"]];
-    AC [AnnotateCollection; ToProj] [[SumAgg "value"]];
-    AC [PushdownCollection; AnnotateCollection] [[SumAgg "value"]]
+  AC
+    [PushdownCollection; AnnotateCollection; ToProj]
+    [[SumAgg "value"]];
+  AC
+    []
+    [[SumAgg "value"]];
+  AC
+    [PushdownCollection; AnnotateCollection; ToProj]
+    [[]]
   ].
 
 Definition row_ty_orders :=

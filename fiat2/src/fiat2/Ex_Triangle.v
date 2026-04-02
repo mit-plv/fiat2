@@ -17,9 +17,9 @@ foreach q in queries do
     if q.type = 0
     then
         let triangles =
-            sort [ e1 <- mut edges,
-                e2 <- mut edges,
-                e3 <- mut edges,
+            sort [ e1 <- !edges,
+                e2 <- !edges,
+                e3 <- !edges,
                 check(e2.src = e1.dst),
                 check(e3.src = e2.dst),
                 check(e1.dst = e3.dst),
@@ -27,13 +27,13 @@ foreach q in queries do
                 ret { p1: e1.src, p2: e2.src, p3: e3.src } ] in
         let mut result := "" in
         foreach tri in triangles do
-            result := mut result ++ str(tri.p1) ++ ", " ++
+            result := !result ++ str(tri.p1) ++ ", " ++
                 str(tri.p2) ++ ", " ++ str(tri.p3) ++ "\n"
         end;
-        outputs := mut result :: mut outputs
+        outputs := !result :: !outputs
     else
-        edges := q.new_edge :: mut edges;
-        outputs := "New edge added successfully\n" :: mut outputs
+        edges := q.new_edge :: !edges;
+        outputs := "New edge added successfully\n" :: !outputs
     end
 end
  *)
@@ -41,10 +41,24 @@ end
 Definition prog := (CLetMut (EVar "edges_tbl") "edges" (CForeach (EVar "queries") "q" (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AInt 0))) (CLet (ESort LikeList (EFlatmap LikeList (ELoc "edges") "e1" (EFlatmap LikeList (ELoc "edges") "e2" (EFlatmap LikeList (ELoc "edges") "e3" (EIf (EBinop OEq (EAccess (EVar "e2") "src") (EAccess (EVar "e1") "dst")) (EIf (EBinop OEq (EAccess (EVar "e3") "src") (EAccess (EVar "e2") "dst")) (EIf (EBinop OEq (EAccess (EVar "e1") "dst") (EAccess (EVar "e3") "dst")) (EIf (EBinop OAnd (EBinop OLess (EAccess (EVar "e1") "src") (EAccess (EVar "e1") "dst")) (EBinop OLess (EAccess (EVar "e2") "src") (EAccess (EVar "e2") "dst"))) (EBinop OCons (ERecord [("p1", (EAccess (EVar "e1") "src")); ("p2", (EAccess (EVar "e2") "src")); ("p3", (EAccess (EVar "e3") "src"))]) (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))))))) "triangles" (CLetMut (EAtom (AString "")) "result" (CSeq (CForeach (EVar "triangles") "tri" (CAssign "result" (EBinop OConcatString (ELoc "result") (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "tri") "p1")) (EBinop OConcatString (EAtom (AString ", ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "tri") "p2")) (EBinop OConcatString (EAtom (AString ", ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "tri") "p3")) (EAtom (AString "\n")))))))))) (CAssign "outputs" (EBinop OCons (ELoc "result") (ELoc "outputs")))))) (CSeq (CAssign "edges" (EBinop OCons (EAccess (EVar "q") "new_edge") (ELoc "edges"))) (CAssign "outputs" (EBinop OCons (EAtom (AString "New edge added successfully\n")) (ELoc "outputs"))))))).
 
 Definition heuristics := [
-    AC [PushdownCollection; AnnotateCollection; ToFilter; ToJoin; ToProj; IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf; SplitIf; SwapIfNil; SwapFlatmapIf; SwapFlatmapIf; SwapFlatmapIf] [[DictIdx "src"; DictIdx "dst"]];
-    AC [AnnotateCollection; ToFilter; ToJoin; ToProj; IfNilIntoFlatmap; SwapFlatmapIf; SplitIf; SwapIfNil; SwapFlatmapIf; SwapFlatmapIf] [[DictIdx "src"; DictIdx "dst"]];
-    AC [PushdownCollection; AnnotateCollection; ToFilter; ToJoin; ToProj; IfNilIntoFlatmap; SwapFlatmapIf; SplitIf; SwapIfNil; SwapFlatmapIf] [[DictIdx "src"; DictIdx "dst"]];
-    AC [PushdownCollection; AnnotateCollection; ToFilter; ToJoin; ToProj; IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf; SplitIf; SwapIfNil; IfNilIntoFlatmap (* This one is manually added*); SwapFlatmapIf; SwapFlatmapIf; SwapFlatmapIf] [[DictIdx "src"; DictIdx "dst"]]
+    AC
+      [PushdownCollection; AnnotateCollection; ToProj; ToFilter;
+       IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf;
+       SplitIf; SwapIfNil;
+       IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf]
+      [[DictIdx "src"]];
+    AC
+      [PushdownCollection; AnnotateCollection; ToProj; ToFilter;
+       IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf; SwapFlatmapIf;
+       SplitIf; SwapIfNil;
+       IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf; SwapFlatmapIf]
+      [[DictIdx "src"]];
+    AC
+      [PushdownCollection; AnnotateCollection; ToFilter;
+       IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf;
+       SplitIf; SwapIfNil;
+       IfNilIntoFlatmap; SwapFlatmapIf; SwapFlatmapIf]
+      [[DictIdx "src"]]
   ].
 
 Definition row_ty_edges :=

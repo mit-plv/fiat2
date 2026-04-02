@@ -11,40 +11,47 @@ Import ListNotations.
 let mut edges := edges_tbl in
 let mut visited := [ {node: start_node, depth: 0} ] in
 let mut frontier := [ start_node ] in
-let mut next_frontier := [] in
+let mut next_frontier := []<int> in
 let mut cur_depth := 1 in
 
-foreach i in range(0, len(edges)) do
-  foreach cur_node in mut frontier do
+foreach i in range(0, len(edges_tbl)) do
+  foreach cur_node in !frontier do
     let cur_children =
-      sort [ e <- mut edges,
+      sort [ e <- !edges,
         check(e.src = cur_node),
-        check([n <- visited, check(n.node = e.dst), ret ()] = []),
+        check([n <- !visited, check(n.node = e.dst), ret ()] = []),
         ret e.dst ] in
 
     foreach n in cur_children do
-      visited := {node: n, depth: cur_depth} :: mut visited;
-      next_frontier := n :: mut next_frontier
+      visited := {node: n, depth: !cur_depth} :: !visited;
+      next_frontier := n :: !next_frontier
     end
   end;
 
-  frontier := mut next_frontier;
-  next_frontier := [];
-  cur_depth := mut cur_depth + 1
+  frontier := !next_frontier;
+  next_frontier := []<int>;
+  cur_depth := !cur_depth + 1
 end;
 
-foreach n in visited do
-  output := "Node " ++ n.node ++ " at depth " ++ str(n.depth) ++ "\n" ++ mut output
+foreach n in sort(!visited) do
+  outputs := ("Node " ++ str(n.node) ++ " at depth " ++
+    str(n.depth) ++ "\n") :: !outputs
 end
 *)
 
 Definition prog := (CLetMut (EVar "edges_tbl") "edges" (CLetMut (EBinop OCons (ERecord [("node", (EVar "start_node")); ("depth", (EAtom (AInt 0)))]) (EAtom (ANil None))) "visited" (CLetMut (EBinop OCons (EVar "start_node") (EAtom (ANil None))) "frontier" (CLetMut (EAtom (ANil (Some TInt))) "next_frontier" (CLetMut (EAtom (AInt 1)) "cur_depth" (CSeq (CForeach (EBinop ORange (EAtom (AInt 0)) (EUnop OLength (EVar "edges_tbl"))) "i" (CSeq (CForeach (ELoc "frontier") "cur_node" (CLet (ESort LikeList (EFlatmap LikeList (ELoc "edges") "e" (EIf (EBinop OEq (EAccess (EVar "e") "src") (EVar "cur_node")) (EIf (EBinop OEq (EFlatmap LikeList (ELoc "visited") "n" (EIf (EBinop OEq (EAccess (EVar "n") "node") (EAccess (EVar "e") "dst")) (EBinop OCons (EAtom AUnit) (EAtom (ANil None))) (EAtom (ANil None)))) (EAtom (ANil None))) (EBinop OCons (EAccess (EVar "e") "dst") (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))))) "cur_children" (CForeach (EVar "cur_children") "n" (CSeq (CAssign "visited" (EBinop OCons (ERecord [("node", (EVar "n")); ("depth", (ELoc "cur_depth"))]) (ELoc "visited"))) (CAssign "next_frontier" (EBinop OCons (EVar "n") (ELoc "next_frontier"))))))) (CSeq (CAssign "frontier" (ELoc "next_frontier")) (CSeq (CAssign "next_frontier" (EAtom (ANil (Some TInt)))) (CAssign "cur_depth" (EBinop OPlus (ELoc "cur_depth") (EAtom (AInt 1)))))))) (CForeach (ESort LikeList (ELoc "visited")) "n" (CAssign "outputs" (EBinop OCons (EBinop OConcatString (EAtom (AString "Node ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "n") "node")) (EBinop OConcatString (EAtom (AString " at depth ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "n") "depth")) (EAtom (AString "\n")))))) (ELoc "outputs")))))))))).
 
-Definition heuristics :=
-  [
-    AC [PushdownCollection; AnnotateCollection; ToJoin; ToFilter; IfNilIntoFlatmap; SwapConjuncts] [[DictIdx "src"]; [DictIdx "node"]];
-    AC [AnnotateCollection; ToJoin; ToFilter; IfNilIntoFlatmap] [[DictIdx "src"]; [DictIdx "node"]];
-    AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap] [[DictIdx "src"]; [DictIdx "node"]]
+Definition heuristics :=[
+    AC
+      [PushdownCollection; AnnotateCollection; ToProj; ToFilter;
+       IfNilIntoFlatmap; ToProj; ToFilter; IfNilIntoFlatmap]
+      [[DictIdx "src"]; [DictIdx "node"]];
+    AC
+      [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap]
+      [[DictIdx "src"]; [DictIdx "node"]];
+    AC
+      [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap]
+      [[DictIdx "src"]; []]
   ].
 
 Definition row_ty_edges :=

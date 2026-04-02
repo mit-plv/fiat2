@@ -1,4 +1,3 @@
-(* Join on foreign key *)
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.SumAgg fiat2.MinAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.RelTransf fiat2.IndexTransf
@@ -9,29 +8,40 @@ From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
 (*
+(* Join on foreign key *)
+
+(* id is the primary key of dept_tbl
+   dept_id is a foreign key of emp_tbl
+*)
+
 let mut employees := emp_tbl in
 let mut departments := dept_tbl in
 
 foreach i in range(0, iters) do
+    let mut output := "" in
     let result =
-    sort [ d <- mut departments,
-        e <- mut employees,
+    sort [ d <- !departments,
+        e <- !employees,
         check(e.dept_id = d.id),
         ret {name: e.name, dept: d.name} ] in
 
     foreach r in result do
-        output := mut output ++ r.name ++ " is in " ++ r.dept ++ "\n"
+        output := !output ++ r.name ++ " is in " ++ r.dept ++ "\n"
     end;
-    output := mut output ++ "\n"
+    outputs := !output :: !outputs
 end
 *)
 
 Definition prog := (CLetMut (EVar "emp_tbl") "employees" (CLetMut (EVar "dept_tbl") "departments" (CForeach (EBinop ORange (EAtom (AInt 0)) (EVar "iters")) "i" (CLetMut (EAtom (AString "")) "output" (CLet (ESort LikeList (EFlatmap LikeList (ELoc "departments") "d" (EFlatmap LikeList (ELoc "employees") "e" (EIf (EBinop OEq (EAccess (EVar "e") "dept_id") (EAccess (EVar "d") "id")) (EBinop OCons (ERecord [("name", (EAccess (EVar "e") "name")); ("dept", (EAccess (EVar "d") "name"))]) (EAtom (ANil None))) (EAtom (ANil None)))))) "result" (CSeq (CForeach (EVar "result") "r" (CAssign "output" (EBinop OConcatString (ELoc "output") (EBinop OConcatString (EAccess (EVar "r") "name") (EBinop OConcatString (EAtom (AString " is in ")) (EBinop OConcatString (EAccess (EVar "r") "dept") (EAtom (AString "\n")))))))) (CAssign "outputs" (EBinop OCons (ELoc "output") (ELoc "outputs"))))))))).
 
 Definition heuristics := [
-    AC [PushdownCollection; AnnotateCollection; JoinToFlatmapFilter; FilterPushdown; SwapConjuncts; ToFilter; ToProj; ToJoin] [[DictIdx "dept_id"]; [DictIdx "id"]];
-    AC [PushdownCollection; AnnotateCollection; FilterPushdown; ToFilter; ToProj; ToJoin] [[DictIdx "dept_id"]; [DictIdx "id"]];
-    AC [PushdownCollection; AnnotateCollection; JoinToFlatmapFilter; ToFilter; ToProj; ToJoin] [[DictIdx "dept_id"]; [DictIdx "id"]]].
+    AC
+      [PushdownCollection; AnnotateCollection; ToProj; JoinToFlatmapFilter; ToJoin]
+      [[DictIdx "dept_id"]; []];
+    AC
+      [PushdownCollection; AnnotateCollection; ToJoin]
+      [[]; []]
+  ].
 
 (* Row types *)
 Definition row_ty_employees :=
