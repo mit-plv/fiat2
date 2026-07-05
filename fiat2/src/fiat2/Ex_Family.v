@@ -29,17 +29,15 @@ end
 
 Definition prog := (CLetMut (EVar "parents_tbl") "parents" (CForeach (EVar "queries") "person" (CLetMut (EBinop OConcatString (EAtom (AString "Grandchildren of ")) (EBinop OConcatString (EVar "person") (EAtom (AString ":\n")))) "result" (CLet (ESort LikeList (EFlatmap LikeList (ELoc "parents") "p" (EFlatmap LikeList (ELoc "parents") "q" (EIf (EBinop OAnd (EBinop OEq (EAccess (EVar "p") "parent") (EVar "person")) (EBinop OEq (EAccess (EVar "q") "parent") (EAccess (EVar "p") "child"))) (EBinop OCons (EAccess (EVar "q") "child") (EAtom (ANil None))) (EAtom (ANil None)))))) "children" (CSeq (CForeach (EVar "children") "child" (CAssign "result" (EBinop OConcatString (ELoc "result") (EBinop OConcatString (EVar "child") (EAtom (AString "\n")))))) (CAssign "outputs" (EBinop OCons (ELoc "result") (ELoc "outputs")))))))).
 
+(* Claude Sonnet 4.6 *)
 Definition heuristics :=
-  [
-    AC
-      [PushdownCollection; AnnotateCollection; JoinToFlatmapFilter; FilterPushdown; ToJoin]
-      [[DictIdx "parent"]];
-    AC
-      [PushdownCollection; AnnotateCollection; FilterPushdown; ToJoin]
-      [[DictIdx "parent"]];
-    AC
-      [PushdownCollection; AnnotateCollection; ToJoin]
-      [[]]
+  [ AC [PushdownCollection; AnnotateCollection;
+        ToProj; ToFilter; IfNilIntoFlatmap; ToFilter; IfNilIntoFlatmap;
+        SwapFlatmapIf; SplitIf]
+      [[DictIdx "parent"]]
+    ; AC [PushdownCollection; AnnotateCollection;
+      ToProj; JoinToFlatmapFilter; FilterPushdown; ToJoin]
+     [[DictIdx "parent"]]
   ].
 
 Definition row_ty_parents :=

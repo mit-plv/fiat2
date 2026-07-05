@@ -41,18 +41,16 @@ end
 
 Definition prog := (CLetMut (EVar "edges_tbl") "edges" (CLetMut (EBinop OCons (ERecord [("node", (EVar "start_node")); ("depth", (EAtom (AInt 0)))]) (EAtom (ANil None))) "visited" (CLetMut (EBinop OCons (EVar "start_node") (EAtom (ANil None))) "frontier" (CLetMut (EAtom (ANil (Some TInt))) "next_frontier" (CLetMut (EAtom (AInt 1)) "cur_depth" (CSeq (CForeach (EBinop ORange (EAtom (AInt 0)) (EUnop OLength (EVar "edges_tbl"))) "i" (CSeq (CForeach (ELoc "frontier") "cur_node" (CLet (ESort LikeList (EFlatmap LikeList (ELoc "edges") "e" (EIf (EBinop OEq (EAccess (EVar "e") "src") (EVar "cur_node")) (EIf (EBinop OEq (EFlatmap LikeList (ELoc "visited") "n" (EIf (EBinop OEq (EAccess (EVar "n") "node") (EAccess (EVar "e") "dst")) (EBinop OCons (EAtom AUnit) (EAtom (ANil None))) (EAtom (ANil None)))) (EAtom (ANil None))) (EBinop OCons (EAccess (EVar "e") "dst") (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))))) "cur_children" (CForeach (EVar "cur_children") "n" (CSeq (CAssign "visited" (EBinop OCons (ERecord [("node", (EVar "n")); ("depth", (ELoc "cur_depth"))]) (ELoc "visited"))) (CAssign "next_frontier" (EBinop OCons (EVar "n") (ELoc "next_frontier"))))))) (CSeq (CAssign "frontier" (ELoc "next_frontier")) (CSeq (CAssign "next_frontier" (EAtom (ANil (Some TInt)))) (CAssign "cur_depth" (EBinop OPlus (ELoc "cur_depth") (EAtom (AInt 1)))))))) (CForeach (ESort LikeList (ELoc "visited")) "n" (CAssign "outputs" (EBinop OCons (EBinop OConcatString (EAtom (AString "Node ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "n") "node")) (EBinop OConcatString (EAtom (AString " at depth ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "n") "depth")) (EAtom (AString "\n")))))) (ELoc "outputs")))))))))).
 
-Definition heuristics :=[
-    AC
-      [PushdownCollection; AnnotateCollection; ToProj; ToFilter;
-       IfNilIntoFlatmap; ToProj; ToFilter; IfNilIntoFlatmap]
-      [[DictIdx "src"]; [DictIdx "node"]];
-    AC
-      [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap]
-      [[DictIdx "src"]; [DictIdx "node"]];
-    AC
-      [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap]
-      [[DictIdx "src"]; []]
-  ].
+(* Claude Sonnet 4.6 *)
+Definition heuristics :=
+[ AC [PushdownCollection; AnnotateCollection; ToProj; ToFilter;
+      IfNilIntoFlatmap; IfNilIntoFlatmap]
+     [[DictIdx "src"]; [DictIdx "node"]]
+; AC [PushdownCollection; AnnotateCollection;
+      ToProj; ToFilter; IfNilIntoFlatmap;
+      ToProj; ToFilter; IfNilIntoFlatmap; IfNilIntoFlatmap]
+     [[DictIdx "src"]; [DictIdx "node"]]
+].
 
 Definition row_ty_edges :=
   TRecord (record_sort [("src", TInt); ("dst", TInt)]).

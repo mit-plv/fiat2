@@ -53,17 +53,10 @@ end
 
 Definition prog := (CLetMut (EVar "inventory_tbl") "inventory" (CLetMut (EVar "orders_tbl") "orders" (CForeach (EVar "queries") "q" (CLetMut (EAtom (AString "")) "new_log" (CSeq (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AString "add order"))) (CLet (ESort LikeList (EFlatmap LikeList (ELoc "inventory") "item" (EIf (EBinop OEq (EAccess (EVar "item") "id") (EAccess (EVar "q") "new_order_id")) (EBinop OCons (EAccess (EVar "item") "price") (EAtom (ANil None))) (EAtom (ANil None))))) "item_price" (CSeq (CForeach (EVar "item_price") "price" (CAssign "orders" (EBinop OCons (ERecord [("id", (EAccess (EVar "q") "new_order_id")); ("price", (EVar "price"))]) (ELoc "orders")))) (CAssign "new_log" (EBinop OConcatString (EAtom (AString "Added order: ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "q") "new_order_id")) (EAtom (AString "\n"))))))) (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AString "discount status"))) (CLet (EFold (EFlatmap LikeList (ELoc "orders") "item" (EBinop OCons (EAccess (EVar "item") "price") (EAtom (ANil None)))) (EAtom (AInt 0)) "_v" "_acc" (EBinop OPlus (EVar "_v") (EVar "_acc"))) "total" (CIf (EBinop OLess (EVar "total") (EAtom (AInt 300))) (CLet (EBinop OMinus (EAtom (AInt 300)) (EVar "total")) "diff" (CAssign "new_log" (EBinop OConcatString (EAtom (AString "Spend another ")) (EBinop OConcatString (EUnop OIntToString (EVar "diff")) (EAtom (AString " dollars to get discount\n")))))) (CLet (EFold (EFlatmap LikeList (ELoc "orders") "item" (EBinop OCons (EAccess (EVar "item") "price") (EAtom (ANil None)))) (EAtom (ANone (Some TInt))) "_v" "_acc" (EOptMatch (EVar "_acc") (EUnop OSome (EVar "_v")) "_x" (EIf (EBinop OLess (EVar "_v") (EVar "_x")) (EUnop OSome (EVar "_v")) (EVar "_acc")))) "min_price_opt" (CAssign "new_log" (EOptMatch (EVar "min_price_opt") (EAtom (AString "Minimum price undefined: No orders\n")) "min_price" (EBinop OConcatString (EAtom (AString "Qualified for a discount of ")) (EBinop OConcatString (EUnop OIntToString (EVar "min_price")) (EAtom (AString " dollars\n"))))))))) (CAssign "new_log" (EAtom (AString "Invalid q\n"))))) (CAssign "log" (EBinop OCons (ELoc "new_log") (ELoc "log")))))))).
 
+(* Claude Sonnet 4.6 *)
 Definition heuristics :=
-  [
-    AC
-      [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap; ToProj]
-      [[DictIdx "id"]; [SumAgg "price"; MinAgg "price"]];
-    AC
-      [PushdownCollection; AnnotateCollection; ToProj]
-      [[DictIdx "id"]; [SumAgg "price"; MinAgg "price"]];
-    AC
-      [PushdownCollection; AnnotateCollection; ToProj]
-      [[]; [SumAgg "price"; MinAgg "price"]]
+  [ AC [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap]
+      [[DictIdx "id"]; [SumAgg "price"; MinAgg "price"]]
   ].
 
 Definition row_ty_inventory :=

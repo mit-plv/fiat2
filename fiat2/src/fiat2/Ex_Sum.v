@@ -29,16 +29,10 @@ end
 
 Definition prog := (CLetMut (EVar "orders_tbl") "orders" (CForeach (EVar "queries") "q" (CLetMut (EAtom (AString "")) "output" (CSeq (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AInt 0))) (CLet (EFold (EFlatmap LikeList (ELoc "orders") "o" (EBinop OCons (EAccess (EVar "o") "value") (EAtom (ANil None)))) (EAtom (AInt 0)) "_v" "_acc" (EBinop OPlus (EVar "_v") (EVar "_acc"))) "total" (CAssign "output" (EBinop OConcatString (EAtom (AString "Current total value: ")) (EBinop OConcatString (EUnop OIntToString (EVar "total")) (EAtom (AString "\n")))))) (CSeq (CAssign "orders" (EBinop OCons (EAccess (EVar "q") "new_order") (ELoc "orders"))) (CAssign "output" (EAtom (AString "Added a new order\n"))))) (CAssign "outputs" (EBinop OCons (ELoc "output") (ELoc "outputs"))))))).
 
-Definition heuristics := [
-  AC
-    [PushdownCollection; AnnotateCollection; ToProj]
-    [[SumAgg "value"]];
-  AC
-    []
-    [[SumAgg "value"]];
-  AC
-    [PushdownCollection; AnnotateCollection; ToProj]
-    [[]]
+(* Claude Sonnet 4.6 *)
+Definition heuristics :=
+  [ AC [PushdownCollection; AnnotateCollection; ToProj]
+      [[SumAgg "value"]]
   ].
 
 Definition row_ty_orders :=

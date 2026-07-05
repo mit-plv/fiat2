@@ -215,6 +215,10 @@ Fixpoint command_py (n:nat) (c:command) : string :=
       (* identical in Python; mutation allowed *)
       line n (x ++ " = " ++ expr_py e) ++
       command_py n c'
+  | CAssign x (EBinop OCons e1 (ELoc x1)) =>
+      if String.eqb x x1
+      then line n (x ++ ".insert(0, " ++ expr_py e1 ++ ")")
+      else line n (x ++ " = " ++ expr_py (EBinop OCons e1 (ELoc x1)))
   | CAssign x e =>
       line n (x ++ " = " ++ expr_py e)
   | CIf e c1 c2 =>
