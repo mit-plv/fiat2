@@ -1,6 +1,6 @@
-Require Import String ZArith List.
+From Stdlib Require Import String ZArith List.
 
-(* conquord types *)
+(* Conquord types *)
 Inductive type : Type :=
 | TWord
 | TInt

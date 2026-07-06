@@ -1,6 +1,6 @@
-Require Import ZArith String List.
+From Stdlib Require Import ZArith String List Sorted Permutation.
 Require Import coqutil.Word.Interface coqutil.Word.Properties coqutil.Datatypes.List coqutil.Datatypes.Result.
-Require Import Std.Sorting.Mergesort Sorted Permutation.
+Require Import Std.Sorting.Mergesort.
 
 Section WithWord.
   Context {width: Z} {word: word.word width}.
@@ -181,7 +181,7 @@ Section WithWord.
   Lemma compare_antisym__leb_total : forall (A : Type) (cmp : A -> A -> comparison), is_antisym cmp -> is_total (leb_from_compare cmp).
   Proof.
     unfold is_antisym, is_total, leb_from_compare.
-    intros A cmp H x y. rewrite H; destruct (cmp y x); intuition.
+    intros A cmp H x y. rewrite H; destruct (cmp y x); intuition idtac.
   Qed.
 
   Lemma string_compare_refl : forall s : string, String.compare s s = Eq.
@@ -219,8 +219,8 @@ Section WithWord.
     - repeat match goal with
              | |- context[word.eqb ?a ?b] => destruct (word.eqb_spec a b)
              | |- context[word.ltu ?a ?b] => destruct (word.ltu_spec a b)
-             | H1: ?a <> ?b, H2: ?b = ?a |- _ => symmetry in H2; intuition
-             end; auto; intuition.
+             | H1: ?a <> ?b, H2: ?b = ?a |- _ => symmetry in H2; intuition idtac
+             end; auto; intuition idtac.
       + exfalso. apply (Z.lt_asymm _ _ H1). assumption.
       + exfalso. apply H. apply (Z.le_antisymm _ _ H1) in H2.
         rewrite <-word.of_Z_unsigned. rewrite <-word.of_Z_unsigned at 1. congruence.
@@ -318,7 +318,7 @@ Section WithWord.
       - eapply record_compare_Eq_eq; eauto.
       - unfold dict_compare in *. eapply list_compare_Eq_eq; eauto.
         rewrite Forall_forall; intros. eapply List.Forall_In in H; eauto.
-        eapply pair_compare_Eq_eq; eauto; intuition.
+        eapply pair_compare_Eq_eq; eauto; intuition idtac.
       - eapply bag_compare_Eq_eq; eauto.
       - eapply list_compare_Eq_eq; eauto.
   Qed.
@@ -464,7 +464,7 @@ Section WithWord.
   Proof.
     unfold RelationClasses.Transitive. unfold value_leb, leb_from_compare.
     intros x y z.
-    destruct (value_compare x y) eqn:E1, (value_compare y z) eqn:E2, (value_compare x z) eqn:E3; intuition.
+    destruct (value_compare x y) eqn:E1, (value_compare y z) eqn:E2, (value_compare x z) eqn:E3; intuition idtac.
     all: repeat match goal with H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H end; subst.
     all: try congruence.
     - rewrite value_compare_refl in E3; discriminate.
@@ -535,7 +535,7 @@ Section WithWord.
     Lemma record_entry_leb_trans : RelationClasses.Transitive record_entry_leb.
     Proof.
       unfold RelationClasses.Transitive. destruct x, y, z. unfold record_entry_leb. simpl.
-      unfold String.leb. destruct (String.compare s s0) eqn:E1, (String.compare s0 s1) eqn:E2; intuition.
+      unfold String.leb. destruct (String.compare s s0) eqn:E1, (String.compare s0 s1) eqn:E2; intuition auto with *.
       - apply compare_eq_iff in E2. subst. rewrite E1; easy.
       - apply compare_eq_iff in E1. subst. rewrite E2; easy.
       - apply compare_eq_iff in E2. subst. rewrite E1; easy.
@@ -583,7 +583,7 @@ Section WithWord.
            | |- context[match ?x with _ => _ end] =>
                let E := fresh "E" in
                destruct x eqn:E
-           end; intuition.
+           end; intuition idtac.
     all: try apply value_compare_Eq_eq in E; try apply value_compare_Eq_eq in E0; subst;
       try congruence.
     - rewrite value_compare_refl in E1. discriminate.
@@ -626,7 +626,7 @@ Section WithWord.
            | |- context[match ?x with _ => _ end] =>
                let E := fresh "E" in
                destruct x eqn:E
-           end; intuition.
+           end; intuition idtac.
     all: try apply value_compare_Eq_eq in E; try apply value_compare_Eq_eq in E0; subst;
       try congruence.
     - rewrite value_compare_refl in E1. discriminate.

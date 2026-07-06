@@ -1,7 +1,7 @@
 Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface
-conquord.CollectionTransf conquord.DictIndexImpl conquord.SumAgg conquord.TransfUtils conquord.RelTransf conquord.IndexTransf conquord.TransfSound conquord.Utils conquord.Substitute.
+  conquord.CollectionTransf conquord.DictIndexImpl conquord.SumAgg conquord.TransfUtils conquord.RelTransf conquord.IndexTransf conquord.TransfSound conquord.Utils conquord.Substitute conquord.Notations.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith.
+From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
 Section ConcreteExample.
@@ -72,8 +72,7 @@ Section ConcreteExample.
     repeat (apply_transf_sound_lemmas; eauto 6 with transf_hints).
   Qed.
 
-  Require Import conquord.Notations.
-  Open Scope conquord_scope.
+  Local Open Scope conquord_scope.
 
   Definition row_ty := TRecord (record_sort [("name", TString); ("department", TString); ("feedback", TString); ("salary", TInt)]).
   (* two arbitrary well_typed rows *)

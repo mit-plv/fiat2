@@ -1,6 +1,6 @@
 default_target: all
 
-.PHONY: update_all clone_all bedrock2_noex conquord all clean_bedrock2 clean_conquord clean clean_deps clean_all install_bedrock2_noex install_conquord install
+.PHONY: update_all clone_all coqutil clean_coqutil install_coqutil conquord all clean_conquord clean clean_deps clean_all install_conquord install
 
 clone_all:
 	git submodule update --init --recursive
@@ -13,18 +13,18 @@ ABS_ROOT_DIR:=$(abspath $(dir $(REL_PATH_OF_THIS_MAKEFILE)))
 # use cygpath -m because Coq on Windows cannot handle cygwin paths
 ABS_ROOT_DIR:=$(shell cygpath -m '$(ABS_ROOT_DIR)' 2>/dev/null || echo '$(ABS_ROOT_DIR)')
 
-BEDROCK2_DIR ?= $(ABS_ROOT_DIR)/bedrock2/
-export BEDROCK2_DIR
-SORTING_DIR ?= $(ABS_ROOT_DIR)/coq-stdlib-edits/
+COQUTIL_DIR ?= $(ABS_ROOT_DIR)/deps/coqutil/
+export COQUTIL_DIR
+SORTING_DIR ?= $(ABS_ROOT_DIR)/deps/coq-stdlib-edits/
 
-bedrock2_noex:
-	$(MAKE) -C $(BEDROCK2_DIR) bedrock2_noex
+coqutil:
+	$(MAKE) -C $(COQUTIL_DIR)
 
-clean_bedrock2:
-	$(MAKE) -C $(BEDROCK2_DIR) clean_bedrock2
+clean_coqutil:
+	$(MAKE) -C $(COQUTIL_DIR) clean
 
-install_bedrock2_noex:
-	$(MAKE) -C $(BEDROCK2_DIR) install_bedrock2_noex
+install_coqutil:
+	$(MAKE) -C $(COQUTIL_DIR) install
 
 sorting:
 	$(MAKE) -C $(SORTING_DIR)
@@ -32,7 +32,7 @@ sorting:
 clean_sorting:
 	$(MAKE) -C $(SORTING_DIR) clean
 
-conquord: bedrock2_noex sorting
+conquord: deps
 	$(MAKE) -C $(ABS_ROOT_DIR)/conquord
 
 clean_conquord:
@@ -41,12 +41,14 @@ clean_conquord:
 install_conquord:
 	$(MAKE) -C $(ABS_ROOT_DIR)/conquord install
 
-all: bedrock2_noex conquord
+deps: coqutil sorting
+
+all: deps conquord
 
 clean: clean_conquord
 
-clean_deps: clean_bedrock2 clean_sorting
+clean_deps: clean_coqutil clean_sorting
 
 clean_all: clean_deps clean
 
-install: install_bedrock2_noex install_conquord
+install: install_coqutil install_conquord

@@ -1,7 +1,7 @@
 Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface
   conquord.CollectionTransf conquord.DictIndexImpl conquord.SumAgg conquord.MinAgg conquord.BitmapIndex conquord.TransfUtils conquord.RelTransf conquord.IndexTransf conquord.TransfSound conquord.Utils conquord.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith.
+From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
 Require Import conquord.Notations.

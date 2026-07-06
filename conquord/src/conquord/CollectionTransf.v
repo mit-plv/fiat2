@@ -1,6 +1,6 @@
 Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.Utils conquord.TransfUtils conquord.TransfSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
-Require Import List String ZArith Permutation Sorted.
+From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
 Definition annotate_collection (e : expr) : expr :=
@@ -16,6 +16,8 @@ Definition annotate_collection (e : expr) : expr :=
       if (all_neqb [v0; acc0; x0] && all_eqb [(v0, [v1; v2; v3]); (acc0, [acc1; acc2]); (x0, [x1])])%bool
       then EACIFold AGMin (ESetOf l)
       else e
+  | EBinop OEq e (EAtom (ANil t)) =>
+      EBinop OEq (EBagOf e) (EAtom (AEmptyBag t))
   | _ => e
   end.
 
@@ -26,6 +28,7 @@ Fixpoint bag_of (e : expr) : expr :=
   | EJoin LikeList e1 e2 x y p e3 => EJoin LikeBag (bag_of e1) (bag_of e2) x y p e3
   | EProj LikeList e1 x e2 => EProj LikeBag (bag_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OBagInsert (bag_of e2) e1
+  | EIf e1 e2 e3 => EIf e1 (bag_of e2) (bag_of e3)
   | _ => EBagOf e
   end.
 
@@ -255,6 +258,9 @@ Section WithWord.
       all: try now (econstructor; eauto).
       1:{ cbn. case_match; try now (econstructor; eauto).
           invert_type_of_op. repeat econstructor; eauto. }
+      1:{ cbn; repeat case_match; try now (econstructor; eauto).
+          repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+          invert_type_of_atom; repeat (econstructor; eauto). }
       1:{ cbn; repeat case_match; try now (econstructor; eauto);
           repeat invert_type_of_clear; repeat invert_type_of_op_clear;
           rewrite !Bool.andb_true_iff, !Bool.negb_true_iff,
@@ -263,6 +269,18 @@ Section WithWord.
           repeat (repeat clear_refl; do_injection);
           repeat econstructor; eauto. }
       1:{ cbn. repeat econstructor; eauto. }
+    Qed.
+
+    Lemma bag_insert_not_nil : forall (v : value) l, bag_insert v l <> nil.
+    Proof.
+      induction l; cbn; repeat case_match; discriminate.
+    Qed.
+
+    Lemma list_to_bag_nil : forall (l : list value), list_to_bag l = [] -> l = [].
+    Proof.
+      induction l; auto.
+      cbn. intros. apply bag_insert_not_nil in H.
+      intuition fail.
     Qed.
 
     Lemma bag_to_list_preserve_SSorted : forall (b : list (value * nat)),
@@ -296,6 +314,25 @@ Section WithWord.
           induction l; cbn; auto.
           rewrite IHl. f_equal. rewrite Zpos_P_of_succ_nat. case_match; auto.
           destruct p; auto. }
+      1:{ repeat (case_match; auto; cbn; []).
+          f_equal.
+          lazymatch goal with
+            |- _ = ?RHS =>
+              destruct RHS eqn:E_list
+          end.
+          1:{ apply value_eqb_eq in E_list.
+              do_injection; reflexivity. }
+          1:{ apply value_eqb_neq in E_list.
+          lazymatch goal with
+            |- ?LHS = _ =>
+              destruct LHS eqn:E_bag
+          end; try congruence.
+          apply value_eqb_eq in E_bag.
+          do_injection.
+          lazymatch goal with
+            H: list_to_bag _ = nil |- _ =>
+              apply list_to_bag_nil in H
+          end; congruence. } }
       1:{ repeat (case_match; auto; cbn; []).
           case_match; auto; cbn; repeat (case_match; auto; cbn; []);
           rewrite !Bool.andb_true_iff, !Bool.negb_true_iff, !eqb_eq, !eqb_neq in *;
@@ -361,9 +398,9 @@ Section WithWord.
         type_of Gstore Genv (bag_of e) (TBag t).
     Proof.
       induction e using expr_IH; cbn; intros.
-      all: try now (econstructor; eauto).
+      all: try now (invert_type_of; econstructor; eauto).
       all: case_match; invert_type_of; try invert_type_of_op;
-        repeat (econstructor; eauto).
+                    repeat (econstructor; eauto).
     Qed.
 
     Definition VBag_of (v : value) :=
@@ -381,6 +418,9 @@ Section WithWord.
     Proof.
       induction 1; unfold VBag_of in *; auto; intros.
       1:{ cbn. case_match; auto; cbn. rewrite IHtype_of2; auto.
+          case_match; auto. }
+      1:{ cbn. apply_type_sound e1.
+          invert_type_of_value_clear.
           case_match; auto. }
       1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
           apply Permutation_list_to_bag_eq. apply Utils.Permutation_flat_map; intros;

@@ -1,5 +1,5 @@
 Require Import conquord.Language.
-Require Import String ZArith.
+From Stdlib Require Import String ZArith.
 
 Declare Scope conquord_scope.
 

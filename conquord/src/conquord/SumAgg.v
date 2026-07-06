@@ -1,6 +1,6 @@
 Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface conquord.CollectionTransf conquord.Utils conquord.TransfSound conquord.TransfUtils conquord.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith Permutation Sorted.
+From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
 Open Scope string_scope.

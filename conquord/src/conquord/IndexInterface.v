@@ -1,6 +1,6 @@
 Require Import conquord.Language conquord.Value conquord.Interpret conquord.TypeSystem conquord.TypeSound.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
-Require Import List String ZArith.
+From Stdlib Require Import List String ZArith.
 
 Class index :=
   mk {

@@ -1,7 +1,7 @@
 Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.IndexInterface
   conquord.Utils conquord.TransfSound conquord.Substitute conquord.TransfUtils.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-Require Import List String ZArith Sorted Permutation.
+From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
 Lemma map_fst_map_triple : forall A B C D (l : list (A * B * C)) (f : B -> D),
@@ -89,7 +89,7 @@ Section compo_idx.
         induction H; cbn in *; auto.
         repeat invert_Forall; invert_NoDup.
         constructor; repeat case_match; auto.
-        cbn; auto using idx_ty_wf. }
+        cbn; apply idx_ty_wf; auto. }
   Qed.
 
   Lemma NoDup_In_access_record : forall A (l : list (string * A)),
@@ -167,6 +167,39 @@ Section WithMap.
     Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
     Notation value := (value (width:=width)).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+    Definition apply_below_letmut f (Gstore Genv : tenv) (c : command) :=
+      match c with
+      | CLetMut e x c' =>
+          match synthesize_expr Gstore Genv e with
+          | Success (t, _) => CLetMut e x (f (map.put Gstore x t) Genv c')
+          | Failure _ => c
+          end
+      | _ => c
+      end.
+
+    Lemma apply_below_letmut_sound : forall f,
+        transf_sound (locals:=locals) f ->
+        transf_sound (locals:=locals) (apply_below_letmut f).
+    Proof.
+      unfold transf_sound; intros.
+      destruct c; auto; cbn.
+      repeat (case_match; auto).
+      apply typechecker_sound in E as H_ty; auto.
+      invert_well_typed.
+      eapply synthesizable_ty_unique in E as E'; eauto; subst.
+      intuition idtac.
+      1:{ econstructor; eauto.
+          apply H; auto.
+          eapply tenv_wf_step, type_of__type_wf;
+            [ | | | eauto ]; assumption. }
+      1:{ eapply H in H7; eauto; intuition idtac.
+          1:{ cbn. rewrite H8; auto.
+              apply locals_wf_step;
+                eauto using type_sound. }
+          eapply tenv_wf_step, type_of__type_wf;
+            [ | | | eauto ]; assumption. }
+    Qed.
 
     Section WithIndex.
       Context {idx : IndexInterface.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
@@ -655,7 +688,7 @@ Section WithMap.
         1: rewrite Forall_map.
         eapply Permutation_Forall; [ apply Permuted_record_sort | ].
         repeat constructor; intuition idtac; cbn.
-        auto using idx_ty_wf.
+        eauto using idx_ty_wf.
       Qed.
 
       Lemma to_idx_satisfy_idx_wf : forall free_vars e Gstore Genv t store env,
@@ -924,6 +957,7 @@ End WithMap.
 Ltac apply_transf_sound_lemmas :=
   lazymatch goal with
   | |- transf_sound (apply_idx_related_transfs _ _ _) => apply apply_idx_related_transfs_sound
+  | |- transf_sound (apply_below_letmut _) => apply apply_below_letmut_sound
   | |- aug_transf_sound _ _ _ (fun _ => Basics.compose _ _) => apply aug_transf_sound_compose
   | |- transf_sound (fun _ _ => Basics.compose _ _) => apply transf_sound_compose
   | |- aug_transf_sound _ _ _ (fun _ => repeat_transf _ _) => apply repeat_transf_preserve_aug_transf_sound

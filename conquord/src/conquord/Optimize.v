@@ -2,7 +2,7 @@ Require Import conquord.Language conquord.Value conquord.Interpret conquord.Type
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.List.
-Require Import List ZArith String.
+From Stdlib Require Import List ZArith String.
 
 (* below 6 lemmas should be moved to coq utils
        used in relational algebra filter/join conversions *)
@@ -1381,30 +1381,6 @@ Import Permutation.
       - apply In_flat_map_ext. intros a LA. apply In_flat_map_ext. intros b LB. rewrite Properties.map.put_put_diff; auto.
       - rewrite H. apply Permutation.Permutation_refl.
     Qed.
-
-    Theorem join_assoc: forall (store env: locals) (Gstore Genv: tenv) (tb1 tb2 tb3 p1 p12 r12: expr) (x y z xy yz:string) (l1 l2: list value) (xcols ycols zcols: list string),
-        let rx := make_record x xcols in
-        let ry := make_record y ycols in
-        let rz := make_record z zcols in
-        let rxy := ERecord (("0"%string, rx) :: ("1"%string, ry) :: nil) in
-        let ryz := ERecord (("0"%string, ry) :: ("1"%string, rz) :: nil) in
-        let y_yz := EAccess (EVar yz) "0" in
-        let z_yz := EAccess (EVar yz) "1" in
-        let p12let := (ELet z_yz z (ELet rxy xy p12)) in
-        let p23 := EBinop OAnd p1 p12let in
-        let r23 := (ELet z_yz z (ELet (EBinop OConcat (EVar x) y_yz) xy r12)) in
-        x <> y -> y <> z -> x <> z ->
-        interp_expr store env (EJoin LikeList (EJoin LikeList tb1 tb2 x y p1 rxy) tb3 xy z p12 r12) = VList l1 ->
-        interp_expr store env (EJoin LikeList tb1 (EJoin LikeList tb2 tb3 y z (EAtom (ABool true)) ryz) x yz p23 r23) = VList l2 ->
-        Permutation.Permutation l1 l2.
-    Proof.
-      intros. cbn [interp_expr] in *.
-      destruct (interp_expr store env tb1) eqn:T1; try (solve [inversion H2]).
-      destruct (interp_expr store env tb2) eqn:T2; try (solve [inversion H2]).
-      destruct (interp_expr store env tb3) eqn:T3; try (solve [inversion H2]).
-      unfold interp_atom in H3. rewrite filter_true_id in H3.
-      injection H2 as L1. injection H3 as L2. rewrite <- L1. rewrite <- L2. Admitted.
-
 
     Theorem proj_proj: forall (store env: locals) (Gstore Genv: tenv) (tb r r2: expr) (x x2: string) (r2cols rcols: list string),
         free_immut_in x2 r = false ->

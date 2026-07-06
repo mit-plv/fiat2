@@ -1,6 +1,6 @@
 Require Import conquord.Language conquord.Interpret conquord.Value conquord.TypeSystem conquord.TypeSound conquord.Utils.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
-Require Import List String ZArith Permutation.
+From Stdlib Require Import List String ZArith Permutation.
 
 Fixpoint repeat_string (s : string) (n : nat) : string :=
   match n with
