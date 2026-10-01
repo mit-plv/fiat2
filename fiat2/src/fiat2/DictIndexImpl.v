@@ -243,6 +243,148 @@ Section WithHole.
             unfold value_eqb. rewrite_l_to_r. assumption. }
       Qed.
 
+      Section DictDelete.
+        Local Coercion is_true : bool >-> Sortclass.
+
+        Lemma value_ltb_leb_trans : forall (a b c : value),
+            value_ltb a b = true -> value_leb b c = true -> value_ltb a c = true.
+        Proof.
+          unfold value_ltb, value_leb, leb_from_compare; intros a b c H_ab H_bc.
+          destruct (value_compare a b) eqn:E_ab; try discriminate.
+          destruct (value_compare b c) eqn:E_bc; try discriminate.
+          - apply value_compare_Eq_eq in E_bc; subst. rewrite E_ab; reflexivity.
+          - rewrite (value_compare_trans _ _ _ E_ab E_bc); reflexivity.
+        Qed.
+
+        Lemma value_ltb__value_eqb_false : forall (a b : value),
+            value_ltb a b = true -> value_eqb a b = false.
+        Proof.
+          unfold value_ltb, value_eqb; intros.
+          destruct (value_compare a b); congruence.
+        Qed.
+
+        Lemma neq__value_eqb_false : forall (a b : value),
+            a <> b -> value_eqb a b = false.
+        Proof.
+          intros. rewrite <- Bool.not_true_iff_false, value_eqb_iff_eq; assumption.
+        Qed.
+
+        Lemma dict_lookup_delete_diff : forall k k' (d : list (value * value)),
+            k <> k' -> dict_lookup k (dict_delete k' d) = dict_lookup k d.
+        Proof.
+          induction d as [| [k0 v0] d IH]; cbn; intros; auto.
+          destruct (value_eqb k' k0) eqn:E.
+          - apply value_eqb_eq in E; subst.
+            rewrite neq__value_eqb_false; auto.
+          - cbn. destruct (value_eqb k k0); auto.
+        Qed.
+
+        Lemma dict_delete_lt_head : forall k k0 (v0 : value) d,
+            value_ltb k k0 = true ->
+            StronglySorted dict_entry_leb ((k0, v0) :: d) ->
+            dict_delete k ((k0, v0) :: d) = (k0, v0) :: d.
+        Proof.
+          intros * H_lt H_sort.
+          apply not_In__dict_delete. intro H_in.
+          apply in_map_iff in H_in as [[k1 v1] [H_k H_in]]; cbn in H_k; subst.
+          destruct H_in as [H_eq | H_in].
+          - injection H_eq; intros; subst.
+            apply value_ltb__value_eqb_false in H_lt.
+            rewrite value_eqb_refl in H_lt; discriminate.
+          - inversion H_sort; subst.
+            rewrite Forall_forall in *.
+            lazymatch goal with
+              H: forall x, In x d -> _ |- _ => apply H in H_in
+            end.
+            unfold dict_entry_leb in H_in; cbn in H_in.
+            pose proof (value_ltb_leb_trans _ _ _ H_lt H_in) as H_kk.
+            apply value_ltb__value_eqb_false in H_kk.
+            rewrite value_eqb_refl in H_kk; discriminate.
+        Qed.
+
+        Lemma dict_delete_insert_same : forall k (v : value) d,
+            StronglySorted dict_entry_leb d ->
+            dict_delete k (dict_insert k v d) = dict_delete k d.
+        Proof.
+          induction d as [| [k0 v0] d IH]; intros H_sort.
+          - cbn. rewrite value_eqb_refl; reflexivity.
+          - cbn [dict_insert]. destruct (value_ltb k k0) eqn:E_lt.
+            + cbn [dict_delete]. rewrite value_eqb_refl.
+              symmetry. apply dict_delete_lt_head; auto.
+            + destruct (value_eqb k k0) eqn:E_eq; cbn [dict_delete].
+              * rewrite value_eqb_refl, E_eq; reflexivity.
+              * rewrite E_eq. inversion H_sort; subst.
+                rewrite IH; auto.
+        Qed.
+
+        Lemma dict_delete_insert_diff : forall k k' (v : value) d,
+            k <> k' -> StronglySorted dict_entry_leb d ->
+            dict_delete k (dict_insert k' v d) = dict_insert k' v (dict_delete k d).
+        Proof.
+          induction d as [| [k0 v0] d IH]; intros H_neq H_sort.
+          - cbn. rewrite neq__value_eqb_false; auto.
+          - inversion H_sort; subst.
+            cbn [dict_insert]. destruct (value_ltb k' k0) eqn:E_lt.
+            + cbn [dict_delete]. rewrite neq__value_eqb_false; auto.
+              destruct (value_eqb k k0) eqn:E_eq.
+              * (* the deleted key is the head that k' is inserted before *)
+                destruct d as [| [k1 v1] d]; cbn [dict_insert]; auto.
+                lazymatch goal with
+                  H: Forall _ ((k1, v1) :: d) |- _ => inversion H; subst
+                end.
+                unfold dict_entry_leb in *; cbn in *.
+                rewrite (value_ltb_leb_trans _ _ _ E_lt); auto.
+              * cbn [dict_insert]. rewrite E_lt; reflexivity.
+            + destruct (value_eqb k' k0) eqn:E_eq'.
+              * apply value_eqb_eq in E_eq'; subst.
+                cbn [dict_delete]. rewrite !neq__value_eqb_false; auto.
+                cbn [dict_insert]. rewrite E_lt, value_eqb_refl; reflexivity.
+              * cbn [dict_delete]. destruct (value_eqb k k0) eqn:E_eq; auto.
+                cbn [dict_insert]. rewrite E_lt, E_eq', IH; auto.
+        Qed.
+
+        Lemma gallina_to_idx_SSorted : forall l d,
+            gallina_to_idx (VList l) = VDict d ->
+            StronglySorted dict_entry_leb d.
+        Proof.
+          cbn [gallina_to_idx]; intros l d H. injection H as H; subst.
+          induction l as [| r l IH]; cbn [fold_right].
+          - constructor.
+          - destruct r; try constructor.
+            apply dict_insert_preserve_SSorted; assumption.
+        Qed.
+
+        (* Building the index of a table with the rows whose attr equals kv filtered out
+           is the same as deleting kv from the index of the whole table *)
+        Lemma gallina_to_idx_filter_neq : forall l rt kv,
+            type_of_value (VList l) (TList (TRecord rt)) ->
+            gallina_to_idx
+              (VList (filter (fun r => negb (value_eqb (match r with
+                                                        | VRecord rc => record_proj attr rc
+                                                        | _ => VUnit
+                                                        end) kv)) l)) =
+              match gallina_to_idx (VList l) with
+              | VDict d => VDict (dict_delete kv d)
+              | v => v
+              end.
+        Proof.
+          intros * H_ty. invert_type_of_value_clear.
+          lazymatch goal with
+            H: Forall _ l |- _ => induction H as [| r l H_r H_l IH]
+          end; auto.
+          invert_type_of_value_clear.
+          pose proof (gallina_to_idx_SSorted l _ eq_refl) as H_sort.
+          cbn [gallina_to_idx filter fold_right] in *.
+          injection IH as IH.
+          destruct (value_eqb (record_proj attr l0) kv) eqn:E; cbn [negb fold_right].
+          - apply value_eqb_eq in E. rewrite E, dict_delete_insert_same; auto.
+            f_equal; assumption.
+          - assert (H_neq : record_proj attr l0 <> kv).
+            { intro H_eq. rewrite H_eq, value_eqb_refl in E. discriminate. }
+            rewrite IH, dict_lookup_delete_diff, dict_delete_insert_diff; auto.
+        Qed.
+      End DictDelete.
+
       Lemma bag_to_list_insert_Permutation : forall (v : value) b,
           Permutation (bag_to_list (bag_insert v b)) (v :: bag_to_list b).
       Proof.
@@ -762,6 +904,111 @@ Section WithHole.
           Qed.
         End cons_to_insert.
 
+        Section filter_to_delete.
+          (* Rebuilding the index from the table with the rows whose attr equals k filtered out
+             becomes deleting k from the index rebuilt from the table *)
+          Definition filter_neq_to_delete_head (e : expr) :=
+            match e with
+            | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+                (EFilter LikeList e' y (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr2) k))) =>
+                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1; attr2]); (x0, [x1]); (y, [y0])] &&
+                      all_neqb [acc0; tup0; x0] &&
+                      negb (free_immut_in y k))%bool
+                then EBinop ODelete (eto_idx tup tup tup tup acc acc acc x x attr attr e') k
+                else e
+            | _ => e
+            end.
+
+          Lemma filter_neq_to_delete_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore filter_neq_to_delete_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            econstructor; [ constructor | | eapply not_free_immut_put_ty; eauto ].
+            repeat (econstructor; eauto);
+              repeat rewrite_map_get_put_goal; auto;
+              try use_is_NoDup.
+          Qed.
+
+          Lemma filter_neq_to_delete_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store filter_neq_to_delete_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [filter_neq_to_delete_head]. repeat (case_match; auto; []).
+            cbn in * |-.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            enough (E_Binop: forall o e1 e2, interp_expr store env (EBinop o e1 e2) = interp_binop o (interp_expr store env e1) (interp_expr store env e2)); auto.
+            rewrite E_Binop.
+            let pat := open_constr:(EFold e1_1 _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty. }
+            let pat := open_constr:(EFold (EFilter _ _ _ _) _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty.
+                1: repeat econstructor; eauto.
+                rewrite_map_get_put_goal; reflexivity. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3: prove_sub_wf.
+            2:{ eapply type_of_strengthen;
+                [
+                | apply map_incl_empty
+                | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3:{ prove_sub_wf.
+                do_injection. repeat econstructor; eauto.
+                rewrite_map_get_put_goal; reflexivity. }
+            2:{ eapply type_of_strengthen;
+                [
+                | apply map_incl_empty
+                | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
+              [ | | | eapply type_sound; eauto ]; eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn [make_sub_env]; rewrite map.get_put_same; reflexivity ];
+              [ | | | eapply type_sound with (Gstore:=Gstore) (Genv:=Genv);
+                      [ repeat econstructor; eauto; try (rewrite_map_get_put_goal; reflexivity) | .. ];
+                      eauto with fiat2_hints ];
+              eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            apply_type_sound e1_1.
+            lazymatch goal with
+              H: type_of_value (interp_expr _ _ e1_1) _ |- _ =>
+                pose proof H as H_l; invert_type_of_value_clear
+            end.
+            cbn [interp_expr]. rewrite_expr_value.
+            erewrite In_filter_ext with
+              (g := fun r => negb (value_eqb (match r with
+                                              | VRecord rc => record_proj attr rc
+                                              | _ => VUnit
+                                              end) (interp_expr store env e1_2_2))).
+            2:{ intros. cbn [interp_expr interp_unop interp_binop].
+                unfold get_local; rewrite map.get_put_same.
+                erewrite <- not_free_immut_put_sem; auto. }
+            rewrite gallina_to_idx_filter_neq with (rt:=tl); auto.
+          Qed.
+        End filter_to_delete.
+
         Section use_idx.
           Context (tbl : string).
           Definition use_idx_head (e : expr) :=
@@ -906,6 +1153,15 @@ Section WithHole.
         1: eapply cons_to_insert_head_preserve_ty; eauto.
         1: eapply cons_to_insert_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
+
+      Lemma filter_neq_to_delete_head_sound :
+          expr_transf_sound (locals:=locals) filter_neq_to_delete_head.
+      Proof.
+        unfold expr_transf_sound; intros.
+        intuition idtac.
+        1: eapply filter_neq_to_delete_head_preserve_ty; eauto.
+        1: eapply filter_neq_to_delete_head_preserve_sem; [ | | eauto .. ]; auto.
+      Qed.
     End WithMap.
   End WithVars.
 End WithHole.
@@ -946,6 +1202,7 @@ Qed.
 
 #[export] Hint Resolve use_idx_head_sound2 : transf_hints.
 #[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
+#[export] Hint Resolve filter_neq_to_delete_head_sound : transf_hints.
 #[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
 
 #[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_idx_ty : transf_hints.
