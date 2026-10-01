@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -15,7 +15,7 @@ Section WithHole.
     Context (H_NoDup : is_NoDup_opaque [tup; acc; x]).
 
     Definition to_idx : expr :=
-      EACFold AGSum (EProj LikeBag (EBagOf (EVar hole)) x (EAccess (EVar x) attr)).
+      EACFold AGSum (flatmap_proj_bag (EBagOf (EVar hole)) x (EAccess (EVar x) attr) None).
 
     Definition is_tbl_ty (t : type) : bool :=
       match t with
@@ -82,7 +82,7 @@ Section WithHole.
 
           Definition sum_to_agg_lookup_head (e : expr) :=
             match e with
-            | EACFold AGSum (EProj LikeBag (EBagOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0)) =>
+            | EACFold AGSum (flatmap_proj_bag (EBagOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _) =>
                 if all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1]); (id_tag, [id_tag0]); (x0, [x1])]
                 then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
                 else e
@@ -141,7 +141,7 @@ Section WithHole.
             repeat rewrite_l_to_r. unfold to_idx.
             cbn. unfold get_local. unfold record_proj.
             rewrite_map_get_put_goal.
-            do 3 f_equal. erewrite map_ext_in; eauto.
+            do 3 f_equal. apply In_flat_map_ext.
             intros. repeat rewrite_map_get_put_goal. reflexivity.
           Qed.
         End sum_to_agg_lookup.
@@ -149,8 +149,8 @@ Section WithHole.
         Section cons_to_add.
           Definition cons_to_add_head (e : expr) :=
             match e with
-            | EACFold AGSum (EProj LikeBag (EBagOf (EBinop OCons e1 e2)) x0 e3) =>
-                EBinop OPlus (ELet e1 x0 e3) (EACFold AGSum (EProj LikeBag (EBagOf e2) x0 e3))
+            | EACFold AGSum (flatmap_proj_bag (EBagOf (EBinop OCons e1 e2)) x0 e3 t) =>
+                EBinop OPlus (ELet e1 x0 e3) (EACFold AGSum (flatmap_proj_bag (EBagOf e2) x0 e3 t))
             | _ => e
             end.
 

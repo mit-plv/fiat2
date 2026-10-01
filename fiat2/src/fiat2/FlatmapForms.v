@@ -18,6 +18,27 @@ Notation flatmap_filter_bag e x p y t1 t2 :=
   (EFlatmap LikeBag e x
      (EIf p (EBinop OBagInsert (EAtom (AEmptyBag t1)) (EVar y)) (EAtom (AEmptyBag t2)))).
 
+(* map e x r on bags, as produced by bag_of from [x <- e, ret r] *)
+Notation flatmap_proj_bag e x r t :=
+  (EFlatmap LikeBag e x (EBinop OBagInsert (EAtom (AEmptyBag t)) r)).
+
+(* map e x r on sets, as produced by set_of from [x <- e, ret r] *)
+Notation flatmap_proj_set e x r t :=
+  (EFlatmap LikeSet e x (EBinop OSetInsert (EAtom (AEmptySet t)) r)).
+
+Lemma flat_map_singleton : forall A B (f : A -> B) l,
+    flat_map (fun v => [f v]) l = map f l.
+Proof.
+  induction l; cbn; congruence.
+Qed.
+
+(* rewrite does not infer the function in flat_map_singleton, so match it explicitly *)
+Ltac rewrite_flat_map_singleton :=
+  repeat lazymatch goal with
+    |- context[flat_map (fun v => [@?g v]) ?l] =>
+      rewrite (flat_map_singleton _ _ g l)
+    end.
+
 Section WithWord.
   Context {width: Z} {word: word.word width}.
   Context {word_ok: word.ok word}.
@@ -63,6 +84,31 @@ Section WithWord.
       unfold get_local. rewrite map.get_put_same.
       case_match; auto.
       destruct b; auto.
+    Qed.
+
+    Lemma interp_flatmap_proj_bag : forall (store env : locals) e x r t,
+        interp_expr store env (flatmap_proj_bag e x r t) =
+          match interp_expr store env e with
+          | VBag l =>
+              VBag (list_to_bag
+                      (map (fun v => interp_expr store (map.put env x v) r) (bag_to_list l)))
+          | _ => VUnit
+          end.
+    Proof.
+      (* the flat_map of singletons is convertible to the map *)
+      intros. cbn [interp_expr]. destruct (interp_expr store env e); reflexivity.
+    Qed.
+
+    (* Unfolds interp_expr on EACFold by one step, leaving its argument unevaluated *)
+    Lemma interp_EACFold : forall (store env : locals) ag e,
+        interp_expr store env (EACFold ag e) =
+          let '(zr, op) := interp_aggr ag in
+          match interp_expr store env e with
+          | VBag l => fold_right op zr (bag_to_list l)
+          | _ => VUnit
+          end.
+    Proof.
+      reflexivity.
     Qed.
   End WithMap.
 

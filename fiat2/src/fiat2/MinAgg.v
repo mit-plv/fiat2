@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -14,7 +14,7 @@ Section WithHole.
     Context (x : string).
 
     Definition to_idx : expr :=
-      EACIFold AGMin (EProj LikeSet (ESetOf (EVar hole)) x (EAccess (EVar x) attr)).
+      EACIFold AGMin (flatmap_proj_set (ESetOf (EVar hole)) x (EAccess (EVar x) attr) None).
 
     Definition is_tbl_ty (t : type) : bool :=
       match t with
@@ -81,7 +81,7 @@ Section WithHole.
 
           Definition min_to_agg_lookup_head (e : expr) :=
             match e with
-            | EACIFold AGMin (EProj LikeSet (ESetOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0)) =>
+            | EACIFold AGMin (flatmap_proj_set (ESetOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _) =>
                 if all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1]); (id_tag, [id_tag0]); (x0, [x1])]
                 then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
                 else e
@@ -139,7 +139,7 @@ Section WithHole.
             repeat rewrite_l_to_r. unfold to_idx.
             cbn. unfold get_local. unfold record_proj.
             rewrite_map_get_put_goal.
-            erewrite map_ext_in; eauto.
+            erewrite In_flat_map_ext; eauto.
             intros. repeat rewrite_map_get_put_goal. reflexivity.
           Qed.
         End min_to_agg_lookup.
@@ -149,12 +149,12 @@ Section WithHole.
 
           Definition cons_to_min_head (e : expr) :=
             match e with
-            | EACIFold AGMin (EProj LikeSet (ESetOf (EBinop OCons e1 e2)) x0 e3) =>
+            | EACIFold AGMin (flatmap_proj_set (ESetOf (EBinop OCons e1 e2)) x0 e3 t) =>
                 if (negb (y =? x0) && negb (free_immut_in y e2)
                    && negb (free_immut_in y e3))%bool
                 then
                 ELet (ELet e1 x0 e3) y
-                  (EOptMatch (EACIFold AGMin (EProj LikeSet (ESetOf e2) x0 e3)) (EUnop OSome (EVar y))
+                  (EOptMatch (EACIFold AGMin (flatmap_proj_set (ESetOf e2) x0 e3 t)) (EUnop OSome (EVar y))
                      x0 (EIf (EBinop OLess (EVar y) (EVar x0)) (EUnop OSome (EVar y)) (EUnop OSome (EVar x0))))
                 else e
             | _ => e
@@ -187,7 +187,7 @@ Section WithHole.
             invert_type_of_aci_aggr_clear.
             rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
             rewrite eqb_neq in *.
-            cbn.
+            cbn. rewrite_flat_map_singleton.
             rewrite <- not_free_immut_put_sem; auto.
             apply_type_sound e1_2.
             invert_type_of_value_clear.
@@ -199,16 +199,16 @@ Section WithHole.
                 rewrite Forall_forall; intros; apply_Forall_In.
                 rewrite Properties.map.put_put_diff_comm; auto.
                 rewrite <- not_free_immut_put_sem; auto.
-                apply_type_sound e0_2; eauto with fiat2_hints. }
+                apply_type_sound e1_4; eauto with fiat2_hints. }
             rewrite aci_aggr_alt.
             2:{ eapply incl_Forall; [ apply list_to_set_incl | ].
                 eapply incl_Forall; [ apply incl_map, list_to_set_incl | ].
                 rewrite Forall_map.
                 constructor.
                 1: apply_type_sound e1_1;
-                apply_type_sound e0_2; eauto with fiat2_hints.
+                apply_type_sound e1_4; eauto with fiat2_hints.
                 rewrite Forall_forall; intros; apply_Forall_In.
-                apply_type_sound e0_2; eauto with fiat2_hints. }
+                apply_type_sound e1_4; eauto with fiat2_hints. }
             erewrite fold_right_change_order_idem.
             2:{ intros. repeat case_match; auto; do 3 f_equal.
                 1: rewrite !Z.min_assoc;
@@ -233,7 +233,7 @@ Section WithHole.
             2:{ eapply incl_tran; [ apply incl_map, list_to_set_incl_r | ].
                 apply list_to_set_incl_r. }
             cbn. apply_type_sound e1_1.
-            apply_type_sound e0_2; eauto with fiat2_hints.
+            apply_type_sound e1_4; eauto with fiat2_hints.
             lazymatch goal with
               H: type_of_value _ TInt |- _ =>
                 inversion H; subst
