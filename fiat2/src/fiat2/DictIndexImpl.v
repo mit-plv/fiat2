@@ -1143,6 +1143,109 @@ Section WithHole.
           Qed.
         End filter_to_delete.
 
+        Section flatmap_filter_to_delete.
+          (* filter_neq_to_delete_head, matching the filter written as a flatmap *)
+          Definition flatmap_filter_neq_to_delete_head (e : expr) :=
+            match e with
+            | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+                (flatmap_filter_list e' y (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr2) k)) y1 _ _) =>
+                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1; attr2]); (x0, [x1]); (y, [y0; y1])] &&
+                      all_neqb [acc0; tup0; x0] &&
+                      negb (free_immut_in y k))%bool
+                then EBinop ODelete (eto_idx tup tup tup tup acc acc acc x x attr attr e') k
+                else e
+            | _ => e
+            end.
+          Lemma flatmap_filter_neq_to_delete_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore flatmap_filter_neq_to_delete_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            econstructor; [ constructor | | eapply not_free_immut_put_ty; eauto ].
+            repeat (econstructor; eauto);
+              repeat rewrite_map_get_put_goal; auto;
+              try use_is_NoDup.
+          Qed.
+
+          Lemma flatmap_filter_neq_to_delete_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store flatmap_filter_neq_to_delete_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [flatmap_filter_neq_to_delete_head]. repeat (case_match; auto; []).
+            cbn in * |-.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            enough (E_Binop: forall o e1 e2, interp_expr store env (EBinop o e1 e2) = interp_binop o (interp_expr store env e1) (interp_expr store env e2)); auto.
+            rewrite E_Binop.
+            let pat := open_constr:(EFold e1_1 _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty. }
+            let pat := open_constr:(EFold (EFlatmap _ _ _ _) _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty.
+                1: repeat econstructor; eauto.
+                all: rewrite_map_get_put_goal; reflexivity. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3: prove_sub_wf.
+            2:{ eapply type_of_strengthen;
+                [
+                | apply map_incl_empty
+                | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3:{ prove_sub_wf.
+                do_injection. repeat econstructor; eauto.
+                all: rewrite_map_get_put_goal; reflexivity. }
+            2:{ eapply type_of_strengthen;
+                [
+                | apply map_incl_empty
+                | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
+              [ | | | eapply type_sound; eauto ]; eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn [make_sub_env]; rewrite map.get_put_same; reflexivity ];
+              [ | | | eapply type_sound with (Gstore:=Gstore) (Genv:=Genv);
+                      [ repeat econstructor; eauto; try (rewrite_map_get_put_goal; reflexivity) | .. ];
+                      eauto with fiat2_hints ];
+              eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            apply_type_sound e1_1.
+            lazymatch goal with
+              H: type_of_value (interp_expr _ _ e1_1) _ |- _ =>
+                pose proof H as H_l; invert_type_of_value_clear
+            end.
+            rewrite interp_flatmap_filter_list. rewrite_expr_value. cbv beta iota.
+            erewrite In_filter_ext with
+              (g := fun r => negb (value_eqb (match r with
+                                              | VRecord rc => record_proj attr rc
+                                              | _ => VUnit
+                                              end) (interp_expr store env e1_2_1_2))).
+            2:{ intros. cbn [interp_expr interp_unop interp_binop].
+                unfold get_local; rewrite map.get_put_same.
+                erewrite <- not_free_immut_put_sem; auto. }
+            rewrite gallina_to_idx_filter_neq with (rt:=tl); auto.
+          Qed.
+        End flatmap_filter_to_delete.
+
         Section use_idx.
           Context (tbl : string).
           Definition use_idx_head (e : expr) :=
@@ -1319,6 +1422,15 @@ Section WithHole.
         1: eapply filter_neq_to_delete_head_preserve_ty; eauto.
         1: eapply filter_neq_to_delete_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
+
+      Lemma flatmap_filter_neq_to_delete_head_sound :
+          expr_transf_sound (locals:=locals) flatmap_filter_neq_to_delete_head.
+      Proof.
+        unfold expr_transf_sound; intros.
+        intuition idtac.
+        1: eapply flatmap_filter_neq_to_delete_head_preserve_ty; eauto.
+        1: eapply flatmap_filter_neq_to_delete_head_preserve_sem; [ | | eauto .. ]; auto.
+      Qed.
     End WithMap.
   End WithVars.
 End WithHole.
@@ -1377,6 +1489,7 @@ Qed.
 #[export] Hint Resolve use_idx_head_sound2 : transf_hints.
 #[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
 #[export] Hint Resolve filter_neq_to_delete_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_filter_neq_to_delete_head_sound : transf_hints.
 #[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
 #[export] Hint Resolve eq_flatmap_filter_to_lookup_head_sound2 : transf_hints.
 

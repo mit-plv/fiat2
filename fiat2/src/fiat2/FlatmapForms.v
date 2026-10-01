@@ -26,6 +26,25 @@ Section WithWord.
   Section WithMap.
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
+    Lemma interp_flatmap_filter_list : forall (store env : locals) e x p t1 t2,
+        interp_expr store env (flatmap_filter_list e x p x t1 t2) =
+          match interp_expr store env e with
+          | VList l =>
+              VList (filter (fun v => match interp_expr store (map.put env x v) p with
+                                      | VBool b => b
+                                      | _ => false
+                                      end) l)
+          | _ => VUnit
+          end.
+    Proof.
+      intros. cbn [interp_expr]. destruct (interp_expr store env e); auto.
+      f_equal. induction l as [| v l' IH]; auto.
+      cbn [flat_map filter]. rewrite IH.
+      unfold get_local. rewrite map.get_put_same.
+      case_match; auto.
+      destruct b; auto.
+    Qed.
+
     Lemma interp_flatmap_filter_bag : forall (store env : locals) e x p t1 t2,
         interp_expr store env (flatmap_filter_bag e x p x t1 t2) =
           match interp_expr store env e with
