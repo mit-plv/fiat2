@@ -16,7 +16,7 @@ Notation flatmap_filter_list e x p y t1 t2 :=
 (* The bag version of flatmap_filter_list, as produced by bag_of *)
 Notation flatmap_filter_bag e x p y t1 t2 :=
   (EFlatmap LikeBag e x
-     (EIf p (EBinop OBagInsert (EBagOf (EAtom (ANil t1))) (EVar y)) (EBagOf (EAtom (ANil t2))))).
+     (EIf p (EBinop OBagInsert (EAtom (AEmptyBag t1)) (EVar y)) (EAtom (AEmptyBag t2)))).
 
 Section WithWord.
   Context {width: Z} {word: word.word width}.

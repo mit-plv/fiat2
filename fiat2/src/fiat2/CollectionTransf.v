@@ -29,6 +29,7 @@ Fixpoint bag_of (e : expr) : expr :=
   | EProj LikeList e1 x e2 => EProj LikeBag (bag_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OBagInsert (bag_of e2) e1
   | EIf e1 e2 e3 => EIf e1 (bag_of e2) (bag_of e3)
+  | EAtom (ANil t) => EAtom (AEmptyBag t)
   | _ => EBagOf e
   end.
 
@@ -39,6 +40,7 @@ Fixpoint set_of (e : expr) : expr :=
   | EJoin LikeList e1 e2 x y p e3 => EJoin LikeSet (set_of e1) (set_of e2) x y p e3
   | EProj LikeList e1 x e2 => EProj LikeSet (set_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OSetInsert (set_of e2) e1
+  | EAtom (ANil t) => EAtom (AEmptySet t)
   | _ => ESetOf e
   end.
 
@@ -401,6 +403,8 @@ Section WithWord.
       all: try now (invert_type_of; econstructor; eauto).
       all: case_match; invert_type_of; try invert_type_of_op;
                     repeat (econstructor; eauto).
+      all: (* EAtom (ANil _) *)
+        invert_type_of_atom; constructor; auto.
     Qed.
 
     Definition VBag_of (v : value) :=
@@ -417,6 +421,8 @@ Section WithWord.
         interp_expr store env (bag_of e) = VBag_of (interp_expr store env e).
     Proof.
       induction 1; unfold VBag_of in *; auto; intros.
+      1:{ (* TyEAtom *)
+          cbn. destruct a; reflexivity. }
       1:{ cbn. case_match; auto; cbn. rewrite IHtype_of2; auto.
           case_match; auto. }
       1:{ cbn. apply_type_sound e1.
@@ -451,6 +457,8 @@ Section WithWord.
       all: try now (econstructor; eauto).
       all: case_match; invert_type_of; try invert_type_of_op;
         repeat (econstructor; eauto).
+      all: (* EAtom (ANil _) *)
+        invert_type_of_atom; constructor; auto.
     Qed.
 
     Definition VSet_of (v : value) :=
@@ -562,6 +570,8 @@ Section WithWord.
         interp_expr store env (set_of e) = VSet_of (interp_expr store env e).
     Proof.
       induction 1; unfold VSet_of in *; auto; intros.
+      1:{ (* TyEAtom *)
+          cbn. destruct a; reflexivity. }
       1:{ cbn. case_match; auto; cbn; use_set_of_sem_IH; auto.
           case_match; auto. }
       1:{ cbn. use_set_of_sem_IH; auto.
