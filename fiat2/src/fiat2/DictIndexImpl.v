@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -706,6 +706,140 @@ Section WithHole.
                 rewrite_map_get_put_goal.
                 erewrite <- not_free_immut_put_sem; auto. }
           Qed.
+
+          Definition eq_flatmap_filter_to_lookup_head (e : expr) :=
+            (* [row <- tbl[id_tag], check(row.attr == e'), ret row] (as a bag) -->
+               match (lookup idx e') with none => emptybag | some b => b *)
+            match e with
+            | flatmap_filter_bag
+                (EBagOf (EAccess (ELoc tbl0) id_tag0))
+                x0 (EBinop OEq (EAccess (EVar x1) attr0) e') x2 _ _ =>
+                if (all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1; x2]); (id_tag, [id_tag0])] &&
+                      negb (free_immut_in x0 e'))%bool
+                then EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) e')
+                       (EAtom (AEmptyBag None))
+                       b (EVar b)
+                else e
+            | _ => e
+            end.
+          Lemma eq_flatmap_filter_to_lookup_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              preserve_ty Gstore eq_flatmap_filter_to_lookup_head.
+          Proof.
+            unfold preserve_ty, is_tbl_ty. intros.
+            repeat destruct_match_hyp; try congruence.
+            repeat destruct_subexpr. simpl.
+            case_match; auto. repeat rewrite Bool.andb_true_r in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac. rewrite Bool.negb_true_iff, eqb_eq in *; subst.
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
+            repeat (rewrite_l_to_r; do_injection2).
+            repeat (econstructor; eauto).
+            1:{ unfold get_attr_type.
+                lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
+                eapply not_free_immut_put_ty; eauto. }
+            1-3: repeat invert_type_wf; auto.
+            1: rewrite map.get_put_same; trivial.
+          Qed.
+          Lemma eq_flatmap_filter_to_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              match map.get store tbl with
+              | Some v => aux_wf_for_idx v
+              | _ => False
+              end ->
+              preserve_sem Gstore store eq_flatmap_filter_to_lookup_head.
+          Proof.
+            unfold preserve_sem, aux_wf_for_idx; intros.
+            unfold is_tbl_ty, idx_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            assert (idx_chara a a1).
+            { subst. eapply idx_wf__idx_chara; eauto.
+              invert_type_of_value_clear.
+              pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2); auto. }
+            lazymatch goal with
+              H: idx_wf _ _, H': idx_chara _ _ |- _ =>
+                clear H; unfold idx_chara in H'
+            end.
+            invert_type_of_value_clear.
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2).
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E2 H3).
+            invert_type_of_value_clear.
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H20 E4 H4).
+            invert_type_of_value_clear.
+            repeat destruct_subexpr. unfold eq_flatmap_filter_to_lookup_head.
+            cbv beta iota; case_match; auto.
+            cbn [all_eqb all_eqb' andb] in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite Bool.negb_true_iff, eqb_eq in *; subst. repeat clear_refl.
+            rewrite interp_flatmap_filter_bag.
+            cbn. unfold get_local. rewrite_l_to_r. unfold record_proj.
+            repeat rewrite_l_to_r.
+            unfold idx_wf in *.
+            repeat (destruct_match_hyp; intuition idtac).
+            cbn [list_to_bag]. rewrite list_to_bag_filter_list_to_bag.
+            lazymatch goal with
+              H: forall _, _ |- context[dict_lookup ?v _] =>
+                specialize (H v)
+            end.
+            repeat invert_type_of_clear. rewrite_map_get_put_hyp.
+            lazymatch goal with
+              H: type_of _ _ e2_1_2 _ |- _ =>
+                apply not_free_immut_put_ty in H; auto
+            end. invert_type_of_op. rewrite_l_to_r.
+            repeat (do_injection; try clear_refl).
+            assert (type_of_value (VOption (dict_lookup (interp_expr store env e2_1_2) l2)) (TOption (TBag (TRecord l1)))).
+            1:{ apply_type_sound e2_1_2.
+                eapply dict_lookup_sound; [ | | | eauto ];
+                  eauto with fiat2_hints.
+                1: constructor; eauto with fiat2_hints.
+                1:{ constructor; auto. rewrite_l_to_r; do_injection.
+                    unfold get_attr_type in *. rewrite_l_to_r. auto. } }
+            invert_type_of_value_clear.
+            1:{ lazymatch goal with
+                H: _ = dict_lookup _ _ |- _ =>
+                  rewrite <- H in *
+              end. cbn in *.
+                lazymatch goal with
+                  H: Permutation _ nil |- _ =>
+                    apply Permutation_sym, Permutation_nil in H
+                end.
+                f_equal.
+                rewrite Forall_false__filter; auto.
+                rewrite Forall_forall.
+                intros. invert_type_of_value_clear.
+                lazymatch goal with
+                  H: filter _ ?l = [], H': In _ ?l |- _ =>
+                    apply filter_eq_nil__Forall_false in H;
+                    rewrite Forall_forall in H; apply H in H' as H_x1
+                end.
+                apply_Forall_In.
+                rewrite_map_get_put_goal. invert_type_of_value_clear.
+                unfold record_proj in *.
+                erewrite <- not_free_immut_put_sem; auto. }
+            1:{ rewrite_map_get_put_goal.
+                repeat invert_type_of_value_clear.
+                lazymatch goal with
+                  H: _ = dict_lookup _ _ |- _ =>
+                    rewrite <- H in * end.
+                f_equal.
+                lazymatch goal with
+                  H: Permutation _ _ |- _ =>
+                    apply Permutation_list_to_bag_eq in H end.
+                rewrite bag_to_list_to_bag in *; auto. subst.
+                f_equal. apply In_filter_ext; intros.
+                apply_Forall_In. invert_type_of_value_clear.
+                rewrite_map_get_put_goal.
+                erewrite <- not_free_immut_put_sem; auto. }
+          Qed.
         End eq_filter_to_lookup.
 
         Section cons_to_insert.
@@ -1121,6 +1255,29 @@ Section WithHole.
           unfold value_wf_with_globals in *. invert_Forall; intuition auto.
         Qed.
 
+        Lemma eq_flatmap_filter_to_lookup_head_sound : forall b is_tbl_ty' aux_ty aux_wf,
+            aux_ty_for_idx aux_ty ->
+            (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
+            (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_flatmap_filter_to_lookup_head b).
+        Proof.
+          unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+          invert_tenv_wf_with_globals.
+          specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+          1: eapply eq_flatmap_filter_to_lookup_head_preserve_ty; eauto.
+          1: eapply eq_flatmap_filter_to_lookup_head_preserve_sem; eauto.
+          lazymatch goal with
+            H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+              apply H in H'
+          end.
+          destruct_match_hyp; intuition idtac.
+          lazymatch goal with
+            H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+              apply H in H'
+          end.
+          unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+        Qed.
+
         Lemma use_idx_head_sound : forall is_tbl_ty' aux_ty aux_wf,
             aux_ty_for_idx aux_ty ->
             (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
@@ -1200,10 +1357,28 @@ Proof.
   intros; eapply eq_filter_to_lookup_head_sound; eauto.
 Qed.
 
+Lemma eq_flatmap_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
+       forall tenv : map.map string type,
+       map.ok tenv ->
+       forall (width : Z) (word : Interface.word width),
+       word.ok word ->
+       forall locals : map.map string (value (word:=word)),
+       map.ok locals ->
+       forall (id_tag aux_tag idx_tag b : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
+       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
+       (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
+       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
+       is_NoDup_opaque [tup; acc; x] ->
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_flatmap_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
+Proof.
+  intros; eapply eq_flatmap_filter_to_lookup_head_sound; eauto.
+Qed.
+
 #[export] Hint Resolve use_idx_head_sound2 : transf_hints.
 #[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
 #[export] Hint Resolve filter_neq_to_delete_head_sound : transf_hints.
 #[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
+#[export] Hint Resolve eq_flatmap_filter_to_lookup_head_sound2 : transf_hints.
 
 #[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_idx_ty : transf_hints.
 #[export] Hint Extern 5 (type_wf (IndexInterface.idx_ty _)) => apply idx_ty_wf : transf_hints.
