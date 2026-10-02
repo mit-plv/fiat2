@@ -118,6 +118,9 @@ Fixpoint expr_py (e:expr) : string :=
             let (cs, r) := clauses b' in (" if " ++ expr_py p ++ cs, r)
         | EFlatmap _ b1 y b' =>
             let (cs, r) := clauses b' in (" for " ++ y ++ " in " ++ expr_py b1 ++ cs, r)
+        | ELet b1 y b' =>
+            (* a let inside a comprehension binds y to a one-element list *)
+            let (cs, r) := clauses b' in (" for " ++ y ++ " in [" ++ expr_py b1 ++ "]" ++ cs, r)
         | _ => (" for y in " ++ expr_py b, "y")
         end in
       let (cs, r) := clauses e2 in

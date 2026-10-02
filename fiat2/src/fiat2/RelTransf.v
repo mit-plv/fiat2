@@ -429,6 +429,57 @@ Section WithMap.
   Qed.
 End WithMap.
 
+Definition flatmap_if_head (e : expr) :=
+  (* [x <- (if p then e1 else []), e2] --> if p then [x <- e1, e2] else [] *)
+  match e with
+  | EFlatmap LikeList (EIf p e1 (EAtom (ANil _))) x e2 =>
+      EIf p (EFlatmap LikeList e1 x e2) (EAtom (ANil None))
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma flatmap_if_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_if_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat invert_type_of_clear.
+    repeat (econstructor; eauto).
+    (* the type of the new empty list is well-formed because it is e2's element type *)
+    lazymatch goal with
+      H: type_of _ (map.put _ _ _) _ (TList ?t2) |- type_wf ?t2 =>
+        apply type_of__type_wf in H
+    end; auto.
+    1: invert_type_wf; assumption.
+    apply tenv_wf_step; auto.
+    lazymatch goal with
+      H: type_of _ _ _ (TList ?t1) |- type_wf ?t1 =>
+        apply type_of__type_wf in H
+    end; auto.
+    invert_type_wf; assumption.
+  Qed.
+
+  Lemma flatmap_if_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_if_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl.
+    destruct (interp_expr store env e1_1); auto.
+    destruct b; reflexivity.
+  Qed.
+
+  Lemma flatmap_if_head_sound : expr_transf_sound (locals:=locals) flatmap_if_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_if_head_preserve_ty; auto.
+    eapply flatmap_if_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 Definition swap_conjuncts_head (e : expr) :=
   match e with
   | EBinop OAnd p1 p2 =>
@@ -609,3 +660,4 @@ End WithMap.
 #[export] Hint Resolve flatmap_assoc_head_sound : transf_hints.
 #[export] Hint Resolve flatmap_singleton_head_sound : transf_hints.
 #[export] Hint Resolve flatmap_identity_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_if_head_sound : transf_hints.
