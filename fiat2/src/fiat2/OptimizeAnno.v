@@ -96,6 +96,7 @@ Section WithConcreteMaps.
 
     Definition dict_lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr "tup" "acc" "x" "y").
+    Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr "tup" "acc" "x").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" tag tbl).
 
     Definition pk_idx_wf := (BitmapIndex.pk_idx_wf (width:=width) "hole" "tup" "acc").
@@ -141,7 +142,11 @@ Section WithConcreteMaps.
         ([(dict_idx_tag, cdict_idx attr, dict_idx_wf attr)],
           [dict_lookup_transf dict_idx_tag attr;
            use_dict_idx_transf dict_idx_tag attr;
-           fun tbl => repeat_transf (cons_to_insert_transf attr tbl) reps],
+           (* inserts and deletes are maintained in the same loop, so that
+              an insert into a filtered table and a filter of an extended table
+              are both handled *)
+           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr tbl)
+                                       (cons_to_insert_transf attr tbl)) reps],
           S cur_tag)
     | BitmapIdx attr v =>
         let pk_idx_tag := String.of_nat cur_tag in
@@ -484,6 +489,9 @@ end.
             | prove_In_map_fst_sort_map ].
             1: prove_is_tbl_ty.
             1: prove_idx_wf. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply filter_neq_to_delete_head_sound;
+              eauto with transf_hints. }
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_insert_head_sound;
               eauto with transf_hints. } }
