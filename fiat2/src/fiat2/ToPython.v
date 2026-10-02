@@ -105,52 +105,23 @@ Fixpoint expr_py (e:expr) : string :=
       paren ("(lambda " ++ x ++ ": " ++
              expr_py e2 ++ ")(" ++
              expr_py e1 ++ ")")
-  | EFlatmap tag e1 x e2 =>
-      let c1 := expr_py e1 in
-      let c2 := expr_py e2 in
-      match tag with
-      | LikeSet =>
-          "[" ++ "y for " ++ x ++ " in " ++ c1 ++
-          " for y in " ++ c2 ++ "]"
-      | _ =>
-          "[" ++ "y for " ++ x ++ " in " ++ c1 ++
-          " for y in " ++ c2 ++ "]"
-      end
-  | EFilter tag l x p =>
-      let cl := expr_py l in
-      let cp := expr_py p in
-      match tag with
-      | LikeSet =>
-          "[" ++ x ++ " for " ++ x ++ " in " ++ cl ++
-          " if " ++ cp ++ "]"
-      | _ =>
-          "[" ++ x ++ " for " ++ x ++ " in " ++ cl ++
-          " if " ++ cp ++ "]"
-      end
-  | EProj tag l x r =>
-      let cl := expr_py l in
-      let cr := expr_py r in
-      match tag with
-      | LikeSet =>
-          "[" ++ cr ++ " for " ++ x ++ " in " ++ cl ++ "]"
-      | _ =>
-          "[" ++ cr ++ " for " ++ x ++ " in " ++ cl ++ "]"
-      end
-  | EJoin tag l1 l2 x y p r =>
-      let c1 := expr_py l1 in
-      let c2 := expr_py l2 in
-      let cp := expr_py p in
-      let cr := expr_py r in
-      match tag with
-      | LikeSet =>
-          "[" ++ cr ++ " for " ++ x ++ " in " ++ c1 ++
-          " for " ++ y ++ " in " ++ c2 ++
-          " if " ++ cp ++ "]"
-      | _ =>
-          "[" ++ cr ++ " for " ++ x ++ " in " ++ c1 ++
-          " for " ++ y ++ " in " ++ c2 ++
-          " if " ++ cp ++ "]"
-      end
+  | EFlatmap _ e1 x e2 =>
+      (* Print the flatmap as one comprehension: a singleton body gives the result
+         expression, an "if" whose else branch is empty gives an "if" clause, and a
+         nested flatmap gives another "for" clause. Any other body is iterated over. *)
+      let fix clauses (b : expr) : string * string :=
+        match b with
+        | EBinop OCons r (EAtom (ANil _))
+        | EBinop OBagInsert (EAtom (AEmptyBag _)) r
+        | EBinop OSetInsert (EAtom (AEmptySet _)) r => ("", expr_py r)
+        | EIf p b' (EAtom (ANil _ | AEmptyBag _ | AEmptySet _)) =>
+            let (cs, r) := clauses b' in (" if " ++ expr_py p ++ cs, r)
+        | EFlatmap _ b1 y b' =>
+            let (cs, r) := clauses b' in (" for " ++ y ++ " in " ++ expr_py b1 ++ cs, r)
+        | _ => (" for y in " ++ expr_py b, "y")
+        end in
+      let (cs, r) := clauses e2 in
+      "[" ++ r ++ " for " ++ x ++ " in " ++ expr_py e1 ++ cs ++ "]"
   | ERecord l =>
       let compile_field '(k,v) :=
           """" ++ k ++ """: " ++ expr_py v in

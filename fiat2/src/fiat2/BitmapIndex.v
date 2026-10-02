@@ -808,59 +808,6 @@ Section WithTags.
                                      l x (EBinop OCons (EVar x) l))
                                   l)]).
 
-      Definition filter_to_bitmap_lookup_head (e : expr) :=
-        match e with
-        | EFilter LikeList (EAccess (ELoc tbl0) (id_tag0)) x
-            (EBinop OEq (EAccess (EVar x0) attr0) (EAtom (AString str0))) =>
-            if (all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x, [x0; x]); (id_tag, [id_tag0]); (str, [str0])])
-            then
-              let n := EAccess (EVar acc) "0" in
-              let l := EAccess (EVar acc) "1" in
-              EAccess
-                (use_bitmap
-                   (EAccess (EAccess (ELoc tbl) aux_tag) bm_tag)
-                   (EAccess (EAccess (EAccess (ELoc tbl) aux_tag) pk_idx_tag) "1"))
-                "1"
-            else e
-        | _ => e
-        end.
-
-      Lemma filter_to_bitmap_lookup_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
-          type_wf t -> is_pk_tbl_ty t = true ->
-          is_bitmap_tbl_ty t = true ->
-          map.get Gstore tbl = Some (TRecord tl) ->
-          access_record tl id_tag = Success t ->
-          access_record tl aux_tag = Success (TRecord aux_tl) ->
-          access_record aux_tl pk_idx_tag = Success (pk_idx_ty t) ->
-          access_record aux_tl bm_tag = Success (bitmap_ty t) ->
-          preserve_ty Gstore (filter_to_bitmap_lookup_head).
-      Proof.
-        unfold preserve_ty, is_pk_tbl_ty, is_bitmap_tbl_ty. intros.
-        repeat destruct_match_hyp; try congruence.
-        repeat destruct_subexpr. simpl.
-        case_match; auto. repeat rewrite Bool.andb_true_r in *.
-        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
-        rewrite eqb_eq in *; subst.
-        repeat invert_type_of_clear. repeat invert_type_of_op_clear.
-        repeat rewrite_map_get_put_hyp.
-        repeat (clear_refl; repeat do_injection2).
-        repeat (rewrite_l_to_r; do_injection2).
-        econstructor.
-        1: econstructor.
-        1: repeat (econstructor; eauto).
-        1:{ lazymatch goal with
-            H: tenv_wf ?G, H': map.get ?G _ = _ |- _ =>
-              apply H in H'
-          end.
-            repeat invert_type_wf.
-            instantiate(1:=[("0", TInt); ("1", TList (TRecord tl0))]).
-            repeat (econstructor; eauto). cbn; intuition discriminate. }
-        1:{ repeat (econstructor; eauto);
-            repeat rewrite_map_get_put_goal; eauto;
-            use_is_NoDup. }
-        cbn; reflexivity.
-      Qed.
-
       Lemma fiat2_gallina_use_bitmap : forall (store env : locals) bm d,
           free_immut_in b d = false ->
           free_immut_in acc d = false ->
@@ -1076,65 +1023,6 @@ Section WithTags.
             invert_Forall2. rewrite_l_to_r. reflexivity. }
       Qed.
 
-      Lemma filter_to_bitmap_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
-          type_wf t -> is_pk_tbl_ty t = true ->
-          is_bitmap_tbl_ty t = true ->
-          map.get Gstore tbl = Some (TRecord tl) ->
-          access_record tl id_tag = Success t ->
-          access_record tl aux_tag = Success (TRecord aux_tl) ->
-          access_record aux_tl pk_idx_tag = Success (pk_idx_ty t) ->
-          access_record aux_tl bm_tag = Success (bitmap_ty t) ->
-          match map.get store tbl with
-          | Some v => aux_wf_for_idx pk_idx_tag pk_idx_wf v /\
-                        aux_wf_for_idx bm_tag bitmap_wf v
-          | _ => False
-          end ->
-          preserve_sem Gstore store filter_to_bitmap_lookup_head.
-      Proof.
-        unfold preserve_sem, aux_wf_for_idx; intros.
-        repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
-        eapply pk_idx_wf__pk_idx_chara in H13; eauto.
-        all: unfold is_pk_tbl_ty, is_bitmap_tbl_ty, pk_idx_ty, bitmap_ty in *.
-        all: apply_locals_wf store;
-          repeat (destruct_match_hyp; try discriminate; intuition idtac; []);  do_injection.
-        all: invert_type_of_value_clear;
-          use_Forall2_access_record id_tag; auto.
-        use_Forall2_access_record aux_tag.
-        invert_type_of_value_clear.
-        use_Forall2_access_record pk_idx_tag.
-        use_Forall2_access_record bm_tag.
-        repeat destruct_subexpr. unfold filter_to_bitmap_lookup_head.
-        case_match; auto. cbn in * |-.
-        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
-        rewrite eqb_eq in *; subst. repeat clear_refl.
-        cbn [interp_expr interp_binop apply_bool_binop interp_atom].
-        unfold get_local. rewrite_l_to_r.
-        unfold record_proj. repeat rewrite_l_to_r.
-        repeat invert_type_of_value_clear.
-        rewrite type_eqb_eq in *; subst.
-        unfold pk_idx_chara in *.
-        destruct_and. repeat (destruct_match_hyp; intuition idtac).
-        erewrite use_bitmap_sem; try reflexivity.
-        4,5: eauto.
-        2:{ cbn. unfold get_local, record_proj; repeat rewrite_l_to_r.
-            eauto. }
-        2:{ eapply bitmap_wf__bitmap_chara; auto; cbn.
-            unfold get_local, record_proj; repeat rewrite_l_to_r. eauto. }
-        cbn. f_equal.
-        apply In_filter_ext; intros. apply_Forall_In.
-        invert_type_of_value_clear. rewrite_map_get_put_goal.
-        lazymatch goal with
-          H: Forall2 _ l6 _ |- _ => apply Forall2_split in H as [HL HR] end.
-        rewrite Forall2_fst_eq in HL.
-        lazymatch goal with
-          H: access_record l1 _ = _ |- _ =>
-            apply access_record_sound in H;
-            apply in_map with (f:=fst) in H; cbn in H;
-            rewrite <- HL in H; apply In_access_record in H
-        end.
-        destruct_exists; rewrite_l_to_r. reflexivity.
-      Qed.
-
       (* filter_to_bitmap_lookup_head, matching the filter written as a flatmap *)
       Definition flatmap_filter_to_bitmap_lookup_head (e : expr) :=
         match e with
@@ -1253,40 +1141,6 @@ Section WithTags.
     Context (x b acc : string).
     Context (H_NoDup : is_NoDup_opaque [x; b; acc]).
 
-    Lemma filter_to_bitmap_lookup_head_sound : forall is_tbl_ty' aux_ty aux_wf,
-        aux_ty_for_idx pk_idx_tag pk_idx_ty aux_ty ->
-        aux_ty_for_idx bm_tag bitmap_ty aux_ty ->
-        (forall t, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
-        (forall t, is_tbl_ty' t = true -> is_bitmap_tbl_ty t = true) ->
-        (forall (v : value), aux_wf v -> aux_wf_for_idx pk_idx_tag pk_idx_wf v) ->
-        (forall (v : value), aux_wf v -> aux_wf_for_idx bm_tag bitmap_wf v) ->
-        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (filter_to_bitmap_lookup_head x b acc).
-    Proof.
-      unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
-      invert_tenv_wf_with_globals.
-      repeat lazymatch goal with
-               H: forall _, is_tbl_ty' _ = _ -> _, H': is_tbl_ty' _ = _ |- _ =>
-        let H_tbl_ty := fresh "H_tbl_ty" in
-        apply H in H' as H_tbl_ty; clear H end.
-      specialize (H tbl_ty). specialize (H0 tbl_ty).
-      repeat destruct_match_hyp; intuition idtac.
-      1: eapply filter_to_bitmap_lookup_head_preserve_ty; eauto.
-      1: eapply filter_to_bitmap_lookup_head_preserve_sem; eauto.
-      lazymatch goal with
-        H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
-          apply H in H'
-      end.
-      destruct_match_hyp; intuition idtac.
-      all: lazymatch goal with
-             H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
-               apply H in H'
-           end.
-      all: unfold value_wf_with_globals in *; invert_Forall; intuition idtac.
-      all: repeat lazymatch goal with
-               H: context[?f _ _]|- ?f _ _ _ =>
-                 apply H end; auto.
-    Qed.
-
     Lemma flatmap_filter_to_bitmap_lookup_head_sound : forall is_tbl_ty' aux_ty aux_wf,
         aux_ty_for_idx pk_idx_tag pk_idx_ty aux_ty ->
         aux_ty_for_idx bm_tag bitmap_ty aux_ty ->
@@ -1322,29 +1176,6 @@ Section WithTags.
     Qed.
   End WithMap.
 End WithTags.
-
-Lemma filter_to_bitmap_lookup_head_sound2 : forall pk_hole pk_tup pk_acc : string,
-  forall (attr str bm_hole bm_tup id_tag aux_tag pk_idx_tag bm_tag : string) (tenv : map.map string type),
-    map.ok tenv ->
-    forall (width : Z) (word : word width),
-      word.ok word ->
-      forall locals : map.map string (value (width:=width)),
-        map.ok locals ->
-        forall x b acc : string,
-          is_NoDup_opaque [x; b; acc] ->
-          forall (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : (value (width:=width)) -> Prop),
-            aux_ty_for_idx id_tag aux_tag pk_idx_tag pk_idx_ty aux_ty ->
-            aux_ty_for_idx id_tag aux_tag bm_tag bitmap_ty aux_ty ->
-            (forall t : type, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
-            (forall t : type, is_tbl_ty' t = true -> is_bitmap_tbl_ty attr t = true) ->
-            (forall v : (value (width:=width)), aux_wf v -> aux_wf_for_idx id_tag aux_tag pk_idx_tag (pk_idx_wf pk_hole pk_tup pk_acc) v) ->
-            (forall v : (value (width:=width)), aux_wf v -> aux_wf_for_idx id_tag aux_tag bm_tag (bitmap_wf attr str bm_hole bm_tup) v) ->
-            is_NoDup_opaque [pk_tup; pk_acc] ->
-            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
-              (filter_to_bitmap_lookup_head attr str id_tag aux_tag pk_idx_tag bm_tag x b acc).
-Proof.
-  intros; eapply filter_to_bitmap_lookup_head_sound; eauto.
-Qed.
 
 Lemma flatmap_filter_to_bitmap_lookup_head_sound2 : forall pk_hole pk_tup pk_acc : string,
   forall (attr str bm_hole bm_tup id_tag aux_tag pk_idx_tag bm_tag : string) (tenv : map.map string type),
@@ -1387,7 +1218,6 @@ Qed.
 #[export] Hint Resolve cons_to_pk_idx_update_head_sound : transf_hints.
 #[export] Hint Resolve cons_to_bitmap_update_head_sound : transf_hints.
 #[export] Hint Resolve use_bitmap_head_sound : transf_hints.
-#[export] Hint Resolve filter_to_bitmap_lookup_head_sound2 : transf_hints.
 #[export] Hint Resolve flatmap_filter_to_bitmap_lookup_head_sound2 : transf_hints.
 #[export] Hint Resolve use_pk_idx_head_sound2 : transf_hints.
 

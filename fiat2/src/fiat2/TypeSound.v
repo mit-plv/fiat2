@@ -97,14 +97,6 @@ Section WithWord.
       1: apply IHtype_of in H_env as H_wf; inversion H_wf; subst;
       eapply Forall_access_record; eauto.
       1,2: apply_type_of__type_wf_IH_hyp; constructor; invert_type_wf; auto.
-      1:{ constructor. apply IHtype_of4. repeat apply tenv_wf_step; auto.
-          + apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
-          + apply IHtype_of2 in H_env as H_wf2. inversion H_wf2; auto. }
-      1,2: constructor; apply_type_of__type_wf_IH_goal;
-      repeat apply_type_of__type_wf_IH_hyp;
-      repeat apply tenv_wf_step; try invert_type_wf; auto.
-      1,2,3: constructor; apply IHtype_of2, tenv_wf_step; auto;
-      apply IHtype_of1 in H_env as H_wf1; inversion H_wf1; auto.
       1,2: constructor; apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
     Qed.
 
@@ -519,22 +511,6 @@ Section WithWord.
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
                   try apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* EFilter *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* EJoin *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-        all: apply IHe2 in E3; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-      - (* EProj *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
       - (* EBagOf *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
@@ -1498,87 +1474,6 @@ Section WithWord.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
       - (* TyESort_Set *)
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros. apply_Forall_In.
-      - (* TyEFilter_List *)
-        repeat apply_type_sound_IH. constructor. apply Forall_Forall_filter. auto.
-      - (* TyEFilter_Bag *)
-        repeat apply_type_sound_IH. constructor.
-        1: rewrite (map_fst_filter_fst _ _ l
-                      (fun v => match interp_expr store (map.put env x v) p with
-                                | VBool b => b
-                                | _ => false
-                                end)); apply NoDup_filter; auto.
-        1: auto using filter_preserve_SSorted.
-        1,2: apply Forall_Forall_filter; auto.
-      - (* TyEFilter_Set *)
-        repeat apply_type_sound_IH. constructor;
-          auto using NoDup_filter, filter_preserve_SSorted, Forall_Forall_filter.
-      - (* TyEJoin_List *)
-        repeat apply_type_sound_IH.
-        rewrite <- H4 in H'0. eapply flat_map_type_sound; eauto. intros.
-        apply map_type_sound with (t := t2).
-        + constructor; apply Forall_Forall_filter; auto.
-        + intuition idtac. repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
-            try apply tenv_wf_step; try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEJoin_Bag *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
-        repeat Forall_fst__Forall_bag_to_list.
-        remember (bag_to_list l0) as l0'. clear Heql0'.
-        induction l0'; cbn; auto.
-        invert_Forall. apply Forall_app; intuition auto.
-        apply List.Forall_map.
-        apply Forall_Forall_filter.
-        remember (bag_to_list l) as l'. clear Heql'.
-        lazymatch goal with
-          H: Forall _ (flat_map _ _) |- _ =>
-            clear H
-        end.
-        induction l'; cbn; auto.
-        invert_Forall. constructor; intuition auto.
-        apply_type_sound_IH; auto.
-        1:{ apply tenv_wf_step; auto.
-            apply_type_of__type_wf; try invert_type_wf; auto. }
-        1: apply_type_of__type_wf; try invert_type_wf; auto.
-        1: apply locals_wf_step; auto.
-      - (* TyEJoin_Set *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
-        eapply incl_Forall; [ apply list_to_set_incl | ].
-        rewrite Forall_forall; intros ? H_in.
-        rewrite in_flat_map in H_in; destruct H_in as [? [? H_in]].
-        apply_Forall_In.
-        rewrite in_map_iff in H_in; destruct H_in as [? [? H_in]].
-        rewrite filter_In in H_in; intuition idtac.
-        subst; apply_type_sound_IH; auto.
-        1:{ apply tenv_wf_step; auto.
-            apply_type_of__type_wf; try invert_type_wf; auto. }
-        1: apply_type_of__type_wf; try invert_type_wf; auto.
-        1: apply locals_wf_step; auto.
-        apply_Forall_In.
-      - (* TyEProj_List *)
-        repeat apply_type_sound_IH.
-        apply map_type_sound with (t := t1).
-        + constructor. auto.
-        + intros; repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
-            try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEProj_Bag *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
-        repeat Forall_fst__Forall_bag_to_list.
-        apply List.Forall_map.
-        remember (bag_to_list l) as l'. clear Heql'.
-        induction l'; cbn; auto.
-        invert_Forall; constructor; auto.
-        apply_type_sound_IH; auto.
-        apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEProj_Set *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
-        eapply incl_Forall; [ apply list_to_set_incl | ].
-        apply List.Forall_map; rewrite Forall_forall; intros.
-        apply_Forall_In.
-        apply_type_sound_IH; auto.
-        apply_type_of__type_wf; try invert_type_wf; auto.
       - (* TyEBagOf *)
         repeat apply_type_sound_IH.
         constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.

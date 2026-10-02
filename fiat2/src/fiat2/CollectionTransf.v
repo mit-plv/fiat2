@@ -24,9 +24,6 @@ Definition annotate_collection (e : expr) : expr :=
 Fixpoint bag_of (e : expr) : expr :=
   match e with
   | EFlatmap LikeList e1 x e2 => EFlatmap LikeBag (bag_of e1) x (bag_of e2)
-  | EFilter LikeList e x p => EFilter LikeBag (bag_of e) x p
-  | EJoin LikeList e1 e2 x y p e3 => EJoin LikeBag (bag_of e1) (bag_of e2) x y p e3
-  | EProj LikeList e1 x e2 => EProj LikeBag (bag_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OBagInsert (bag_of e2) e1
   | EIf e1 e2 e3 => EIf e1 (bag_of e2) (bag_of e3)
   | EAtom (ANil t) => EAtom (AEmptyBag t)
@@ -36,9 +33,6 @@ Fixpoint bag_of (e : expr) : expr :=
 Fixpoint set_of (e : expr) : expr :=
   match e with
   | EFlatmap LikeList e1 x e2 => EFlatmap LikeSet (set_of e1) x (set_of e2)
-  | EFilter LikeList e x p => EFilter LikeSet (set_of e) x p
-  | EJoin LikeList e1 e2 x y p e3 => EJoin LikeSet (set_of e1) (set_of e2) x y p e3
-  | EProj LikeList e1 x e2 => EProj LikeSet (set_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OSetInsert (set_of e2) e1
   | EAtom (ANil t) => EAtom (AEmptySet t)
   | _ => ESetOf e
@@ -52,12 +46,14 @@ Definition push_down_collection (e : expr) : expr :=
   end.
 
 Definition ex : expr :=
-  ESort LikeList (EFilter LikeList (ELoc "tbl") "x"
-    (EBinop OEq (EAccess (EVar "x") "attr") (EAtom (AInt 0)))).
+  ESort LikeList (EFlatmap LikeList (ELoc "tbl") "x"
+    (EIf (EBinop OEq (EAccess (EVar "x") "attr") (EAtom (AInt 0)))
+       (EBinop OCons (EVar "x") (EAtom (ANil None))) (EAtom (ANil None)))).
 (* Compute fold_expr push_down_collection (fold_expr annotate_collection ex). *)
 
 Definition ex1 : expr :=
-  EFold (EProj LikeList (ELoc "tbl") "r" (EAccess (EVar "r") "attr")) (EAtom (ANone None)) "v" "acc"
+  EFold (EFlatmap LikeList (ELoc "tbl") "r" (EBinop OCons (EAccess (EVar "r") "attr") (EAtom (ANil None))))
+    (EAtom (ANone None)) "v" "acc"
       (EOptMatch (EVar "acc") (EUnop OSome (EVar "v"))
          "x" (EIf (EBinop OLess (EVar "v") (EVar "x")) (EUnop OSome (EVar "v")) (EVar "acc"))).
 (* Compute fold_expr push_down_collection (fold_expr annotate_collection ex1). *)
@@ -436,17 +432,6 @@ Section WithWord.
           apply_Forall_In. erewrite IHtype_of2; eauto with fiat2_hints.
           apply_type_sound e2; eauto with fiat2_hints. invert_type_of_value.
           apply list_to_bag_to_list_Permutation. }
-      1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
-          apply filter_list_to_bag with
-            (P:=fun v : value => match interp_expr store (map.put env x v) p with
-                                 | VBool b => b
-                                 | _ => false
-                                 end). }
-      1:{ cbn. rewrite IHtype_of1, IHtype_of2; auto. repeat (case_match; auto). f_equal.
-          auto using Permutation_list_to_bag_eq, Utils.Permutation_flat_map,
-            list_to_bag_to_list_Permutation, Permutation_map, Permutation_filter. }
-      1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
-          auto using Permutation_list_to_bag_eq, Permutation_map, list_to_bag_to_list_Permutation. }
     Qed.
 
     Lemma set_of_ty : forall e Gstore Genv t,
@@ -593,29 +578,6 @@ Section WithWord.
               invert_type_of_value_clear. apply_Forall_In.
               rewrite IHtype_of2; eauto with fiat2_hints.
               case_match; auto using incl_refl, list_to_set_incl_r. } }
-      1:{ cbn. use_set_of_sem_IH; auto.
-          case_match; auto. f_equal.
-          apply NoDup_SSorted_double_incl_eq; auto using list_to_set_NoDup, list_to_set_SSorted, NoDup_filter, filter_preserve_SSorted;
-            eauto using incl_tran, list_to_set_incl_r,
-            incl_filter_incl, list_to_set_incl. }
-      1:{ cbn. use_set_of_sem_IH; auto.
-          case_match; auto.
-          use_set_of_sem_IH; auto.
-          case_match; auto. f_equal.
-          apply NoDup_SSorted_double_incl_eq; auto using list_to_set_NoDup, list_to_set_SSorted, NoDup_filter, filter_preserve_SSorted.
-          1:{ eapply incl_tran; [ apply list_to_set_incl | ].
-              eapply incl_tran; [ | apply list_to_set_incl_r ].
-              apply flat_map_incl_in2; [ apply list_to_set_incl | ].
-              intros. apply incl_map, incl_filter_incl, list_to_set_incl. }
-          1:{ eapply incl_tran; [ apply list_to_set_incl | ].
-              eapply incl_tran; [ | apply list_to_set_incl_r ].
-              apply flat_map_incl_in2; [ apply list_to_set_incl_r | ].
-              intros. apply incl_map, incl_filter_incl, list_to_set_incl_r. } }
-      1:{ cbn. use_set_of_sem_IH; auto.
-          case_match; auto. f_equal.
-          apply NoDup_SSorted_double_incl_eq; auto using list_to_set_NoDup, list_to_set_SSorted;
-            eauto using incl_tran, list_to_set_incl_r,
-            incl_map, list_to_set_incl. }
     Qed.
 
     Theorem push_down_collection_preserve_ty : forall e Gstore Genv t,

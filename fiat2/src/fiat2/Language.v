@@ -137,10 +137,6 @@ Inductive expr : Type :=
 | EOptMatch (e : expr) (e_none : expr) (x : string) (e_some : expr)
 | EDictFold (d e0 : expr) (k v acc : string) (e : expr)
 | ESort (tag : collection_tag) (l : expr) (* by value order *)
-(* relational algebra *)
-| EFilter (tag: collection_tag) (l : expr) (x : string) (p : expr) (* Select a subset of rows from table *)
-| EJoin (tag: collection_tag) (l1 l2 : expr) (x y : string) (p r : expr) (* Join two tables *)
-| EProj (tag: collection_tag) (l : expr) (x : string) (r : expr) (* Generalized projection *)
 (* conversion to different collections *)
 | EBagOf (l : expr)
 | ESetOf (l : expr).
@@ -163,9 +159,6 @@ Section ExprIH.
     (f_optmatch : forall e e_none x e_some, P e -> P e_none -> P e_some -> P (EOptMatch e e_none x e_some))
     (f_dictfold : forall d e0 k v acc e, P d -> P e0 -> P e -> P (EDictFold d e0 k v acc e))
     (f_sort : forall tag l, P l -> P (ESort tag l))
-    (f_filter : forall tag l x p, P l -> P p -> P (EFilter tag l x p))
-    (f_join : forall tag l1 l2 x y p r, P l1 -> P l2 -> P p -> P r -> P (EJoin tag l1 l2 x y p r))
-    (f_proj : forall tag l x r, P l -> P r -> P (EProj tag l x r))
     (f_bagof : forall l, P l -> P (EBagOf l))
     (f_setof : forall l, P l -> P (ESetOf l)).
 
@@ -198,9 +191,6 @@ Section ExprIH.
       | EOptMatch e e_none x e_some => f_optmatch e e_none x e_some (expr_IH e) (expr_IH e_none) (expr_IH e_some)
       | EDictFold d e0 k v acc e => f_dictfold d e0 k v acc e (expr_IH d) (expr_IH e0) (expr_IH e)
       | ESort tag l => f_sort tag l (expr_IH l)
-      | EFilter tag l x p => f_filter tag l x p (expr_IH l) (expr_IH p)
-      | EJoin tag l1 l2 x y p r => f_join tag l1 l2 x y p r (expr_IH l1) (expr_IH l2) (expr_IH p) (expr_IH r)
-      | EProj tag l x r => f_proj tag l x r (expr_IH l) (expr_IH r)
       | EBagOf l => f_bagof l (expr_IH l)
       | ESetOf l => f_setof l (expr_IH l)
       end.

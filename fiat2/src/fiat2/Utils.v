@@ -1068,71 +1068,6 @@ Section WithMap.
             apply_type_sound e3;
               [ repeat apply tenv_wf_step; eauto with fiat2_hints
               | repeat apply locals_wf_step; apply_Forall_In; intuition auto ]. } }
-    1,2,3: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto;
-        apply_type_sound e1; invert_type_of_value;
-        f_equal; apply In_filter_ext; auto; intros; apply_Forall_In;
-    use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e2; invert_type_of_value.
-        f_equal. apply In_flat_map_ext; intros. apply_Forall_In.
-        erewrite In_filter_ext; eauto.
-        2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        apply map_ext_in; intros.
-        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e2; invert_type_of_value.
-        do 2 f_equal. apply In_flat_map_ext; intros.
-        repeat Forall_fst__Forall_bag_to_list. apply_Forall_In.
-        erewrite In_filter_ext; eauto.
-        2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        apply map_ext_in; intros.
-        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e2; invert_type_of_value.
-        do 2 f_equal. apply In_flat_map_ext; intros.
-        apply_Forall_In.
-        erewrite In_filter_ext; eauto.
-        2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        apply map_ext_in; intros.
-        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        f_equal. apply map_ext_in; intros. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        do 2 f_equal. apply map_ext_in; intros.
-        Forall_fst__Forall_bag_to_list. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        do 2 f_equal. apply map_ext_in; intros.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
   Qed.
 
   Lemma map_incl__locals_equiv : forall G l l',
@@ -1659,10 +1594,6 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
                                   (negb (String.eqb x k) && negb (String.eqb x v) && negb (String.eqb x acc) &&
                                      free_immut_in x e)
   | ESort _ l => free_immut_in x l
-  | EFilter _ e y p => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x p)
-  | EJoin _ e1 e2 x1 x2 p r => free_immut_in x e1 || free_immut_in x e2 ||
-                               (negb (String.eqb x x1) && negb (String.eqb x x2) && (free_immut_in x p || free_immut_in x r))
-  | EProj _ e y r => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x r)
   | EBagOf e | ESetOf e => free_immut_in x e
   end.
 
@@ -1747,35 +1678,6 @@ Section WithMap.
              ++ rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
              ++ apply IHe3; intuition idtac.
                 rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
-    - inversion H0; subst; constructor.
-      1,3,5: apply IHe1; auto; intuition fail.
-      1,2,3: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | apply IHe2; intuition idtac;
-        rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
-    - inversion H0; subst; econstructor.
-      1,5,9: apply IHe1; eauto; intuition fail.
-      1,4,7: apply IHe2; eauto; intuition fail.
-      1,3,5: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
-      (destruct (x =? y) eqn:Ey;
-       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-       | apply IHe3; simpl in *; rewrite Bool.orb_false_iff in *; intuition idtac; rewrite eqb_neq in *;
-         rewrite Properties.map.put_put_diff; auto ]).
-      1,2,3: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
-      (destruct (x =? y) eqn:Ey;
-       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-       | apply IHe4; simpl in *; rewrite Bool.orb_false_iff in *; intuition idtac; rewrite eqb_neq in *;
-         rewrite Properties.map.put_put_diff; auto ]).
-    - inversion H0; subst; econstructor.
-      1,3,5: apply IHe1; eauto; intuition fail.
-      1,2,3: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | apply IHe2; intuition idtac;
-        rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
   Qed.
 
   Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
@@ -1860,64 +1762,6 @@ Section WithMap.
       destruct (x =? acc) eqn:Eacc;
         try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
       rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition auto.
-    - destruct tag; auto;
-      rewrite <- IHe1; intuition idtac; case_match; auto;
-      f_equal; clear E; induction l; auto; simpl;
-      (destruct (x0 =? x) eqn:E';
-       [ rewrite eqb_eq in *; subst;
-         rewrite Properties.map.put_put_same; destruct_one_match;
-         [f_equal |]; apply IHl
-       | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; intuition idtac;
-         rewrite <- IHe2 with (x := x0); intuition idtac;
-         destruct_one_match; auto; f_equal; apply IHl ]).
-    - destruct tag; auto;
-        rewrite <- IHe1, <- IHe2; intuition idtac; repeat case_match; auto.
-      1: do 2 f_equal; apply flat_map_ext; intros; clear E E0;
-      induction l0; auto; simpl.
-      2: do 2 f_equal; apply flat_map_ext; intros; clear E E0;
-      remember (bag_to_list l0) as l0'; clear Heql0';
-      induction l0'; auto; simpl.
-      3: f_equal; apply flat_map_ext; intros; clear E E0;
-      induction l0; auto; simpl.
-      all: enough (interp_expr store (map.put (map.put (map.put env x0 v) x a) y a0) e3 = interp_expr store (map.put (map.put env x a) y a0) e3);
-        [ | (destruct (x0 =? x) eqn:Ex;
-             [ rewrite eqb_eq in *; subst;
-               rewrite Properties.map.put_put_same; auto
-             | rewrite eqb_neq in *;
-               rewrite Properties.map.put_put_diff with (k1 := x0); auto;
-               (destruct (x0 =? y) eqn:Ey;
-               [ rewrite eqb_eq in *; subst;
-                 rewrite Properties.map.put_put_same; auto
-               | rewrite eqb_neq in *;
-                 rewrite Properties.map.put_put_diff; auto;
-                 simpl in H1; rewrite Bool.orb_false_iff in *;
-                 rewrite <- IHe3; intuition idtac ]) ]) ].
-      1: rewrite H0; destruct_one_match; simpl; try apply IHl0;
-      f_equal; try apply IHl0.
-      2: rewrite H0; destruct_one_match; simpl; try apply IHl0';
-      f_equal; try apply IHl0'.
-      3: rewrite H0; destruct_one_match; simpl; try apply IHl0;
-      f_equal; try apply IHl0.
-      all: destruct (x0 =? x) eqn:Ex;
-        [ rewrite eqb_eq in *; subst;
-          rewrite Properties.map.put_put_same; auto
-        | rewrite eqb_neq in *;
-          rewrite Properties.map.put_put_diff with (k1 := x0); auto;
-          (destruct (x0 =? y) eqn:Ey;
-           [ rewrite eqb_eq in *; subst;
-             rewrite Properties.map.put_put_same; auto
-           | rewrite eqb_neq in *;
-             rewrite Properties.map.put_put_diff with (k1 := x0); auto;
-             simpl in H1; rewrite Bool.orb_false_iff in *;
-             rewrite <- (IHe4 x0); intuition idtac ]) ].
-    - destruct tag; auto;
-        rewrite <- IHe1; intuition idtac; case_match; auto.
-      all: [> do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext; intro;
-        (destruct (x0 =? x) eqn:Ex;
-         [ rewrite eqb_eq in *; subst;
-           rewrite Properties.map.put_put_same; auto
-         | rewrite eqb_neq in *;
-           rewrite Properties.map.put_put_diff with (k1 := x0); auto ]).
   Qed.
 End WithMap.
 
