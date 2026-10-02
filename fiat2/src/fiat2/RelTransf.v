@@ -264,6 +264,171 @@ Section WithMap.
   Qed.
 End WithMap.
 
+Definition flatmap_assoc_head (e : expr) :=
+  (* [y <- [x <- e1, e2], e3] --> [x <- e1, y <- e2, e3], where x is not free in e3 *)
+  match e with
+  | EFlatmap LikeList (EFlatmap LikeList e1 x e2) y e3 =>
+      if free_immut_in x e3 then e
+      else EFlatmap LikeList e1 x (EFlatmap LikeList e2 y e3)
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  (* Binding x around e does not change e's type when x is not free in e *)
+  Lemma not_free_immut_put_put_ty : forall x y e (Gstore Genv : tenv) tx ty t,
+      free_immut_in x e = false ->
+      type_of Gstore (map.put Genv y ty) e t ->
+      type_of Gstore (map.put (map.put Genv x tx) y ty) e t.
+  Proof.
+    intros. destruct (String.eqb x y) eqn:E.
+    - rewrite String.eqb_eq in E; subst.
+      rewrite Properties.map.put_put_same; assumption.
+    - rewrite String.eqb_neq in E.
+      rewrite Properties.map.put_put_diff_comm; auto.
+      apply not_free_immut_put_ty2; assumption.
+  Qed.
+
+  (* Binding x around e does not change e's value when x is not free in e *)
+  Lemma not_free_immut_put_put_sem : forall x y e (store env : locals) vx vy,
+      free_immut_in x e = false ->
+      interp_expr store (map.put (map.put env x vx) y vy) e = interp_expr store (map.put env y vy) e.
+  Proof.
+    intros. destruct (String.eqb x y) eqn:E.
+    - rewrite String.eqb_eq in E; subst.
+      rewrite Properties.map.put_put_same; reflexivity.
+    - rewrite String.eqb_neq in E.
+      rewrite Properties.map.put_put_diff_comm; auto.
+      symmetry. apply not_free_immut_put_sem; assumption.
+  Qed.
+
+  Lemma flatmap_assoc_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_assoc_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    repeat invert_type_of_clear.
+    repeat econstructor; eauto using not_free_immut_put_put_ty.
+  Qed.
+
+  Lemma flatmap_assoc_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_assoc_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []).
+    repeat invert_type_of_clear.
+    cbn [interp_expr].
+    apply_type_sound e1_1; invert_type_of_value_clear.
+    f_equal. rewrite flat_map__flat_map.
+    apply flat_map_eq. rewrite Forall_forall; intros v H_in.
+    apply_Forall_In.
+    apply_type_sound2 e1_2;
+      try (apply tenv_wf_step; eauto with fiat2_hints);
+      try (apply locals_wf_step; auto).
+    invert_type_of_value_clear. try rewrite_expr_value.
+    apply flat_map_eq. rewrite Forall_forall; intros.
+    rewrite not_free_immut_put_put_sem; auto.
+  Qed.
+
+  Lemma flatmap_assoc_head_sound : expr_transf_sound (locals:=locals) flatmap_assoc_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_assoc_head_preserve_ty; auto.
+    eapply flatmap_assoc_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
+Definition flatmap_singleton_head (e : expr) :=
+  (* [x <- [e1], e2] --> let x = e1 in e2 *)
+  match e with
+  | EFlatmap LikeList (EBinop OCons e1 (EAtom (ANil _))) x e2 => ELet e1 x e2
+  | _ => e
+  end.
+
+Definition flatmap_identity_head (e : expr) :=
+  (* [x <- e1, ret x] --> e1 *)
+  match e with
+  | EFlatmap LikeList e1 x (EBinop OCons (EVar y) (EAtom (ANil _))) =>
+      if String.eqb x y then e1 else e
+  | _ => e
+  end.
+
+Lemma flat_map_singleton_id : forall A (l : list A),
+    flat_map (fun v => v :: nil) l = l.
+Proof.
+  induction l; cbn; congruence.
+Qed.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma flatmap_singleton_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_singleton_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+    econstructor; eauto.
+  Qed.
+
+  Lemma flatmap_singleton_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_singleton_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl.
+    repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+    apply_type_sound2 e2;
+      try (apply tenv_wf_step; eauto with fiat2_hints);
+      try (apply locals_wf_step; auto; eapply type_sound; eauto).
+    invert_type_of_value_clear.
+    try rewrite_expr_value. rewrite app_nil_r. reflexivity.
+  Qed.
+
+  Lemma flatmap_singleton_head_sound : expr_transf_sound (locals:=locals) flatmap_singleton_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_singleton_head_preserve_ty; auto.
+    eapply flatmap_singleton_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+
+  Lemma flatmap_identity_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_identity_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    rewrite String.eqb_eq in *; subst.
+    repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+    repeat rewrite_map_get_put_hyp. repeat do_injection. assumption.
+  Qed.
+
+  Lemma flatmap_identity_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_identity_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []).
+    rewrite String.eqb_eq in *; subst.
+    repeat invert_type_of_clear.
+    apply_type_sound e1; invert_type_of_value_clear.
+    cbn [interp_expr interp_binop interp_atom]. try rewrite_expr_value.
+    unfold get_local. f_equal.
+    erewrite flat_map_ext; [ symmetry; apply flat_map_singleton_id | ].
+    intros. rewrite map.get_put_same. reflexivity.
+  Qed.
+
+  Lemma flatmap_identity_head_sound : expr_transf_sound (locals:=locals) flatmap_identity_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_identity_head_preserve_ty; auto.
+    eapply flatmap_identity_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 Definition swap_conjuncts_head (e : expr) :=
   match e with
   | EBinop OAnd p1 p2 =>
@@ -441,3 +606,6 @@ End WithMap.
 #[export] Hint Resolve if_nil_into_flatmap_head_sound : transf_hints.
 #[export] Hint Resolve swap_conjuncts_head_sound : transf_hints.
 #[export] Hint Resolve split_if_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_assoc_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_singleton_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_identity_head_sound : transf_hints.
