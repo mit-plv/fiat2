@@ -34,11 +34,15 @@ end
 
 Definition prog := (CLetMut (EVar "emp_tbl") "employees" (CLetMut (EVar "dept_tbl") "departments" (CForeach (EBinop ORange (EAtom (AInt 0)) (EVar "iters")) "i" (CLetMut (EAtom (AString "")) "output" (CLet (ESort LikeList (EFlatmap LikeList (ELoc "departments") "d" (EFlatmap LikeList (ELoc "employees") "e" (EIf (EBinop OEq (EAccess (EVar "e") "dept_id") (EAccess (EVar "d") "id")) (EBinop OCons (ERecord [("name", (EAccess (EVar "e") "name")); ("dept", (EAccess (EVar "d") "name"))]) (EAtom (ANil None))) (EAtom (ANil None)))))) "result" (CSeq (CForeach (EVar "result") "r" (CAssign "output" (EBinop OConcatString (ELoc "output") (EBinop OConcatString (EAccess (EVar "r") "name") (EBinop OConcatString (EAtom (AString " is in ")) (EBinop OConcatString (EAccess (EVar "r") "dept") (EAtom (AString "\n")))))))) (CAssign "outputs" (EBinop OCons (ELoc "output") (ELoc "outputs"))))))))).
 
-(* Claude Sonnet 4.6 *)
+(* Adapted by hand from the Claude Sonnet 4.6 heuristics after EFilter/EProj/EJoin
+   were removed from the rewrite menu: ToFilter and ToProj are dropped, since
+   filters and projections now stay flatmaps;
+   ToJoin followed by JoinToFlatmapFilter is replaced by IfNilIntoFlatmap, which
+   exposes the same filter (so both heuristics now coincide). *)
 Definition heuristics :=
-  [ AC [PushdownCollection; AnnotateCollection; ToProj; JoinToFlatmapFilter; ToJoin]
+  [ AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
       [[DictIdx "dept_id"]; []];
-    AC [PushdownCollection; AnnotateCollection; ToProj; ToFilter; IfNilIntoFlatmap]
+    AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
       [[DictIdx "dept_id"]; []]
   ].
 

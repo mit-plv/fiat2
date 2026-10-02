@@ -40,17 +40,19 @@ end
 
 Definition prog := (CLetMut (EVar "edges_tbl") "edges" (CForeach (EVar "queries") "q" (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AInt 0))) (CLet (ESort LikeList (EFlatmap LikeList (ELoc "edges") "e1" (EFlatmap LikeList (ELoc "edges") "e2" (EFlatmap LikeList (ELoc "edges") "e3" (EIf (EBinop OEq (EAccess (EVar "e2") "src") (EAccess (EVar "e1") "dst")) (EIf (EBinop OEq (EAccess (EVar "e3") "src") (EAccess (EVar "e2") "dst")) (EIf (EBinop OEq (EAccess (EVar "e1") "dst") (EAccess (EVar "e3") "dst")) (EIf (EBinop OAnd (EBinop OLess (EAccess (EVar "e1") "src") (EAccess (EVar "e1") "dst")) (EBinop OLess (EAccess (EVar "e2") "src") (EAccess (EVar "e2") "dst"))) (EBinop OCons (ERecord [("p1", (EAccess (EVar "e1") "src")); ("p2", (EAccess (EVar "e2") "src")); ("p3", (EAccess (EVar "e3") "src"))]) (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))) (EAtom (ANil None))))))) "triangles" (CLetMut (EAtom (AString "")) "result" (CSeq (CForeach (EVar "triangles") "tri" (CAssign "result" (EBinop OConcatString (ELoc "result") (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "tri") "p1")) (EBinop OConcatString (EAtom (AString ", ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "tri") "p2")) (EBinop OConcatString (EAtom (AString ", ")) (EBinop OConcatString (EUnop OIntToString (EAccess (EVar "tri") "p3")) (EAtom (AString "\n")))))))))) (CAssign "outputs" (EBinop OCons (ELoc "result") (ELoc "outputs")))))) (CSeq (CAssign "edges" (EBinop OCons (EAccess (EVar "q") "new_edge") (ELoc "edges"))) (CAssign "outputs" (EBinop OCons (EAtom (AString "New edge added successfully\n")) (ELoc "outputs"))))))).
 
-(* Claude Sonnet 4.6 *)
+(* Adapted by hand from the Claude Sonnet 4.6 heuristics after EFilter/EProj/EJoin
+   were removed from the rewrite menu: ToFilter is dropped, since filters now stay
+   flatmaps. *)
 Definition heuristics :=
-[ AC [PushdownCollection; AnnotateCollection; ToFilter;
+[ AC [PushdownCollection; AnnotateCollection;
       IfNilIntoFlatmap; IfNilIntoFlatmap;
       SwapFlatmapIf]
      [[DictIdx "src"]]
-; AC [PushdownCollection; AnnotateCollection; ToFilter;
+; AC [PushdownCollection; AnnotateCollection;
       IfNilIntoFlatmap; IfNilIntoFlatmap;
       SwapIfNil; SwapFlatmapIf]
      [[DictIdx "src"; DictIdx "dst"]]
-; AC [PushdownCollection; AnnotateCollection; ToFilter;
+; AC [PushdownCollection; AnnotateCollection;
       IfNilIntoFlatmap; IfNilIntoFlatmap;
       SwapFlatmapIf;
       SwapIfNil; SwapIfNil;
@@ -63,7 +65,7 @@ Definition heuristics :=
     [[DictIdx "src"]]
   ; AC [PushdownCollection; AnnotateCollection;
     SwapFlatmapIf; SwapIfNil; SwapFlatmapIf; SwapFlatmapIf; SwapIfNil;
-    ToFilter; IfNilIntoFlatmap; ToFilter; IfNilIntoFlatmap;
+    IfNilIntoFlatmap; IfNilIntoFlatmap;
     SwapFlatmapIf; SplitIf]
    [[DictIdx "src"]]
 ].

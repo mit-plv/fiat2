@@ -13,12 +13,7 @@ Variant basic_transf :=
   | SplitIf
   | SwapFlatmapIf
   | IfNilIntoFlatmap
-  | ToFilter
-  | ToProj
-  | ToJoin
   | SwapConjuncts
-  | JoinToFlatmapFilter
-  | FilterPushdown
   | AnnotateCollection
   | PushdownCollection.
 
@@ -31,18 +26,13 @@ Variant index_choice :=
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
 
-Definition to_proj_transf := fold_command id to_proj_head.
-Definition to_filter_transf := fold_command id to_filter_head.
-Definition to_join_transf := fold_command id to_join_head.
 Definition annotate_collection_transf := fold_command id annotate_collection.
 Definition push_down_collection_transf := fold_command id push_down_collection.
-Definition filter_pushdown_transf := fold_command id filter_pushdown_head.
 Definition swap_if_nil_transf := fold_command id swap_if_nil_head.
 Definition merge_if_transf := fold_command id merge_if_head.
 Definition split_if_transf := fold_command id split_if_head.
 Definition swap_flatmap_if_transf := fold_command id swap_flatmap_if_head.
 Definition if_nil_into_flatmap_transf := fold_command id if_nil_into_flatmap_head.
-Definition join_to_flatmap_filter_transf := fold_command id join_to_flatmap_filter_head.
 Definition swap_conjuncts_transf := fold_command id swap_conjuncts_head.
 
 Definition mk_basic_transf (f : basic_transf) : command -> command :=
@@ -52,12 +42,7 @@ Definition mk_basic_transf (f : basic_transf) : command -> command :=
   | SplitIf => split_if_transf
   | SwapFlatmapIf => swap_flatmap_if_transf
   | IfNilIntoFlatmap => if_nil_into_flatmap_transf
-  | ToFilter => to_filter_transf
-  | ToProj => to_proj_transf
-  | ToJoin => to_join_transf
   | SwapConjuncts => swap_conjuncts_transf
-  | JoinToFlatmapFilter => join_to_flatmap_filter_transf
-  | FilterPushdown => filter_pushdown_transf
   | AnnotateCollection => annotate_collection_transf
   | PushdownCollection => push_down_collection_transf
   end.
@@ -109,7 +94,7 @@ Section WithConcreteMaps.
     apply dict_idx_ok. auto with transf_hints.
     Qed.
 
-    Definition dict_lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
+    Definition dict_lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_flatmap_filter_to_lookup_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr "tup" "acc" "x" "y").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" tag tbl).
 
@@ -133,7 +118,7 @@ Section WithConcreteMaps.
     Definition use_bitmap_transf := fun tbl => fold_command_with_globals [tbl] (use_bitmap_head bitmap_attr bitmap_str "id_tag" "aux_tag" tag tbl).
     Definition filter_to_bitmap_lookup_transf :=
       fun tbl => fold_command_with_globals [tbl]
-                   (filter_to_bitmap_lookup_head bitmap_attr bitmap_str "id_tag" "aux_tag" tag tag' "x" "b" "acc" tbl).
+                   (flatmap_filter_to_bitmap_lookup_head bitmap_attr bitmap_str "id_tag" "aux_tag" tag tag' "x" "b" "acc" tbl).
   End CommonPipelineParts.
 
   Definition mk_idx (cur_tag : nat) (reps : nat) (ic : index_choice) :
@@ -479,7 +464,7 @@ end.
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_min_head_sound. } }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
-        1:{ eapply eq_filter_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
+        1:{ eapply eq_flatmap_filter_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1:{ rewrite is_NoDup_to_transparent.
                 instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
                 cbn; intuition discriminate. }
@@ -503,7 +488,7 @@ end.
             eapply cons_to_insert_head_sound;
               eauto with transf_hints. } }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
-        1:{ eapply filter_to_bitmap_lookup_head_sound;
+        1:{ eapply flatmap_filter_to_bitmap_lookup_head_sound;
               eauto with transf_hints.
             1:{ rewrite is_NoDup_to_transparent.
                 instantiate(2:="pk_tup"). instantiate (1:="pk_acc").
