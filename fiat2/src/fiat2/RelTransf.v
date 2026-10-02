@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.CollectionTransf.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 From Stdlib Require Import List String ZArith Permutation.
 
@@ -651,6 +651,81 @@ Section WithMap.
 
 End WithMap.
 
+Definition swap_flatmap_likebag_head (e : expr) :=
+  (* Under bag semantics, the order of two independent nested iterations does not matter:
+     [x <- e1, y <- e2, e3] --> [y <- e2, x <- e1, e3]
+     when x and y differ, x is not free in e2 and y is not free in e1 *)
+  match e with
+  | EFlatmap LikeBag e1 x (EFlatmap LikeBag e2 y e3) =>
+      if (String.eqb x y || free_immut_in x e2 || free_immut_in y e1)%bool then e
+      else EFlatmap LikeBag e2 y (EFlatmap LikeBag e1 x e3)
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (word:=word)).
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma swap_flatmap_likebag_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_flatmap_likebag_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    rewrite !Bool.orb_false_iff, String.eqb_neq in *; intuition idtac.
+    repeat invert_type_of_clear.
+    repeat econstructor.
+    - eapply not_free_immut_put_ty; eauto.
+    - apply not_free_immut_put_ty2; eauto.
+    - rewrite Properties.map.put_put_diff_comm; auto.
+  Qed.
+
+  Lemma swap_flatmap_likebag_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store swap_flatmap_likebag_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl.
+    repeat (case_match; auto; []).
+    rewrite !Bool.orb_false_iff, String.eqb_neq in *; intuition idtac.
+    repeat invert_type_of_clear.
+    cbn [interp_expr].
+    lazymatch goal with
+      H: type_of _ (map.put _ _ _) e2_1 _ |- _ =>
+        apply not_free_immut_put_ty in H; auto
+    end.
+    apply_type_sound e1; invert_type_of_value_clear.
+    apply_type_sound e2_1; invert_type_of_value_clear.
+    repeat rewrite_expr_value.
+    f_equal. apply Permutation_list_to_bag_eq.
+    (* each table is the same in every iteration of the other loop *)
+    erewrite In_flat_map_ext with (l := bag_to_list l0);
+      [ | intros w _; rewrite <- (not_free_immut_put_sem e1 x0); [ rewrite <- H; reflexivity | assumption ] ].
+    erewrite In_flat_map_ext with (l := bag_to_list l);
+      [ | intros v _; rewrite <- (not_free_immut_put_sem e2_1 x); [ rewrite <- H0; reflexivity | assumption ] ].
+    cbn beta iota.
+    (* drop the conversions of the inner results to bags and back *)
+    eapply perm_trans;
+      [ eapply Utils.Permutation_flat_map;
+        [ intros; apply list_to_bag_to_list_Permutation | apply Permutation_refl ] | ].
+    eapply perm_trans;
+      [ | apply Permutation_sym; eapply Utils.Permutation_flat_map;
+          [ intros; apply list_to_bag_to_list_Permutation | apply Permutation_refl ] ].
+    (* bind the two variables in the same order on both sides, then swap the loops *)
+    erewrite In_flat_map_ext with (l := bag_to_list l0);
+      [ | intros w _; apply In_flat_map_ext; intros v _;
+          rewrite Properties.map.put_put_diff_comm; [ reflexivity | congruence ] ].
+    apply Permutation_flat_map_comm.
+  Qed.
+
+  Lemma swap_flatmap_likebag_head_sound : expr_transf_sound (locals:=locals) swap_flatmap_likebag_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply swap_flatmap_likebag_head_preserve_ty; auto.
+    eapply swap_flatmap_likebag_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
 #[export] Hint Resolve swap_if_nil_head_sound : transf_hints.
 #[export] Hint Resolve merge_if_head_sound : transf_hints.
 #[export] Hint Resolve swap_flatmap_if_head_sound : transf_hints.
@@ -661,3 +736,4 @@ End WithMap.
 #[export] Hint Resolve flatmap_singleton_head_sound : transf_hints.
 #[export] Hint Resolve flatmap_identity_head_sound : transf_hints.
 #[export] Hint Resolve flatmap_if_head_sound : transf_hints.
+#[export] Hint Resolve swap_flatmap_likebag_head_sound : transf_hints.

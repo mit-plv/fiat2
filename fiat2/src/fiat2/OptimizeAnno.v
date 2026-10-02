@@ -19,7 +19,8 @@ Variant basic_transf :=
   | FlatmapAssoc
   | FlatmapSingleton
   | FlatmapIdentity
-  | FlatmapIf.
+  | FlatmapIf
+  | SwapBagFlatmaps.
 
 Variant index_choice :=
   | SumAgg (attr : string)
@@ -42,6 +43,7 @@ Definition flatmap_assoc_transf := fold_command id flatmap_assoc_head.
 Definition flatmap_singleton_transf := fold_command id flatmap_singleton_head.
 Definition flatmap_identity_transf := fold_command id flatmap_identity_head.
 Definition flatmap_if_transf := fold_command id flatmap_if_head.
+Definition swap_flatmap_likebag_transf := fold_command id swap_flatmap_likebag_head.
 
 Definition mk_basic_transf (f : basic_transf) : command -> command :=
   match f with
@@ -57,6 +59,7 @@ Definition mk_basic_transf (f : basic_transf) : command -> command :=
   | FlatmapSingleton => flatmap_singleton_transf
   | FlatmapIdentity => flatmap_identity_transf
   | FlatmapIf => flatmap_if_transf
+  | SwapBagFlatmaps => swap_flatmap_likebag_transf
   end.
 
 Definition compose_basic_transfs : list (command -> command) -> command -> command :=
