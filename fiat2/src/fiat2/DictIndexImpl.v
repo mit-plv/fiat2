@@ -556,7 +556,7 @@ Section WithHole.
                 rewrite value_compare_refl; reflexivity. }
           Qed.
 
-          Definition eq_flatmap_filter_to_lookup_head (e : expr) :=
+          Definition eq_filter_to_lookup_head (e : expr) :=
             (* [row <- tbl[id_tag], check(row.attr == e'), ret row] (as a bag) -->
                match (lookup idx e') with none => emptybag | some b => b *)
             match e with
@@ -571,13 +571,13 @@ Section WithHole.
                 else e
             | _ => e
             end.
-          Lemma eq_flatmap_filter_to_lookup_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+          Lemma eq_filter_to_lookup_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
               type_wf t -> is_tbl_ty t = true ->
               map.get Gstore tbl = Some (TRecord tl) ->
               access_record tl id_tag = Success t ->
               access_record tl aux_tag = Success (TRecord aux_tl) ->
               access_record aux_tl idx_tag = Success (idx_ty t) ->
-              preserve_ty Gstore eq_flatmap_filter_to_lookup_head.
+              preserve_ty Gstore eq_filter_to_lookup_head.
           Proof.
             unfold preserve_ty, is_tbl_ty. intros.
             repeat destruct_match_hyp; try congruence.
@@ -594,7 +594,7 @@ Section WithHole.
             1-3: repeat invert_type_wf; auto.
             1: rewrite map.get_put_same; trivial.
           Qed.
-          Lemma eq_flatmap_filter_to_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+          Lemma eq_filter_to_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
               type_wf t -> is_tbl_ty t = true ->
               map.get Gstore tbl = Some (TRecord tl) ->
               access_record tl id_tag = Success t ->
@@ -604,7 +604,7 @@ Section WithHole.
               | Some v => aux_wf_for_idx v
               | _ => False
               end ->
-              preserve_sem Gstore store eq_flatmap_filter_to_lookup_head.
+              preserve_sem Gstore store eq_filter_to_lookup_head.
           Proof.
             unfold preserve_sem, aux_wf_for_idx; intros.
             unfold is_tbl_ty, idx_ty in *.
@@ -624,7 +624,7 @@ Section WithHole.
             invert_type_of_value_clear.
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H20 E4 H4).
             invert_type_of_value_clear.
-            repeat destruct_subexpr. unfold eq_flatmap_filter_to_lookup_head.
+            repeat destruct_subexpr. unfold eq_filter_to_lookup_head.
             cbv beta iota; case_match; auto.
             cbn [all_eqb all_eqb' andb] in *.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
@@ -887,9 +887,10 @@ Section WithHole.
           Qed.
         End cons_to_insert.
 
-        Section flatmap_filter_to_delete.
-          (* filter_neq_to_delete_head, matching the filter written as a flatmap *)
-          Definition flatmap_filter_neq_to_delete_head (e : expr) :=
+        Section filter_to_delete.
+          Definition filter_neq_to_delete_head (e : expr) :=
+            (* the index rebuilt from [y <- e', check(!(y.attr == k)), ret y] -->
+               delete k from the index rebuilt from e' *)
             match e with
             | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
                 (flatmap_filter_list e' y (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr2) k)) y1 _ _) =>
@@ -900,8 +901,8 @@ Section WithHole.
                 else e
             | _ => e
             end.
-          Lemma flatmap_filter_neq_to_delete_head_preserve_ty : forall (Gstore : tenv),
-              preserve_ty Gstore flatmap_filter_neq_to_delete_head.
+          Lemma filter_neq_to_delete_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore filter_neq_to_delete_head.
           Proof.
             unfold preserve_ty; intros. repeat destruct_subexpr.
             cbn. repeat (case_match; auto).
@@ -917,11 +918,11 @@ Section WithHole.
               try use_is_NoDup.
           Qed.
 
-          Lemma flatmap_filter_neq_to_delete_head_preserve_sem : forall (Gstore : tenv) (store : locals),
-              preserve_sem Gstore store flatmap_filter_neq_to_delete_head.
+          Lemma filter_neq_to_delete_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store filter_neq_to_delete_head.
           Proof.
             unfold preserve_sem; intros. repeat destruct_subexpr.
-            cbn [flatmap_filter_neq_to_delete_head]. repeat (case_match; auto; []).
+            cbn [filter_neq_to_delete_head]. repeat (case_match; auto; []).
             cbn in * |-.
             rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
             rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
@@ -988,7 +989,7 @@ Section WithHole.
                 erewrite <- not_free_immut_put_sem; auto. }
             rewrite gallina_to_idx_filter_neq with (rt:=tl); auto.
           Qed.
-        End flatmap_filter_to_delete.
+        End filter_to_delete.
 
         Section use_idx.
           Context (tbl : string).
@@ -1079,17 +1080,17 @@ Section WithHole.
         Ltac invert_tenv_wf_with_globals :=
           lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
 
-        Lemma eq_flatmap_filter_to_lookup_head_sound : forall b is_tbl_ty' aux_ty aux_wf,
+        Lemma eq_filter_to_lookup_head_sound : forall b is_tbl_ty' aux_ty aux_wf,
             aux_ty_for_idx aux_ty ->
             (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
             (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
-            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_flatmap_filter_to_lookup_head b).
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head b).
         Proof.
           unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
           invert_tenv_wf_with_globals.
           specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
-          1: eapply eq_flatmap_filter_to_lookup_head_preserve_ty; eauto.
-          1: eapply eq_flatmap_filter_to_lookup_head_preserve_sem; eauto.
+          1: eapply eq_filter_to_lookup_head_preserve_ty; eauto.
+          1: eapply eq_filter_to_lookup_head_preserve_sem; eauto.
           lazymatch goal with
             H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
               apply H in H'
@@ -1135,13 +1136,13 @@ Section WithHole.
         1: eapply cons_to_insert_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
 
-      Lemma flatmap_filter_neq_to_delete_head_sound :
-          expr_transf_sound (locals:=locals) flatmap_filter_neq_to_delete_head.
+      Lemma filter_neq_to_delete_head_sound :
+          expr_transf_sound (locals:=locals) filter_neq_to_delete_head.
       Proof.
         unfold expr_transf_sound; intros.
         intuition idtac.
-        1: eapply flatmap_filter_neq_to_delete_head_preserve_ty; eauto.
-        1: eapply flatmap_filter_neq_to_delete_head_preserve_sem; [ | | eauto .. ]; auto.
+        1: eapply filter_neq_to_delete_head_preserve_ty; eauto.
+        1: eapply filter_neq_to_delete_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
     End WithMap.
   End WithVars.
@@ -1164,7 +1165,7 @@ Proof.
   intros; eapply use_idx_head_sound; eauto.
 Qed.
 
-Lemma eq_flatmap_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
+Lemma eq_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
        forall (width : Z) (word : Interface.word width),
@@ -1176,15 +1177,15 @@ Lemma eq_flatmap_filter_to_lookup_head_sound2 : forall hole attr tup acc x : str
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
        (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
-       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_flatmap_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
 Proof.
-  intros; eapply eq_flatmap_filter_to_lookup_head_sound; eauto.
+  intros; eapply eq_filter_to_lookup_head_sound; eauto.
 Qed.
 
 #[export] Hint Resolve use_idx_head_sound2 : transf_hints.
 #[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
-#[export] Hint Resolve flatmap_filter_neq_to_delete_head_sound : transf_hints.
-#[export] Hint Resolve eq_flatmap_filter_to_lookup_head_sound2 : transf_hints.
+#[export] Hint Resolve filter_neq_to_delete_head_sound : transf_hints.
+#[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
 
 #[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_idx_ty : transf_hints.
 #[export] Hint Extern 5 (type_wf (IndexInterface.idx_ty _)) => apply idx_ty_wf : transf_hints.

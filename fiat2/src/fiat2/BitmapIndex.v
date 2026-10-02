@@ -1023,8 +1023,9 @@ Section WithTags.
             invert_Forall2. rewrite_l_to_r. reflexivity. }
       Qed.
 
-      (* filter_to_bitmap_lookup_head, matching the filter written as a flatmap *)
-      Definition flatmap_filter_to_bitmap_lookup_head (e : expr) :=
+      Definition filter_to_bitmap_lookup_head (e : expr) :=
+        (* [x <- tbl[id_tag], check(x.attr == str), ret x] -->
+           the rows found by scanning the bitmap and looking them up in the pk index *)
         match e with
         | flatmap_filter_list (EAccess (ELoc tbl0) (id_tag0)) x
             (EBinop OEq (EAccess (EVar x0) attr0) (EAtom (AString str0))) x1 _ _ =>
@@ -1041,7 +1042,7 @@ Section WithTags.
         | _ => e
         end.
 
-      Lemma flatmap_filter_to_bitmap_lookup_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+      Lemma filter_to_bitmap_lookup_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
           type_wf t -> is_pk_tbl_ty t = true ->
           is_bitmap_tbl_ty t = true ->
           map.get Gstore tbl = Some (TRecord tl) ->
@@ -1049,7 +1050,7 @@ Section WithTags.
           access_record tl aux_tag = Success (TRecord aux_tl) ->
           access_record aux_tl pk_idx_tag = Success (pk_idx_ty t) ->
           access_record aux_tl bm_tag = Success (bitmap_ty t) ->
-          preserve_ty Gstore (flatmap_filter_to_bitmap_lookup_head).
+          preserve_ty Gstore (filter_to_bitmap_lookup_head).
       Proof.
         unfold preserve_ty, is_pk_tbl_ty, is_bitmap_tbl_ty. intros.
         repeat destruct_match_hyp; try congruence.
@@ -1077,7 +1078,7 @@ Section WithTags.
         cbn; reflexivity.
       Qed.
 
-      Lemma flatmap_filter_to_bitmap_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+      Lemma filter_to_bitmap_lookup_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
           type_wf t -> is_pk_tbl_ty t = true ->
           is_bitmap_tbl_ty t = true ->
           map.get Gstore tbl = Some (TRecord tl) ->
@@ -1090,7 +1091,7 @@ Section WithTags.
                         aux_wf_for_idx bm_tag bitmap_wf v
           | _ => False
           end ->
-          preserve_sem Gstore store flatmap_filter_to_bitmap_lookup_head.
+          preserve_sem Gstore store filter_to_bitmap_lookup_head.
       Proof.
         unfold preserve_sem, aux_wf_for_idx; intros.
         repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
@@ -1104,7 +1105,7 @@ Section WithTags.
         invert_type_of_value_clear.
         use_Forall2_access_record pk_idx_tag.
         use_Forall2_access_record bm_tag.
-        repeat destruct_subexpr. unfold flatmap_filter_to_bitmap_lookup_head.
+        repeat destruct_subexpr. unfold filter_to_bitmap_lookup_head.
         case_match; auto. cbn in * |-.
         repeat rewrite Bool.andb_true_iff in *; intuition idtac.
         rewrite eqb_eq in *; subst. repeat clear_refl.
@@ -1141,14 +1142,14 @@ Section WithTags.
     Context (x b acc : string).
     Context (H_NoDup : is_NoDup_opaque [x; b; acc]).
 
-    Lemma flatmap_filter_to_bitmap_lookup_head_sound : forall is_tbl_ty' aux_ty aux_wf,
+    Lemma filter_to_bitmap_lookup_head_sound : forall is_tbl_ty' aux_ty aux_wf,
         aux_ty_for_idx pk_idx_tag pk_idx_ty aux_ty ->
         aux_ty_for_idx bm_tag bitmap_ty aux_ty ->
         (forall t, is_tbl_ty' t = true -> is_pk_tbl_ty t = true) ->
         (forall t, is_tbl_ty' t = true -> is_bitmap_tbl_ty t = true) ->
         (forall (v : value), aux_wf v -> aux_wf_for_idx pk_idx_tag pk_idx_wf v) ->
         (forall (v : value), aux_wf v -> aux_wf_for_idx bm_tag bitmap_wf v) ->
-        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (flatmap_filter_to_bitmap_lookup_head x b acc).
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (filter_to_bitmap_lookup_head x b acc).
     Proof.
       unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
       invert_tenv_wf_with_globals.
@@ -1158,8 +1159,8 @@ Section WithTags.
         apply H in H' as H_tbl_ty; clear H end.
       specialize (H tbl_ty). specialize (H0 tbl_ty).
       repeat destruct_match_hyp; intuition idtac.
-      1: eapply flatmap_filter_to_bitmap_lookup_head_preserve_ty; eauto.
-      1: eapply flatmap_filter_to_bitmap_lookup_head_preserve_sem; eauto.
+      1: eapply filter_to_bitmap_lookup_head_preserve_ty; eauto.
+      1: eapply filter_to_bitmap_lookup_head_preserve_sem; eauto.
       lazymatch goal with
         H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
           apply H in H'
@@ -1177,7 +1178,7 @@ Section WithTags.
   End WithMap.
 End WithTags.
 
-Lemma flatmap_filter_to_bitmap_lookup_head_sound2 : forall pk_hole pk_tup pk_acc : string,
+Lemma filter_to_bitmap_lookup_head_sound2 : forall pk_hole pk_tup pk_acc : string,
   forall (attr str bm_hole bm_tup id_tag aux_tag pk_idx_tag bm_tag : string) (tenv : map.map string type),
     map.ok tenv ->
     forall (width : Z) (word : word width),
@@ -1195,9 +1196,9 @@ Lemma flatmap_filter_to_bitmap_lookup_head_sound2 : forall pk_hole pk_tup pk_acc
             (forall v : (value (width:=width)), aux_wf v -> aux_wf_for_idx id_tag aux_tag bm_tag (bitmap_wf attr str bm_hole bm_tup) v) ->
             is_NoDup_opaque [pk_tup; pk_acc] ->
             expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
-              (flatmap_filter_to_bitmap_lookup_head attr str id_tag aux_tag pk_idx_tag bm_tag x b acc).
+              (filter_to_bitmap_lookup_head attr str id_tag aux_tag pk_idx_tag bm_tag x b acc).
 Proof.
-  intros; eapply flatmap_filter_to_bitmap_lookup_head_sound; eauto.
+  intros; eapply filter_to_bitmap_lookup_head_sound; eauto.
 Qed.
 
 Lemma use_pk_idx_head_sound2 : forall pk_hole pk_tup pk_acc : string,
@@ -1218,7 +1219,7 @@ Qed.
 #[export] Hint Resolve cons_to_pk_idx_update_head_sound : transf_hints.
 #[export] Hint Resolve cons_to_bitmap_update_head_sound : transf_hints.
 #[export] Hint Resolve use_bitmap_head_sound : transf_hints.
-#[export] Hint Resolve flatmap_filter_to_bitmap_lookup_head_sound2 : transf_hints.
+#[export] Hint Resolve filter_to_bitmap_lookup_head_sound2 : transf_hints.
 #[export] Hint Resolve use_pk_idx_head_sound2 : transf_hints.
 
 #[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_pk_idx_ty : transf_hints.
