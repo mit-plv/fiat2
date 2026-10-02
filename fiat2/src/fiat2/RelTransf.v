@@ -200,11 +200,20 @@ Proof.
   rewrite flat_map_app. congruence.
 Qed.
 
+(* Whether e is [x] *)
+Definition is_singleton_of (x : string) (e : expr) : bool :=
+  match e with
+  | EBinop OCons (EVar y) (EAtom (ANil _)) => String.eqb x y
+  | _ => false
+  end.
+
 Definition if_nil_into_flatmap_head (e : expr) :=
-  (* Expose filter construct *)
+  (* Expose filter construct; a flatmap that already is a filter is left alone,
+     since splitting it would only add an identity flatmap around the filter *)
   match e with
   | EFlatmap LikeList e1 x (EIf p e2 (EAtom (ANil t))) =>
-      EFlatmap LikeList (EFlatmap LikeList e1 x (EIf p (singleton (EVar x)) (EAtom (ANil None)))) x e2
+      if is_singleton_of x e2 then e
+      else EFlatmap LikeList (EFlatmap LikeList e1 x (EIf p (singleton (EVar x)) (EAtom (ANil None)))) x e2
   | _ => e
   end.
 
@@ -230,6 +239,7 @@ Section WithMap.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
     repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
     repeat invert_type_of_clear.
+    destruct (interp_expr store env e1) eqn:E_e1; auto.
     apply_type_sound e1; invert_type_of_value_clear.
     lazymatch goal with
       _: VList _ = ?x, H': ?x = _ |- _ =>
