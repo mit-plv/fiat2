@@ -437,8 +437,6 @@ Section WithWord.
           unfold_fold_typechecker; repeat destruct_match; try invert_result;
           repeat (apply_typechecker_IH; try invert_pair; try econstructor; eauto; try constructor;
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto).
-        (* the set operators are rejected by the typechecker *)
-        all: discriminate.
       - (* ETernop *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
@@ -1238,6 +1236,33 @@ Section WithWord.
         inversion H; subst; clear H
     end.
 
+  (* Inserting well-typed elements into a well-typed set gives a well-typed set *)
+  Lemma set_union_sound : forall (l1 l2 : list value) t,
+      Forall (fun v => type_of_value v t) l1 ->
+      type_of_value (VSet l2) (TSet t) ->
+      type_of_value (VSet (fold_right set_insert l2 l1)) (TSet t).
+  Proof.
+    induction 1; cbn; intros H_l2; auto.
+    specialize (IHForall H_l2). inversion IHForall; subst.
+    constructor; auto using set_insert_preserve_SSorted, set_insert_preserve_NoDup.
+    rewrite Forall_forall; intros ? H_in.
+    apply set_insert_incl in H_in as [ H_in | H_in ]; subst; auto.
+    apply_Forall_In.
+  Qed.
+
+  (* Any subset of a well-typed set, taken in order, is a well-typed set *)
+  Lemma set_filter_sound : forall (l : list value) t f,
+      type_of_value (VSet l) (TSet t) ->
+      type_of_value (VSet (filter f l)) (TSet t).
+  Proof.
+    intros * H. inversion H; subst. constructor.
+    - apply NoDup_filter; assumption.
+    - apply filter_preserve_SSorted; assumption.
+    - rewrite Forall_forall; intros ? H_in.
+      apply filter_In in H_in as [ H_in _ ].
+      apply_Forall_In.
+  Qed.
+
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1278,6 +1303,15 @@ Section WithWord.
              eapply set_insert_incl in H_in as [ H_in | H_in ].
              2: apply_Forall_In.
              rewrite_asm; auto. }
+        24:{ (* OSetUnion *)
+             repeat apply_type_sound_IH. cbn. apply set_union_sound; auto; constructor; auto. }
+        24:{ (* OSetIntersect *)
+             repeat apply_type_sound_IH. cbn. apply set_filter_sound; constructor; auto. }
+        24:{ (* OSetDiff *)
+             repeat apply_type_sound_IH. cbn. apply set_filter_sound; constructor; auto. }
+        24:{ (* OSetMem *)
+             revert IHtype_of2; apply_type_sound_IH; intros.
+             cbn. constructor. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).

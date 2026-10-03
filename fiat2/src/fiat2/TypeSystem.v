@@ -195,7 +195,11 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOBagInsert t : type_of_binop OBagInsert (TBag t) t (TBag t)
 | TyOSetInsert t : type_of_binop OSetInsert (TSet t) t (TSet t)
 | TyOLookup kt vt : type_of_binop OLookup (TDict kt vt) kt (TOption vt)
-| TyODelete kt vt : type_of_binop ODelete (TDict kt vt) kt (TDict kt vt).
+| TyODelete kt vt : type_of_binop ODelete (TDict kt vt) kt (TDict kt vt)
+| TyOSetUnion t : type_of_binop OSetUnion (TSet t) (TSet t) (TSet t)
+| TyOSetIntersect t : type_of_binop OSetIntersect (TSet t) (TSet t) (TSet t)
+| TyOSetDiff t : type_of_binop OSetDiff (TSet t) (TSet t) (TSet t)
+| TyOSetMem t : type_of_binop OSetMem (TSet t) t TBool.
 
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
 | TyOInsert kt vt : type_of_ternop OInsert (TDict kt vt) kt vt (TDict kt vt).
@@ -697,8 +701,21 @@ Section WithMap.
                                                       Success (EBinop ODelete d' k')
                                      | _ => error:(e "is a dictionary but expected" expected)
                                      end
-                        | OSetUnion | OSetIntersect | OSetDiff | OSetMem =>
-                            error:(e "uses a set operator, which the typechecker does not support yet")
+                        | OSetUnion | OSetIntersect | OSetDiff =>
+                            match expected with
+                            | TSet t => e1' <- analyze_expr Gstore Genv (TSet t) e1 ;; e2' <- analyze_expr Gstore Genv (TSet t) e2 ;;
+                                         Success (EBinop o e1' e2')
+                            | _ => error:(e "is a set but expected" expected)
+                            end
+                        | OSetMem =>
+                            match expected with
+                            | TBool => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                       match t1 with
+                                       | TSet t => e2' <- analyze_expr Gstore Genv t e2 ;; Success (EBinop OSetMem e1' e2')
+                                       | t => error:(e1 "has type" t "but expected a set")
+                                       end
+                            | _ => error:(e "is a boolean but expected" expected)
+                            end
                         | o => let '(t1, t2, t3) := binop_types o in
                                if type_eqb expected t3
                                then e1' <- analyze_expr Gstore Genv t1 e1 ;;
@@ -933,8 +950,18 @@ Section WithMap.
                                                           Success (t1, EBinop ODelete d' k')
                                           | t => error:(e "has type" t "but expected a dictionary")
                                           end
-                             | OSetUnion | OSetIntersect | OSetDiff | OSetMem =>
-                                 error:(e "uses a set operator, which the typechecker does not support yet")
+                             | OSetUnion | OSetIntersect | OSetDiff =>
+                                 '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                 match t1 with
+                                 | TSet t => e2' <- analyze_expr Gstore Genv (TSet t) e2 ;; Success (TSet t, EBinop o e1' e2')
+                                 | t => error:(e1 "has type" t "but expected a set")
+                                 end
+                             | OSetMem =>
+                                 '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                 match t1 with
+                                 | TSet t => e2' <- analyze_expr Gstore Genv t e2 ;; Success (TBool, EBinop OSetMem e1' e2')
+                                 | t => error:(e1 "has type" t "but expected a set")
+                                 end
                              | o => let '(t1, t2, t3) := binop_types o in
                                     e1' <- analyze_expr Gstore Genv t1 e1 ;;
                                     e2' <- analyze_expr Gstore Genv t2 e2 ;;
