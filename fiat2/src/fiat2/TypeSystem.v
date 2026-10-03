@@ -199,10 +199,12 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOSetUnion t : type_of_binop OSetUnion (TSet t) (TSet t) (TSet t)
 | TyOSetIntersect t : type_of_binop OSetIntersect (TSet t) (TSet t) (TSet t)
 | TyOSetDiff t : type_of_binop OSetDiff (TSet t) (TSet t) (TSet t)
-| TyOSetMem t : type_of_binop OSetMem (TSet t) t TBool.
+| TyOSetMem t : type_of_binop OSetMem (TSet t) t TBool
+| TyOStrContains : type_of_binop OStrContains TString TString TBool.
 
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
-| TyOInsert kt vt : type_of_ternop OInsert (TDict kt vt) kt vt (TDict kt vt).
+| TyOInsert kt vt : type_of_ternop OInsert (TDict kt vt) kt vt (TDict kt vt)
+| TyOSubstring : type_of_ternop OSubstring TString TInt TInt TString.
 
 Inductive type_of_aggr : aggr -> type -> type -> Prop :=
 | TyAGSum : type_of_aggr AGSum TInt TInt
@@ -575,6 +577,7 @@ Definition binop_types (o : binop) : (type * type * type) :=
   | OWPlus | OWMinus | OWTimes | OWDivU | OWDivS | OWModU | OWModS => (TWord, TWord, TWord)
   | OPlus | OMinus | OTimes | ODiv | OMod => (TInt, TInt, TInt)
   | OConcatString => (TString, TString, TString)
+  | OStrContains => (TString, TString, TBool)
   | OAnd | OOr => (TBool, TBool, TBool)
   | OWLessU | OWLessS => (TWord, TWord, TBool)
   | OLess => (TInt, TInt, TBool)
@@ -732,6 +735,15 @@ Section WithMap.
                                     v' <- analyze_expr Gstore Genv vt e3 ;;
                                     Success (ETernop OInsert d' k' v')
                                 | _ => error:(e "is a dictionary but expected" expected)
+                                end
+                            | OSubstring =>
+                                match expected with
+                                | TString =>
+                                    s' <- analyze_expr Gstore Genv TString e1 ;;
+                                    i' <- analyze_expr Gstore Genv TInt e2 ;;
+                                    n' <- analyze_expr Gstore Genv TInt e3 ;;
+                                    Success (ETernop OSubstring s' i' n')
+                                | _ => error:(e "is a string but expected" expected)
                                 end
                             end
     | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
@@ -975,6 +987,10 @@ Section WithMap.
                                                                Success (t1, ETernop OInsert d' k' v')
                                               | t => error:(e "has type" t "but expected a dictionary")
                                               end
+                                 | OSubstring => s' <- analyze_expr Gstore Genv TString e1 ;;
+                                                 i' <- analyze_expr Gstore Genv TInt e2 ;;
+                                                 n' <- analyze_expr Gstore Genv TInt e3 ;;
+                                                 Success (TString, ETernop OSubstring s' i' n')
                                  end
          | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
                            match synthesize_expr Gstore Genv e2 with

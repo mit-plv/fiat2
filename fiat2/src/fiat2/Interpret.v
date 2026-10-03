@@ -205,6 +205,15 @@ Section WithWord.
                  | VSet l => VBool (set_mem b l)
                  | _ => VUnit
                  end
+    (* whether the second string occurs in the first *)
+    | OStrContains => match a, b with
+                      | VString s, VString p =>
+                          VBool (match String.index 0 p s with
+                                 | Some _ => true
+                                 | None => false
+                                 end)
+                      | _, _ => VUnit
+                      end
     | OLookup => match a, b with
                  | VDict d, k => VOption (dict_lookup k d)
                  | _, _ => VUnit
@@ -221,6 +230,12 @@ Section WithWord.
                  | VDict d, k, v => VDict (dict_insert k v d)
                  | _, _, _ => VUnit
                  end
+    (* the substring of a starting at position b with length c;
+       negative positions and lengths count as 0, and it stops at the end of a *)
+    | OSubstring => match a, b, c with
+                    | VString s, VInt i, VInt n => VString (String.substring (Z.to_nat i) (Z.to_nat n) s)
+                    | _, _, _ => VUnit
+                    end
     end.
 
   Definition interp_aggr (ag : aggr) : (value * (value -> value -> value)) :=

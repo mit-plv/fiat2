@@ -1174,7 +1174,9 @@ Section WithMap.
                   repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
                   try congruence; repeat (try clear_refl; do_injection); subst; eauto; repeat (try clear_refl; do_injection); try (f_equal; use_synthesize_ty_unique_IH);
                   repeat apply tenv_wf_step; eauto with fiat2_hints).
-    1:{ do_injection. inversion H; subst; eauto. }
+    1:{ (* ETernop *)
+        destruct o; cbn in *; inversion H; subst;
+          repeat (destruct_match_hyp; try congruence); do_injection; eauto. }
     1:{ repeat destruct_match_hyp; try congruence;
         try do_injection;
         repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);

@@ -441,6 +441,8 @@ Section WithWord.
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
                 try apply_type_of__type_wf; auto; try invert_type_wf; auto).
+        (* OSubstring: the typing rule itself *)
+        all: constructor.
       - (* EIf *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
@@ -1312,6 +1314,8 @@ Section WithWord.
         24:{ (* OSetMem *)
              revert IHtype_of2; apply_type_sound_IH; intros.
              cbn. constructor. }
+        24:{ (* OStrContains *)
+             repeat apply_type_sound_IH. cbn. constructor. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).
@@ -1326,10 +1330,13 @@ Section WithWord.
           auto.
       - (* TyETernop *)
         inversion H; subst.
-        cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
-        apply dict_insert_sound; auto;
-          try apply_type_of__type_wf; try invert_type_wf; auto.
-        constructor; auto.
+        + (* OInsert *)
+          cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+          apply dict_insert_sound; auto;
+            try apply_type_of__type_wf; try invert_type_wf; auto.
+          constructor; auto.
+        + (* OSubstring *)
+          repeat apply_type_sound_IH. cbn. constructor.
       - (* TyEIf *)
         repeat apply_type_sound_IH;
           match goal with

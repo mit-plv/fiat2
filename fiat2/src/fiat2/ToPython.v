@@ -84,6 +84,7 @@ Definition binop_py (o:binop) (e1 e2:string) : string :=
   | OSetIntersect => "(lambda s1, s2: [v for v in s1 if v in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetDiff => "(lambda s1, s2: [v for v in s1 if v not in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetMem => paren (e2 ++ " in " ++ e1)
+  | OStrContains => paren (e2 ++ " in " ++ e1)
   | OLookup => e1 ++ ".get(" ++ e2 ++ ")"
   | ODelete =>
       "{k:v for k,v in " ++ e1 ++ ".items() if k != " ++ e2 ++ "}"
@@ -99,6 +100,9 @@ Fixpoint expr_py (e:expr) : string :=
       unop_py o (expr_py e1)
   | EBinop o e1 e2 =>
       binop_py o (expr_py e1) (expr_py e2)
+  | ETernop OSubstring e1 e2 e3 =>
+      (* negative start or length count as 0, as in the semantics *)
+      "(lambda s, i, n: s[i:i+n])(" ++ expr_py e1 ++ ", max(" ++ expr_py e2 ++ ", 0), max(" ++ expr_py e3 ++ ", 0))"
   | ETernop OInsert e1 e2 e3 =>
       paren (expr_py e1 ++ " | {" ++
              expr_py e2 ++ ":" ++

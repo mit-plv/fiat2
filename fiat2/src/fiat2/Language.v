@@ -107,12 +107,14 @@ Inductive binop : Type :=
 | OSetIntersect
 | OSetDiff
 | OSetMem
+| OStrContains
 | OLookup
 | ODelete.
 
 (* Ternary operators *)
 Inductive ternop : Set :=
-| OInsert.
+| OInsert
+| OSubstring.
 
 (* What an expr with a list type can be interpreted to *)
 Inductive collection_tag := LikeSet | LikeBag | LikeList.
