@@ -204,7 +204,8 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
 | TyOInsert kt vt : type_of_ternop OInsert (TDict kt vt) kt vt (TDict kt vt)
-| TyOSubstring : type_of_ternop OSubstring TString TInt TInt TString.
+| TyOSubstring : type_of_ternop OSubstring TString TInt TInt TString
+| TyODictRange kt vt : type_of_ternop ODictRange (TDict kt vt) kt kt (TDict kt vt).
 
 Inductive type_of_aggr : aggr -> type -> type -> Prop :=
 | TyAGSum : type_of_aggr AGSum TInt TInt
@@ -745,6 +746,15 @@ Section WithMap.
                                     Success (ETernop OSubstring s' i' n')
                                 | _ => error:(e "is a string but expected" expected)
                                 end
+                            | ODictRange =>
+                                match expected with
+                                | TDict kt vt =>
+                                    d' <- analyze_expr Gstore Genv (TDict kt vt) e1 ;;
+                                    lo' <- analyze_expr Gstore Genv kt e2 ;;
+                                    hi' <- analyze_expr Gstore Genv kt e3 ;;
+                                    Success (ETernop ODictRange d' lo' hi')
+                                | _ => error:(e "is a dictionary but expected" expected)
+                                end
                             end
     | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
                       e2' <- analyze_expr Gstore Genv expected e2 ;;
@@ -991,6 +1001,13 @@ Section WithMap.
                                                  i' <- analyze_expr Gstore Genv TInt e2 ;;
                                                  n' <- analyze_expr Gstore Genv TInt e3 ;;
                                                  Success (TString, ETernop OSubstring s' i' n')
+                                 | ODictRange => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
+                                                 match t1 with
+                                                 | TDict kt vt => lo' <- analyze_expr Gstore Genv kt e2 ;;
+                                                                  hi' <- analyze_expr Gstore Genv kt e3 ;;
+                                                                  Success (t1, ETernop ODictRange d' lo' hi')
+                                                 | t => error:(e "has type" t "but expected a dictionary")
+                                                 end
                                  end
          | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
                            match synthesize_expr Gstore Genv e2 with

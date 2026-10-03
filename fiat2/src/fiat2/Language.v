@@ -114,7 +114,8 @@ Inductive binop : Type :=
 (* Ternary operators *)
 Inductive ternop : Set :=
 | OInsert
-| OSubstring.
+| OSubstring
+| ODictRange.
 
 (* What an expr with a list type can be interpreted to *)
 Inductive collection_tag := LikeSet | LikeBag | LikeList.

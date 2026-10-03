@@ -84,6 +84,8 @@ Section WithWord.
                 apply_type_of__type_wf_IH_hyp; invert_type_wf; auto).
       1: inversion H; repeat constructor; auto; subst;
           repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
+      (* ternary operators: the result type is the first operand's, or a string *)
+      1: inversion H; subst; first [ apply IHtype_of1; auto | constructor ].
       1: inversion H; repeat constructor; auto.
       1:{ constructor; auto.
           + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
@@ -1265,6 +1267,20 @@ Section WithWord.
       apply_Forall_In.
   Qed.
 
+  (* Restricting a well-typed dictionary to a range of keys keeps it well-typed *)
+  Lemma dict_range_sound : forall (d : list (value * value)) kt vt lo hi,
+      type_of_value (VDict d) (TDict kt vt) ->
+      type_of_value (VDict (dict_range lo hi d)) (TDict kt vt).
+  Proof.
+    unfold dict_range; intros * H. inversion H; subst. constructor.
+    - rewrite Forall_forall in *; intros ? H_in.
+      apply filter_In in H_in as [ H_in _ ]. auto.
+    - rewrite map_fst_filter_fst with
+        (P := fun k => andb (negb (value_ltb k lo)) (value_ltb k hi)).
+      apply NoDup_filter; assumption.
+    - apply filter_preserve_SSorted; assumption.
+  Qed.
+
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1337,6 +1353,9 @@ Section WithWord.
           constructor; auto.
         + (* OSubstring *)
           repeat apply_type_sound_IH. cbn. constructor.
+        + (* ODictRange *)
+          cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+          apply dict_range_sound. constructor; auto.
       - (* TyEIf *)
         repeat apply_type_sound_IH;
           match goal with

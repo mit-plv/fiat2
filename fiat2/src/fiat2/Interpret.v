@@ -224,6 +224,10 @@ Section WithWord.
                  end
     end.
 
+  (* the entries of d whose keys k satisfy lo <= k < hi *)
+  Definition dict_range (lo hi : value) (d : list (value * value)) : list (value * value) :=
+    filter (fun p => andb (negb (value_ltb (fst p) lo)) (value_ltb (fst p) hi)) d.
+
   Definition interp_ternop (o : ternop) (a b c : value) : value :=
     match o with
     | OInsert => match a, b, c with
@@ -235,6 +239,10 @@ Section WithWord.
     | OSubstring => match a, b, c with
                     | VString s, VInt i, VInt n => VString (String.substring (Z.to_nat i) (Z.to_nat n) s)
                     | _, _, _ => VUnit
+                    end
+    | ODictRange => match a with
+                    | VDict d => VDict (dict_range b c d)
+                    | _ => VUnit
                     end
     end.
 

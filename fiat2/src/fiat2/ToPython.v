@@ -100,6 +100,9 @@ Fixpoint expr_py (e:expr) : string :=
       unop_py o (expr_py e1)
   | EBinop o e1 e2 =>
       binop_py o (expr_py e1) (expr_py e2)
+  | ETernop ODictRange e1 e2 e3 =>
+      (* linear in the number of keys; an ordered map would make this logarithmic *)
+      "(lambda d, lo, hi: {k: v for k, v in d.items() if lo <= k < hi})(" ++ expr_py e1 ++ ", " ++ expr_py e2 ++ ", " ++ expr_py e3 ++ ")"
   | ETernop OSubstring e1 e2 e3 =>
       (* negative start or length count as 0, as in the semantics *)
       "(lambda s, i, n: s[i:i+n])(" ++ expr_py e1 ++ ", max(" ++ expr_py e2 ++ ", 0), max(" ++ expr_py e3 ++ ", 0))"
