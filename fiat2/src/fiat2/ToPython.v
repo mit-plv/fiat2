@@ -156,10 +156,6 @@ Fixpoint expr_py (e:expr) : string :=
       "(foldr(" ++ "lambda " ++ acc ++ ", " ++ v ++ ": " ++ expr_py e3 ++ ", " ++
         expr_py e1 ++ "," ++
       expr_py e2 ++ "))"
-  | EFlatmap2 e1 e2 x1 x2 e3 =>
-      "[" ++ expr_py e3 ++
-      " for " ++ x1 ++ " in " ++ expr_py e1 ++
-      " for " ++ x2 ++ " in " ++ expr_py e2 ++ "]"
   | EDictFold d e0 k v acc e => "" (* unused *)
   end.
 

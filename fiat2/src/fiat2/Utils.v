@@ -985,15 +985,6 @@ Section WithMap.
     | H: locals_equiv ?G _ _, H': map.get ?G _ = Some _ |- _ =>
         apply H in H' end.
 
-  Lemma In_flat_map2_ext : forall (A B C : Type) (l : list A) (l' : list B) (f g : A -> B -> list C),
-      (forall a b, In a l -> In b l' -> f a b = g a b) -> flat_map2 f l l' = flat_map2 g l l'.
-  Proof.
-    induction l; auto.
-    destruct l'; auto.
-    cbn; intros. rewrite H; auto.
-    f_equal. erewrite IHl; eauto.
-  Qed.
-
   Ltac use_interp_expr__locals_equiv_IH :=
     lazymatch goal with
       IH: context[interp_expr _ _ ?e] |- context[interp_expr _ _ ?e] =>
@@ -1029,13 +1020,6 @@ Section WithMap.
         apply In_flat_map_ext; intros.
         apply_Forall_In.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ repeat (use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto).
-        apply_type_sound e1; invert_type_of_value.
-        apply_type_sound e2; invert_type_of_value.
-        f_equal.
-        apply In_flat_map2_ext; intros. repeat apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ];
-          try apply tenv_wf_step; try apply locals_wf_step; eauto with fiat2_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         revert IHe3. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto; intros.
@@ -1581,9 +1565,6 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
   | ETernop _ e1 e2 e3 => free_immut_in x e1 || free_immut_in x e2 || free_immut_in x e3
   | EIf e1 e2 e3 => free_immut_in x e1 || free_immut_in x e2 || free_immut_in x e3
   | ELet e1 y e2 | EFlatmap _ e1 y e2 => free_immut_in x e1 || (negb (String.eqb x y) && free_immut_in x e2)
-  | EFlatmap2 e1 e2 x1 x2 e3 =>
-      free_immut_in x e1 || free_immut_in x e2 ||
-        (negb (String.eqb x x1) && negb (String.eqb x x2) && free_immut_in x e3)
   | EFold e1 e2 y z e3 => free_immut_in x e1 || free_immut_in x e2 || (negb (String.eqb x y) && negb (String.eqb x z) && free_immut_in x e3)
   | EACFold _ e => free_immut_in x e
   | EACIFold _ e => free_immut_in x e
@@ -1633,16 +1614,6 @@ Section WithMap.
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | apply IHe2; intuition idtac;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
-    - invert_type_of_clear; econstructor.
-      1: apply IHe1; eauto; intuition idtac.
-      1: apply IHe2; eauto; intuition idtac.
-      destruct (x =? x1) eqn:Ex1;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ].
-      destruct (x =? x2) eqn:Ex2;
-        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-        | apply IHe3; intuition idtac;
-          rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
     - inversion H0; subst; econstructor.
       + apply IHe1; eauto; intuition fail.
       + apply IHe2; intuition fail.
@@ -1721,17 +1692,6 @@ Section WithMap.
       rewrite Properties.map.put_put_same; auto.
       1,2,3: rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto;
       erewrite IHe2; intuition fail.
-    - rewrite <- IHe1; intuition idtac.
-      rewrite <- IHe2; intuition idtac.
-      repeat case_match; auto. f_equal.
-      apply In_flat_map2_ext; intros.
-      destruct (x =? x1) eqn:Ex1;
-        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto
-        | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac ].
-      destruct (x =? x2) eqn:Ex2;
-        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto
-        | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac ].
-      rewrite <- (IHe3 x); auto.
     - rewrite <- IHe1; intuition idtac. case_match; auto. rewrite <- IHe2; auto.
       apply In_fold_right_ext with (P := fun _ => True); auto.
       intros. destruct (x0 =? x) eqn:Ex.

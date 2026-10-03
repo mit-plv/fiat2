@@ -84,8 +84,6 @@ Section WithWord.
                 apply_type_of__type_wf_IH_hyp; invert_type_wf; auto).
       1: inversion H; repeat constructor; auto; subst;
           repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
-      1: repeat apply_type_of__type_wf_IH_hyp; repeat apply tenv_wf_step;
-          auto; invert_type_wf; auto.
       1: inversion H; repeat constructor; auto.
       1:{ constructor; auto.
           + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
@@ -453,11 +451,6 @@ Section WithWord.
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto;
                   try apply tenv_wf_step; auto).
       - (* EFlatmap *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try econstructor; eauto;
-                  try apply_type_of__type_wf; auto; try invert_type_wf; auto;
-                  try apply tenv_wf_step; auto).
-      - (* EFlatmap2 *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try econstructor; eauto;
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto;
@@ -1354,19 +1347,6 @@ Section WithWord.
         inversion H_e2; subst.
         repeat rewrite_sym_asm.
         apply_Forall_In.
-      - (* TyEFlatmap2 *)
-        repeat apply_type_sound_IH;
-          repeat clear_expr_value. constructor.
-        generalize dependent l. induction l0; auto.
-        destruct l; auto.
-        intros. repeat invert_Forall. cbn.
-        apply IHl0 in H7; auto.
-        apply Forall_app; split; auto.
-        assert (type_of_value (interp_expr store (map.put (map.put env x1 a) x2 v) e3) (TList t3)).
-        { apply_type_sound_IH; auto; try apply tenv_wf_step;
-            try apply_type_of__type_wf; try apply locals_wf_step;
-            try invert_type_wf; auto. }
-        invert_type_of_value_clear; auto.
       - (* TyEFold *)
         repeat apply_type_sound_IH;
           try (match goal with
