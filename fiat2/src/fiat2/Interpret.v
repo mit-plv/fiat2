@@ -128,6 +128,9 @@ Section WithWord.
   Definition list_to_set : list value -> list value :=
     fold_right set_insert nil.
 
+  Definition set_mem (v : value) (l : list value) : bool :=
+    existsb (value_eqb v) l.
+
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
     | OWPlus => apply_word_binop word.add a b
@@ -185,6 +188,23 @@ Section WithWord.
                     | VSet l => VSet (set_insert b l)
                     | _ => VUnit
                     end
+    (* inserting the elements of one set into the other keeps the result sorted and duplicate-free *)
+    | OSetUnion => match a, b with
+                   | VSet l1, VSet l2 => VSet (fold_right set_insert l2 l1)
+                   | _, _ => VUnit
+                   end
+    | OSetIntersect => match a, b with
+                       | VSet l1, VSet l2 => VSet (filter (fun v => set_mem v l2) l1)
+                       | _, _ => VUnit
+                       end
+    | OSetDiff => match a, b with
+                  | VSet l1, VSet l2 => VSet (filter (fun v => negb (set_mem v l2)) l1)
+                  | _, _ => VUnit
+                  end
+    | OSetMem => match a with
+                 | VSet l => VBool (set_mem b l)
+                 | _ => VUnit
+                 end
     | OLookup => match a, b with
                  | VDict d, k => VOption (dict_lookup k d)
                  | _, _ => VUnit

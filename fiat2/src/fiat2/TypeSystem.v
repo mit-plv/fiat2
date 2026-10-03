@@ -697,6 +697,8 @@ Section WithMap.
                                                       Success (EBinop ODelete d' k')
                                      | _ => error:(e "is a dictionary but expected" expected)
                                      end
+                        | OSetUnion | OSetIntersect | OSetDiff | OSetMem =>
+                            error:(e "uses a set operator, which the typechecker does not support yet")
                         | o => let '(t1, t2, t3) := binop_types o in
                                if type_eqb expected t3
                                then e1' <- analyze_expr Gstore Genv t1 e1 ;;
@@ -931,6 +933,8 @@ Section WithMap.
                                                           Success (t1, EBinop ODelete d' k')
                                           | t => error:(e "has type" t "but expected a dictionary")
                                           end
+                             | OSetUnion | OSetIntersect | OSetDiff | OSetMem =>
+                                 error:(e "uses a set operator, which the typechecker does not support yet")
                              | o => let '(t1, t2, t3) := binop_types o in
                                     e1' <- analyze_expr Gstore Genv t1 e1 ;;
                                     e2' <- analyze_expr Gstore Genv t2 e2 ;;

@@ -103,6 +103,10 @@ Inductive binop : Type :=
 | OWRange
 | OBagInsert
 | OSetInsert
+| OSetUnion
+| OSetIntersect
+| OSetDiff
+| OSetMem
 | OLookup
 | ODelete.
 

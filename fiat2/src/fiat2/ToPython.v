@@ -78,6 +78,12 @@ Definition binop_py (o:binop) (e1 e2:string) : string :=
   | OBagInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
   | OSetInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
   (* | OSetInsert => paren ("{" ++ e2 ++ "}" ++ " | " ++ e1) *)
+  (* sets are Python lists, since their elements may be unhashable dicts;
+     the lambdas evaluate each operand once *)
+  | OSetUnion => "(lambda s1, s2: s1 + [v for v in s2 if v not in s1])(" ++ e1 ++ ", " ++ e2 ++ ")"
+  | OSetIntersect => "(lambda s1, s2: [v for v in s1 if v in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
+  | OSetDiff => "(lambda s1, s2: [v for v in s1 if v not in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
+  | OSetMem => paren (e2 ++ " in " ++ e1)
   | OLookup => e1 ++ ".get(" ++ e2 ++ ")"
   | ODelete =>
       "{k:v for k,v in " ++ e1 ++ ".items() if k != " ++ e2 ++ "}"

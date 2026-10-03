@@ -437,6 +437,8 @@ Section WithWord.
           unfold_fold_typechecker; repeat destruct_match; try invert_result;
           repeat (apply_typechecker_IH; try invert_pair; try econstructor; eauto; try constructor;
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto).
+        (* the set operators are rejected by the typechecker *)
+        all: discriminate.
       - (* ETernop *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
