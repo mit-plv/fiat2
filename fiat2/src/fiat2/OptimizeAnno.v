@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.BitmapIndex fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
@@ -25,8 +25,7 @@ Variant basic_transf :=
 Variant index_choice :=
   | SumAgg (attr : string)
   | MinAgg (attr : string)
-  | DictIdx (attr : string)
-  | BitmapIdx (attr : string) (attr_v : string).
+  | DictIdx (attr : string).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -78,7 +77,7 @@ Section WithConcreteMaps.
   Instance clocals_ok : map.ok clocals := SortedListString.ok _.
 
   Section CommonPipelineParts.
-    Context (tag tag' : string).
+    Context (tag : string).
     Context (sum_agg_attr : string).
 
     Definition sum_agg_wf := (SumAgg.idx_wf (locals:=clocals) "hole" sum_agg_attr "x").
@@ -114,27 +113,6 @@ Section WithConcreteMaps.
     Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr "tup" "acc" "x").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" tag tbl).
 
-    Definition pk_idx_wf := (BitmapIndex.pk_idx_wf (width:=width) "hole" "tup" "acc").
-    Instance cpk_idx : IndexInterface.index := (pk_idx "hole" "tup" "acc").
-    Instance cpk_idx_ok : IndexInterface.ok cpk_idx pk_idx_wf.
-    apply pk_idx_ok. auto with transf_hints.
-    Qed.
-
-    Context (bitmap_attr : string).
-    Context (bitmap_str : string).
-    Definition bitmap_wf := (bitmap_wf (width:=width) bitmap_attr bitmap_str "hole" "tup").
-    Instance bitmap : IndexInterface.index := (bitmap bitmap_attr bitmap_str "hole" "tup").
-    Instance bitmap_ok : IndexInterface.ok bitmap bitmap_wf.
-    apply bitmap_ok.
-    Qed.
-
-    Definition cons_to_pk_idx_update_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_pk_idx_update_head "y").
-    Definition use_pk_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_pk_idx_head "id_tag" "aux_tag" tag tbl).
-    Definition cons_to_bitmap_update_transf := fun tbl => fold_command_with_globals [tbl] cons_to_bitmap_update_head.
-    Definition use_bitmap_transf := fun tbl => fold_command_with_globals [tbl] (use_bitmap_head bitmap_attr bitmap_str "id_tag" "aux_tag" tag tbl).
-    Definition filter_to_bitmap_lookup_transf :=
-      fun tbl => fold_command_with_globals [tbl]
-                   (filter_to_bitmap_lookup_head bitmap_attr bitmap_str "id_tag" "aux_tag" tag tag' "x" "b" "acc" tbl).
   End CommonPipelineParts.
 
   Definition mk_idx (cur_tag : nat) (reps : nat) (ic : index_choice) :
@@ -163,17 +141,6 @@ Section WithConcreteMaps.
            fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr tbl)
                                        (cons_to_insert_transf attr tbl)) reps],
           S cur_tag)
-    | BitmapIdx attr v =>
-        let pk_idx_tag := String.of_nat cur_tag in
-        let bm_tag := String.of_nat (S cur_tag) in
-        ([(pk_idx_tag, cpk_idx, pk_idx_wf);
-          (bm_tag, bitmap attr v, bitmap_wf attr v)],
-          [filter_to_bitmap_lookup_transf pk_idx_tag bm_tag attr v;
-           use_bitmap_transf bm_tag attr v;
-           fun tbl => repeat_transf (cons_to_bitmap_update_transf tbl) reps;
-           use_pk_idx_transf pk_idx_tag;
-           fun tbl => repeat_transf (cons_to_pk_idx_update_transf tbl) reps],
-          S (S cur_tag))
 end.
 
   Fixpoint mk_idxs (cur_tag : nat) (reps : nat) (ics : list index_choice) :
@@ -218,16 +185,8 @@ end.
         Forall (fun '(_, idx, _) => hole = "hole") idxs.
   Proof.
     destruct ic; unfold mk_idx; intros;
-      invert_pair; intuition idtac; constructor; auto using NoDup_nil, csum_agg_ok, cmin_agg_ok, cdict_idx_ok, cpk_idx_ok, bitmap_ok; auto.
-    1-4: eexists; intuition eauto.
-    1:{ repeat constructor. unfold String.of_nat.
-        exists (S init_tag); intuition auto. }
-    1:{ intuition idtac.
-        cbn [fst] in *. destruct_In; auto.
-        apply String.of_nat_inj, Nat.neq_succ_diag_l in H.
-        intuition fail. }
-    1:{ cbn [fst].
-        constructor; auto using NoDup_nil. }
+      invert_pair; intuition idtac; constructor; auto using NoDup_nil, csum_agg_ok, cmin_agg_ok, cdict_idx_ok; auto.
+    1-3: eexists; intuition eauto.
   Qed.
 
   Lemma mk_idxs_ok : forall ics init_tag reps idxs transfs next_tag,
@@ -510,40 +469,6 @@ end.
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_insert_head_sound;
               eauto with transf_hints. } }
-    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
-        1:{ eapply filter_to_bitmap_lookup_head_sound;
-              eauto with transf_hints.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(2:="pk_tup"). instantiate (1:="pk_acc").
-                eauto with transf_hints. }
-            1,2: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1,2: prove_is_tbl_ty.
-            1,2: prove_idx_wf; instantiate(1:="hole"); auto. }
-        1:{ eapply use_bitmap_head_sound;
-              eauto with transf_hints.
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply cons_to_bitmap_update_head_sound. }
-        1:{ eapply use_pk_idx_head_sound;
-            eauto with transf_hints.
-            1:{ instantiate(2:="pk_tup"); instantiate(1:="pk_acc");
-                eauto with transf_hints. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf; instantiate (1:="hole"); assumption. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            apply cons_to_pk_idx_update_head_sound. } }
   Qed.
 
   Lemma mk_idxs_mk_idx : forall ics init_tag reps idxs transfs next_tag f,
