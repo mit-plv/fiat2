@@ -109,6 +109,7 @@ Section WithConcreteMaps.
     Qed.
 
     Definition dict_lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
+    Definition dict_range_transf := fun tbl => fold_command_with_globals [tbl] (range_filter_to_dict_range_head dict_idx_attr "id_tag" "aux_tag" tag "k" "b" "rows" tbl).
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr "tup" "acc" "x" "y").
     Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr "tup" "acc" "x").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" tag tbl).
@@ -134,6 +135,7 @@ Section WithConcreteMaps.
         let dict_idx_tag := String.of_nat cur_tag in
         ([(dict_idx_tag, cdict_idx attr, dict_idx_wf attr)],
           [dict_lookup_transf dict_idx_tag attr;
+           dict_range_transf dict_idx_tag attr;
            use_dict_idx_transf dict_idx_tag attr;
            (* inserts and deletes are maintained in the same loop, so that
               an insert into a filtered table and a filter of an extended table
@@ -444,6 +446,16 @@ end.
             eapply cons_to_min_head_sound. } }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         1:{ eapply eq_filter_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        1:{ eapply range_filter_to_dict_range_head_sound; auto using ctenv_ok, clocals_ok.
             1:{ rewrite is_NoDup_to_transparent.
                 instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
                 cbn; intuition discriminate. }

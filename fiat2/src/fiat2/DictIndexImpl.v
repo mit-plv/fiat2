@@ -396,6 +396,123 @@ Section WithHole.
         rewrite bag_to_list_app. auto.
       Qed.
 
+      Section DictRange.
+        Local Coercion is_true : bool >-> Sortclass.
+
+        Lemma Permutation_filter_any : forall A (f : A -> bool) l l',
+            Permutation l l' -> Permutation (filter f l) (filter f l').
+        Proof.
+          induction 1 as [ | a l l' H IH | a b l | l l' l'' H1 IH1 H2 IH2 ]; cbn; auto.
+          - destruct (f a); auto.
+          - destruct (f a), (f b); auto using perm_swap.
+          - eapply perm_trans; eauto.
+        Qed.
+
+        Lemma dict_lookup_Some_In : forall (k v : value) d,
+            dict_lookup k d = Some v -> In (k, v) d.
+        Proof.
+          induction d as [| [k' v'] d IH]; cbn; intros H; [ discriminate | ].
+          destruct (value_eqb k k') eqn:E.
+          - apply value_eqb_eq in E; subst. injection H as ->. left; reflexivity.
+          - right; auto.
+        Qed.
+
+        (* a dictionary is its entry for a, if any, followed by the remaining entries *)
+        Lemma dict_lookup_delete_Permutation : forall (a : value) d,
+            Permutation d (match dict_lookup a d with
+                           | Some v => (a, v) :: dict_delete a d
+                           | None => dict_delete a d
+                           end).
+        Proof.
+          induction d as [| [k v] d IH]; cbn; auto.
+          destruct (value_eqb a k) eqn:E.
+          - apply value_eqb_eq in E; subst. reflexivity.
+          - destruct (dict_lookup a d); cbn.
+            + eapply perm_trans; [ apply perm_skip, IH | apply perm_swap ].
+            + apply perm_skip, IH.
+        Qed.
+
+        (* inserting into a sorted dictionary replaces or adds the entry for a *)
+        Lemma dict_insert_Permutation : forall (a v : value) d,
+            StronglySorted dict_entry_leb d ->
+            Permutation (dict_insert a v d) ((a, v) :: dict_delete a d).
+        Proof.
+          induction d as [| [k w] d IH]; intros H_sort; cbn [dict_insert]; auto.
+          destruct (value_ltb a k) eqn:E_lt.
+          - rewrite dict_delete_lt_head; auto.
+          - destruct (value_eqb a k) eqn:E_eq.
+            + apply value_eqb_eq in E_eq; subst.
+              cbn [dict_delete]. rewrite value_eqb_refl. reflexivity.
+            + cbn [dict_delete]. rewrite E_eq. inversion H_sort; subst.
+              eapply perm_trans; [ apply perm_skip, IH; auto | apply perm_swap ].
+        Qed.
+
+        (* the rows stored in the buckets of a dictionary index, in key order *)
+        Definition range_rows (d : list (value * value)) : list value :=
+          flat_map (fun p => match snd p with VBag b => bag_to_list b | _ => nil end) d.
+
+        Lemma range_rows_Permutation : forall d d',
+            Permutation d d' -> Permutation (range_rows d) (range_rows d').
+        Proof.
+          intros. unfold range_rows. apply Permutation_flat_map; auto.
+        Qed.
+
+        Lemma gallina_to_idx_buckets : forall l d,
+            gallina_to_idx (VList l) = VDict d ->
+            Forall (fun p => exists b, snd p = VBag b) d.
+        Proof.
+          cbn [gallina_to_idx]; intros l d H. injection H as H; subst.
+          induction l as [| r l IH]; cbn [fold_right]; auto.
+          destruct r; try constructor.
+          rewrite Forall_forall in *; intros p H_in.
+          apply dict_insert_incl in H_in.
+          destruct H_in as [ <- | H_in ]; [ eexists; reflexivity | eauto ].
+        Qed.
+
+        (* Selecting the rows of a table with lo <= attr < hi gives the rows in the
+           buckets of the index restricted to keys in [lo, hi), up to order *)
+        Lemma gallina_to_idx_range : forall lo hi l,
+            Forall (fun r => exists rc, r = VRecord rc) l ->
+            forall d, gallina_to_idx (VList l) = VDict d ->
+            Permutation
+              (filter (fun r => match r with
+                                | VRecord rc => andb (negb (value_ltb (record_proj attr rc) lo))
+                                                  (value_ltb (record_proj attr rc) hi)
+                                | _ => false
+                                end) l)
+              (range_rows (dict_range lo hi d)).
+        Proof.
+          intros lo hi l H_l. induction H_l as [| r l [rc ->] H_l IH]; intros d H_d.
+          - cbn in H_d. injection H_d as <-. cbn. constructor.
+          - cbn [gallina_to_idx fold_right] in H_d. injection H_d as <-.
+            specialize (IH _ eq_refl).
+            pose proof (gallina_to_idx_SSorted l _ eq_refl) as H_sort.
+            pose proof (gallina_to_idx_buckets l _ eq_refl) as H_bags.
+            set (D := fold_right _ nil l) in *.
+            unfold dict_range in *.
+            (* the new index is its entry for the row's key followed by the other entries *)
+            eapply perm_trans;
+              [ | apply range_rows_Permutation, Permutation_filter_any, Permutation_sym,
+                  dict_insert_Permutation; exact H_sort ].
+            (* and so is the old index *)
+            pose proof (perm_trans IH (range_rows_Permutation _ _
+                          (Permutation_filter_any _ _ _ _ (dict_lookup_delete_Permutation (record_proj attr rc) D)))) as H1.
+            clear IH. revert H1.
+            unfold range_rows. cbn [filter flat_map fst snd].
+            destruct (dict_lookup (record_proj attr rc) D) as [ w | ] eqn:E_lk; intro H1.
+            + apply dict_lookup_Some_In in E_lk.
+              rewrite Forall_forall in H_bags. apply H_bags in E_lk as [ b H_b ]. cbn in H_b. subst w.
+              cbn [filter flat_map fst snd] in *. revert H1.
+              destruct (andb (negb (value_ltb (record_proj attr rc) lo)) (value_ltb (record_proj attr rc) hi)) eqn:E_in; intro H1; [ | exact H1 ].
+              eapply perm_trans; [ apply perm_skip, H1 | ].
+              apply Permutation_sym. cbn [flat_map snd]. rewrite app_comm_cons.
+              apply Permutation_app_tail, bag_to_list_insert_Permutation.
+            + revert H1.
+              destruct (andb (negb (value_ltb (record_proj attr rc) lo)) (value_ltb (record_proj attr rc) hi)) eqn:E_in; intro H1; [ | exact H1 ].
+              cbn. apply perm_skip, H1.
+        Qed.
+      End DictRange.
+
       Lemma idx_wf__idx_chara : forall (t : type) (tbl_v idx_v : value),
           type_wf t -> is_tbl_ty t = true ->
           type_of_value tbl_v t ->
@@ -690,6 +807,172 @@ Section WithHole.
                 erewrite <- not_free_immut_put_sem; auto. }
           Qed.
         End eq_filter_to_lookup.
+
+        Section range_filter_to_dict_range.
+          Context (rk rv racc : string).
+          Context (tbl : string).
+
+          Definition range_filter_to_dict_range_head (e : expr) :=
+            (* [row <- tbl[id_tag], check(!(row.attr < lo) && row.attr < hi), ret row] (as a bag) -->
+               the concatenated buckets of range(idx, lo, hi) *)
+            match e with
+            | flatmap_filter_bag
+                (EBagOf (EAccess (ELoc tbl0) id_tag0))
+                x0 (EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) attr0) lo))
+                                (EBinop OLess (EAccess (EVar x2) attr1) hi)) x3 _ _ =>
+                if (all_eqb [(tbl, [tbl0]); (attr, [attr0; attr1]); (x0, [x1; x2; x3]); (id_tag, [id_tag0])] &&
+                      negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi) &&
+                      negb (String.eqb rv racc))%bool
+                then EBagOf (EDictFold (ETernop ODictRange (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) lo hi)
+                               (EAtom (ANil None)) rk rv racc
+                               (EBinop OConcat (ESort LikeBag (EVar rv)) (EVar racc)))
+                else e
+            | _ => e
+            end.
+
+          (* Unfolds interp_expr on EBagOf by one step *)
+          Lemma interp_EBagOf : forall (store env : locals) e,
+              interp_expr store env (EBagOf e) =
+                match interp_expr store env e with
+                | VList l => VBag (list_to_bag l)
+                | _ => VUnit
+                end.
+          Proof.
+            reflexivity.
+          Qed.
+
+          (* Folding "bucket ++ acc" over a dictionary whose values are bags collects their rows *)
+          Lemma interp_concat_buckets : forall (store env : locals) d l t,
+              rv <> racc ->
+              interp_expr store env d = VDict l ->
+              Forall (fun p => exists b, snd p = VBag b) l ->
+              interp_expr store env
+                (EDictFold d (EAtom (ANil t)) rk rv racc (EBinop OConcat (ESort LikeBag (EVar rv)) (EVar racc)))
+              = VList (range_rows l).
+          Proof.
+            intros * H_neq H_d H_bags. cbn [interp_expr]. rewrite H_d. clear H_d.
+            induction H_bags as [| [k w] l [b H_b] H_l IH]; auto.
+            cbn [fold_right fst snd] in *. rewrite IH. subst w.
+            cbn [interp_binop interp_atom]. unfold get_local.
+            rewrite map.get_put_same, map.get_put_diff, map.get_put_same; auto.
+          Qed.
+
+          Lemma range_filter_to_dict_range_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              preserve_ty Gstore range_filter_to_dict_range_head.
+          Proof.
+            unfold preserve_ty, is_tbl_ty. intros.
+            repeat destruct_match_hyp; try congruence.
+            repeat destruct_subexpr. simpl.
+            case_match; auto. repeat rewrite Bool.andb_true_r in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite !Bool.negb_true_iff, eqb_eq in *; subst.
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
+            repeat (rewrite_l_to_r; do_injection2).
+            rewrite String.eqb_neq in *.
+            unfold idx_ty, get_attr_type in *.
+            lazymatch goal with H: access_record _ attr = Success TInt |- _ => rewrite H in * end.
+            constructor. econstructor.
+            1: econstructor; [ constructor | repeat econstructor; eauto | eapply not_free_immut_put_ty; eauto .. ].
+            1: constructor; constructor; invert_type_wf; assumption.
+            repeat econstructor; repeat rewrite_map_get_put_goal; auto.
+          Qed.
+
+          Lemma range_filter_to_dict_range_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              match map.get store tbl with
+              | Some v => aux_wf_for_idx v
+              | _ => False
+              end ->
+              preserve_sem Gstore store range_filter_to_dict_range_head.
+          Proof.
+            unfold preserve_sem, aux_wf_for_idx; intros.
+            unfold is_tbl_ty, idx_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            invert_type_of_value_clear.
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E1 H2).
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H16 E2 H3).
+            invert_type_of_value_clear.
+            pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H20 E4 H4).
+            repeat destruct_subexpr. unfold range_filter_to_dict_range_head.
+            cbv beta iota; case_match; auto.
+            cbn [all_eqb all_eqb' andb] in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite !Bool.negb_true_iff, eqb_eq in *; subst. repeat clear_refl.
+            rewrite interp_flatmap_filter_bag.
+            rewrite String.eqb_neq in *.
+            (* the bounds are integers that do not depend on the filtered row *)
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
+            lazymatch goal with H: type_of _ (map.put _ x0 _) e2_1_1_2 TInt |- _ =>
+              apply not_free_immut_put_ty in H; auto end.
+            lazymatch goal with H: type_of _ (map.put _ x0 _) e2_1_2_2 TInt |- _ =>
+              apply not_free_immut_put_ty in H; auto end.
+            apply_type_sound e2_1_1_2. apply_type_sound e2_1_2_2.
+            repeat lazymatch goal with H: type_of_value (interp_expr _ _ _) TInt |- _ => inversion H; clear H end.
+            (* the table is a list of records, and the index is built from it *)
+            invert_type_of_value_clear.
+            unfold idx_wf in *.
+            repeat (rewrite_l_to_r; do_injection2).
+            lazymatch goal with H: type_of_value a (TList _) |- _ => inversion H; subst end.
+            lazymatch goal with H: VDict _ = interp_expr _ _ to_idx |- _ =>
+              erewrite fiat2_gallina_to_idx in H; eauto end.
+            (* the left side collects the rows of the index's buckets for keys in range *)
+            rewrite interp_EBagOf.
+            erewrite interp_concat_buckets;
+              [ | assumption
+                | cbn [interp_expr interp_ternop]; unfold get_local; rewrite E;
+                  unfold record_proj; rewrite E2, E4; reflexivity
+                | ].
+            2:{ eapply incl_Forall; [ apply incl_filter | ].
+                rewrite Forall_forall in *; intros p H_in.
+                lazymatch goal with H: forall _, In _ l2 -> _ |- _ => apply H in H_in as [ _ H_b ] end.
+                inversion H_b; eauto. }
+            (* the right side filters the table's rows *)
+            cbn [interp_expr]. unfold get_local. rewrite E. unfold record_proj. rewrite E1.
+            rewrite list_to_bag_filter_list_to_bag.
+            f_equal. apply Permutation_list_to_bag_eq, Permutation_sym.
+            erewrite In_filter_ext; [ apply gallina_to_idx_range | ].
+            - rewrite Forall_forall in *; intros r H_in.
+              lazymatch goal with H: forall _, In _ l1 -> _ |- _ => apply H in H_in end.
+              inversion H_in; eauto.
+            - lazymatch goal with H: VDict l2 = _ |- _ => rewrite H; reflexivity end.
+            - (* both filters test lo <= r.attr < hi on integers *)
+              intros r H_in.
+              lazymatch goal with H: Forall _ l1 |- _ => rewrite Forall_forall in H; apply H in H_in end.
+              inversion H_in; subst.
+              (* the row's attr field is an int *)
+              lazymatch goal with
+              | H: Forall2 _ ?rc tl1, H': access_record tl1 attr = Success TInt |- _ =>
+                  pose proof (access_record_sound _ _ _ _ H') as H_attr;
+                  apply in_map with (f := fst) in H_attr;
+                  pose proof H as H_fst; apply Forall2_split in H_fst as [ H_fst _ ];
+                  apply Forall2_fst_eq in H_fst; rewrite <- H_fst in H_attr;
+                  apply In_access_record in H_attr as [ v H_v ];
+                  pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H H_v H') as H_vt
+              end.
+              inversion H_vt; subst.
+              cbn [interp_expr interp_binop interp_unop]. unfold get_local, record_proj.
+              cbn [fst] in H_v. rewrite map.get_put_same, H_v.
+              (* the bounds do not mention x0 *)
+              rewrite <- !not_free_immut_put_sem by assumption.
+              lazymatch goal with
+              | H: VInt _ = interp_expr _ _ e2_1_1_2, H': VInt _ = interp_expr _ _ e2_1_2_2 |- _ =>
+                  rewrite <- H, <- H'
+              end.
+              reflexivity.
+          Qed.
+        End range_filter_to_dict_range.
 
         Section cons_to_insert.
           Context (y : string).
@@ -1103,6 +1386,29 @@ Section WithHole.
           unfold value_wf_with_globals in *. invert_Forall; intuition auto.
         Qed.
 
+        Lemma range_filter_to_dict_range_head_sound : forall rk rv racc is_tbl_ty' aux_ty aux_wf,
+            aux_ty_for_idx aux_ty ->
+            (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
+            (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head rk rv racc).
+        Proof.
+          unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+          invert_tenv_wf_with_globals.
+          specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+          1: eapply range_filter_to_dict_range_head_preserve_ty; eauto.
+          1: eapply range_filter_to_dict_range_head_preserve_sem; eauto.
+          lazymatch goal with
+            H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+              apply H in H'
+          end.
+          destruct_match_hyp; intuition idtac.
+          lazymatch goal with
+            H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+              apply H in H'
+          end.
+          unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+        Qed.
+
         Lemma use_idx_head_sound : forall is_tbl_ty' aux_ty aux_wf,
             aux_ty_for_idx aux_ty ->
             (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
@@ -1182,10 +1488,28 @@ Proof.
   intros; eapply eq_filter_to_lookup_head_sound; eauto.
 Qed.
 
+Lemma range_filter_to_dict_range_head_sound2 : forall hole attr tup acc x : string,
+       forall tenv : map.map string type,
+       map.ok tenv ->
+       forall (width : Z) (word : Interface.word width),
+       word.ok word ->
+       forall locals : map.map string (value (word:=word)),
+       map.ok locals ->
+       forall (id_tag aux_tag idx_tag rk rv racc : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
+       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
+       (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
+       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
+       is_NoDup_opaque [tup; acc; x] ->
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head attr id_tag aux_tag idx_tag rk rv racc).
+Proof.
+  intros; eapply range_filter_to_dict_range_head_sound; eauto.
+Qed.
+
 #[export] Hint Resolve use_idx_head_sound2 : transf_hints.
 #[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
 #[export] Hint Resolve filter_neq_to_delete_head_sound : transf_hints.
 #[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
+#[export] Hint Resolve range_filter_to_dict_range_head_sound2 : transf_hints.
 
 #[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply to_idx_ty : transf_hints.
 #[export] Hint Extern 5 (type_wf (IndexInterface.idx_ty _)) => apply idx_ty_wf : transf_hints.
