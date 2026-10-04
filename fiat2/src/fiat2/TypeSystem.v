@@ -736,11 +736,14 @@ Section WithMap.
                                  | _ => error:(e1 "has type" t "but expected a list")
                                  end
                     | OSome => match expected with
-                               | TOption t => analyze_expr Gstore Genv t e1
+                               | TOption t => e1' <- analyze_expr Gstore Genv t e1 ;;
+                                              Success (EUnop o e1')
                                | _ => error:(e "is an option but expected" expected)
                                end
                     | o => let '(t1, t2) := unop_types o in
-                           if type_eqb expected t2 then analyze_expr Gstore Genv t1 e1
+                           if type_eqb expected t2
+                           then e1' <- analyze_expr Gstore Genv t1 e1 ;;
+                                Success (EUnop o e1')
                            else error:(e "has type" e1 "but expected" expected)
                     end
     | EBinop o e1 e2 => match o with

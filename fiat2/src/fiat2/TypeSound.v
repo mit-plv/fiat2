@@ -564,6 +564,125 @@ Section WithWord.
           apply H; try apply tenv_wf_step; try apply locals_wf_step
       end.
 
+    Lemma fold_right_ext : forall A B (f g : B -> A -> A) a l,
+        (forall b a', f b a' = g b a') -> fold_right f a l = fold_right g a l.
+    Proof.
+      induction l; cbn; intros; auto.
+      rewrite IHl; auto.
+    Qed.
+
+    Lemma flat_map2_ext : forall A B C (f g : A -> B -> list C) l1 l2,
+        (forall a b, f a b = g a b) -> flat_map2 f l1 l2 = flat_map2 g l1 l2.
+    Proof.
+      induction l1; destruct l2; cbn; intros; auto.
+      rewrite H, IHl1; auto.
+    Qed.
+
+    Lemma map_filter_ext_pointwise : forall A B (f g : A -> B) (p q : A -> bool) l,
+        (forall a, f a = g a) -> (forall a, p a = q a) ->
+        map f (filter p l) = map g (filter q l).
+    Proof.
+      intros. rewrite (filter_ext p q); auto.
+      apply map_ext; auto.
+    Qed.
+
+    Lemma atom_typechecker_preserve_sem : forall a t a',
+        (synthesize_atom a = Success (t, a') -> interp_atom (word:=word) a' = interp_atom a) /\
+          (analyze_atom t a = Success a' -> interp_atom (word:=word) a' = interp_atom a).
+    Proof.
+      destruct a; split; cbn; unfold compare_types; intro H.
+      all: repeat (destruct_match_hyp; try discriminate).
+      all: inversion H; subst; reflexivity.
+    Qed.
+
+    Lemma record_type_from'_preserve_sem : forall (store env : locals) l (Gstore Genv : tenv) tl el,
+        Forall
+          (fun p : string * expr =>
+             forall (Gstore Genv : tenv) (store env : locals) (t : type) (e' : expr),
+               (synthesize_expr Gstore Genv (snd p) = Success (t, e') ->
+                interp_expr store env e' = interp_expr store env (snd p)) /\
+                 (analyze_expr Gstore Genv t (snd p) = Success e' ->
+                  interp_expr store env e' = interp_expr store env (snd p))) l ->
+        record_type_from' (map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
+        map (fun '(s, e) => (s, interp_expr store env e)) el =
+          map (fun '(s, e) => (s, interp_expr store env e)) l.
+    Proof.
+      induction l as [ | [s e] l IHl ]; cbn; intros Gstore Genv tl el H_IH H.
+      - invert_result. reflexivity.
+      - repeat destruct_match. invert_result.
+        inversion H_IH as [ | ? ? H_e H_l ]; subst. cbn [snd] in H_e. cbn.
+        f_equal.
+        + f_equal. eapply (proj1 (H_e _ _ _ _ _ _)); eassumption.
+        + eapply IHl; eassumption.
+    Qed.
+
+    Lemma record_from'_preserve_sem : forall (store env : locals) l (Gstore Genv : tenv) tl el,
+        Forall
+          (fun p : string * expr =>
+             forall (Gstore Genv : tenv) (store env : locals) (t : type) (e' : expr),
+               (synthesize_expr Gstore Genv (snd p) = Success (t, e') ->
+                interp_expr store env e' = interp_expr store env (snd p)) /\
+                 (analyze_expr Gstore Genv t (snd p) = Success e' ->
+                  interp_expr store env e' = interp_expr store env (snd p))) l ->
+        record_from' (map (fun '(s, e) => (s, analyze_expr Gstore Genv (get_attr_type tl s) e)) l) = Success el ->
+        map (fun '(s, e) => (s, interp_expr store env e)) el =
+          map (fun '(s, e) => (s, interp_expr store env e)) l.
+    Proof.
+      induction l as [ | [s e] l IHl ]; cbn; intros Gstore Genv tl el H_IH H.
+      - invert_result. reflexivity.
+      - repeat destruct_match. invert_result.
+        inversion H_IH as [ | ? ? H_e H_l ]; subst. cbn [snd] in H_e. cbn.
+        f_equal.
+        + f_equal. eapply (proj2 (H_e _ _ _ _ _ _)); eassumption.
+        + eapply IHl; eassumption.
+    Qed.
+
+    Ltac rewrite_preserve_sem_IH :=
+      match goal with
+      | IH: forall _ _ _ _ _ _, (synthesize_expr _ _ ?e = _ -> _) /\ _,
+          H: synthesize_expr _ _ ?e = Success (_, ?e') |- _ =>
+          erewrite (proj1 (IH _ _ _ _ _ _) H)
+      | IH: forall _ _ _ _ _ _, _ /\ (analyze_expr _ _ _ ?e = _ -> _),
+          H: analyze_expr _ _ _ ?e = Success ?e' |- _ =>
+          erewrite (proj2 (IH _ _ _ _ _ _) H)
+      end.
+
+    Ltac preserve_sem_step :=
+      first [ rewrite_preserve_sem_IH
+            | reflexivity
+            | eapply (proj1 (atom_typechecker_preserve_sem _ _ _)); eassumption
+            | eapply (proj2 (atom_typechecker_preserve_sem _ _ _)); eassumption
+            | eapply record_type_from'_preserve_sem; eassumption
+            | eapply record_from'_preserve_sem; eassumption
+            | apply flat_map_ext; intro
+            | apply map_filter_ext_pointwise; intro
+            | apply map_ext; intro
+            | apply filter_ext; intro
+            | apply fold_right_ext; intros
+            | apply flat_map2_ext; intros
+            | lazymatch goal with
+              | |- VList _ = VList _ => f_equal
+              | |- VBag _ = VBag _ => f_equal
+              | |- VSet _ = VSet _ => f_equal
+              | |- list_to_bag _ = list_to_bag _ => f_equal
+              | |- list_to_set _ = list_to_set _ => f_equal
+              | |- VRecord _ = VRecord _ => f_equal
+              | |- record_sort _ = record_sort _ => f_equal
+              end
+            | progress cbv beta zeta
+            | case_match ].
+
+    Lemma typechecker_preserve_sem : forall e Gstore Genv (store env : locals) t e',
+        (synthesize_expr Gstore Genv e = Success (t, e') -> interp_expr store env e' = interp_expr store env e) /\
+          (analyze_expr Gstore Genv t e = Success e' -> interp_expr store env e' = interp_expr store env e).
+    Proof.
+      induction e using expr_IH; intros; split; intro H_tc.
+      all: try destruct o; try destruct tag; try destruct ag.
+      all: cbn [synthesize_expr analyze_expr] in H_tc; unfold record_type_from, record_from in H_tc;
+        repeat destruct_match; try invert_pair; try invert_result; cbn [interp_expr].
+      all: repeat preserve_sem_step.
+    Qed.
+
     Ltac type_injection :=
       lazymatch goal with
       | H : TList _ = TList _ |- _ => injection H as H; subst
