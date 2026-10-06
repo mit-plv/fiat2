@@ -125,7 +125,7 @@ Section WithConcreteMaps.
 
     Definition set_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (set_to_lookup_head set_agg_attr "id_tag" "aux_tag" tag tbl).
     Definition cons_to_set_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_set_insert_head set_agg_attr).
-    Definition filter_to_set_diff_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_set_diff_head set_agg_attr "y").
+    Definition filter_to_set_diff_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_set_diff_head set_agg_attr).
 
   End CommonPipelineParts.
 

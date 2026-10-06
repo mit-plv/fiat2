@@ -345,15 +345,14 @@ Section WithHole.
 
         (* deleting every row with a given attribute value drops it from the set *)
         Section filter_neq_to_set_diff.
-          Context (y : string).
 
           Definition filter_neq_to_set_diff_head (e : expr) :=
             match e with
             | flatmap_proj_set
-                (ESetOf (flatmap_filter_list e' y0
-                           (EUnop ONot (EBinop OEq (EAccess (EVar y1) attr1) k)) y2 _ _))
+                (ESetOf (flatmap_filter_list e' y
+                           (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr1) k)) y1 _ _))
                 x0 (EAccess (EVar x1) attr0) t =>
-                if (all_eqb [(attr, [attr0; attr1]); (x0, [x1]); (y, [y0; y1; y2])] &&
+                if (all_eqb [(attr, [attr0; attr1]); (x0, [x1]); (y, [y0; y1])] &&
                       negb (free_immut_in y k))%bool
                 then EBinop OSetDiff
                        (flatmap_proj_set (ESetOf e') x0 (EAccess (EVar x0) attr0) t)
@@ -388,7 +387,7 @@ Section WithHole.
                against the attribute, so it has the attribute's type *)
             1:{ eapply not_free_immut_put_ty; [ eassumption | ].
                 lazymatch goal with
-                | H: type_of _ (map.put _ y _) e1_2_1_2 ?t2 |- type_of _ _ _ ?t1 =>
+                | H: type_of _ (map.put _ _ _) e1_2_1_2 ?t2 |- type_of _ _ _ ?t1 =>
                     replace t1 with t2 by congruence; exact H
                 end. }
           Qed.
@@ -449,8 +448,8 @@ Section WithHole.
           1: eapply cons_to_set_insert_head_preserve_sem; [ | | eauto .. ]; auto.
         Qed.
 
-        Lemma filter_neq_to_set_diff_head_sound : forall y,
-          expr_transf_sound (locals:=locals) (filter_neq_to_set_diff_head y).
+        Lemma filter_neq_to_set_diff_head_sound :
+          expr_transf_sound (locals:=locals) filter_neq_to_set_diff_head.
         Proof.
           unfold expr_transf_sound; intros.
           intuition idtac.
