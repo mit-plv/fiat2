@@ -142,7 +142,6 @@ Inductive expr : Type :=
 | ERecord (l : list (string * expr))
 | EAccess (r : expr) (s : string)
 | EOptMatch (e : expr) (e_none : expr) (x : string) (e_some : expr)
-| EDictFold (d e0 : expr) (k v acc : string) (e : expr)
 | ESort (tag : collection_tag) (l : expr) (* by value order *)
 (* conversion to different collections *)
 | EBagOf (l : expr)
@@ -163,7 +162,6 @@ Section ExprIH.
     (f_record : forall l, Forall (fun p => P (snd p)) l -> P (ERecord l))
     (f_access : forall r s, P r -> P (EAccess r s))
     (f_optmatch : forall e e_none x e_some, P e -> P e_none -> P e_some -> P (EOptMatch e e_none x e_some))
-    (f_dictfold : forall d e0 k v acc e, P d -> P e0 -> P e -> P (EDictFold d e0 k v acc e))
     (f_sort : forall tag l, P l -> P (ESort tag l))
     (f_bagof : forall l, P l -> P (EBagOf l))
     (f_setof : forall l, P l -> P (ESetOf l)).
@@ -194,7 +192,6 @@ Section ExprIH.
       | ERecord l => f_record l (record_expr_IH expr_IH l)
       | EAccess r s => f_access r s (expr_IH r)
       | EOptMatch e e_none x e_some => f_optmatch e e_none x e_some (expr_IH e) (expr_IH e_none) (expr_IH e_some)
-      | EDictFold d e0 k v acc e => f_dictfold d e0 k v acc e (expr_IH d) (expr_IH e0) (expr_IH e)
       | ESort tag l => f_sort tag l (expr_IH l)
       | EBagOf l => f_bagof l (expr_IH l)
       | ESetOf l => f_setof l (expr_IH l)

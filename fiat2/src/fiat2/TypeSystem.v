@@ -275,10 +275,6 @@ Section WithMap.
                                     type_of Gstore Genv e_none t2 ->
                                     type_of Gstore (map.put Genv x t1) e_some t2 ->
                                     type_of Gstore Genv (EOptMatch e e_none x e_some) t2
-  | TyEDictFold d kt vt e0 t k v acc e : type_of Gstore Genv d (TDict kt vt) ->
-                                         type_of Gstore Genv e0 t ->
-                                         type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
-                                         type_of Gstore Genv (EDictFold d e0 k v acc e) t
   | TyESort_List l t : type_of Gstore Genv l (TList t) ->
                   type_of Gstore Genv (ESort LikeList l) (TList t)
   | TyESort_Bag l t : type_of Gstore Genv l (TBag t) ->
@@ -370,10 +366,6 @@ Section WithMap.
                                                                   type_of Gstore Genv e_none t2 -> P Genv e_none t2 ->
                                                                   type_of Gstore (map.put Genv x t1) e_some t2 -> P (map.put Genv x t1) e_some t2 ->
                                                                   P Genv (EOptMatch e e_none x e_some) t2).
-    Hypothesis (f_dictfold : forall Genv d kt vt e0 t k v acc e, type_of Gstore Genv d (TDict kt vt) -> P Genv d (TDict kt vt) ->
-                                                                  type_of Gstore Genv e0 t -> P Genv e0 t ->
-                                                                  type_of Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) e t -> P (map.put (map.put (map.put Genv k kt) v vt) acc t) e t ->
-                                                                  P Genv (EDictFold d e0 k v acc e) t).
     Hypothesis (f_sort_list : forall Genv l t, type_of Gstore Genv l (TList t) -> P Genv l (TList t) ->
                                           P Genv (ESort LikeList l) (TList t)).
     Hypothesis (f_sort_bag : forall Genv l t, type_of Gstore Genv l (TBag t) -> P Genv l (TBag t) ->
@@ -416,7 +408,6 @@ Section WithMap.
       | TyERecord _ _ l tl tl' Hname Hfield Hpermu Hnodup Hsort => f_record Genv l tl tl' Hname Hfield (record_type_of_IH type_of_IH Genv (List.map snd l) (List.map snd tl) Hfield) Hpermu Hnodup Hsort
       | TyEAccess _ _ e tl x t He Hin => f_access Genv e tl x t He (type_of_IH Genv e (TRecord tl) He) Hin
       | TyEOptMatch _ _ e t1 e_none t2 x e_some He He_none He_some => f_optmatch Genv e t1 e_none t2 x e_some He (type_of_IH Genv e (TOption t1) He) He_none (type_of_IH Genv e_none t2 He_none) He_some (type_of_IH (map.put Genv x t1) e_some t2 He_some)
-      | TyEDictFold _ _ d kt vt e0 t k v acc e Hd He0 He => f_dictfold Genv d kt vt e0 t k v acc e Hd (type_of_IH Genv d (TDict kt vt) Hd) He0 (type_of_IH Genv e0 t He0)  He (type_of_IH (map.put (map.put (map.put Genv k kt) v vt) acc t) e t He)
       | TyESort_List _ _ l t Hl => f_sort_list Genv l t Hl (type_of_IH Genv l (TList t) Hl)
       | TyESort_Bag _ _ l t Hl => f_sort_bag Genv l t Hl (type_of_IH Genv l (TBag t) Hl)
       | TyESort_Set _ _ l t Hl => f_sort_set Genv l t Hl (type_of_IH Genv l (TSet t) Hl)
@@ -870,14 +861,6 @@ Section WithMap.
             Success (EOptMatch e' e_none' x e_some')
         | t => error:(e "has type" t "but expected an option")
         end
-    | EDictFold d e0 k v acc e =>
-        '(t, d') <- synthesize_expr Gstore Genv d ;;
-        match t with
-        | TDict kt vt => e0' <- analyze_expr Gstore Genv expected e0 ;;
-                         e' <- analyze_expr Gstore (map.put (map.put (map.put Genv k kt) v vt) acc expected) expected e ;;
-                         Success (EDictFold d' e0' k v acc e')
-        | t => error:(d "has type" t "but expected a dictionary")
-        end
     | ESort tag l =>
             match expected with
             | TList t =>
@@ -1112,15 +1095,6 @@ Section WithMap.
                      Success (t2, EOptMatch e' e_none' x e_some')
                  end
              | t1 => error:(e "has type" t1 "but expected an option")
-             end
-         | EDictFold d e0 k v acc e =>
-             '(t, d') <- synthesize_expr Gstore Genv d ;;
-             match t with
-             | TDict kt vt =>
-                 '(t, e0') <- synthesize_expr Gstore Genv e0 ;;
-                 e' <- analyze_expr Gstore (map.put (map.put (map.put Genv k kt) v vt) acc t) t e ;;
-                 Success (t, EDictFold d' e0' k v acc e')
-             | t => error:(d "has type" t "but expected a dictionary")
              end
          | ESort tag l =>
              '(t, l') <- synthesize_expr Gstore Genv l ;;

@@ -247,7 +247,6 @@ Section WithMap.
         unfold aux_ty.
         induction 5 using type_of_IH; simpl; intros.
         all: try (econstructor; eauto; apply_transf_to_idx_preserve_ty''_IH; apply tenv_wf_step; eauto with fiat2_hints).
-        3: repeat apply tenv_wf_step; eauto with fiat2_hints.
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ repeat rewrite_l_to_r; do_injection.
                 repeat econstructor; try rewrite_map_get_put_goal; eauto.
@@ -433,15 +432,6 @@ Section WithMap.
         1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
             apply_type_sound e. invert_type_of_value_clear;
               use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints. }
-        1:{ use_transf_to_idx_preserve_sem''_IH; eauto.
-            apply_type_sound d. invert_type_of_value_clear.
-            revert IHtype_of3.
-            use_transf_to_idx_preserve_sem''_IH; eauto; intros.
-            apply In_fold_right_ext with (P:=fun v => type_of_value v t); eauto with fiat2_hints.
-            intros. apply_Forall_In. intuition idtac;
-              use_transf_to_idx_preserve_sem''_IH; eauto with fiat2_hints.
-            2: eapply type_sound; eauto with fiat2_hints.
-            all: repeat apply tenv_wf_step; eauto with fiat2_hints. }
       Qed.
 
       Lemma consistent_with_global_update : forall (l0 l0' l l' : locals),

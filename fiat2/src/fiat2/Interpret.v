@@ -371,11 +371,6 @@ Section WithWord.
           | VOption (Some v) => interp_expr store (map.put env x v) e_some
           | _ => VUnit
           end
-      | EDictFold d e0 x y z e =>
-          match interp_expr store env d with
-          | VDict l => fold_right (fun v acc => interp_expr store (map.put (map.put (map.put env x (fst v)) y (snd v)) z acc) e) (interp_expr store env e0) l
-          | _ => VUnit
-          end
       | ESort tag l =>
           match tag with
           | LikeList =>

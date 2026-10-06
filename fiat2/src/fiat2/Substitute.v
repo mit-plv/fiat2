@@ -72,12 +72,6 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
       let x' := fresh_var x free_vars in
       EOptMatch (substitute sub free_vars e1) (substitute sub free_vars e2) x'
         (substitute ((x, EVar x') :: sub) (x' :: free_vars) e3)
-  | EDictFold d e0 k v acc e =>
-      let k' := fresh_var k free_vars in
-      let v' := fresh_var v (k' :: free_vars) in
-      let acc' := fresh_var acc (v' :: k' :: free_vars) in
-      EDictFold (substitute sub free_vars d) (substitute sub free_vars e0) k' v' acc'
-        (substitute ((acc, EVar acc') :: (v, EVar v') :: (k, EVar k') :: sub) (acc' :: v' :: k' :: free_vars) e)
   | ESort tag e => ESort tag (substitute sub free_vars e)
   | EBagOf l => EBagOf (substitute sub free_vars l)
   | ESetOf l => ESetOf (substitute sub free_vars l)
@@ -394,30 +388,6 @@ Section WithMap.
               [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
                 auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
               | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
-          invert_type_of_value.
-          revert IHe0_3. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto; intros.
-          apply In_fold_right_ext with (P:=fun v => type_of_value v t0); intros.
-          1: eapply type_sound; eauto; eapply make_sub_env_wf; [ .. | eauto ]; auto.
-          apply_Forall_In. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          8,9: intuition eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq; try apply fresh_var_neq2
-                            | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; intuition auto.
-          1: eapply type_sound; eauto.
-          all: repeat apply tenv_wf_step; repeat apply locals_wf_step;
-            eauto using locals_equiv_refl with fiat2_hints.
-          all: try (eapply make_sub_env_wf; [ | | | | eauto ]; auto).
-          repeat apply locals_equiv_step.
-          2-4: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq, fresh_var_neq2.
-          eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-          repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-          all: auto using locals_equiv_refl, incl_tl. }
     Qed.
 End WithMap.
 
@@ -446,8 +416,6 @@ Fixpoint free_immuts_in (e : expr) : list string :=
   | EAccess e s => free_immuts_in e
   | EOptMatch e1 e2 x e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x (free_immuts_in e3)
-  | EDictFold e1 e2 k v acc e3 =>
-      free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec k (remove string_dec v (remove string_dec acc (free_immuts_in e3)))
   | ESort _ e => free_immuts_in e
   | EBagOf l | ESetOf l => free_immuts_in l
   end.

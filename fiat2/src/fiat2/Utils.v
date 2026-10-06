@@ -1041,17 +1041,6 @@ Section WithMap.
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         all: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        revert IHe3. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto; intros.
-        eapply In_fold_right_ext with (P:=fun v => type_of_value v t); intros.
-        1: apply_type_sound e2.
-        1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            2: repeat apply tenv_wf_step; eauto with fiat2_hints.
-            2: repeat apply locals_wf_step; apply_Forall_In; intuition auto.
-            apply_type_sound e3;
-              [ repeat apply tenv_wf_step; eauto with fiat2_hints
-              | repeat apply locals_wf_step; apply_Forall_In; intuition auto ]. } }
   Qed.
 
   Lemma map_incl__locals_equiv : forall G l l',
@@ -1573,9 +1562,6 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
   | ERecord l => existsb (fun '(_, e) => free_immut_in x e) l
   | EAccess e _ => free_immut_in x e
   | EOptMatch e e_none y e_some => free_immut_in x e || free_immut_in x e_none || (negb (String.eqb x y) && free_immut_in x e_some)
-  | EDictFold d e0 k v acc e => free_immut_in x d || free_immut_in x e0 ||
-                                  (negb (String.eqb x k) && negb (String.eqb x v) && negb (String.eqb x acc) &&
-                                     free_immut_in x e)
   | ESort _ l => free_immut_in x l
   | EBagOf e | ESetOf e => free_immut_in x e
   end.
@@ -1638,19 +1624,6 @@ Section WithMap.
         * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
         * apply IHe3; intuition idtac.
           rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
-    - inversion H0; subst; econstructor.
-      + apply IHe1; eauto; intuition fail.
-      + apply IHe2; intuition fail.
-      + destruct (x =? k) eqn:Ek.
-        * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-        * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
-          destruct (x =? v) eqn:Ev.
-          -- rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-          -- rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
-             destruct (x =? acc) eqn:Eacc.
-             ++ rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-             ++ apply IHe3; intuition idtac.
-                rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
   Qed.
 
   Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
@@ -1713,17 +1686,6 @@ Section WithMap.
       * rewrite eqb_eq in *; subst.
         rewrite Properties.map.put_put_same. auto.
       * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition auto.
-    - rewrite <- IHe1; intuition idtac. case_match; auto. rewrite <- IHe2; auto.
-      apply In_fold_right_ext with (P := fun _ => True); auto.
-      intros. destruct (x =? k) eqn:Ek;
-        try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac.
-      destruct (x =? v) eqn:Ev;
-        try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac.
-      destruct (x =? acc) eqn:Eacc;
-        try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition auto.
   Qed.
 End WithMap.
 

@@ -170,10 +170,6 @@ Fixpoint expr_py (e:expr) : string :=
       "(foldr(" ++ "lambda " ++ acc ++ ", " ++ v ++ ": " ++ expr_py e3 ++ ", " ++
         expr_py e1 ++ "," ++
       expr_py e2 ++ "))"
-  | EDictFold d e0 k v acc e =>
-      (* folds over the entries in insertion order rather than key order *)
-      "(foldr(lambda " ++ acc ++ ", kv: (lambda " ++ k ++ ", " ++ v ++ ": " ++ expr_py e ++ ")(kv[0], kv[1]), " ++
-        "list(" ++ expr_py d ++ ".items()), " ++ expr_py e0 ++ "))"
   end.
 
 Definition indent_unit := "    ".

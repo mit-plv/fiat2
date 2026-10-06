@@ -457,6 +457,15 @@ Section WithHole.
           intros. unfold range_rows. apply Permutation_flat_map; auto.
         Qed.
 
+        (* the buckets of a dictionary are the values of its entries *)
+        Lemma range_rows_map_snd : forall d,
+            range_rows d
+            = flat_map (fun v => match v with VBag b => bag_to_list b | _ => nil end)
+                (List.map snd d).
+        Proof.
+          unfold range_rows; induction d; cbn; congruence.
+        Qed.
+
         Lemma gallina_to_idx_buckets : forall l d,
             gallina_to_idx (VList l) = VDict d ->
             Forall (fun p => exists b, snd p = VBag b) d.
@@ -809,7 +818,7 @@ Section WithHole.
         End eq_filter_to_lookup.
 
         Section range_filter_to_dict_range.
-          Context (rk rv racc : string).
+          Context (rv : string).
           Context (tbl : string).
 
           Definition range_filter_to_dict_range_head (e : expr) :=
@@ -821,40 +830,28 @@ Section WithHole.
                 x0 (EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) attr0) lo))
                                 (EBinop OLess (EAccess (EVar x2) attr1) hi)) x3 _ _ =>
                 if (all_eqb [(tbl, [tbl0]); (attr, [attr0; attr1]); (x0, [x1; x2; x3]); (id_tag, [id_tag0])] &&
-                      negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi) &&
-                      negb (String.eqb rv racc))%bool
-                then EBagOf (EDictFold (ETernop ODictRange (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) lo hi)
-                               (EAtom (ANil None)) rk rv racc
-                               (EBinop OConcat (ESort LikeBag (EVar rv)) (EVar racc)))
+                      negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi))%bool
+                then EFlatmap LikeBag
+                       (EUnop ODictValues
+                          (ETernop ODictRange (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) lo hi))
+                       rv (EVar rv)
                 else e
             | _ => e
             end.
 
-          (* Unfolds interp_expr on EBagOf by one step *)
-          Lemma interp_EBagOf : forall (store env : locals) e,
-              interp_expr store env (EBagOf e) =
-                match interp_expr store env e with
-                | VList l => VBag (list_to_bag l)
-                | _ => VUnit
-                end.
-          Proof.
-            reflexivity.
-          Qed.
-
-          (* Folding "bucket ++ acc" over a dictionary whose values are bags collects their rows *)
-          Lemma interp_concat_buckets : forall (store env : locals) d l t,
-              rv <> racc ->
+          (* Flattening the values of a dictionary collects the rows of its buckets *)
+          Lemma interp_flatmap_dict_values : forall (store env : locals) d l,
               interp_expr store env d = VDict l ->
-              Forall (fun p => exists b, snd p = VBag b) l ->
-              interp_expr store env
-                (EDictFold d (EAtom (ANil t)) rk rv racc (EBinop OConcat (ESort LikeBag (EVar rv)) (EVar racc)))
-              = VList (range_rows l).
+              interp_expr store env (EFlatmap LikeBag (EUnop ODictValues d) rv (EVar rv))
+              = VBag (list_to_bag (range_rows l)).
           Proof.
-            intros * H_neq H_d H_bags. cbn [interp_expr]. rewrite H_d. clear H_d.
-            induction H_bags as [| [k w] l [b H_b] H_l IH]; auto.
-            cbn [fold_right fst snd] in *. rewrite IH. subst w.
-            cbn [interp_binop interp_atom]. unfold get_local.
-            rewrite map.get_put_same, map.get_put_diff, map.get_put_same; auto.
+            intros * H_d. cbn [interp_expr interp_unop]. rewrite H_d.
+            erewrite In_flat_map_ext.
+            2:{ intros v _. cbn [interp_expr]. unfold get_local.
+                rewrite map.get_put_same. reflexivity. }
+            f_equal. apply Permutation_list_to_bag_eq.
+            rewrite range_rows_map_snd.
+            apply Permutation_flat_map; auto using list_to_bag_to_list_Permutation.
           Qed.
 
           Lemma range_filter_to_dict_range_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
@@ -874,13 +871,17 @@ Section WithHole.
             repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
             repeat (clear_refl; repeat do_injection2).
             repeat (rewrite_l_to_r; do_injection2).
-            rewrite String.eqb_neq in *.
             unfold idx_ty, get_attr_type in *.
             lazymatch goal with H: access_record _ attr = Success TInt |- _ => rewrite H in * end.
-            constructor. econstructor.
-            1: econstructor; [ constructor | repeat econstructor; eauto | eapply not_free_immut_put_ty; eauto .. ].
-            1: constructor; constructor; invert_type_wf; assumption.
-            repeat econstructor; repeat rewrite_map_get_put_goal; auto.
+            econstructor.
+            (* the index's range, as a bag of buckets *)
+            1:{ econstructor; [ constructor | ].
+                econstructor;
+                  [ constructor
+                  | repeat econstructor; eauto
+                  | eapply not_free_immut_put_ty; eauto .. ]. }
+            (* the flatmap returns each bucket unchanged *)
+            econstructor; rewrite_map_get_put_goal; auto.
           Qed.
 
           Lemma range_filter_to_dict_range_head_preserve_sem : forall (Gstore : tenv) (store : locals) tl t aux_tl,
@@ -910,7 +911,6 @@ Section WithHole.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
             rewrite !Bool.negb_true_iff, eqb_eq in *; subst. repeat clear_refl.
             rewrite interp_flatmap_filter_bag.
-            rewrite String.eqb_neq in *.
             (* the bounds are integers that do not depend on the filtered row *)
             repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
             repeat (clear_refl; repeat do_injection2).
@@ -928,16 +928,9 @@ Section WithHole.
             lazymatch goal with H: VDict _ = interp_expr _ _ to_idx |- _ =>
               erewrite fiat2_gallina_to_idx in H; eauto end.
             (* the left side collects the rows of the index's buckets for keys in range *)
-            rewrite interp_EBagOf.
-            erewrite interp_concat_buckets;
-              [ | assumption
-                | cbn [interp_expr interp_ternop]; unfold get_local; rewrite E;
-                  unfold record_proj; rewrite E2, E4; reflexivity
-                | ].
-            2:{ eapply incl_Forall; [ apply incl_filter | ].
-                rewrite Forall_forall in *; intros p H_in.
-                lazymatch goal with H: forall _, In _ l2 -> _ |- _ => apply H in H_in as [ _ H_b ] end.
-                inversion H_b; eauto. }
+            erewrite interp_flatmap_dict_values;
+              [ | cbn [interp_expr interp_ternop]; unfold get_local; rewrite E;
+                  unfold record_proj; rewrite E2, E4; reflexivity ].
             (* the right side filters the table's rows *)
             cbn [interp_expr]. unfold get_local. rewrite E. unfold record_proj. rewrite E1.
             rewrite list_to_bag_filter_list_to_bag.
@@ -1386,11 +1379,11 @@ Section WithHole.
           unfold value_wf_with_globals in *. invert_Forall; intuition auto.
         Qed.
 
-        Lemma range_filter_to_dict_range_head_sound : forall rk rv racc is_tbl_ty' aux_ty aux_wf,
+        Lemma range_filter_to_dict_range_head_sound : forall rv is_tbl_ty' aux_ty aux_wf,
             aux_ty_for_idx aux_ty ->
             (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
             (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
-            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head rk rv racc).
+            expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head rv).
         Proof.
           unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
           invert_tenv_wf_with_globals.
@@ -1495,12 +1488,12 @@ Lemma range_filter_to_dict_range_head_sound2 : forall hole attr tup acc x : stri
        word.ok word ->
        forall locals : map.map string (value (word:=word)),
        map.ok locals ->
-       forall (id_tag aux_tag idx_tag rk rv racc : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
+       forall (id_tag aux_tag idx_tag rv : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
        aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
        (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
-       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head attr id_tag aux_tag idx_tag rk rv racc).
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head attr id_tag aux_tag idx_tag rv).
 Proof.
   intros; eapply range_filter_to_dict_range_head_sound; eauto.
 Qed.

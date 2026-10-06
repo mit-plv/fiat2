@@ -503,11 +503,6 @@ Section WithWord.
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
                   try apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
-      - (* EDictFold *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
       - (* ESort *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
@@ -1624,26 +1619,6 @@ Section WithWord.
       - (* TyEOptMatch *)
         repeat apply_type_sound_IH; auto; try constructor;
           try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEDictFold *)
-        repeat apply_type_sound_IH.
-        all: try (lazymatch goal with
-                  | H: VDict ?l = _ |- _ => clear H
-                  end; induction l; simpl; try constructor; auto; apply_type_sound_IH; auto;
-                  invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-                  try apply_type_of__type_wf; try invert_type_wf; intuition idtac;
-                  lazymatch goal with
-                  | H: _ -> _ -> ?P |- ?P => apply H
-                  end;
-                  simpl in *; invert_NoDup; invert_SSorted; intuition idtac).
-        all: try (lazymatch goal with
-                  | H: VDict ?l = _ |- type_of_value (fold_right _ _ ?l) _ => clear H; induction l
-                  end;
-                  simpl; try constructor; auto; apply_type_sound_IH; auto;
-                  invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-                  try apply_type_of__type_wf; try invert_type_wf; intuition idtac;
-                  lazymatch goal with
-                  | H: _ -> _ -> ?P |- ?P => apply H
-                  end; simpl in *; invert_NoDup; invert_SSorted; intuition idtac).
       - (* TyESort_List *)
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros.
         eapply List.Forall_In in H2; eauto. eapply Permutation_in.

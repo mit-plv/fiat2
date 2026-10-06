@@ -71,7 +71,6 @@ Section fold_expr.
       | ERecord l => ERecord (List.map (fun '(s, e) => (s, fold_expr e)) l)
       | EAccess e x => EAccess (fold_expr e) x
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
-      | EDictFold d e0 k v acc e => EDictFold (fold_expr d) (fold_expr e0) k v acc (fold_expr e)
       | ESort tag l => ESort tag (fold_expr l)
       | EBagOf e => EBagOf (fold_expr e)
       | ESetOf e => ESetOf (fold_expr e)
@@ -100,7 +99,6 @@ Section WithMap.
     all: try apply_fold_expr_preserve_ty_IH; repeat apply tenv_wf_step; auto;
       try now (apply_type_of__type_wf; eauto; try invert_type_wf; auto).
     1: apply type_of__type_wf in H10; auto.
-    3: apply type_of__type_wf in H11; auto.
     1: rewrite fst_map_fst; auto.
     1:{ lazymatch goal with H1: NoDup _, H2: Permutation _ _,
             H3: List.map fst _ = _ |- _ =>
@@ -189,19 +187,6 @@ Section WithMap.
         all: apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         apply locals_wf_step; eauto. eapply type_sound in H10; eauto. inversion H10; subst.
         all: trans_of_eq; congruence. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
-        apply_fold_expr_preserve_sem_IH.
-        eapply In_fold_right_ext with (P:=fun a => type_of_value a t); intros.
-        1: eapply type_sound; eauto.
-        apply_type_sound e1; rewrite_l_to_r; invert_type_of_value.
-        apply_Forall_In; intuition;
-          [ apply_fold_expr_preserve_sem_IH | eapply type_sound; resolve_locals_wf; eauto ];
-          repeat apply tenv_wf_step; repeat apply locals_wf_step;
-          eauto with fiat2_hints.
-        apply fold_expr_preserve_ty; repeat apply tenv_wf_step; eauto with fiat2_hints. }
   Qed.
 
   Lemma fold_expr_sound : forall f,
