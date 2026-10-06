@@ -1,5 +1,5 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.Utils fiat2.CollectionTransf.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.CollectionTransf.
+Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
 
@@ -48,6 +48,27 @@ Section WithWord.
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
     (* the flatmap's bound variable is the row the attribute is read from *)
+    (* projecting an attribute out of well-typed records gives values of its type *)
+    Lemma Forall_map_record_proj : forall (attr : string) (l : list value) tl t,
+        Forall (fun v => type_of_value v (TRecord tl)) l ->
+        access_record tl attr = Success t ->
+        Forall (fun v => type_of_value v t)
+          (List.map (fun v => match v with
+                              | VRecord r => record_proj attr r
+                              | _ => VUnit
+                              end) l).
+    Proof.
+      intros * H_l H_attr. rewrite Forall_map, Forall_forall; intros v H_in.
+      rewrite Forall_forall in H_l; apply H_l in H_in.
+      invert_type_of_value_clear.
+      eapply record_proj_sound; eauto using access_record_sound.
+      (* the record's field names are the type's field names *)
+      lazymatch goal with
+        H: Forall2 _ _ _ |- _ =>
+          apply Forall2_split in H as [H _]; apply Forall2_fst_eq in H; rewrite H
+      end; auto.
+    Qed.
+
     Lemma map_proj_put : forall (attr : string) (env : locals) y l,
         List.map (fun v => match get_local (map.put env y v) y with
                            | VRecord r => record_proj attr r
@@ -83,6 +104,27 @@ Section WithWord.
       unfold get_local. rewrite map.get_put_same.
       rewrite <- not_free_immut_put_sem; auto.
     Qed.
+
+    Lemma interp_EVar : forall (store env : locals) y,
+        interp_expr store env (EVar y) = get_local env y.
+    Proof. reflexivity. Qed.
+
+    Lemma interp_EOptMatch : forall (store env : locals) e e_none y e_some,
+        interp_expr store env (EOptMatch e e_none y e_some) =
+          match interp_expr store env e with
+          | VOption (Some v) => interp_expr store (map.put env y v) e_some
+          | VOption None => interp_expr store env e_none
+          | _ => VUnit
+          end.
+    Proof. reflexivity. Qed.
+
+    Lemma interp_EIf : forall (store env : locals) e1 e2 e3,
+        interp_expr store env (EIf e1 e2 e3) =
+          match interp_expr store env e1 with
+          | VBool b => if b then interp_expr store env e2 else interp_expr store env e3
+          | _ => VUnit
+          end.
+    Proof. reflexivity. Qed.
 
     Lemma interp_EBinop : forall (store env : locals) o e1 e2,
         interp_expr store env (EBinop o e1 e2) =

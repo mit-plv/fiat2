@@ -99,6 +99,58 @@ Section WithHole.
         1: apply Z.min_l, Z.lt_le_incl; auto.
       Qed.
 
+      (* Deleting every row whose attribute is k only disturbs the minimum when
+         the minimum is k itself. *)
+      Lemma min_set_map_filter_neq : forall (f : value -> value) k l,
+          match list_to_set (List.map f (filter (fun v => negb (value_eqb (f v) k)) l)) with
+          | nil => VOption None
+          | v :: _ => VOption (Some v)
+          end
+          = match list_to_set (List.map f l) with
+            | nil => VOption None
+            | v :: _ =>
+                if value_eqb v k
+                then match list_to_set
+                            (List.map f (filter (fun v => negb (value_eqb (f v) k)) l)) with
+                     | nil => VOption None
+                     | w :: _ => VOption (Some w)
+                     end
+                else VOption (Some v)
+            end.
+      Proof.
+        intros. rewrite <- filter_list_to_set_map.
+        destruct (list_to_set (List.map f l)) as [| v s] eqn:E; auto.
+        cbn [filter]. destruct (value_eqb v k) eqn:E2; cbn [negb]; auto.
+      Qed.
+
+      Notation proj_attr :=
+        (fun v => match v with
+                  | VRecord r => record_proj attr r
+                  | _ => VUnit
+                  end).
+
+      (* the minimum of an attribute over a table, in terms of the table's rows *)
+      Lemma interp_min_proj : forall (store env : locals) e l tl x t,
+          interp_expr store env e = VList l ->
+          Forall (fun v => type_of_value v (TRecord tl)) l ->
+          access_record tl attr = Success TInt ->
+          interp_expr store env
+            (EACIFold AGMin (flatmap_proj_set (ESetOf e) x (EAccess (EVar x) attr) t))
+          = match list_to_set (List.map proj_attr l) with
+            | nil => VOption None
+            | v :: _ => VOption (Some v)
+            end.
+      Proof.
+        intros * H_e H_l H_attr.
+        erewrite interp_EACIFold_AGMin_sorted;
+          eauto using list_to_set_SSorted.
+        1:{ rewrite interp_flatmap_proj_set, interp_ESetOf, H_e.
+            cbn [interp_expr]. rewrite map_proj_put, list_to_set_map_list_to_set.
+            reflexivity. }
+        1:{ eapply incl_Forall; [ apply list_to_set_incl | ].
+            eapply Forall_map_record_proj; eauto. }
+      Qed.
+
       Ltac invert_type_of_aci_aggr_clear :=
         lazymatch goal with
         | H: type_of_aci_aggr _ _ _ |- _ =>
@@ -289,6 +341,128 @@ Section WithHole.
           Qed.
         End cons_to_min.
 
+        Section filter_neq_to_min_guard.
+          Context (m : string).
+
+          Definition filter_neq_to_min_guard_head (e : expr) :=
+            match e with
+            | EACIFold AGMin
+                (flatmap_proj_set
+                   (ESetOf (flatmap_filter_list e' y
+                              (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr1) k)) y1 t1 t2))
+                   x0 (EAccess (EVar x1) attr0) t) =>
+                if (all_eqb [(attr, [attr0; attr1]); (x0, [x1]); (y, [y0; y1])] &&
+                      negb (free_immut_in y k) &&
+                      negb (free_immut_in m k) && negb (free_immut_in m e'))%bool
+                then
+                  EOptMatch
+                    (EACIFold AGMin
+                       (flatmap_proj_set (ESetOf e') x0 (EAccess (EVar x0) attr) t))
+                    (EAtom (ANone (Some TInt))) m
+                    (EIf (EBinop OEq (EVar m) k)
+                       (EACIFold AGMin
+                          (flatmap_proj_set
+                             (ESetOf (flatmap_filter_list e' y
+                                        (EUnop ONot (EBinop OEq (EAccess (EVar y) attr) k)) y t1 t2))
+                             x0 (EAccess (EVar x0) attr) t))
+                       (EUnop OSome (EVar m)))
+                else e
+            | _ => e
+            end.
+
+          Lemma filter_neq_to_min_guard_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore filter_neq_to_min_guard_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            cbn [all_eqb all_eqb' andb] in *.
+            rewrite !Bool.andb_true_r, !Bool.andb_true_iff, !Bool.negb_true_iff in *;
+              intuition idtac.
+            rewrite eqb_eq in *; subst.
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+            repeat rewrite_map_get_put_hyp.
+            (* the filter's row and the projected row are the same record *)
+            repeat lazymatch goal with
+                   | H: Some _ = Some _ |- _ => injection H as H
+                   | H: TRecord _ = TRecord _ |- _ => injection H as H
+                   end; subst.
+            lazymatch goal with H: type_of_aci_aggr _ _ _ |- _ => inversion H; subst end.
+            repeat (rewrite_l_to_r; do_injection).
+            repeat (econstructor; eauto); repeat rewrite_map_get_put_goal; eauto.
+            (* the key is compared against the attribute, so it is an integer,
+               and it mentions neither the filtered row nor the bound minimum *)
+            1:{ apply not_free_immut_put_ty2; auto.
+                eapply not_free_immut_put_ty; [ eassumption | ].
+                lazymatch goal with
+                | H: type_of _ (map.put _ _ _) e2_2 ?t2 |- type_of _ _ _ ?t1 =>
+                    replace t1 with t2 by congruence; exact H
+                end. }
+            (* the table does not mention the bound minimum *)
+            1: apply not_free_immut_put_ty2; auto.
+            (* the key again, now under the filter's row as well *)
+            1:{ lazymatch goal with
+                | |- type_of _ (map.put (map.put _ ?mm _) ?yy _) _ _ =>
+                    destruct (String.eqb mm yy) eqn:E_m;
+                    [ rewrite eqb_eq in E_m; subst;
+                      rewrite Properties.map.put_put_same; assumption
+                    | rewrite eqb_neq in E_m;
+                      rewrite Properties.map.put_put_diff_comm by auto;
+                      apply not_free_immut_put_ty2; auto ]
+                end. }
+          Qed.
+
+          Lemma filter_neq_to_min_guard_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store filter_neq_to_min_guard_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [filter_neq_to_min_guard_head]. repeat (case_match; auto; []).
+            cbn [all_eqb all_eqb' andb] in *.
+            rewrite !Bool.andb_true_r, !Bool.andb_true_iff, !Bool.negb_true_iff in *;
+              intuition idtac.
+            rewrite eqb_eq in *; subst.
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+            repeat lazymatch goal with
+                   | H: Some _ = Some _ |- _ => injection H as H
+                   | H: TRecord _ = TRecord _ |- _ => injection H as H
+                   end; subst.
+            lazymatch goal with H: type_of_aci_aggr _ _ _ |- _ => inversion H; subst end.
+            repeat (rewrite_l_to_r; do_injection).
+            repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection).
+            apply_type_sound e1_1. invert_type_of_value_clear.
+            (* the rows that survive the delete *)
+            assert (H_filt : interp_expr store env
+                      (flatmap_filter_list e1_1 x1
+                         (EUnop ONot (EBinop OEq (EAccess (EVar x1) attr) e2_2)) x1 t0 t1)
+                    = VList (filter (fun v => negb (value_eqb (proj_attr v)
+                                                     (interp_expr store env e2_2))) l)).
+            1:{ rewrite interp_flatmap_filter_list, <- H1.
+                f_equal. apply filter_pred_neq; auto. }
+            rewrite interp_EOptMatch.
+            erewrite interp_min_proj with (e := e1_1) (l := l); eauto.
+            erewrite interp_min_proj; eauto using Forall_Forall_filter.
+            rewrite min_set_map_filter_neq.
+            destruct (list_to_set (List.map proj_attr l)) as [| v s] eqn:E.
+            1: reflexivity.
+            (* the bound minimum is compared against the deleted key *)
+            rewrite interp_EIf, interp_EBinop, interp_EVar.
+            unfold get_local. rewrite map.get_put_same.
+            rewrite <- (not_free_immut_put_sem e2_2 m) by assumption.
+            cbn [interp_binop].
+            destruct (value_eqb v (interp_expr store env e2_2)).
+            2:{ cbn [interp_expr interp_unop]. unfold get_local.
+                rewrite map.get_put_same. reflexivity. }
+            (* the minimum was deleted, so it is recomputed, and the recomputation
+               does not mention the bound minimum *)
+            rewrite <- not_free_immut_put_sem.
+            2:{ cbn [free_immut_in].
+                lazymatch goal with H: free_immut_in m e1_1 = false |- _ => rewrite H end.
+                lazymatch goal with H: free_immut_in m e2_2 = false |- _ => rewrite H end.
+                destruct (String.eqb m x1), (String.eqb m x0); cbn; auto. }
+            erewrite interp_min_proj; eauto using Forall_Forall_filter.
+          Qed.
+        End filter_neq_to_min_guard.
+
         Ltac invert_tenv_wf_with_globals :=
           lazymatch goal with H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst end.
 
@@ -323,12 +497,22 @@ Section WithHole.
           1: eapply cons_to_min_head_preserve_ty; eauto.
           1: eapply cons_to_min_head_preserve_sem; [ | | eauto .. ]; auto.
         Qed.
+
+        Lemma filter_neq_to_min_guard_head_sound : forall m,
+          expr_transf_sound (locals:=locals) (filter_neq_to_min_guard_head m).
+        Proof.
+          unfold expr_transf_sound; intros.
+          intuition idtac.
+          1: eapply filter_neq_to_min_guard_head_preserve_ty; eauto.
+          1: eapply filter_neq_to_min_guard_head_preserve_sem; [ | | eauto .. ]; auto.
+        Qed.
       End WithTags.
     End WithMap.
   End WithVars.
 End WithHole.
 
 #[export] Hint Resolve cons_to_min_head_sound : transf_hints.
+#[export] Hint Resolve filter_neq_to_min_guard_head_sound : transf_hints.
 #[export] Hint Resolve min_to_agg_lookup_head_sound : transf_hints.
 
 #[export] Hint Extern 5 (type_of _ _ IndexInterface.to_idx _) => apply MinAgg.to_idx_ty : transf_hints.

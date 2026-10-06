@@ -61,9 +61,17 @@ Definition prog :=
                             (EAtom (AString "\n")))))
                    (ELoc "outputs"))))))).
 
+(* Two configurations, to show what the set index is for.  The guard rule is the
+   same in both: it keeps the cached minimum unless the delete removes it.  What
+   differs is the cost of the branch that does not keep it -- with a set index on
+   the same attribute it reads that set, and without one it goes back to the
+   table.  The set index must be listed first, so that the min aggregation wins
+   the race for the read of the minimum. *)
 Definition heuristics :=
   [ AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
-      [[SetAgg "price"; MinAgg "price"]]
+      [[SetAgg "price"; MinAgg "price"]];
+    AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
+      [[MinAgg "price"]]
   ].
 
 Definition row_ty_orders :=

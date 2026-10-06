@@ -100,6 +100,9 @@ Section WithConcreteMaps.
 
     Definition min_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (min_to_agg_lookup_head min_agg_attr "id_tag" "aux_tag" tag tbl).
     Definition cons_to_min_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_min_head "y").
+    (* applied once, not repeatedly: the rewritten form contains the expression
+       it rewrote, in the branch that recomputes the minimum *)
+    Definition filter_to_min_guard_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_min_guard_head min_agg_attr "m").
 
     Context (dict_idx_attr : string).
 
@@ -142,7 +145,10 @@ Section WithConcreteMaps.
         let min_tag := String.of_nat cur_tag in
         ([(min_tag, cmin_agg attr, min_agg_wf attr)],
                        [min_agg_lookup_transf min_tag attr;
-                        fun tbl => repeat_transf (cons_to_min_transf tbl) reps],
+                        fun tbl => repeat_transf (cons_to_min_transf tbl) reps;
+                        (* last in the list, so first to run: the guard leaves a
+                           read of the old minimum for the lookup rule above *)
+                        filter_to_min_guard_transf attr],
           S cur_tag)
     | SetAgg attr =>
         let set_tag := String.of_nat cur_tag in
@@ -464,8 +470,9 @@ end.
             | prove_In_map_fst_sort_map ].
             1: prove_is_tbl_ty.
             1: prove_idx_wf. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply cons_to_min_head_sound. } }
+        all: apply expr_transf_sound__expr_aug_transf_sound.
+        1: eapply cons_to_min_head_sound.
+        1: eapply filter_neq_to_min_guard_head_sound; auto using ctenv_ok, clocals_ok. }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         1:{ eapply set_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1: prove_aux_ty_for_idx;
