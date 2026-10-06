@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
@@ -25,6 +25,7 @@ Variant basic_transf :=
 Variant index_choice :=
   | SumAgg (attr : string)
   | MinAgg (attr : string)
+  | SetAgg (attr : string)
   | DictIdx (attr : string).
 
 Variant anno_command :=
@@ -114,6 +115,18 @@ Section WithConcreteMaps.
     Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr "tup" "acc" "x").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" tag tbl).
 
+    Context (set_agg_attr : string).
+
+    Definition set_agg_wf := (SetAgg.idx_wf (locals:=clocals) "hole" set_agg_attr "x").
+    Instance cset_agg : IndexInterface.index := (set_agg "hole" set_agg_attr "x").
+    Instance cset_agg_ok : IndexInterface.ok cset_agg set_agg_wf.
+    apply set_agg_ok.
+    Qed.
+
+    Definition set_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (set_to_lookup_head set_agg_attr "id_tag" "aux_tag" tag tbl).
+    Definition cons_to_set_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_set_insert_head set_agg_attr).
+    Definition filter_to_set_diff_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_set_diff_head set_agg_attr "y").
+
   End CommonPipelineParts.
 
   Definition mk_idx (cur_tag : nat) (reps : nat) (ic : index_choice) :
@@ -130,6 +143,14 @@ Section WithConcreteMaps.
         ([(min_tag, cmin_agg attr, min_agg_wf attr)],
                        [min_agg_lookup_transf min_tag attr;
                         fun tbl => repeat_transf (cons_to_min_transf tbl) reps],
+          S cur_tag)
+    | SetAgg attr =>
+        let set_tag := String.of_nat cur_tag in
+        ([(set_tag, cset_agg attr, set_agg_wf attr)],
+          [set_agg_lookup_transf set_tag attr;
+           (* an insert and a keyed delete are both maintained in one pass *)
+           fun tbl => repeat_transf (Basics.compose (filter_to_set_diff_transf attr tbl)
+                                       (cons_to_set_insert_transf attr tbl)) reps],
           S cur_tag)
     | DictIdx attr =>
         let dict_idx_tag := String.of_nat cur_tag in
@@ -187,8 +208,9 @@ end.
         Forall (fun '(_, idx, _) => hole = "hole") idxs.
   Proof.
     destruct ic; unfold mk_idx; intros;
-      invert_pair; intuition idtac; constructor; auto using NoDup_nil, csum_agg_ok, cmin_agg_ok, cdict_idx_ok; auto.
-    1-3: eexists; intuition eauto.
+      invert_pair; intuition idtac; constructor;
+      auto using NoDup_nil, csum_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok; auto.
+    1-4: eexists; intuition eauto.
   Qed.
 
   Lemma mk_idxs_ok : forall ics init_tag reps idxs transfs next_tag,
@@ -444,6 +466,18 @@ end.
             1: prove_idx_wf. }
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_min_head_sound. } }
+    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        1:{ eapply set_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply filter_neq_to_set_diff_head_sound; auto using ctenv_ok, clocals_ok. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply cons_to_set_insert_head_sound; auto using ctenv_ok, clocals_ok. } }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         1:{ eapply eq_filter_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1:{ rewrite is_NoDup_to_transparent.
