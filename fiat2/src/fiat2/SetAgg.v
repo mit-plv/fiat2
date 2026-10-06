@@ -66,6 +66,11 @@ Section WithHole.
         unfold idx_wf; intros; auto.
       Qed.
 
+      Lemma set_mem_singleton : forall (v k : value), set_mem v [k] = value_eqb v k.
+      Proof.
+        intros. unfold set_mem; cbn. apply Bool.orb_false_r.
+      Qed.
+
       Instance set_agg : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
       Instance set_agg_ok : IndexInterface.ok set_agg idx_wf :=
@@ -73,149 +78,15 @@ Section WithHole.
 
       (* Unfold interp_expr one layer at a time, so that the rewrites below can
          work from the outside in without touching the subexpressions. *)
-      Lemma interp_EBinop : forall (store env : locals) o e1 e2,
-          interp_expr store env (EBinop o e1 e2) =
-            interp_binop o (interp_expr store env e1) (interp_expr store env e2).
-      Proof.
-        reflexivity.
-      Qed.
 
-      Lemma interp_ESetOf : forall (store env : locals) e,
-          interp_expr store env (ESetOf e) =
-            match interp_expr store env e with
-            | VList l => VSet (list_to_set l)
-            | _ => VUnit
-            end.
-      Proof.
-        reflexivity.
-      Qed.
 
-      Lemma interp_flatmap_proj_set : forall (store env : locals) e y r t,
-          interp_expr store env (flatmap_proj_set e y r t) =
-            match interp_expr store env e with
-            | VSet l =>
-                VSet (list_to_set
-                        (List.map (fun v => interp_expr store (map.put env y v) r) l))
-            | _ => VUnit
-            end.
-      Proof.
-        intros. cbn [interp_expr]. case_match; auto.
-      Qed.
 
-      (* the flatmap's bound variable is the row the attribute is read from *)
-      Lemma map_proj_put : forall (env : locals) y l,
-          List.map (fun v => match get_local (map.put env y v) y with
-                             | VRecord r => record_proj attr r
-                             | _ => VUnit
-                             end) l
-          = List.map (fun v => match v with
-                               | VRecord r => record_proj attr r
-                               | _ => VUnit
-                               end) l.
-      Proof.
-        intros. apply map_ext; intros.
-        unfold get_local. rewrite map.get_put_same. reflexivity.
-      Qed.
 
-      (* filtering a set leaves a set *)
-      Lemma SSorted_filter : forall (R : value -> value -> Prop) (p : value -> bool) l,
-          StronglySorted R l -> StronglySorted R (filter p l).
-      Proof.
-        induction l; cbn; auto; intros.
-        invert_SSorted. case_match; auto.
-        constructor; auto using Forall_Forall_filter.
-      Qed.
 
-      (* a projection of a set of rows does not care that the rows were deduplicated *)
-      Lemma list_to_set_map_list_to_set : forall (f : value -> value) l,
-          list_to_set (List.map f (list_to_set l)) = list_to_set (List.map f l).
-      Proof.
-        intros. apply NoDup_SSorted_double_incl_eq;
-          auto using list_to_set_NoDup, list_to_set_SSorted.
-        - unfold incl; intros w H_in.
-          apply list_to_set_incl, in_map_iff in H_in.
-          destruct H_in as [u [H_eq H_u]]; subst.
-          apply list_to_set_incl in H_u.
-          apply list_to_set_incl_r, in_map; auto.
-        - unfold incl; intros w H_in.
-          apply list_to_set_incl, in_map_iff in H_in.
-          destruct H_in as [u [H_eq H_u]]; subst.
-          apply list_to_set_incl_r, in_map, list_to_set_incl_r; auto.
-      Qed.
 
-      Lemma set_mem_singleton : forall (v k : value), set_mem v [k] = value_eqb v k.
-      Proof.
-        intros. unfold set_mem; cbn. apply Bool.orb_false_r.
-      Qed.
 
-      (* dropping every row whose attribute is k drops exactly k from the set *)
-      Lemma filter_list_to_set_map : forall (f : value -> value) k l,
-          filter (fun w => negb (set_mem w [k])) (list_to_set (List.map f l))
-          = list_to_set (List.map f (filter (fun v => negb (value_eqb (f v) k)) l)).
-      Proof.
-        intros.
-        erewrite In_filter_ext with (g := fun w => negb (value_eqb w k))
-          by (intros; rewrite set_mem_singleton; reflexivity).
-        apply NoDup_SSorted_double_incl_eq;
-          auto using list_to_set_NoDup, list_to_set_SSorted,
-                     NoDup_filter, SSorted_filter.
-        - unfold incl; intros w H_in.
-          apply filter_In in H_in; destruct H_in as [H_in H_q].
-          apply list_to_set_incl, in_map_iff in H_in.
-          destruct H_in as [u [H_eq H_u]]; subst.
-          apply list_to_set_incl_r, in_map, filter_In; intuition auto.
-        - unfold incl; intros w H_in.
-          apply list_to_set_incl, in_map_iff in H_in.
-          destruct H_in as [u [H_eq H_u]]; subst.
-          apply filter_In in H_u; destruct H_u as [H_u H_p].
-          apply filter_In; intuition auto.
-          apply list_to_set_incl_r, in_map; auto.
-      Qed.
 
-      (* the predicate of a delete tests the row's attribute against a key that
-         does not depend on the row *)
-      Lemma filter_pred_neq : forall (store env : locals) y k l,
-          free_immut_in y k = false ->
-          filter (fun v => match interp_expr store (map.put env y v)
-                                   (EUnop ONot (EBinop OEq (EAccess (EVar y) attr) k)) with
-                           | VBool b => b
-                           | _ => false
-                           end) l
-          = filter (fun v => negb (value_eqb
-                                     (match v with
-                                      | VRecord r => record_proj attr r
-                                      | _ => VUnit
-                                      end)
-                                     (interp_expr store env k))) l.
-      Proof.
-        intros. apply In_filter_ext; intros.
-        cbn [interp_expr interp_unop interp_binop].
-        unfold get_local. rewrite map.get_put_same.
-        rewrite <- not_free_immut_put_sem; auto.
-      Qed.
 
-      (* projecting a set commutes with adding one element to it *)
-      Lemma list_to_set_map_set_insert : forall (f : value -> value) v s,
-          list_to_set (List.map f (set_insert v s))
-          = set_insert (f v) (list_to_set (List.map f s)).
-      Proof.
-        intros. apply NoDup_SSorted_double_incl_eq;
-          auto using list_to_set_NoDup, list_to_set_SSorted,
-                     set_insert_preserve_NoDup, set_insert_preserve_SSorted.
-        - unfold incl; intros w H_in.
-          apply list_to_set_incl, in_map_iff in H_in.
-          destruct H_in as [u [H_eq H_u]]; subst.
-          apply set_insert_incl in H_u; destruct H_u as [H_u | H_u]; subst.
-          1: apply set_insert_incl_r; cbn; auto.
-          apply set_insert_incl_r; cbn; right.
-          apply list_to_set_incl_r, in_map; auto.
-        - unfold incl; intros w H_in.
-          apply set_insert_incl in H_in; destruct H_in as [H_in | H_in]; subst.
-          1: apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
-          apply list_to_set_incl, in_map_iff in H_in.
-          destruct H_in as [u [H_eq H_u]]; subst.
-          apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
-      Qed.
 
       Section WithTags.
         Context (id_tag aux_tag idx_tag: string).
@@ -409,7 +280,10 @@ Section WithHole.
             rewrite filter_pred_neq by assumption.
             cbn [interp_expr interp_binop interp_atom set_insert].
             rewrite !map_proj_put, !list_to_set_map_list_to_set.
-            f_equal. apply filter_list_to_set_map.
+            f_equal.
+            (* the difference against a singleton tests the key *)
+            erewrite In_filter_ext by (intros; rewrite set_mem_singleton; reflexivity).
+            apply filter_list_to_set_map.
           Qed.
         End filter_neq_to_set_diff.
 

@@ -47,6 +47,70 @@ Section WithWord.
   Section WithMap.
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
+    (* the flatmap's bound variable is the row the attribute is read from *)
+    Lemma map_proj_put : forall (attr : string) (env : locals) y l,
+        List.map (fun v => match get_local (map.put env y v) y with
+                           | VRecord r => record_proj attr r
+                           | _ => VUnit
+                           end) l
+        = List.map (fun v => match v with
+                             | VRecord r => record_proj attr r
+                             | _ => VUnit
+                             end) l.
+    Proof.
+      intros. apply map_ext; intros.
+      unfold get_local. rewrite map.get_put_same. reflexivity.
+    Qed.
+
+    (* the predicate of a delete tests the row's attribute against a key that
+       does not depend on the row *)
+    Lemma filter_pred_neq : forall (attr : string) (store env : locals) y k l,
+        free_immut_in y k = false ->
+        filter (fun v => match interp_expr store (map.put env y v)
+                                 (EUnop ONot (EBinop OEq (EAccess (EVar y) attr) k)) with
+                         | VBool b => b
+                         | _ => false
+                         end) l
+        = filter (fun v => negb (value_eqb
+                                   (match v with
+                                    | VRecord r => record_proj attr r
+                                    | _ => VUnit
+                                    end)
+                                   (interp_expr store env k))) l.
+    Proof.
+      intros. apply In_filter_ext; intros.
+      cbn [interp_expr interp_unop interp_binop].
+      unfold get_local. rewrite map.get_put_same.
+      rewrite <- not_free_immut_put_sem; auto.
+    Qed.
+
+    Lemma interp_EBinop : forall (store env : locals) o e1 e2,
+        interp_expr store env (EBinop o e1 e2) =
+          interp_binop o (interp_expr store env e1) (interp_expr store env e2).
+    Proof.
+      reflexivity.
+    Qed.
+    Lemma interp_ESetOf : forall (store env : locals) e,
+        interp_expr store env (ESetOf e) =
+          match interp_expr store env e with
+          | VList l => VSet (list_to_set l)
+          | _ => VUnit
+          end.
+    Proof.
+      reflexivity.
+    Qed.
+    Lemma interp_flatmap_proj_set : forall (store env : locals) e y r t,
+        interp_expr store env (flatmap_proj_set e y r t) =
+          match interp_expr store env e with
+          | VSet l =>
+              VSet (list_to_set
+                      (List.map (fun v => interp_expr store (map.put env y v) r) l))
+          | _ => VUnit
+          end.
+    Proof.
+      intros. cbn [interp_expr]. case_match; auto.
+    Qed.
+
     Lemma interp_flatmap_filter_list : forall (store env : locals) e x p t1 t2,
         interp_expr store env (flatmap_filter_list e x p x t1 t2) =
           match interp_expr store env e with

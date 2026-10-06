@@ -64,6 +64,41 @@ Section WithHole.
       Instance min_agg_ok : IndexInterface.ok min_agg idx_wf :=
         IndexInterface.Build_ok min_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
+      Local Coercion is_true : bool >-> Sortclass.
+
+      (* The canonical form of a set is sorted, so the minimum fold returns the
+         first element.  This is a fact about the canonical form the semantics
+         gives a set, not a claim about how an implementation represents one. *)
+      Lemma interp_EACIFold_AGMin_sorted : forall (store env : locals) e l,
+          interp_expr store env e = VSet l ->
+          Forall (fun v => type_of_value v TInt) l ->
+          StronglySorted value_leb l ->
+          interp_expr store env (EACIFold AGMin e)
+          = match l with
+            | nil => VOption None
+            | v :: _ => VOption (Some v)
+            end.
+      Proof.
+        intros * H_e H_ty H_sorted. cbn [interp_expr interp_aci_aggr].
+        rewrite H_e. clear H_e.
+        induction l as [| v l IH]; auto.
+        invert_Forall. invert_SSorted.
+        cbn [fold_right]. rewrite IH; auto.
+        destruct l as [| w l']; cbn [fst snd].
+        1: reflexivity.
+        invert_Forall.
+        lazymatch goal with H: Forall _ (_ :: _) |- _ => inversion H; subst end.
+        (* v and its successor are both integers, and v is the smaller *)
+        lazymatch goal with H: type_of_value v TInt |- _ => inversion H; subst end.
+        lazymatch goal with H: type_of_value w TInt |- _ => inversion H; subst end.
+        cbn [snd]. do 3 f_equal.
+        unfold value_leb, leb_from_compare in *; cbn [value_compare] in *.
+        lazymatch goal with |- Z.min ?a ?b = ?a => destruct (Z.compare_spec a b) end;
+          try discriminate.
+        1: subst; apply Z.min_id.
+        1: apply Z.min_l, Z.lt_le_incl; auto.
+      Qed.
+
       Ltac invert_type_of_aci_aggr_clear :=
         lazymatch goal with
         | H: type_of_aci_aggr _ _ _ |- _ =>

@@ -530,6 +530,76 @@ Section WithWord.
             inversion H_in; auto;
             apply value_eqb_neq in E; congruence. } }
     Qed.
+    (* filtering a set leaves a set *)
+    Lemma SSorted_filter : forall (R : value -> value -> Prop) (p : value -> bool) l,
+        StronglySorted R l -> StronglySorted R (filter p l).
+    Proof.
+      induction l; cbn; auto; intros.
+      invert_SSorted. case_match; auto.
+      constructor; auto using Forall_Forall_filter.
+    Qed.
+
+    (* projecting a set commutes with adding one element to it *)
+    Lemma list_to_set_map_set_insert : forall (f : value -> value) v s,
+        list_to_set (List.map f (set_insert v s))
+        = set_insert (f v) (list_to_set (List.map f s)).
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted,
+                   set_insert_preserve_NoDup, set_insert_preserve_SSorted.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply set_insert_incl in H_u; destruct H_u as [H_u | H_u]; subst.
+        1: apply set_insert_incl_r; cbn; auto.
+        apply set_insert_incl_r; cbn; right.
+        apply list_to_set_incl_r, in_map; auto.
+      - unfold incl; intros w H_in.
+        apply set_insert_incl in H_in; destruct H_in as [H_in | H_in]; subst.
+        1: apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
+    Qed.
+
+    (* a projection of a set of rows does not care that the rows were deduplicated *)
+    Lemma list_to_set_map_list_to_set : forall (f : value -> value) l,
+        list_to_set (List.map f (list_to_set l)) = list_to_set (List.map f l).
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl in H_u.
+        apply list_to_set_incl_r, in_map; auto.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl_r, in_map, list_to_set_incl_r; auto.
+    Qed.
+
+    (* dropping every row whose attribute is k drops exactly k from the set *)
+    Lemma filter_list_to_set_map : forall (f : value -> value) k l,
+        filter (fun w => negb (value_eqb w k)) (list_to_set (List.map f l))
+        = list_to_set (List.map f (filter (fun v => negb (value_eqb (f v) k)) l)).
+    Proof.
+      intros.
+      apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted,
+                   NoDup_filter, SSorted_filter.
+      - unfold incl; intros w H_in.
+        apply filter_In in H_in; destruct H_in as [H_in H_q].
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl_r, in_map, filter_In; intuition auto.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply filter_In in H_u; destruct H_u as [H_u H_p].
+        apply filter_In; intuition auto.
+        apply list_to_set_incl_r, in_map; auto.
+    Qed.
 
     Lemma incl_filter_incl : forall [A : Type] (f : A -> bool) (l1 l2 : list A),
         incl l1 l2 ->
