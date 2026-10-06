@@ -166,7 +166,8 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyOLength t : type_of_unop OLength (TList t) TInt
 | TyOLengthString : type_of_unop OLengthString TString TInt
 | TyOIntToString : type_of_unop OIntToString TInt TString
-| TyOSome t : type_of_unop OSome t (TOption t).
+| TyOSome t : type_of_unop OSome t (TOption t)
+| TyODictValues kt vt : type_of_unop ODictValues (TDict kt vt) (TBag vt).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOWPlus : type_of_binop OWPlus TWord TWord TWord
@@ -652,6 +653,13 @@ Section WithMap.
                                               Success (EUnop o e1')
                                | _ => error:(e "is an option but expected" expected)
                                end
+                    | ODictValues => '(t, e') <- synthesize_expr Gstore Genv e1 ;;
+                                     match t with
+                                     | TDict _ vt => if type_eqb expected (TBag vt)
+                                                     then Success (EUnop o e')
+                                                     else error:(e "has type" (TBag vt) "but expected" expected)
+                                     | _ => error:(e1 "has type" t "but expected a dictionary")
+                                     end
                     | o => let '(t1, t2) := unop_types o in
                            if type_eqb expected t2
                            then e1' <- analyze_expr Gstore Genv t1 e1 ;;
@@ -915,6 +923,11 @@ Section WithMap.
                                      | _ => error:(e "has type" t "but expected a list")
                                      end
                         | OSome => '(t, e') <- synthesize_expr Gstore Genv e ;; Success (TOption t, EUnop o e')
+                        | ODictValues => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                                         match t with
+                                         | TDict _ vt => Success (TBag vt, EUnop o e')
+                                         | _ => error:(e "has type" t "but expected a dictionary")
+                                         end
                         | o => let '(t1, t2) := unop_types o in
                                e' <- analyze_expr Gstore Genv t1 e ;; Success (t2, EUnop o e')
                         end

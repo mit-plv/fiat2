@@ -82,6 +82,10 @@ Section WithWord.
       all: try now (apply_type_of__type_wf_IH_goal;
                 apply tenv_wf_step; auto;
                 apply_type_of__type_wf_IH_hyp; invert_type_wf; auto).
+      (* unary operators: ODictValues needs the dictionary's value type *)
+      1: inversion H; repeat constructor; auto; subst;
+          repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
+      (* binary operators *)
       1: inversion H; repeat constructor; auto; subst;
           repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
       (* ternary operators: the result type is the first operand's, or a string *)
@@ -1175,6 +1179,19 @@ Section WithWord.
         right; auto. }
   Qed.
 
+  (* Turning a list into a bag preserves the element type *)
+  Lemma list_to_bag_sound : forall (l : list value) t,
+      Forall (fun v => type_of_value v t) l ->
+      type_of_value (VBag (list_to_bag l)) (TBag t).
+  Proof.
+    intros * H. constructor;
+      auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
+    rewrite Forall_forall; intros p H_in.
+    apply in_map with (f:=fst) in H_in.
+    apply list_to_bag_incl in H_in.
+    rewrite Forall_forall in H; auto.
+  Qed.
+
   Lemma incl_repeat : forall A (x : A) l n,
       In x l -> incl (repeat x n) l.
   Proof.
@@ -1406,7 +1423,16 @@ Section WithWord.
         match goal with H : type_of_atom _ _ |- _ => inversion H end; subst; constructor;
         auto using SSorted_nil, Forall_nil, NoDup_nil.
       - (* TyEUnop *)
-        inversion H; apply_type_sound_IH; try discriminate; repeat constructor; auto.
+        inversion H; apply_type_sound_IH; try discriminate;
+          try solve [ repeat constructor; auto ].
+        (* ODictValues: the values of a well-typed dictionary form a well-typed bag *)
+        lazymatch goal with H: TDict _ _ = TDict _ _ |- _ => inversion H; subst end.
+        apply list_to_bag_sound.
+        rewrite Forall_forall; intros v H_in.
+        apply in_map_iff in H_in; destruct H_in as [p [H_eq H_p]]; subst.
+        lazymatch goal with
+          H: Forall _ ?l, H': In _ ?l |- _ => rewrite Forall_forall in H; apply H in H'
+        end; intuition auto.
       - (* TyEBinop *)
         inversion H; subst.
         26:{ (* OLookup *)

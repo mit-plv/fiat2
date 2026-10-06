@@ -74,7 +74,8 @@ Inductive unop : Type :=
 | OLength
 | OLengthString
 | OIntToString
-| OSome.
+| OSome
+| ODictValues.
 
 (* Binary operators *)
 Inductive binop : Type :=

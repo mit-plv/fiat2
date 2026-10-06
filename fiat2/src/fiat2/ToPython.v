@@ -58,6 +58,7 @@ Definition unop_py (o:unop) (e:string) : string :=
   | OLengthString => "len(" ++ e ++ ")"
   | OIntToString => "str(" ++ e ++ ")"
   | OSome => e
+  | ODictValues => "list(" ++ e ++ ".values())"
   end.
 
 Definition binop_py (o:binop) (e1 e2:string) : string :=

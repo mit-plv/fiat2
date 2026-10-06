@@ -24,6 +24,20 @@ Section WithWord.
     | AUnit => VUnit
     end.
 
+  Fixpoint bag_insert (v : value) (l : list (value * nat)) :=
+    match l with
+    | nil => (v, S 0) :: nil
+    | (v', n') :: l => if value_ltb v v' then (v, S 0) :: (v', n') :: l
+                      else if value_eqb v v' then (v, (S n')%nat) :: l
+                           else (v', n') :: bag_insert v l
+    end.
+
+  Definition list_to_bag : list value -> list (value * nat):=
+    fold_right bag_insert nil.
+
+  Definition bag_to_list : list (value * nat) -> list value :=
+    flat_map (fun p => repeat (fst p) (snd p)).
+
   Definition interp_unop (o : unop) (v : value) : value :=
     match o with
     | OWNeg => match v with
@@ -51,6 +65,10 @@ Section WithWord.
                       | _ => VUnit
                       end
     | OSome => VOption (Some v)
+    | ODictValues => match v with
+                     | VDict d => VBag (list_to_bag (List.map snd d))
+                     | _ => VUnit
+                     end
     end.
 
   Definition apply_word_binop (o : word -> word -> word) (a b : value) : value :=
@@ -102,20 +120,6 @@ Section WithWord.
     | nil => None
     | (k', v) :: l => if value_eqb k k' then Some v else dict_lookup k l
     end.
-
-  Fixpoint bag_insert (v : value) (l : list (value * nat)) :=
-    match l with
-    | nil => (v, S 0) :: nil
-    | (v', n') :: l => if value_ltb v v' then (v, S 0) :: (v', n') :: l
-                      else if value_eqb v v' then (v, (S n')%nat) :: l
-                           else (v', n') :: bag_insert v l
-    end.
-
-  Definition list_to_bag : list value -> list (value * nat):=
-    fold_right bag_insert nil.
-
-  Definition bag_to_list : list (value * nat) -> list value :=
-    flat_map (fun p => repeat (fst p) (snd p)).
 
   Fixpoint set_insert (v : value) (l : list value) :=
     match l with

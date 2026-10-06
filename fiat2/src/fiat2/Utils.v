@@ -1162,7 +1162,7 @@ Section WithMap.
         lazymatch goal with
           H: type_of_unop _ _ _ |- _ => inversion H; subst end;
         try do_injection; try reflexivity.
-        use_synthesize_ty_unique_IH; congruence. }
+        all: use_synthesize_ty_unique_IH; congruence. }
     1:{ repeat destruct_match_hyp; try congruence;
         simpl in *; try invert_pair2;
         lazymatch goal with
