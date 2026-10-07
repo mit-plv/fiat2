@@ -89,6 +89,7 @@ Section WithConcreteMaps.
 
     Definition sum_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (sum_to_agg_lookup_head sum_agg_attr "id_tag" "aux_tag" tag tbl).
     Definition cons_to_add_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_add_head).
+    Definition filter_to_sub_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_sub_head sum_agg_attr).
 
     Context (min_agg_attr : string).
 
@@ -139,7 +140,10 @@ Section WithConcreteMaps.
         let sum_tag := String.of_nat cur_tag in
         ([(sum_tag, csum_agg attr, sum_agg_wf attr)],
           [sum_agg_lookup_transf sum_tag attr;
-           fun tbl => repeat_transf (cons_to_add_transf tbl) reps],
+           (* an insert and a keyed delete are both maintained in one pass; the
+              delete's rewrite is not self-similar, so repeating it is safe *)
+           fun tbl => repeat_transf (Basics.compose (filter_to_sub_transf attr tbl)
+                                       (cons_to_add_transf tbl)) reps],
           S cur_tag)
     | MinAgg attr =>
         let min_tag := String.of_nat cur_tag in
@@ -460,8 +464,9 @@ end.
             | prove_In_map_fst_sort_map ].
             1: prove_is_tbl_ty.
             1: prove_idx_wf. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply cons_to_add_head_sound. } }
+        all: apply expr_transf_sound__expr_aug_transf_sound.
+        1: eapply filter_neq_to_sub_head_sound; auto using ctenv_ok, clocals_ok.
+        1: eapply cons_to_add_head_sound. }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         1:{ eapply min_to_agg_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1: prove_aux_ty_for_idx;

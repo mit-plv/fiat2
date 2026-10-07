@@ -132,6 +132,32 @@ Section WithWord.
     Proof.
       reflexivity.
     Qed.
+    Lemma interp_EBagOf : forall (store env : locals) e,
+        interp_expr store env (EBagOf e) =
+          match interp_expr store env e with
+          | VList l => VBag (list_to_bag l)
+          | _ => VUnit
+          end.
+    Proof. reflexivity. Qed.
+
+    (* a delete tests the attribute against the key, so the rows it keeps are
+       exactly the complement of the rows it removes *)
+    Lemma filter_pred_not_eq : forall (attr : string) (store env : locals) y k l,
+        filter (fun v => match interp_expr store (map.put env y v)
+                                 (EUnop ONot (EBinop OEq (EAccess (EVar y) attr) k)) with
+                         | VBool b => b
+                         | _ => false
+                         end) l
+        = filter (fun v => negb (match interp_expr store (map.put env y v)
+                                         (EBinop OEq (EAccess (EVar y) attr) k) with
+                                 | VBool b => b
+                                 | _ => false
+                                 end)) l.
+    Proof.
+      intros. apply In_filter_ext; intros.
+      cbn [interp_expr interp_unop interp_binop]. reflexivity.
+    Qed.
+
     Lemma interp_ESetOf : forall (store env : locals) e,
         interp_expr store env (ESetOf e) =
           match interp_expr store env e with
