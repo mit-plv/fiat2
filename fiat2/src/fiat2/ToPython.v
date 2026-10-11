@@ -77,10 +77,10 @@ Definition binop_py (o:binop) (e1 e2:string) : string :=
   | OCons => paren ("[" ++ e1 ++ "] + " ++ e2)
   | ORange | OWRange => "list(range(" ++ e1 ++ "," ++ e2 ++ "))"
   | OBagInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
-  | OSetInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
-  (* | OSetInsert => paren ("{" ++ e2 ++ "}" ++ " | " ++ e1) *)
   (* sets are Python lists, since their elements may be unhashable dicts;
-     the lambdas evaluate each operand once *)
+     the lambdas evaluate each operand once.  An insert must not duplicate an
+     element already present, or the list would stop standing for a set. *)
+  | OSetInsert => "(lambda s, v: s if v in s else [v] + s)(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetUnion => "(lambda s1, s2: s1 + [v for v in s2 if v not in s1])(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetIntersect => "(lambda s1, s2: [v for v in s1 if v in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetDiff => "(lambda s1, s2: [v for v in s1 if v not in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
@@ -154,8 +154,9 @@ Fixpoint expr_py (e:expr) : string :=
   | EBagOf l =>
       "list(" ++ expr_py l ++ ")"
   | ESetOf l =>
-      (* Python can't have set of dicts *)
-      "list(" ++ expr_py l ++ ")"
+      (* Python can't have a set of dicts, so a set is a list with the
+         duplicates removed; the first occurrence of each element is kept *)
+      "(lambda l: [v for i, v in enumerate(l) if v not in l[:i]])(" ++ expr_py l ++ ")"
   | ESort _ l =>
       "sorted(" ++ expr_py l ++ ")"
   | EACFold AGSum e =>

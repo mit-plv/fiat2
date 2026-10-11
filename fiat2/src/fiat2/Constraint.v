@@ -39,6 +39,26 @@ Section WithWord.
     2: apply list_to_set_incl.
     lia.
   Qed.
+  Section WithPv.
+    Context (Pv : value -> Prop).
+    Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+    (* Giving the constrained variable a value that already satisfies the
+       constraint is all a declaration has to do.  This is the base case of the
+       invariant, and it is why a constraint declared along with its table --
+       which is born empty -- never needs a failure answer of its own. *)
+    Lemma value_wf_with_globals_put : forall (store : locals) tbl v,
+        Pv v ->
+        holds_for_all_entries (value_wf_with_globals Pv (tbl :: nil)) (map.put store tbl v).
+    Proof.
+      unfold holds_for_all_entries, value_wf_with_globals; intros.
+      destruct (String.eqb k tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+      1:{ rewrite map.get_put_same in *. do_injection.
+          constructor; [ right; auto | constructor ]. }
+      1:{ constructor; [ left; auto | constructor ]. }
+    Qed.
+  End WithPv.
+
   Section WithAttr.
     Context (attr : string).
 
