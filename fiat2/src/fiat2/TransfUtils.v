@@ -214,6 +214,8 @@ Section fold_command.
       | CLet e x c => CLet (fold_expr g e) x (fold_command c)
       | CLetMut e x c => CLetMut (fold_expr g e) x (fold_command c)
       | CAssign x e => CAssign x (fold_expr g e)
+      | CAssignChecked x e guard policy =>
+          CAssignChecked x (fold_expr g e) (fold_expr g guard) (fold_command policy)
       | CIf e c1 c2 => CIf (fold_expr g e) (fold_command c1) (fold_command c2)
       | CForeach e x c => CForeach (fold_expr g e) x (fold_command c)
       end.
@@ -268,6 +270,16 @@ Section WithMap.
             apply fold_expr_preserve_ty; auto. }
         f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
     1:{ f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
+    1:{ (* CAssignChecked: the guard is read in the store the write produces *)
+        assert (H_put : locals_wf Gstore (map.put store x (interp_expr store env e))).
+        { eapply locals_wf_put; eauto. eapply type_sound with (Gstore:=Gstore); eauto. }
+        erewrite fold_expr_preserve_sem with
+          (Gstore:=Gstore) (store:=store) (Genv:=Genv) (env:=env) (e:=e); eauto.
+        erewrite fold_expr_preserve_sem with
+          (Gstore:=Gstore) (store:=map.put store x (interp_expr store env e))
+          (Genv:=Genv) (env:=env) (e:=guard); eauto.
+        repeat case_match; auto.
+        all: use_fold_command_id_preserve_sem_IH Gstore; eauto. }
     1:{ erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto.
         repeat case_match; auto.
         all: use_fold_command_id_preserve_sem_IH Gstore; eauto. }
@@ -322,6 +334,13 @@ Section WithGlobals.
           CLetMut (fold_expr f e) x
             (if inb String.eqb x globals then c else fold_command_with_globals c)
       | CAssign x e => CAssign x (fold_expr f e)
+      (* The guard is left alone.  It is read in the store the write would
+         produce, and these rules need the index invariant to hold of the store
+         they are read in; at a checked assignment that is exactly what has not
+         been established yet, since whether the write happens is what the guard
+         decides. *)
+      | CAssignChecked x e guard policy =>
+          CAssignChecked x (fold_expr f e) guard (fold_command_with_globals policy)
       | CIf e c1 c2 =>
           CIf (fold_expr f e) (fold_command_with_globals c1) (fold_command_with_globals c2)
       | CForeach e x c =>
@@ -398,6 +417,11 @@ Section WithGlobals.
           interp_command store env c = interp_command store env (fold_command_with_globals f c).
     Proof.
       induction c; simpl; intros; auto; invert_parameterized_wf.
+      5:{ (* CAssignChecked: only the assigned expression is rewritten *)
+          erewrite <- fold_expr_preserve_sem with
+            (Gstore:=Gstore) (store:=store) (Genv:=Genv) (env:=env) (e:=e); eauto.
+          repeat case_match; auto.
+          all: apply_fold_command_with_globals_preserve_sem_IH; eauto with fiat2_hints. }
       3:{ erewrite <- fold_expr_preserve_sem; eauto; case_match; auto.
           rewrite inb_false_iff in *.
           erewrite <- IHc; auto.
@@ -470,6 +494,15 @@ Section WithGlobals.
       1:{ econstructor; eauto.
           2: apply fold_expr_preserve_ty; eauto.
           intros. erewrite fold_expr_preserve_sem; eauto. }
+      1:{ (* CAssignChecked: the rewritten expression computes the same value,
+             so the original obligation discharges the new one *)
+          econstructor; eauto.
+          2: apply fold_expr_preserve_ty; eauto.
+          intros * H_P H_str H_env H_guard.
+          assert (H_e : interp_expr store env (fold_expr f e) = interp_expr store env e)
+            by (eapply fold_expr_preserve_sem with
+                  (Gstore:=Gstore) (store:=store) (Genv:=Genv) (env:=env); eauto).
+          rewrite H_e in *. eauto. }
     Qed.
   End WithMap.
 End WithGlobals.
@@ -522,6 +555,9 @@ Section fold_command_with_global.
           CLetMut (fold_expr g e) x
             (if String.eqb x tbl then c else fold_command_with_global free_vars c)
       | CAssign x e => CAssign x (fold_expr g e)
+      | CAssignChecked x e guard policy =>
+          CAssignChecked x (fold_expr g e) (fold_expr g guard)
+            (fold_command_with_global free_vars policy)
       | CIf e c1 c2 =>
           CIf (fold_expr g e) (fold_command_with_global free_vars c1) (fold_command_with_global free_vars c2)
       | CForeach e x c =>

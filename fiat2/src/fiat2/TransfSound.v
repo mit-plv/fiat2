@@ -97,6 +97,20 @@ Section WithMap.
     map.get Gstore x = Some t ->
     type_of Gstore Genv e t ->
     parameterized_wf Gstore Genv P (CAssign x e)
+  (* The write only happens when the guard accepts it, so the invariant need
+     only follow from the guard, not from the assigned expression on its own.
+     This is what lets a program -- rather than the optimizer -- establish an
+     invariant that an index then depends on. *)
+  | PWCAssignChecked x t e guard policy :
+    (forall store env, holds_for_all_entries P store ->
+                       locals_wf Gstore store -> locals_wf Genv env ->
+                       interp_expr (map.put store x (interp_expr store env e)) env guard = VBool true ->
+                       P x (interp_expr store env e)) ->
+    map.get Gstore x = Some t ->
+    type_of Gstore Genv e t ->
+    type_of Gstore Genv guard TBool ->
+    parameterized_wf Gstore Genv P policy ->
+    parameterized_wf Gstore Genv P (CAssignChecked x e guard policy)
   | PWCIf e c1 c2 : type_of Gstore Genv e TBool ->
                     parameterized_wf Gstore Genv P c1 ->
                     parameterized_wf Gstore Genv P c2 ->
@@ -133,6 +147,13 @@ Section WithMap.
             unfold holds_for_all_entries; intros.
             get_put_same_diff x k0; rewrite_map_get_put_hyp. } }
     1:{ unfold holds_for_all_entries; intros.
+        get_put_same_diff x k; rewrite_map_get_put_hyp.
+        do_injection. apply H1; auto. }
+    1:{ (* PWCAssignChecked: the rejected write falls through to the policy,
+           which preserves P by the induction hypothesis *)
+        case_match; try (apply IHparameterized_wf; auto).
+        destruct b; [ | apply IHparameterized_wf; auto ].
+        unfold holds_for_all_entries; intros.
         get_put_same_diff x k; rewrite_map_get_put_hyp.
         do_injection. apply H1; auto. }
     1:{ apply_type_sound e. invert_type_of_value. case_match; auto. }
@@ -197,8 +218,8 @@ Section WithMap.
     induction H_wf; intros.
     all: econstructor; eauto.
     1:{ apply IHH_wf. erewrite H_iff2; auto using iff2_refl. }
-    1:{ intros. apply H_iff2, H; auto.
-        rewrite H_iff2; auto. }
+    1,2: intros; apply H_iff2, H; auto;
+         rewrite H_iff2; auto.
   Qed.
 
   Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> iff) parameterized_wf.
