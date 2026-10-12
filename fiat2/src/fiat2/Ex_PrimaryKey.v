@@ -150,6 +150,42 @@ Section WithConcreteMaps.
     1: assumption.
   Qed.
 
+  (* ---------------------------------------------------------------------
+     A check constraint, to show the per-row split rule applies.
+
+     "every row has a positive id" does not read the table, so it is a row
+     constraint, and row_split_guard_sound replaces the scan the elaboration
+     inserts by a single test of the row being written.  The two hypotheses
+     that rule needs -- the hygiene condition and row_constr_wf -- are
+     discharged here on a concrete body, which is the point of stating them
+     this way.
+     --------------------------------------------------------------------- *)
+  Definition positive_id : constr :=
+    mk_constr "_r" (EBinop OLess (EAtom (AInt 0)) (EAccess (EVar "_r") "id")).
+
+  Lemma positive_id_hygienic : c_row positive_id <> c_all.
+  Proof. unfold positive_id, c_all; cbn [c_row]. intro H; discriminate H. Qed.
+
+  Lemma positive_id_row_wf : row_constr_wf (tenv:=ctenv) row_ty positive_id.
+  Proof.
+    unfold row_constr_wf, row_env, positive_id, row_ty; cbn [c_row c_body].
+    econstructor.
+    1: constructor.
+    1: repeat constructor.
+    1:{ econstructor.
+        1: constructor; rewrite_map_get_put_goal; reflexivity.
+        1: reflexivity. }
+  Qed.
+
+  (* And so it is a constraint in the ordinary sense, usable in a declaration
+     alongside the primary key. *)
+  Lemma positive_id_wf : constr_wf (tenv:=ctenv) row_ty positive_id.
+  Proof.
+    apply row_constr_wf__constr_wf.
+    1: apply positive_id_hygienic.
+    1: apply positive_id_row_wf.
+  Qed.
+
   (* The same program on a concrete input: the third row repeats a key, so it
      is rejected and the table keeps the two rows it accepted. *)
   Definition demo_store : clocals :=
