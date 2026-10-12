@@ -940,17 +940,6 @@ Section WithMap.
     apply H in H1. auto.
   Qed.
 
-  (* A write to a variable the store already types keeps the store well-typed. *)
-  Lemma locals_wf_put : forall (G : tenv) (l : locals) x t v,
-      locals_wf G l -> map.get G x = Some t -> type_of_value v t ->
-      locals_wf G (map.put l x v).
-  Proof.
-    unfold locals_wf; intros * H_wf H_get H_ty x0 t0 H_get0.
-    destruct (String.eqb x x0) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-    - rewrite map.get_put_same, H_get in *. do_injection; auto.
-    - rewrite map.get_put_diff by congruence. apply H_wf; auto.
-  Qed.
-
   Definition locals_equiv (G : tenv) (l l' : locals) : Prop :=
     forall x t, map.get G x = Some t ->
                 map.get l x = map.get l' x.
