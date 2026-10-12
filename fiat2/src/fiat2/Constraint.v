@@ -750,6 +750,246 @@ Section WithWord.
     reflexivity.
   Qed.
 
+  (* ---------------------------------------------------------------------
+     Table constraints: the body may read the table, but not the accumulator.
+
+     This is the class the quantifier is a plain Forall over, and it is where
+     uniqueness lives: a primary key's body reads the table through the hole,
+     so it is not a row constraint, but it never touches the accumulator.  The
+     row constraints above are the further special case where the hole is not
+     read either.
+     --------------------------------------------------------------------- *)
+
+  Lemma c_tbl_neq_c_all : c_tbl <> c_all.
+  Proof. unfold c_tbl, c_all. intro H; discriminate H. Qed.
+
+  Definition c_env_no_acc (row_ty : type) (k : constr) : tenv :=
+    map.put (map.put map.empty c_tbl (TList row_ty)) (c_row k) row_ty.
+
+  Definition tbl_constr_wf (row_ty : type) (k : constr) : Prop :=
+    type_of (map.empty : tenv) (c_env_no_acc row_ty k) (c_body k) TBool.
+
+  (* What the body says about one row, given the table it reads. *)
+  Definition tbl_sat (k : constr) (tv r : value) : Prop :=
+    interp_expr (map.empty : locals)
+      (map.put (map.put map.empty c_tbl tv) (c_row k) r) (c_body k) = VBool true.
+
+  Lemma c_env_no_acc_incl : forall row_ty k,
+      c_row k <> c_all ->
+      map_incl (c_env_no_acc row_ty k) (c_env row_ty k).
+  Proof.
+    unfold c_env_no_acc, c_env; intros * H_ne.
+    apply map_incl_step_r.
+    1:{ apply map_incl_step; auto using string_dec.
+        apply map_incl_step; auto using string_dec, map_incl_empty. }
+    1:{ pose proof c_tbl_neq_c_all as H_ta.
+        rewrite map.get_put_diff by congruence.
+        rewrite map.get_put_diff by congruence.
+        apply map.get_empty. }
+  Qed.
+
+  Lemma tbl_constr_wf__constr_wf : forall row_ty k,
+      c_row k <> c_all ->
+      tbl_constr_wf row_ty k ->
+      constr_wf row_ty k.
+  Proof.
+    unfold tbl_constr_wf, constr_wf; intros * H_ne H_k.
+    eapply type_of_strengthen; eauto using map_incl_refl, c_env_no_acc_incl.
+  Qed.
+
+  (* A row constraint is a table constraint that happens not to read the
+     table. *)
+  Lemma row_constr_wf__tbl_constr_wf : forall row_ty k,
+      row_constr_wf row_ty k ->
+      tbl_constr_wf row_ty k.
+  Proof.
+    unfold row_constr_wf, row_env, tbl_constr_wf, c_env_no_acc; intros.
+    eapply type_of_strengthen; eauto using map_incl_refl.
+    apply map_incl_step; auto using string_dec, map_incl_empty.
+  Qed.
+
+  (* The accumulator, and the store, do not reach the body. *)
+  Lemma tbl_body_interp : forall row_ty k (store env : locals) tv r acc,
+      type_wf row_ty -> c_row k <> c_all ->
+      tbl_constr_wf row_ty k ->
+      type_of_value tv (TList row_ty) ->
+      type_of_value r row_ty ->
+      interp_expr store
+        (map.put (map.put (map.put env c_tbl tv) (c_row k) r) c_all acc) (c_body k)
+      = interp_expr (map.empty : locals)
+          (map.put (map.put map.empty c_tbl tv) (c_row k) r) (c_body k).
+  Proof.
+    unfold tbl_constr_wf, c_env_no_acc; intros * ? H_ne H_k H_tv H_r.
+    eapply interp_expr_strengthen with
+      (Gstore := map.empty : tenv)
+      (Genv := map.put (map.put map.empty c_tbl (TList row_ty)) (c_row k) row_ty)
+      (t := TBool).
+    1: apply tenv_wf_empty.
+    1:{ apply tenv_wf_step; [ | assumption ].
+        apply tenv_wf_step; [ apply tenv_wf_empty | apply WFTList; assumption ]. }
+    1: exact H_k.
+    1: apply locals_wf_empty.
+    1:{ eapply locals_wf_step; [ | exact H_r ].
+        eapply locals_wf_step; eauto using locals_wf_empty. }
+    1: apply map_incl_empty.
+    apply map_incl_step_r.
+    1:{ apply map_incl_step; auto using string_dec.
+        apply map_incl_step; auto using string_dec, map_incl_empty. }
+    1:{ pose proof c_tbl_neq_c_all as H_ta.
+        rewrite map.get_put_diff by congruence.
+        rewrite map.get_put_diff by congruence.
+        apply map.get_empty. }
+  Qed.
+
+  (* One step, for a table constraint. *)
+  Lemma tbl_constr_step : forall row_ty k tv r acc,
+      type_wf row_ty -> c_row k <> c_all ->
+      tbl_constr_wf row_ty k ->
+      type_of_value tv (TList row_ty) ->
+      type_of_value r row_ty ->
+      (tbl_sat k tv r /\ constr_step k tv r acc = acc)
+      \/ (~ tbl_sat k tv r /\ constr_step k tv r acc = VBool false).
+  Proof.
+    unfold constr_step, tbl_sat; intros * ? H_ne H_k H_tv H_r.
+    assert (H_bool : type_of_value
+                       (interp_expr (map.empty : locals)
+                          (map.put (map.put map.empty c_tbl tv) (c_row k) r)
+                          (c_body k)) TBool).
+    { eapply type_sound with
+        (Gstore := map.empty : tenv)
+        (Genv := map.put (map.put map.empty c_tbl (TList row_ty)) (c_row k) row_ty).
+      1: exact H_k.
+      1: apply tenv_wf_empty.
+      1:{ apply tenv_wf_step; [ | assumption ].
+          apply tenv_wf_step; [ apply tenv_wf_empty | apply WFTList; assumption ]. }
+      1: apply locals_wf_empty.
+      1:{ eapply locals_wf_step; [ | exact H_r ].
+          eapply locals_wf_step; eauto using locals_wf_empty. } }
+    destruct (type_of_value_TBool _ H_bool) as [ H_b | H_b ].
+    1: left. 2: right.
+    all: split.
+    1,3: congruence.
+    all: cbn [interp_expr].
+    all: erewrite tbl_body_interp by eauto.
+    all: rewrite H_b.
+    1: unfold get_local; rewrite map.get_put_same; reflexivity.
+    1: reflexivity.
+  Qed.
+
+  (* So for a table constraint too the quantifier is a Forall over the rows --
+     each row consulted against the whole table. *)
+  Lemma tbl_fold_right_iff : forall row_ty k tv l,
+      type_wf row_ty -> c_row k <> c_all ->
+      tbl_constr_wf row_ty k ->
+      type_of_value tv (TList row_ty) ->
+      Forall (fun r => type_of_value r row_ty) l ->
+      (fold_right (constr_step k tv) (VBool true) l = VBool true
+       <-> Forall (tbl_sat k tv) l).
+  Proof.
+    intros * H_rt H_ne H_k H_tv H_l.
+    induction H_l as [| a l H_a H_l IHl]; cbn [fold_right].
+    1: split; auto.
+    destruct (tbl_constr_step row_ty k tv a
+                (fold_right (constr_step k tv) (VBool true) l)
+                H_rt H_ne H_k H_tv H_a)
+      as [[H_sat H_eq] | [H_nsat H_eq]]; rewrite H_eq.
+    1:{ split.
+        1: intros H_c; constructor; auto; apply IHl; auto.
+        1: intros H_F; invert_Forall; apply IHl; auto. }
+    1:{ split.
+        1: intros H_c; discriminate.
+        1: intros H_F; invert_Forall; contradiction. }
+  Qed.
+
+  Lemma tbl_constr_holds_iff : forall row_ty k l,
+      type_wf row_ty -> c_row k <> c_all ->
+      tbl_constr_wf row_ty k ->
+      Forall (fun r => type_of_value r row_ty) l ->
+      (constr_holds k (VList l) <-> Forall (tbl_sat k (VList l)) l).
+  Proof.
+    unfold constr_holds, constr_expr; intros * H_rt H_ne H_k H_l.
+    cbn [interp_expr]. unfold get_local.
+    rewrite map.get_put_same. cbn [interp_atom].
+    eapply tbl_fold_right_iff; eauto.
+    constructor; auto.
+  Qed.
+
+  (* ---------------------------------------------------------------------
+     Counting, for uniqueness.
+
+     A primary key's body counts the rows sharing a key and asks for one.  The
+     facts below turn that count into NoDup on the list of keys, which is the
+     shape an index can be built against.
+     --------------------------------------------------------------------- *)
+
+  Lemma value_eqb_true_iff : forall (v v' : value), value_eqb v v' = true <-> v = v'.
+  Proof.
+    split; intros; subst; auto using value_eqb_eq, value_eqb_refl.
+  Qed.
+
+  Lemma value_eq_dec : forall (v v' : value), {v = v'} + {v <> v'}.
+  Proof.
+    intros. destruct (value_eqb v v') eqn:E.
+    1: left; apply value_eqb_true_iff; exact E.
+    1:{ right; intro H_eq.
+        apply value_eqb_true_iff in H_eq. congruence. }
+  Qed.
+
+  (* A flat_map that emits each element at most once is a filter. *)
+  Lemma length_flat_map_sing : forall (A : Type) (b : A -> bool) (l : list A),
+      List.length (flat_map (fun v => if b v then v :: nil else nil) l)
+      = List.length (List.filter b l).
+  Proof.
+    induction l as [| a l IH]; cbn [flat_map List.filter]; auto.
+    destruct (b a); cbn [List.app List.length]; auto.
+  Qed.
+
+  Lemma length_filter_key__count_occ :
+    forall (A B : Type) (dec : forall x y : B, {x = y} + {x <> y})
+           (eqb : B -> B -> bool) (key : A -> B) (k : B) (l : list A),
+      (forall x y, eqb x y = true <-> x = y) ->
+      List.length (List.filter (fun a => eqb (key a) k) l)
+      = count_occ dec (List.map key l) k.
+  Proof.
+    intros * H_eqb.
+    induction l as [| a l IH]; cbn [List.filter List.map List.length count_occ]; auto.
+    destruct (eqb (key a) k) eqn:E_b; destruct (dec (key a) k) as [E_d | E_d];
+      cbn [List.length].
+    1: f_equal; exact IH.
+    1:{ exfalso. apply H_eqb in E_b. contradiction. }
+    1:{ exfalso. apply (proj2 (H_eqb (key a) k)) in E_d. congruence. }
+    1: exact IH.
+  Qed.
+
+  (* "every element's key occurs exactly once" is exactly NoDup on the keys. *)
+  Lemma Forall_count_one_iff_NoDup :
+    forall (A B : Type) (eqb : B -> B -> bool) (key : A -> B) (l : list A),
+      (forall x y, eqb x y = true <-> x = y) ->
+      (Forall (fun r => List.length
+                          (List.filter (fun r2 => eqb (key r2) (key r)) l) = 1) l
+       <-> NoDup (List.map key l)).
+  Proof.
+    intros * H_eqb.
+    (* the spec of eqb makes B's equality decidable, which count_occ needs *)
+    assert (dec : forall x y : B, {x = y} + {x <> y}).
+    { intros x y. destruct (eqb x y) eqn:E.
+      1: left; apply H_eqb; exact E.
+      1:{ right; intro H_xy.
+          apply (proj2 (H_eqb x y)) in H_xy. congruence. } }
+    split.
+    1:{ intros H_F.
+        apply (proj2 (NoDup_count_occ' dec (List.map key l))).
+        intros x H_in. rewrite in_map_iff in H_in.
+        destruct H_in as [ r [ H_kr H_rin ] ]; subst.
+        rewrite <- length_filter_key__count_occ with (eqb := eqb); auto.
+        exact (proj1 (Forall_forall _ l) H_F r H_rin). }
+    1:{ intros H_nd.
+        pose proof (proj1 (NoDup_count_occ' dec (List.map key l)) H_nd) as H_cnt.
+        apply (proj2 (Forall_forall _ l)). intros r H_rin.
+        rewrite length_filter_key__count_occ with (dec := dec); auto.
+        apply H_cnt, in_map; auto. }
+  Qed.
+
   (* A primary key, as an ordinary row predicate: the row's key occurs exactly
      once in the table.  A row predicate can say this because its body may read
      the table through the hole -- which is exactly why the general form
@@ -764,6 +1004,178 @@ Section WithWord.
                   (EBinop OCons (EVar "_r2") (EAtom (ANil (Some row_ty))))
                   (EAtom (ANil (Some row_ty))))))
          (EAtom (AInt 1))).
+
+  (* The key a row carries. *)
+  Definition row_key (attr : string) (v : value) : value :=
+    match v with
+    | VRecord fs => record_proj attr fs
+    | _ => VUnit
+    end.
+
+  (* A primary key reads the table but not the accumulator, so it is a table
+     constraint, and the quantifier over it is a Forall. *)
+  Lemma unique_constr_tbl_wf : forall attr rt kt,
+      type_wf (TRecord rt) ->
+      access_record rt attr = Success kt ->
+      tbl_constr_wf (TRecord rt) (unique_constr attr (TRecord rt)).
+  Proof.
+    intros * H_wf H_attr.
+    assert (H_in : In (attr, kt) rt) by auto using access_record_sound.
+    unfold tbl_constr_wf, unique_constr, c_env_no_acc, c_tbl;
+      cbn [c_row c_body].
+    repeat lazymatch goal with
+      | |- type_of _ _ _ _ => econstructor
+      | |- type_of_unop _ _ _ => constructor
+      | |- type_of_binop _ _ _ _ => constructor
+      | |- type_of_atom _ _ => constructor
+      | |- map.get _ _ = Some _ => repeat rewrite_map_get_put_goal; reflexivity
+      | |- access_record _ _ = Success _ => exact H_attr
+      | |- In _ _ => exact H_in
+      | |- type_wf _ => exact H_wf
+      end.
+  Qed.
+
+  (* One-layer reduction equations.  cbn on interp_expr descends under the
+     binder a flatmap introduces, which destroys the shape the lemmas below
+     match on; rewriting with these peels one constructor at a time instead. *)
+  Lemma interp_EVar : forall (store env : locals) x,
+      interp_expr store env (EVar x) = get_local env x.
+  Proof. reflexivity. Qed.
+
+  Lemma interp_ELoc : forall (store env : locals) x,
+      interp_expr store env (ELoc x) = get_local store x.
+  Proof. reflexivity. Qed.
+
+  Lemma interp_EAtom : forall (store env : locals) a,
+      interp_expr store env (EAtom a) = interp_atom a.
+  Proof. reflexivity. Qed.
+
+  Lemma interp_EUnop : forall (store env : locals) o e,
+      interp_expr store env (EUnop o e) = interp_unop o (interp_expr store env e).
+  Proof. reflexivity. Qed.
+
+  Lemma interp_EBinop : forall (store env : locals) o e1 e2,
+      interp_expr store env (EBinop o e1 e2)
+      = interp_binop o (interp_expr store env e1) (interp_expr store env e2).
+  Proof. reflexivity. Qed.
+
+  Lemma interp_EFlatmap_list : forall (store env : locals) e1 x e2,
+      interp_expr store env (EFlatmap LikeList e1 x e2)
+      = match interp_expr store env e1 with
+        | VList l1 =>
+            VList (flat_map
+                     (fun v => match interp_expr store (map.put env x v) e2 with
+                               | VList l2 => l2
+                               | _ => nil
+                               end) l1)
+        | _ => VUnit
+        end.
+  Proof. reflexivity. Qed.
+
+  (* One element of the inner scan: the row is kept exactly when its key
+     matches. *)
+  Lemma unique_inner_interp : forall attr rt (r v : value) (l0 : list value),
+      match interp_expr (map.empty : locals)
+              (map.put (map.put (map.put map.empty c_tbl (VList l0)) "_r" r) "_r2" v)
+              (EIf (EBinop OEq (EAccess (EVar "_r2") attr)
+                      (EAccess (EVar "_r") attr))
+                 (EBinop OCons (EVar "_r2") (EAtom (ANil (Some (TRecord rt)))))
+                 (EAtom (ANil (Some (TRecord rt))))) with
+      | VList l2 => l2
+      | _ => nil
+      end
+      = (if value_eqb (row_key attr v) (row_key attr r) then v :: nil else nil).
+  Proof.
+    unfold c_tbl, row_key; intros.
+    cbn [interp_expr interp_binop interp_atom].
+    unfold get_local. repeat rewrite_map_get_put_goal.
+    lazymatch goal with
+    | |- context[value_eqb ?a ?b] => destruct (value_eqb a b)
+    end.
+    1: reflexivity.
+    1: reflexivity.
+  Qed.
+
+  (* So the inner scan of a primary key's body is a filter on the key. *)
+  Lemma unique_flat_map : forall attr rt (r : value) (l0 l : list value),
+      flat_map
+        (fun v =>
+           match interp_expr (map.empty : locals)
+                   (map.put (map.put (map.put map.empty c_tbl (VList l0)) "_r" r) "_r2" v)
+                   (EIf (EBinop OEq (EAccess (EVar "_r2") attr)
+                           (EAccess (EVar "_r") attr))
+                      (EBinop OCons (EVar "_r2") (EAtom (ANil (Some (TRecord rt)))))
+                      (EAtom (ANil (Some (TRecord rt))))) with
+           | VList l2 => l2
+           | _ => nil
+           end) l
+      = List.filter (fun r2 => value_eqb (row_key attr r2) (row_key attr r)) l.
+  Proof.
+    intros. induction l as [| v l IH]; cbn [flat_map List.filter]; auto.
+    rewrite unique_inner_interp, IH.
+    destruct (value_eqb (row_key attr v) (row_key attr r)); reflexivity.
+  Qed.
+
+  (* What a primary key says about one row: its key occurs once. *)
+  Lemma unique_tbl_sat_iff : forall attr rt l r,
+      tbl_sat (unique_constr attr (TRecord rt)) (VList l) r
+      <-> List.length
+            (List.filter (fun r2 => value_eqb (row_key attr r2) (row_key attr r)) l)
+          = 1.
+  Proof.
+    unfold tbl_sat, unique_constr; cbn [c_row c_body]; intros.
+    rewrite interp_EBinop, interp_EUnop, interp_EFlatmap_list, interp_EVar.
+    unfold get_local.
+    rewrite map.get_put_diff by (unfold c_tbl; discriminate).
+    rewrite map.get_put_same.
+    cbn beta iota.
+    rewrite unique_flat_map.
+    cbn [interp_unop interp_binop interp_atom].
+    split.
+    1:{ intro H. injection H as H.
+        apply value_eqb_true_iff in H. injection H as H. lia. }
+    1:{ intro H. rewrite H. reflexivity. }
+  Qed.
+
+  Lemma unique_constr_hygienic : forall attr row_ty,
+      c_row (unique_constr attr row_ty) <> c_all.
+  Proof.
+    unfold unique_constr, c_all; cbn [c_row]; intros.
+    intro H; discriminate H.
+  Qed.
+
+  (* ---------------------------------------------------------------------
+     What a primary key declares, as a statement about keys.
+
+     This is the bridge an index needs: the invariant the program maintains is
+     a quadratic expression about counting, and what a dictionary index can
+     stand for is NoDup on the list of keys.  Everything the guard does is on
+     the left; everything the index assumes is on the right.
+     --------------------------------------------------------------------- *)
+  Theorem unique_constr_holds_iff : forall attr rt kt l,
+      type_wf (TRecord rt) ->
+      access_record rt attr = Success kt ->
+      Forall (fun r => type_of_value r (TRecord rt)) l ->
+      (constr_holds (unique_constr attr (TRecord rt)) (VList l)
+       <-> NoDup (List.map (row_key attr) l)).
+  Proof.
+    intros * H_wf H_attr H_l.
+    (* the quantifier is a Forall over the rows *)
+    rewrite (tbl_constr_holds_iff (TRecord rt) (unique_constr attr (TRecord rt)) l
+               H_wf (unique_constr_hygienic attr (TRecord rt))
+               (unique_constr_tbl_wf attr rt kt H_wf H_attr) H_l).
+    (* and NoDup on the keys is "every key occurs once" *)
+    rewrite <- (Forall_count_one_iff_NoDup value value value_eqb (row_key attr) l
+                  value_eqb_true_iff).
+    (* so the two Foralls agree row by row *)
+    split.
+    1:{ intros H_F. apply (proj2 (Forall_forall _ l)); intros r H_rin.
+        apply (proj1 (unique_tbl_sat_iff attr rt l r)).
+        exact (proj1 (Forall_forall _ l) H_F r H_rin). }
+    1:{ intros H_F. apply (proj2 (Forall_forall _ l)); intros r H_rin.
+        apply (proj2 (unique_tbl_sat_iff attr rt l r)).
+        exact (proj1 (Forall_forall _ l) H_F r H_rin). }
+  Qed.
 
   Lemma unique_constr_wf : forall attr rt kt,
       type_wf (TRecord rt) ->
@@ -784,5 +1196,63 @@ Section WithWord.
       | |- In _ _ => exact H_in
       | |- type_wf _ => exact H_wf
       end.
+  Qed.
+  (* ---------------------------------------------------------------------
+     Uniqueness to a lookup.
+
+     The guard the elaboration inserts at a write that conses one row is, in
+     any store where the key already holds, exactly the test "this row's key
+     is not already present".  That is a membership test on a list of keys,
+     which is what a dictionary index answers in one step -- so an index whose
+     keys are the table's keys discharges this guard without scanning.
+
+     The rewrite itself belongs to the index implementation, which is what
+     knows that its dictionary's keys are the table's keys; what is proved here
+     is the obligation that rewrite reduces to.
+     --------------------------------------------------------------------- *)
+  Theorem unique_guard_iff_fresh :
+    forall attr rt kt free_vars e tbl l (Gstore Genv : tenv) (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf (TRecord rt) ->
+      access_record rt attr = Success kt ->
+      map.get Gstore tbl = Some (TList (TRecord rt)) ->
+      type_of Gstore Genv e (TRecord rt) ->
+      incl (get_free_vars Genv) free_vars ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      map.get store tbl = Some (VList l) ->
+      NoDup (List.map (row_key attr) l) ->
+      (interp_expr store env
+         (constr_guard (unique_constr attr (TRecord rt)) free_vars
+            (EBinop OCons e (ELoc tbl))) = VBool true
+       <-> ~ In (row_key attr (interp_expr store env e))
+               (List.map (row_key attr) l)).
+  Proof.
+    intros * H_Gs H_Ge H_rt H_attr H_tbl H_e H_fv H_store H_env E_tbl H_nd.
+    (* the rows are well typed, and so is the row being written *)
+    destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
+      as [ l' [ E_tbl' H_l ] ].
+    rewrite E_tbl in E_tbl'. injection E_tbl' as E_tbl'; subst l'.
+    assert (H_rv : type_of_value (interp_expr store env e) (TRecord rt))
+      by (eapply type_sound; eauto).
+    assert (H_cons_ty : type_of Gstore Genv (EBinop OCons e (ELoc tbl))
+                          (TList (TRecord rt)))
+      by (econstructor; eauto; constructor; auto).
+    (* the value the write would store *)
+    assert (H_u : interp_expr store env (EBinop OCons e (ELoc tbl))
+                  = VList (interp_expr store env e :: l)).
+    { rewrite interp_EBinop, interp_ELoc. unfold get_local.
+      rewrite E_tbl. reflexivity. }
+    (* the guard is the constraint read of that value *)
+    erewrite constr_guard_interp with (Gstore := Gstore) (Genv := Genv);
+      eauto using unique_constr_wf.
+    rewrite H_u.
+    (* which, for a primary key, is NoDup on the keys *)
+    pose proof (unique_constr_holds_iff attr rt kt
+                  (interp_expr store env e :: l) H_rt H_attr
+                  (Forall_cons _ H_rv H_l)) as H_iff.
+    cbn [List.map] in H_iff. rewrite NoDup_cons_iff in H_iff.
+    (* and the table's own keys are already distinct *)
+    split.
+    1:{ intro H_g. exact (proj1 (proj1 H_iff H_g)). }
+    1:{ intro H_fresh. apply (proj2 H_iff). split; assumption. }
   Qed.
 End WithWord.
