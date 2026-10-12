@@ -214,8 +214,6 @@ Section fold_command.
       | CLet e x c => CLet (fold_expr g e) x (fold_command c)
       | CLetMut e x c => CLetMut (fold_expr g e) x (fold_command c)
       | CAssign x e => CAssign x (fold_expr g e)
-      | CAssignChecked x e guard policy =>
-          CAssignChecked x (fold_expr g e) (fold_expr g guard) (fold_command policy)
       | CIf e c1 c2 => CIf (fold_expr g e) (fold_command c1) (fold_command c2)
       | CForeach e x c => CForeach (fold_expr g e) x (fold_command c)
       end.
@@ -270,16 +268,6 @@ Section WithMap.
             apply fold_expr_preserve_ty; auto. }
         f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
     1:{ f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ (* CAssignChecked: the guard is read in the store the write produces *)
-        assert (H_put : locals_wf Gstore (map.put store x (interp_expr store env e))).
-        { eapply locals_wf_put; eauto. eapply type_sound with (Gstore:=Gstore); eauto. }
-        erewrite fold_expr_preserve_sem with
-          (Gstore:=Gstore) (store:=store) (Genv:=Genv) (env:=env) (e:=e); eauto.
-        erewrite fold_expr_preserve_sem with
-          (Gstore:=Gstore) (store:=map.put store x (interp_expr store env e))
-          (Genv:=Genv) (env:=env) (e:=guard); eauto.
-        repeat case_match; auto.
-        all: use_fold_command_id_preserve_sem_IH Gstore; eauto. }
     1:{ erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto.
         repeat case_match; auto.
         all: use_fold_command_id_preserve_sem_IH Gstore; eauto. }
@@ -334,13 +322,6 @@ Section WithGlobals.
           CLetMut (fold_expr f e) x
             (if inb String.eqb x globals then c else fold_command_with_globals c)
       | CAssign x e => CAssign x (fold_expr f e)
-      (* The guard is left alone.  It is read in the store the write would
-         produce, and these rules need the index invariant to hold of the store
-         they are read in; at a checked assignment that is exactly what has not
-         been established yet, since whether the write happens is what the guard
-         decides. *)
-      | CAssignChecked x e guard policy =>
-          CAssignChecked x (fold_expr f e) guard (fold_command_with_globals policy)
       | CIf e c1 c2 =>
           CIf (fold_expr f e) (fold_command_with_globals c1) (fold_command_with_globals c2)
       | CForeach e x c =>
@@ -355,7 +336,7 @@ Section WithGlobals.
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Ltac invert_parameterized_wf :=
-      lazymatch goal with H: parameterized_wf _ _ _ _ |- _ => inversion H; subst end.
+      lazymatch goal with H: parameterized_wf _ _ _ _ _ |- _ => inversion H; subst end.
 
     Ltac apply_fold_command_with_globals_preserve_ty_IH :=
       lazymatch goal with
@@ -394,7 +375,7 @@ Section WithGlobals.
     Ltac apply_fold_command_with_globals_preserve_sem_IH :=
       lazymatch goal with
       | IH: context[interp_command _ _ (fold_command_with_globals _ ?c)],
-          H: parameterized_wf ?Gstore' ?Genv' _ ?c |-
+          H: parameterized_wf ?Gstore' ?Genv' _ _ ?c |-
           context[interp_command _ _ (fold_command_with_globals _ ?c)] =>
           erewrite <- IH with (Gstore:=Gstore') (Genv:=Genv'); eauto
       end.
@@ -409,19 +390,15 @@ Section WithGlobals.
             tenv_wf_with_globals Gstore ->
             holds_for_all_entries (value_wf_with_globals globals) store ->
             preserve_sem Gstore store f) ->
-        forall (Gstore Genv : tenv) (store env : locals),
+        forall A (Gstore Genv : tenv) (store env : locals),
           tenv_wf Gstore -> tenv_wf Genv -> tenv_wf_with_globals Gstore ->
-          parameterized_wf Gstore Genv (value_wf_with_globals globals) c ->
+          parameterized_wf Gstore Genv (value_wf_with_globals globals) A c ->
           locals_wf Gstore store -> locals_wf Genv env ->
           holds_for_all_entries (value_wf_with_globals globals) store ->
+          A store env ->
           interp_command store env c = interp_command store env (fold_command_with_globals f c).
     Proof.
       induction c; simpl; intros; auto; invert_parameterized_wf.
-      5:{ (* CAssignChecked: only the assigned expression is rewritten *)
-          erewrite <- fold_expr_preserve_sem with
-            (Gstore:=Gstore) (store:=store) (Genv:=Genv) (env:=env) (e:=e); eauto.
-          repeat case_match; auto.
-          all: apply_fold_command_with_globals_preserve_sem_IH; eauto with fiat2_hints. }
       3:{ erewrite <- fold_expr_preserve_sem; eauto; case_match; auto.
           rewrite inb_false_iff in *.
           erewrite <- IHc; auto.
@@ -432,13 +409,22 @@ Section WithGlobals.
           1: apply not_In__tenv_wf_with_globals; auto.
           1:{ eapply type_sound; resolve_locals_wf; auto.
               apply fold_expr_preserve_ty; eauto with fiat2_hints. }
+          (* the body of a CLetMut carries no assumption *)
+          all: try exact I.
           unfold holds_for_all_entries.
           1: apply not_In__value_wf_with_globals; auto. }
       all: try erewrite <- fold_expr_preserve_sem; eauto;
         repeat case_match; auto;
         repeat apply_fold_command_with_globals_preserve_sem_IH; eauto with fiat2_hints.
-      1:{ eapply command_type_sound; eauto.
-          eapply parameterized_wf__well_typed; eauto. }
+      (* subcommands other than CSeq's first and CIf's branches carry no
+         assumption, and CIf's branches get theirs from the test *)
+      all: cbv beta.
+      all: try exact I.
+      (* CIf's branches get their assumption from the test, whose value the
+         rewrite leaves alone *)
+      all: try (split; [ assumption
+                       | erewrite <- fold_expr_preserve_sem; eauto ]).
+      1:{ eapply command_type_sound; eauto using parameterized_wf__well_typed. }
       1:{ eapply parameterized_wf__preserve_P with (Gstore:=Gstore); eauto. }
       1:{ resolve_locals_wf. erewrite fold_expr_preserve_sem; eauto with fiat2_hints. }
       1:{ apply_type_sound e. rewrite fold_expr_preserve_sem in E; eauto. rewrite E in *.
@@ -447,15 +433,27 @@ Section WithGlobals.
             H1: type_of_value _ _, H2: interp_expr _ _ _ = VList _ |- _ =>
               clear H1 H2
           end.
+          (* the body carries no assumption, so neither does the induction over
+             the rows: each row runs in the store the previous one left *)
+          lazymatch goal with H: A _ _ |- _ => clear H end.
           generalize dependent store. induction l; simpl; auto; intros.
-          invert_Forall. eapply IHc in H12 as IHc'; eauto with fiat2_hints.
+          invert_Forall.
+          assert (IHc' : interp_command store (map.put env x a) c
+                         = interp_command store (map.put env x a)
+                             (fold_command_with_globals f c)).
+          { eapply IHc with (A := fun _ _ => True) (Gstore := Gstore)
+                            (Genv := map.put Genv x t); eauto with fiat2_hints. }
           rewrite <- IHc'. apply IHl; auto.
-          2: eapply parameterized_wf__preserve_P with (Gstore:=Gstore) (Genv:=map.put Genv x t);
-          eauto with fiat2_hints.
-          apply command_type_sound with (Genv:=map.put Genv x t); auto.
-          2:{ apply tenv_wf_step; auto. apply_type_of__type_wf; auto. invert_type_wf; auto. }
-          2: eapply locals_wf_step; eauto.
-          eapply parameterized_wf__well_typed; eauto. }
+          1:{ apply command_type_sound with (Genv:=map.put Genv x t); auto.
+              2:{ apply tenv_wf_step; auto. apply_type_of__type_wf; auto.
+                  invert_type_wf; auto. }
+              2: eapply locals_wf_step; eauto.
+              eapply parameterized_wf__well_typed; eauto. }
+          1:{ eapply parameterized_wf__preserve_P
+                with (Gstore:=Gstore) (Genv:=map.put Genv x t)
+                     (A := fun _ _ => True);
+              eauto with fiat2_hints.
+              all: exact I. } }
     Qed.
 
     Ltac apply_preserve_parameterized_wf_IH :=
@@ -471,38 +469,35 @@ Section WithGlobals.
             tenv_wf_with_globals Gstore ->
             holds_for_all_entries (value_wf_with_globals globals) store ->
             preserve_sem Gstore store f) ->
-        forall c (Gstore Genv : tenv),
+        forall c A (Gstore Genv : tenv),
           tenv_wf Gstore -> tenv_wf Genv ->
           tenv_wf_with_globals Gstore ->
-          parameterized_wf Gstore Genv (value_wf_with_globals globals) c ->
-          parameterized_wf Gstore Genv (value_wf_with_globals globals) (fold_command_with_globals f c).
+          parameterized_wf Gstore Genv (value_wf_with_globals globals) A c ->
+          parameterized_wf Gstore Genv (value_wf_with_globals globals) A (fold_command_with_globals f c).
     Proof.
       induction c; simpl; auto; intros; invert_parameterized_wf.
       all: try (econstructor;
                 try (apply fold_expr_preserve_ty; eauto);
                 apply_preserve_parameterized_wf_IH; eauto with fiat2_hints).
+      (* CIf: the rewrite leaves the test's value alone, so each branch keeps
+         the assumption the original derivation gave it *)
+      3,4: eapply parameterized_wf_weaken; [ | eassumption ];
+           intros * ? ? ? [? ?]; split; auto;
+           erewrite <- fold_expr_preserve_sem with (Gstore := Gstore); eauto.
       1:{ econstructor.
           1: apply fold_expr_preserve_ty; eauto.
           case_match; auto. rewrite inb_false_iff in *.
           eapply parameterized_wf_Proper.
           3: apply rm_not_in_globals.
-          all: eauto. apply_preserve_parameterized_wf_IH; eauto with fiat2_hints.
+          all: eauto. 1: reflexivity.
+          apply_preserve_parameterized_wf_IH; eauto with fiat2_hints.
           1: apply tenv_wf_with_globals_step; auto.
           eapply parameterized_wf_Proper.
           3: apply iff2_sym, rm_not_in_globals.
-          all: eauto. }
+          all: eauto. all: reflexivity. }
       1:{ econstructor; eauto.
           2: apply fold_expr_preserve_ty; eauto.
           intros. erewrite fold_expr_preserve_sem; eauto. }
-      1:{ (* CAssignChecked: the rewritten expression computes the same value,
-             so the original obligation discharges the new one *)
-          econstructor; eauto.
-          2: apply fold_expr_preserve_ty; eauto.
-          intros * H_P H_str H_env H_guard.
-          assert (H_e : interp_expr store env (fold_expr f e) = interp_expr store env e)
-            by (eapply fold_expr_preserve_sem with
-                  (Gstore:=Gstore) (store:=store) (Genv:=Genv) (env:=env); eauto).
-          rewrite H_e in *. eauto. }
     Qed.
   End WithMap.
 End WithGlobals.
@@ -530,6 +525,8 @@ Section WithMap.
       resolve_locals_wf; eauto; auto.
       2: eapply fold_command_with_globals_preserve_index_wf; eauto; auto.
       1: eapply fold_command_with_globals_preserve_ty; eauto; try reflexivity.
+      (* a whole program is checked under no assumption *)
+      all: try exact I.
       all: try (unfold preserve_ty; intros; eapply H; eauto).
       all: unfold preserve_sem; intros;
         lazymatch goal with
@@ -555,9 +552,6 @@ Section fold_command_with_global.
           CLetMut (fold_expr g e) x
             (if String.eqb x tbl then c else fold_command_with_global free_vars c)
       | CAssign x e => CAssign x (fold_expr g e)
-      | CAssignChecked x e guard policy =>
-          CAssignChecked x (fold_expr g e) (fold_expr g guard)
-            (fold_command_with_global free_vars policy)
       | CIf e c1 c2 =>
           CIf (fold_expr g e) (fold_command_with_global free_vars c1) (fold_command_with_global free_vars c2)
       | CForeach e x c =>

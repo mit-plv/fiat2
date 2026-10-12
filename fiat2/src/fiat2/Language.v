@@ -205,14 +205,5 @@ Inductive command : Type :=
 | CLet (e : expr) (x : string) (c : command)
 | CLetMut (e : expr) (x : string) (c : command)
 | CAssign(x : string) (e : expr)
-(* An assignment that must leave a declared constraint standing.  The guard is
-   the constraint itself, and it is evaluated in the store the assignment would
-   produce: it reads the candidate value through ELoc x, exactly as the rest of
-   the program reads x, and it may read other mutable variables too, which is
-   what a foreign key needs.  When the guard rejects the write the store is left
-   untouched and the policy runs in its place.  The policy is a strict subterm,
-   so interpretation stays a total structurally recursive function even though
-   the policy may assign again. *)
-| CAssignChecked (x : string) (e : expr) (guard : expr) (policy : command)
 | CIf (e : expr) (c1 c2 : command)
 | CForeach (e : expr) (x : string) (c : command).

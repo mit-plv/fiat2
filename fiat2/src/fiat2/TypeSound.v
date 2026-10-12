@@ -1658,7 +1658,7 @@ Section WithWord.
       induction c; simpl; intros Gstore Genv c' H_str H_env H.
       all: repeat destruct_match.
       1,2: try constructor; try apply_cmd_tc_sound_IH.
-      1,2,6: lazymatch goal with
+      1,2,5: lazymatch goal with
            | H: synthesize_expr _ _ _ = Success _ |- _ =>
                let H_wf := fresh "H_wf" in
                apply typechecker_sound in H; auto;
@@ -1667,10 +1667,6 @@ Section WithWord.
       econstructor; eauto; apply_cmd_tc_sound_IH; apply tenv_wf_step;
       try invert_type_wf; auto.
       - econstructor; eauto. eapply typechecker_sound; eauto.
-      - (* CAssignChecked *)
-        eapply WTCAssignChecked; eauto.
-        all: try apply_cmd_tc_sound_IH.
-        all: eapply typechecker_sound; eauto; constructor.
       - constructor; try apply_cmd_tc_sound_IH.
         eapply typechecker_sound; eauto. constructor.
     Qed.
@@ -1710,18 +1706,6 @@ Section WithWord.
         + rewrite H' in H; injection H as H; subst.
           eapply type_sound; eauto.
         + apply H_str; auto.
-      - (* WTCAssignChecked *)
-        assert (H_put : locals_wf Gstore (map.put store x (interp_expr store env e))).
-        { unfold locals_wf; intros x0 t' H'.
-          destruct (String.eqb x x0) eqn:E;
-            [ rewrite eqb_eq in E; subst; rewrite map.get_put_same
-            | rewrite eqb_neq in E; rewrite map.get_put_diff; try congruence ].
-          - rewrite H' in H; injection H as H; subst.
-            eapply type_sound; eauto.
-          - apply H_str; auto. }
-        destruct (interp_expr (map.put store x (interp_expr store env e)) env guard);
-          try (apply IHwell_typed; auto).
-        destruct b; auto.
       - repeat match goal with |- context[match ?x with _ => _ end] => destruct x end; auto.
       - match goal with |- context[match ?x with _ => _ end] => destruct x eqn:E end; auto.
         apply type_of__type_wf in H as H_wf; auto.

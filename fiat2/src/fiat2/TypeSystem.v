@@ -299,14 +299,6 @@ Section WithMap.
   | WTCAssign x t e : map.get Gstore x = Some t ->
                     type_of Gstore Genv e t ->
                     well_typed Gstore Genv (CAssign x e)
-  (* The guard is typed in Gstore, where x already has the type the assignment
-     gives it, so it may read x as freely as the rest of the program does. *)
-  | WTCAssignChecked x t e guard policy :
-    map.get Gstore x = Some t ->
-    type_of Gstore Genv e t ->
-    type_of Gstore Genv guard TBool ->
-    well_typed Gstore Genv policy ->
-    well_typed Gstore Genv (CAssignChecked x e guard policy)
   | WTCIf e c1 c2 : type_of Gstore Genv e TBool ->
                     well_typed Gstore Genv c1 -> well_typed Gstore Genv c2 ->
                     well_typed Gstore Genv (CIf e c1 c2)
@@ -1152,14 +1144,6 @@ Section WithMap.
                                  Success (CAssign x e')
                      | None => error:(x "not found in the mutable variable type environment")
                      end
-    | CAssignChecked x e guard policy =>
-        match map.get Gstore x with
-        | Some t => e' <- analyze_expr Gstore Genv t e ;;
-                    guard' <- analyze_expr Gstore Genv TBool guard ;;
-                    policy' <- typecheck Gstore Genv policy ;;
-                    Success (CAssignChecked x e' guard' policy')
-        | None => error:(x "not found in the mutable variable type environment")
-        end
     | CIf e c1 c2 => e' <- analyze_expr Gstore Genv TBool e ;;
                      c1' <- typecheck Gstore Genv c1 ;;
                      c2' <- typecheck Gstore Genv c2 ;;

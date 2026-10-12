@@ -205,15 +205,6 @@ Fixpoint command_py (n:nat) (c:command) : string :=
       else line n (x ++ " = " ++ expr_py (EBinop OCons e1 (ELoc x1)))
   | CAssign x e =>
       line n (x ++ " = " ++ expr_py e)
-  | CAssignChecked x e guard policy =>
-      (* The guard reads the candidate value through x, so the write is made
-         first and rolled back from a saved copy if the guard rejects it.  The
-         saved name is derived from x; no fiat2 program can mention it. *)
-      line n (x ++ "__prev = " ++ x) ++
-      line n (x ++ " = " ++ expr_py e) ++
-      line n ("if not " ++ paren (expr_py guard) ++ ":") ++
-      line (S n) (x ++ " = " ++ x ++ "__prev") ++
-      command_py (S n) policy
   | CIf e c1 c2 =>
       line n ("if " ++ expr_py e ++ ":") ++
       command_py (S n) c1 ++

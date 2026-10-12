@@ -1103,12 +1103,6 @@ Section WithMap.
         erewrite IHc. 4: eauto. all: eauto with fiat2_hints.
         all: rewrite_map_get_put_goal. }
     1:{ destruct_get_put_strings; try congruence. }
-    1:{ (* CAssignChecked: the guard decides between a write and the policy *)
-        case_match;
-          try (solve [ eapply IHc with (Gstore:=Gstore) (Genv:=Genv); eauto ]).
-        destruct b;
-          [ destruct_get_put_strings; try congruence
-          | eapply IHc with (Gstore:=Gstore) (Genv:=Genv); eauto ]. }
     1:{ case_match; auto. case_match; subst; eauto. }
     1:{ apply_type_sound e. invert_type_of_value.
         lazymatch goal with H: VList _ = _ |- _ => clear H end.

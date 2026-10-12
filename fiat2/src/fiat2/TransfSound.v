@@ -78,89 +78,144 @@ Section WithMap.
   Definition rm_from_pred (P : string -> value -> Prop) (x : string) :=
     fun s v => s = x \/ P s v.
 
-  Inductive parameterized_wf (Gstore Genv : tenv) (P : string -> value -> Prop) : command -> Prop :=
-  | PWCSkip : parameterized_wf Gstore Genv P CSkip
-  | PWCSeq c1 c2 : parameterized_wf Gstore Genv P c1 ->
-                   parameterized_wf Gstore Genv P c2 ->
-                   parameterized_wf Gstore Genv P (CSeq c1 c2)
-  | PWCLet e t x c : type_of Gstore Genv e t ->
-                     parameterized_wf Gstore (map.put Genv x t) P c ->
-                     parameterized_wf Gstore Genv P (CLet e x c)
-  | PWCLetMut e t x c :
-    type_of Gstore Genv e t ->
-    parameterized_wf (map.put Gstore x t) Genv (rm_from_pred P x) c ->
-    parameterized_wf Gstore Genv P (CLetMut e x c)
-  | PWCAssign x t e :
-    (forall store env, holds_for_all_entries P store ->
-                       locals_wf Gstore store -> locals_wf Genv env ->
-                       P x (interp_expr store env e)) ->
-    map.get Gstore x = Some t ->
-    type_of Gstore Genv e t ->
-    parameterized_wf Gstore Genv P (CAssign x e)
-  (* The write only happens when the guard accepts it, so the invariant need
-     only follow from the guard, not from the assigned expression on its own.
-     This is what lets a program -- rather than the optimizer -- establish an
-     invariant that an index then depends on. *)
-  | PWCAssignChecked x t e guard policy :
-    (forall store env, holds_for_all_entries P store ->
-                       locals_wf Gstore store -> locals_wf Genv env ->
-                       interp_expr (map.put store x (interp_expr store env e)) env guard = VBool true ->
-                       P x (interp_expr store env e)) ->
-    map.get Gstore x = Some t ->
-    type_of Gstore Genv e t ->
-    type_of Gstore Genv guard TBool ->
-    parameterized_wf Gstore Genv P policy ->
-    parameterized_wf Gstore Genv P (CAssignChecked x e guard policy)
-  | PWCIf e c1 c2 : type_of Gstore Genv e TBool ->
-                    parameterized_wf Gstore Genv P c1 ->
-                    parameterized_wf Gstore Genv P c2 ->
-                    parameterized_wf Gstore Genv P (CIf e c1 c2)
-  | PWCForeach e t x c : type_of Gstore Genv e (TList t) ->
-                         parameterized_wf Gstore (map.put Genv x t) P c ->
-                         parameterized_wf Gstore Genv P (CForeach e x c).
+  (* An assumption about the store and the environment a command runs in: the
+     path condition that reaching the command establishes.  CIf is the only
+     form that strengthens it, and it can because its branches run in exactly
+     the store and environment the test was evaluated in.  Every other form
+     runs its subcommand in a store or environment the surrounding tests say
+     nothing about, so it drops the assumption.
 
-  Lemma parameterized_wf__well_typed : forall Gstore Genv P c,
-      parameterized_wf Gstore Genv P c -> well_typed Gstore Genv c.
+     This one rule is what lets a program, rather than the optimizer, establish
+     an invariant that an index depends on: the obligation at an assignment
+     receives the truth of the guard it sits under, so
+
+       CIf guard (CAssign x e) policy
+
+     is well formed as soon as the guard implies the invariant of the value
+     being written -- which is far weaker than asking it of e on its own. *)
+  Inductive parameterized_wf (Gstore Genv : tenv) (P : string -> value -> Prop)
+    : (locals -> locals -> Prop) -> command -> Prop :=
+  | PWCSkip A : parameterized_wf Gstore Genv P A CSkip
+  | PWCSeq A c1 c2 : parameterized_wf Gstore Genv P A c1 ->
+                     parameterized_wf Gstore Genv P (fun _ _ => True) c2 ->
+                     parameterized_wf Gstore Genv P A (CSeq c1 c2)
+  | PWCLet A e t x c : type_of Gstore Genv e t ->
+                       parameterized_wf Gstore (map.put Genv x t) P (fun _ _ => True) c ->
+                       parameterized_wf Gstore Genv P A (CLet e x c)
+  | PWCLetMut A e t x c :
+    type_of Gstore Genv e t ->
+    parameterized_wf (map.put Gstore x t) Genv (rm_from_pred P x) (fun _ _ => True) c ->
+    parameterized_wf Gstore Genv P A (CLetMut e x c)
+  | PWCAssign A x t e :
+    (forall store env, A store env ->
+                       holds_for_all_entries P store ->
+                       locals_wf Gstore store -> locals_wf Genv env ->
+                       P x (interp_expr store env e)) ->
+    map.get Gstore x = Some t ->
+    type_of Gstore Genv e t ->
+    parameterized_wf Gstore Genv P A (CAssign x e)
+  | PWCIf A e c1 c2 :
+    type_of Gstore Genv e TBool ->
+    parameterized_wf Gstore Genv P
+      (fun store env => A store env /\ interp_expr store env e = VBool true) c1 ->
+    parameterized_wf Gstore Genv P
+      (fun store env => A store env /\ interp_expr store env e = VBool false) c2 ->
+    parameterized_wf Gstore Genv P A (CIf e c1 c2)
+  | PWCForeach A e t x c : type_of Gstore Genv e (TList t) ->
+                           parameterized_wf Gstore (map.put Genv x t) P (fun _ _ => True) c ->
+                           parameterized_wf Gstore Genv P A (CForeach e x c).
+
+  Lemma parameterized_wf__well_typed : forall Gstore Genv P A c,
+      parameterized_wf Gstore Genv P A c -> well_typed Gstore Genv c.
   Proof.
     intros. induction H.
     all: econstructor; eauto.
   Qed.
 
-  Lemma parameterized_wf__preserve_P : forall Gstore Genv store env P c,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      parameterized_wf Gstore Genv P c ->
-      locals_wf Gstore store -> locals_wf Genv env ->
-      holds_for_all_entries P store ->
-      holds_for_all_entries P (interp_command store env c).
+  (* A stronger assumption only makes the obligations easier.  The implication
+     may itself assume the well-formedness conditions, since those are
+     available everywhere the assumption is used. *)
+  Lemma parameterized_wf_weaken : forall Gstore Genv P A A' c,
+      (forall store env,
+          locals_wf Gstore store -> locals_wf Genv env ->
+          holds_for_all_entries P store ->
+          A' store env -> A store env) ->
+      parameterized_wf Gstore Genv P A c ->
+      parameterized_wf Gstore Genv P A' c.
   Proof.
-    intros. generalize dependent store; generalize dependent env.
-    induction H1; simpl; auto; intros.
-    1:{ apply IHparameterized_wf2; auto. eapply command_type_sound; eauto.
-        eapply parameterized_wf__well_typed; eauto. }
-    1:{ apply IHparameterized_wf; eauto with fiat2_hints. }
+    intros * H_imp H_wf. generalize dependent A'.
+    induction H_wf; intros.
+    (* CSkip, CSeq, CLet, CLetMut and CForeach mention the assumption nowhere,
+       and every subcommand of theirs but CSeq's first carries none *)
+    1-4,7: econstructor; eauto.
+    1:{ (* CAssign: strengthen the assumption, then use the original obligation *)
+        econstructor.
+        2,3: eassumption.
+        intros * H_A' ? ? ?. apply H; auto. }
+    1:{ (* CIf: both branch assumptions are strengthened the same way *)
+        econstructor.
+        1: eassumption.
+        1: apply IHH_wf1. 2: apply IHH_wf2.
+        all: intros * ? ? ? [? ?]; split; auto. }
+  Qed.
+
+  (* Every derivation built without a path condition is usable under any. *)
+  Corollary parameterized_wf_no_cond : forall Gstore Genv P A c,
+      parameterized_wf Gstore Genv P (fun _ _ => True) c ->
+      parameterized_wf Gstore Genv P A c.
+  Proof.
+    intros * H. eapply parameterized_wf_weaken with (A := fun _ _ => True).
+    2: exact H.
+    intros; exact I.
+  Qed.
+
+  Lemma parameterized_wf__preserve_P : forall Gstore Genv P A c,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      parameterized_wf Gstore Genv P A c ->
+      forall store env,
+        A store env ->
+        locals_wf Gstore store -> locals_wf Genv env ->
+        holds_for_all_entries P store ->
+        holds_for_all_entries P (interp_command store env c).
+  Proof.
+    intros * ? ? H_wf. induction H_wf; simpl; auto; intros.
+    1:{ (* CSeq: c2 runs in the store c1 produced, so it carries no assumption *)
+        assert (H_c1 : locals_wf Gstore (interp_command store env c1))
+          by (eapply command_type_sound; eauto using parameterized_wf__well_typed).
+        assert (H_P1 : holds_for_all_entries P (interp_command store env c1))
+          by (apply IHH_wf1; auto).
+        apply IHH_wf2; auto. }
+    1:{ apply IHH_wf; eauto with fiat2_hints. }
     1:{ unfold holds_for_all_entries. intros. get_update_same_diff x k.
         1:{ rewrite Properties.map.get_update_same in *. auto. }
         1:{ rewrite Properties.map.get_update_diff in *; try congruence.
             unfold rm_from_pred in *.
-            apply IHparameterized_wf in H6; eauto with fiat2_hints.
+            lazymatch goal with
+              H: map.get (interp_command _ _ _) _ = Some _ |- _ =>
+                apply IHH_wf in H; eauto with fiat2_hints
+            end.
             1:{ intuition auto. congruence. }
             unfold holds_for_all_entries; intros.
             get_put_same_diff x k0; rewrite_map_get_put_hyp. } }
     1:{ unfold holds_for_all_entries; intros.
         get_put_same_diff x k; rewrite_map_get_put_hyp.
         do_injection. apply H1; auto. }
-    1:{ (* PWCAssignChecked: the rejected write falls through to the policy,
-           which preserves P by the induction hypothesis *)
-        case_match; try (apply IHparameterized_wf; auto).
-        destruct b; [ | apply IHparameterized_wf; auto ].
-        unfold holds_for_all_entries; intros.
-        get_put_same_diff x k; rewrite_map_get_put_hyp.
-        do_injection. apply H1; auto. }
-    1:{ apply_type_sound e. invert_type_of_value. case_match; auto. }
-    1:{ apply_type_sound e. invert_type_of_value. clear H' H6.
+    1:{ (* CIf: each branch runs under the outcome of the test *)
+        apply_type_sound e. invert_type_of_value.
+        lazymatch goal with H: VBool _ = interp_expr _ _ e |- _ => symmetry in H end.
+        destruct b.
+        1: apply IHH_wf1; auto.
+        1: apply IHH_wf2; auto. }
+    1:{ (* CForeach: the body runs once per row, each in a different store *)
+        apply_type_sound e. invert_type_of_value.
+        lazymatch goal with H: type_of_value _ _ |- _ => clear H end.
+        lazymatch goal with H: VList _ = interp_expr _ _ e |- _ => clear H end.
+        (* the body carries no assumption, so the induction over the rows need
+           not keep the one this command was reached under *)
+        lazymatch goal with H: A _ _ |- _ => clear H end.
         generalize dependent store. induction l; simpl; auto; intros.
         invert_Forall; apply IHl; auto.
-        2:{ apply IHparameterized_wf; eauto with fiat2_hints. }
+        2:{ apply IHH_wf; eauto with fiat2_hints. }
         eapply command_type_sound.
         5: apply locals_wf_step. all: eauto with fiat2_hints.
         eapply parameterized_wf__well_typed; eauto. }
@@ -210,19 +265,19 @@ Section WithMap.
     all: subst; apply H, H0; auto.
   Qed.
 
-  Lemma iff2_parameterized_wf : forall x y z P Q,
+  Lemma iff2_parameterized_wf : forall x y A z P Q,
       iff2 P Q ->
-      parameterized_wf x y P z -> parameterized_wf x y Q z.
+      parameterized_wf x y P A z -> parameterized_wf x y Q A z.
   Proof.
     intros * H_iff2 H_wf. generalize dependent Q.
     induction H_wf; intros.
     all: econstructor; eauto.
     1:{ apply IHH_wf. erewrite H_iff2; auto using iff2_refl. }
-    1,2: intros; apply H_iff2, H; auto;
-         rewrite H_iff2; auto.
+    1:{ intros. apply H_iff2, H; auto.
+        rewrite H_iff2; auto. }
   Qed.
 
-  Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> iff) parameterized_wf.
+  Instance parameterized_wf_Proper : Proper (eq ==> eq ==> iff2 ==> eq ==> eq ==> iff) parameterized_wf.
   Proof.
     intros x x' Hx y y' Hy P Q H z z' Hz.
     split; subst; apply iff2_parameterized_wf;
@@ -309,9 +364,9 @@ Section WithMap.
         type_wf t -> is_tbl_ty t = true ->
         tenv_wf_with_globals [tbl] [aux_ty t] Gstore ->
         well_typed Gstore Genv c ->
-        parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) c ->
+        parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) (fun _ _ => True) c ->
         well_typed Gstore Genv (f tbl c) /\
-          parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) (f tbl c) /\
+          parameterized_wf Gstore Genv (value_wf_with_globals aux_wf [tbl]) (fun _ _ => True) (f tbl c) /\
           forall store env,
             locals_wf Gstore store -> locals_wf Genv env ->
             holds_for_all_entries (value_wf_with_globals aux_wf [tbl]) store ->

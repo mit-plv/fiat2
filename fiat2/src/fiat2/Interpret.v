@@ -413,15 +413,6 @@ Section WithWord.
           let store'' := interp_command store' env c1 in
           map.update store'' x (map.get store x)
       | CAssign x e => map.put store x (interp_expr store env e)
-      | CAssignChecked x e guard policy =>
-          (* The guard sees the store the write would produce, so it reads the
-             candidate value through ELoc x.  A guard that does not evaluate to
-             a boolean rejects the write, like the other unreachable cases. *)
-          let store' := map.put store x (interp_expr store env e) in
-          match interp_expr store' env guard with
-          | VBool true => store'
-          | _ => interp_command store env policy
-          end
       | CIf e c1 c2 => match interp_expr store env e with
                        | VBool b => if b then interp_command store env c1 else interp_command store env c2
                        | _ => store (* unreachable cases *)
