@@ -1202,6 +1202,114 @@ Section WithMap.
                 apply locals_wf_step; auto. eapply type_sound. 1: apply_to_aux_preserve_ty.
                 all: auto. } }
       Qed.
+
+      (* ------------------------------------------------------------------
+         The installation under an invariant the program supplies.
+
+         apply_idx_related_transfs_sound manufactures the index's own aux_wf
+         from well-typedness alone, which it can because transf_to_idx' writes
+         both fields of the record from the same expression.  An invariant the
+         *program* establishes -- a declared constraint, say -- cannot be had
+         that way.  It is supplied here about the input instead: the
+         initializer satisfies Pv, and the body maintains it.
+
+         That is a condition on the command the pipeline is handed, not on the
+         rewrites it is handed, so a rewrite may be proved against the stronger
+         invariant without any rewrite becoming conditional.  The
+         transformation itself is the same function as before; only what may be
+         assumed of the stores it produces is stronger.
+         ------------------------------------------------------------------ *)
+      Definition idx_install_pre (Pv : value -> Prop)
+        (Gstore Genv : tenv) (c : command) : Prop :=
+        match c with
+        | CLetMut e tbl body =>
+            (* the variable is born satisfying the invariant *)
+            (forall (store env : locals),
+                locals_wf Gstore store -> locals_wf Genv env ->
+                Pv (interp_expr store env e))
+            (* and the body keeps it there *)
+            /\ (forall t, type_of Gstore Genv e t ->
+                      parameterized_wf (map.put Gstore tbl t) Genv
+                        (value_wf_with_globals Pv (tbl :: nil))
+                        (fun _ _ => True) body)
+        | _ => True
+        end.
+
+      Lemma apply_idx_related_transfs_pre_sound : forall (Pv : value -> Prop) f,
+          aug_transf_sound is_tbl_ty aux_ty
+            (fun v => aux_wf v /\ at_id_tag Pv v) f ->
+          forall (Gstore Genv : tenv) c,
+            tenv_wf Gstore -> tenv_wf Genv ->
+            well_typed Gstore Genv c ->
+            idx_install_pre Pv Gstore Genv c ->
+            well_typed Gstore Genv (apply_idx_related_transfs f Gstore Genv c) /\
+              forall (store env : locals),
+                locals_wf Gstore store -> locals_wf Genv env ->
+                interp_command store env (apply_idx_related_transfs f Gstore Genv c)
+                = interp_command store env c.
+      Proof.
+        intros Pv f H * H_Gs H_Ge H_wt H_pre.
+        unfold apply_idx_related_transfs.
+        repeat (case_match; auto).
+        cbn [idx_install_pre] in H_pre; destruct H_pre as [ H_init H_body ].
+        invert_well_typed.
+        eapply synthesizable_ty_unique in E0 as H_syn_ty; eauto; subst.
+        assert (H_ty : well_typed (map.put Gstore x (aux_ty t)) Genv (transf_to_idx' x (get_free_vars Genv) c0)).
+        { erewrite <- Properties.map.put_put_same.
+          eapply transf_to_idx_preserve_ty'; try reflexivity; [ | eauto using incl_refl .. ].
+          2: rewrite_map_get_put_goal; eauto.
+          1: eauto with fiat2_hints. }
+        assert (H_wf : parameterized_wf (map.put Gstore x (aux_ty t)) Genv
+                         (value_wf_with_globals (fun v => aux_wf v /\ at_id_tag Pv v) [x])
+                         (fun _ _ => True) (transf_to_idx' x (get_free_vars Genv) c0)).
+        { erewrite <- Properties.map.put_put_same.
+          eapply transf_to_idx'_wf_pre with (A := fun (_ _ : locals) => True);
+            eauto using incl_refl with fiat2_hints.
+          1: rewrite_map_get_put_goal; auto. }
+        eapply H in H_wf. 5: eauto.
+        all: eauto using aux_ty_wf with fiat2_hints.
+        2: constructor;  try eapply map.get_put_same; auto.
+        split.
+        1:{ econstructor.
+            2: apply H_wf; auto.
+            1: apply_to_aux_preserve_ty. }
+        1:{ intros. unfold transf_to_idx, apply_after_letmut.
+            cbn [interp_command]. eapply stores_eq_except__update_eq; intros.
+            destruct (map.get Gstore x0) eqn:E.
+            1:{ symmetry.
+                intuition idtac.
+                lazymatch goal with
+                  H_sem : forall _ _, _ -> _ -> _ ->
+                                     interp_command _ _ _ = interp_command _ _ _ |- _ =>
+                    erewrite H_sem; auto
+                end.
+                2:{ resolve_locals_wf. eapply type_sound.
+                    1: apply_to_aux_preserve_ty.
+                all: resolve_locals_wf; eauto using incl_refl with fiat2_hints. }
+                2:{ constructor; auto. destruct (String.eqb k x) eqn:E_kx;
+                    rewrite ?eqb_eq, ?eqb_neq in *; subst; auto; right.
+                    rewrite_map_get_put_hyp; do_injection.
+                    cbn [interp_expr List.map]. split.
+                    1:{ unfold aux_wf.
+                        rewrite record_sort_access_id, record_sort_access_aux.
+                        eapply to_idx_satisfy_idx_wf; [ | | eauto .. ];
+                          auto using incl_refl. }
+                    1:{ unfold at_id_tag.
+                        rewrite record_sort_access_id.
+                        apply H_init; auto. } }
+                eapply transf_to_idx_preserve_sem' with (Gstore:=map.put Gstore x t); eauto.
+                all: try rewrite_map_get_put_goal; eauto using incl_refl with fiat2_hints.
+                unfold consistent_with_global; intuition idtac; repeat rewrite_map_get_put_goal.
+                cbn [interp_expr List.map].
+                rewrite record_sort_access_id. reflexivity. }
+            1:{ repeat erewrite command_preserve_untouched_store. 4: eauto.
+                9: apply H_wf.
+                all: repeat rewrite_map_get_put_goal; eauto with fiat2_hints.
+                1:{ apply tenv_wf_step; eauto with fiat2_hints. apply aux_ty_wf; eauto with fiat2_hints. }
+                apply locals_wf_step; auto. eapply type_sound. 1: apply_to_aux_preserve_ty.
+                all: auto. } }
+      Qed.
+
     End WithIndex.
 End WithMap.
 
