@@ -36,6 +36,15 @@ Open Scope string_scope.
    So the uniqueness assumption is recorded exactly where it is used, and this
    index cannot be installed by a transformation that does not establish it. *)
 
+(* A hit is not a miss.  Stated separately because the case analysis has to
+   happen away from the hypotheses that mention the lookup, which a destruct
+   in place would rewrite. *)
+Lemma option_is_some_bool : forall (A : Type) (o : option A),
+    o <> None -> (match o with None => true | Some _ => false end) = false.
+Proof.
+  intros * H; destruct o; [ reflexivity | congruence ].
+Qed.
+
 Section WithHole.
   Context (hole : string).
   Context (attr : string).
@@ -282,6 +291,113 @@ Section WithHole.
         pose proof (idx_lookup_None_iff l (row_key attr (interp_expr store env e)))
           as H_lookup.
         tauto.
+      Qed.
+
+
+      (* ------------------------------------------------------------------
+         The cheap guard.
+         ------------------------------------------------------------------ *)
+
+      (* The write is allowed exactly when the index holds no entry under the
+         new row's key.  There is no OIsNone, so the test is an option match
+         whose branches are the two booleans; y names the row that would be
+         displaced and is never read. *)
+      Definition unique_guard (idx_e : expr) (y : string) (e : expr) : expr :=
+        EOptMatch (EBinop OLookup idx_e (EAccess e attr))
+          (EAtom (ABool true)) y (EAtom (ABool false)).
+
+      Lemma unique_guard_ty : forall rt kt idx_e y e (Gstore Genv : tenv),
+          access_record rt attr = Success kt ->
+          type_of Gstore Genv idx_e (TDict kt (TRecord rt)) ->
+          type_of Gstore Genv e (TRecord rt) ->
+          type_of Gstore Genv (unique_guard idx_e y e) TBool.
+      Proof.
+        unfold unique_guard; intros * H_attr H_idx H_e.
+        econstructor.
+        1:{ econstructor.
+            1: constructor.
+            1: exact H_idx.
+            1: econstructor; [ exact H_e | exact H_attr ]. }
+        1: repeat constructor.
+        1: repeat constructor.
+      Qed.
+
+      Lemma unique_guard_interp : forall (store env : locals) idx_e y e d,
+          interp_expr store env idx_e = VDict d ->
+          interp_expr store env (unique_guard idx_e y e)
+          = VBool (match dict_lookup (row_key attr (interp_expr store env e)) d with
+                   | None => true
+                   | Some _ => false
+                   end).
+      Proof.
+        unfold unique_guard, row_key; intros * H_idx.
+        rewrite interp_EOptMatch, interp_EBinop, interp_EAccess, H_idx.
+        cbn [interp_binop].
+        lazymatch goal with
+        | |- context[dict_lookup ?k d] => destruct (dict_lookup k d)
+        end; rewrite interp_EAtom; reflexivity.
+      Qed.
+
+      (* The declared guard and the index guard agree.  This is the equality
+         of guards a rewrite asks for: on the left one lookup, on the right
+         the test the constraint elaboration inserts, which scans the table.
+
+         Both hypotheses on the store are needed, and they come from different
+         places: idx_wf says the index is the table's own dictionary, which an
+         index-maintaining transformation establishes, and NoDup says the keys
+         are distinct, which the declared primary key establishes.  Neither
+         implies the other. *)
+      Theorem unique_guard_sound :
+        forall rt kt free_vars y e idx_e tbl l (Gstore Genv : tenv) (store env : locals),
+          tenv_wf Gstore -> tenv_wf Genv -> type_wf (TRecord rt) ->
+          access_record rt attr = Success kt ->
+          map.get Gstore tbl = Some (TList (TRecord rt)) ->
+          type_of Gstore Genv e (TRecord rt) ->
+          incl (get_free_vars Genv) free_vars ->
+          locals_wf Gstore store -> locals_wf Genv env ->
+          map.get store tbl = Some (VList l) ->
+          NoDup (List.map (row_key attr) l) ->
+          idx_wf (VList l) (interp_expr store env idx_e) ->
+          interp_expr store env (unique_guard idx_e y e)
+          = interp_expr store env
+              (constr_guard (unique_constr attr (TRecord rt)) free_vars
+                 (EBinop OCons e (ELoc tbl))).
+      Proof.
+        intros * H_Gs H_Ge H_rt H_attr H_tbl H_e H_fv H_store H_env E_tbl H_nd H_idx.
+        (* the index is the table's own dictionary *)
+        unfold idx_wf in H_idx; rewrite fiat2_gallina_to_idx in H_idx.
+        (* the declared guard is a boolean *)
+        assert (H_cons_ty : type_of Gstore Genv (EBinop OCons e (ELoc tbl))
+                              (TList (TRecord rt)))
+          by (econstructor; [ constructor | exact H_e | constructor; exact H_tbl ]).
+        assert (H_guard_ty : type_of Gstore Genv
+                               (constr_guard (unique_constr attr (TRecord rt)) free_vars
+                                  (EBinop OCons e (ELoc tbl))) TBool).
+        { eapply constr_guard_ty with (row_ty := TRecord rt).
+          1: exact H_Gs.
+          1: exact H_Ge.
+          1: exact H_rt.
+          1: eapply unique_constr_wf; [ exact H_rt | exact H_attr ].
+          1: exact H_cons_ty.
+          1: exact H_fv. }
+        assert (H_rhs : type_of_value
+                          (interp_expr store env
+                             (constr_guard (unique_constr attr (TRecord rt)) free_vars
+                                (EBinop OCons e (ELoc tbl)))) TBool)
+          by (eapply type_sound; eauto).
+        (* and it is true exactly when the lookup misses *)
+        pose proof (guard_iff_lookup_None rt kt free_vars e tbl l Gstore Genv store env
+                      H_Gs H_Ge H_rt H_attr H_tbl H_e H_fv H_store H_env E_tbl H_nd)
+          as H_iff.
+        rewrite (unique_guard_interp store env idx_e y e (idx_entries l) H_idx).
+        destruct (type_of_value_TBool _ H_rhs) as [ H_t | H_f ].
+        1:{ (* the declared guard passes, so the key is free and so does the
+               lookup test *)
+            rewrite H_t, (proj1 H_iff H_t). reflexivity. }
+        1:{ (* the declared guard fails, so the key is taken: were the lookup a
+               miss, the declared guard would have passed *)
+            rewrite H_f. f_equal. apply option_is_some_bool.
+            intro H_none. rewrite (proj2 H_iff H_none) in H_f. discriminate H_f. }
       Qed.
 
     End WithMap.
