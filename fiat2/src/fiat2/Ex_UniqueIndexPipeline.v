@@ -299,4 +299,76 @@ Section WithConcreteMaps.
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
 
+  (* ====================================================================
+     The write guard as a set membership test, with no declaration at all.
+
+     "Is there already a row with this key" does not depend on how many such
+     rows there are, so it does not need the key-to-row dictionary -- the SET
+     of the table's keys answers it, and that set is sound for every table.
+     So this pipeline installs no declared index: the constrained choice is
+     None, the only index is SetAgg, and the rewrite that gets the program
+     there is an ordinary basic rewrite.
+
+     The same program as above, then, with different choices.  What the
+     declaration buys is not the check; it is the read that returns the row.
+     ==================================================================== *)
+
+  Definition mbasics : list basic_transf := [FilterEmptyToSetMem].
+
+  Definition manno (ds : list decl) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+      mbasics None [[SetAgg "id"]] (pelaborated ds).
+
+  Definition moptimized (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (manno ds) pGstore0 pGenv0.
+
+  Compute (moptimized [DUnique "id"]).
+
+  (* the set of the table's keys, which is what SetAgg maintains *)
+  Definition mkeys (tbl : expr) : expr :=
+    flatmap_proj_set (ESetOf tbl) "x" (EAccess (EVar "x") "id") None.
+
+  Definition moptimized_expected : command :=
+    CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
+                      ("aux_tag",
+                        ERecord [("0", mkeys (EAtom (ANil (Some prow_ty))))])])
+      "users"
+      (CIf (EBinop OAnd
+              (ELet (EVar "u") "_pk_row"
+                 (* the scan is gone: one membership test *)
+                 (EUnop ONot
+                    (EBinop OSetMem
+                       (EAccess (EAccess (ELoc "users") "aux_tag") "0")
+                       (EAccess (EVar "_pk_row") "id"))))
+              (EAtom (ABool true)))
+         (CAssign "users"
+            (ERecord
+               [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
+                (* and the set is kept up to date by one insert, not refolded *)
+                ("aux_tag",
+                  ERecord
+                    [("0", EBinop OSetInsert
+                             (EAccess (EAccess (ELoc "users") "aux_tag") "0")
+                             (EAccess (EVar "u") "id"))])]))
+         CSkip).
+
+  Lemma moptimized_is : moptimized [DUnique "id"] = moptimized_expected.
+  Proof. reflexivity. Qed.
+
+  (* And it is sound with no premise about the declarations at all -- not even
+     the one the gated layer needs -- because this pipeline consults none. *)
+  Theorem moptimized_sound :
+      well_typed pGstore0 pGenv0 (pelaborated [DUnique "id"]) ->
+      well_typed pGstore0 pGenv0 moptimized_expected /\
+        forall (store env : clocals),
+          locals_wf pGstore0 store -> locals_wf pGenv0 env ->
+          interp_command store env moptimized_expected
+          = interp_command store env (pelaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. rewrite <- moptimized_is.
+    unfold moptimized, manno.
+    apply apply_all_transfs_constrained_None_sound;
+      [ apply pGstore0_wf | apply pGenv0_wf | exact H_wt ].
+  Qed.
+
 End WithConcreteMaps.

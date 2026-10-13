@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
+  fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
@@ -21,7 +21,10 @@ Variant basic_transf :=
   | FlatmapSingleton
   | FlatmapIdentity
   | FlatmapIf
-  | SwapBagFlatmaps.
+  | SwapBagFlatmaps
+  (* an emptiness test of a key-equality filter is a membership test in the
+     set of the keys; see ExistsTransf *)
+  | FilterEmptyToSetMem.
 
 Variant index_choice :=
   | SumAgg (attr : string)
@@ -45,6 +48,8 @@ Definition flatmap_singleton_transf := fold_command id flatmap_singleton_head.
 Definition flatmap_identity_transf := fold_command id flatmap_identity_head.
 Definition flatmap_if_transf := fold_command id flatmap_if_head.
 Definition swap_flatmap_likebag_transf := fold_command id swap_flatmap_likebag_head.
+Definition filter_eq_empty_to_set_mem_transf :=
+  fold_command id filter_eq_empty_to_set_mem_head.
 
 Definition mk_basic_transf (f : basic_transf) : command -> command :=
   match f with
@@ -61,6 +66,7 @@ Definition mk_basic_transf (f : basic_transf) : command -> command :=
   | FlatmapIdentity => flatmap_identity_transf
   | FlatmapIf => flatmap_if_transf
   | SwapBagFlatmaps => swap_flatmap_likebag_transf
+  | FilterEmptyToSetMem => filter_eq_empty_to_set_mem_transf
   end.
 
 Definition compose_basic_transfs : list (command -> command) -> command -> command :=
@@ -345,7 +351,8 @@ end.
         swap_flatmap_if_transf, if_nil_into_flatmap_transf, swap_conjuncts_transf,
         annotate_collection_transf, push_down_collection_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
-        flatmap_if_transf, swap_flatmap_likebag_transf;
+        flatmap_if_transf, swap_flatmap_likebag_transf,
+        filter_eq_empty_to_set_mem_transf;
       eapply expr_transf_sound__preserve_parameterized_wf;
       eauto with transf_hints.
   Qed.
@@ -671,7 +678,8 @@ end.
         swap_flatmap_if_transf, if_nil_into_flatmap_transf, swap_conjuncts_transf,
         annotate_collection_transf, push_down_collection_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
-        flatmap_if_transf, swap_flatmap_likebag_transf;
+        flatmap_if_transf, swap_flatmap_likebag_transf,
+        filter_eq_empty_to_set_mem_transf;
       eapply (expr_transf_sound__preserve_cenv_respected (tenv := ctenv) (locals := clocals));
       eauto with transf_hints.
   Qed.
@@ -794,6 +802,24 @@ end.
     apply H_sem1; assumption.
   Qed.
 
+
+  (* With no constrained choice the pipeline is sound for every well-typed
+     program, exactly as apply_all_transfs is.  Nothing is assumed about the
+     declarations because none is consulted -- which is what makes a rewrite
+     like the one in ExistsTransf, that needs no declaration, usable without
+     one. *)
+  Lemma apply_all_transfs_constrained_None_sound : forall ce reps fs icss,
+      transf_sound (locals:=clocals) (apply_all_transfs_constrained ce reps fs None icss).
+  Proof.
+    unfold apply_all_transfs_constrained, Basics.compose, transf_sound, id; intros.
+    pose proof (compose_basic_transfs_sound fs Gstore Genv _ H H0 H1)
+      as [ H_wt1 H_sem1 ]; cbn in H_wt1, H_sem1.
+    pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H H0 H_wt1)
+      as [ H_wt2 H_sem2 ].
+    split; [ exact H_wt2 | ].
+    intros store env H_lws H_lwe.
+    rewrite H_sem2 by assumption. apply H_sem1; assumption.
+  Qed.
 
   (* The annotation a program is optimized with, now also carrying the
      declaration environment it was elaborated with and which declared index to
