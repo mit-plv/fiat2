@@ -143,7 +143,10 @@ Section WithIndexVars.
         end.
 
       Theorem apply_unique_idx_transfs_sound : forall ce f,
+          (* only where the gate fires is the rule's soundness needed, so a
+             rule that reads a declared key may assume the declaration *)
           (forall row_ty ds,
+              declares_unique ds = true ->
               aug_transf_sound (@IndexInterface.is_tbl_ty uidx)
                 (aux_ty (idx := uidx) id_tag aux_tag)
                 (unique_aux_declared row_ty ds) f) ->
@@ -168,7 +171,7 @@ Section WithIndexVars.
                   (idx_ok := unique_dict_idx_ok hole attr tup acc H_ne)
                   id_tag aux_tag H_tags_diff
                   (declared_holds row_ty ds) f);
-          [ apply H_f | assumption .. | ].
+          [ apply H_f; exact E_uq | assumption .. | ].
         apply H_ce; reflexivity.
       Qed.
 
@@ -223,7 +226,10 @@ Section WithIndexVars.
          about the hints is assumed. *)
       Corollary elab_unique_idx_transfs_sound :
         forall sc ce free_vars f (Gstore Genv : tenv) tbl row_ty ds,
+          (* only where the gate fires is the rule's soundness needed, so a
+             rule that reads a declared key may assume the declaration *)
           (forall row_ty ds,
+              declares_unique ds = true ->
               aug_transf_sound (@IndexInterface.is_tbl_ty uidx)
                 (aux_ty (idx := uidx) id_tag aux_tag)
                 (unique_aux_declared row_ty ds) f) ->
