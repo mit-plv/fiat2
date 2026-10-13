@@ -190,6 +190,42 @@ Section WithConcreteMaps.
     1: apply demo_idx_wf.
   Qed.
 
+  (* The index's well-formedness for a primary key, which is the two facts
+     above as one.  This is what an installation owes, and it is discharged
+     here on a concrete table to check that it is dischargeable at all. *)
+  Lemma demo_idx_wf_unique : forall (env : clocals),
+      idx_wf_unique uhole "id" utup uacc (VList demo_rows)
+        (interp_expr demo_store env (ELoc "idx")).
+  Proof.
+    intros. unfold idx_wf_unique; split.
+    1: apply demo_idx_wf.
+    1: cbn [keys_distinct]; apply demo_keys_NoDup.
+  Qed.
+
+  (* And the guards agree with that single hypothesis in place of two, which is
+     the form a rewrite rule gets to assume. *)
+  Theorem demo_guards_agree_pre : forall (env : clocals),
+      locals_wf demo_Genv env ->
+      interp_expr demo_store env index_guard
+      = interp_expr demo_store env declared_guard.
+  Proof.
+    intros env H_env; unfold index_guard, declared_guard.
+    eapply (unique_guard_sound_pre uhole "id" utup uacc utup_neq_uacc)
+      with (kt := TInt) (tbl := "users") (l := demo_rows)
+           (Gstore := demo_Gstore) (Genv := demo_Genv).
+    1: apply demo_Gstore_wf.
+    1: apply demo_Genv_wf.
+    1: apply row_ty_wf.
+    1: reflexivity.
+    1: unfold demo_Gstore; rewrite_map_get_put_goal; reflexivity.
+    1: constructor; unfold demo_Genv; rewrite_map_get_put_goal; reflexivity.
+    1: apply incl_refl.
+    1: apply demo_store_wf.
+    1: assumption.
+    1: unfold demo_store; repeat rewrite_map_get_put_goal; reflexivity.
+    1: apply demo_idx_wf_unique.
+  Qed.
+
   (* The cheap guard is an ordinary boolean expression of the store. *)
   Lemma demo_unique_guard_ty :
     type_of demo_Gstore demo_Genv index_guard TBool.

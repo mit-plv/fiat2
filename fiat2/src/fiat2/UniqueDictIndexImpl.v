@@ -195,6 +195,44 @@ Section WithHole.
         IndexInterface.Build_ok unique_dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
       (* ------------------------------------------------------------------
+         The same index, as an index for a primary key.
+
+         Above, idx_wf says only that the dictionary is the one to_idx builds,
+         which is all that holds of every well-typed table.  A primary key's
+         index claims more -- that a key names one row -- and that claim is
+         about tables with distinct keys and no others.  So it is stated with
+         the precondition that makes it true, and installing the index owes
+         that precondition.  The two are not alternatives: the weak idx_wf
+         above is what an index-maintaining transformation establishes on its
+         own, and the strong one below is what a rewrite rule needs.
+         ------------------------------------------------------------------ *)
+
+      Definition keys_distinct (tbl_v : value) : Prop :=
+        match tbl_v with
+        | VList l => NoDup (List.map (row_key attr) l)
+        | _ => False
+        end.
+
+      Definition idx_wf_unique (tbl_v idx_v : value) : Prop :=
+        idx_wf tbl_v idx_v /\ keys_distinct tbl_v.
+
+      Lemma to_idx_wf_unique : forall (v : value) (t : type),
+          type_wf t -> is_tbl_ty t = true ->
+          type_of_value v t ->
+          keys_distinct v ->
+          idx_wf_unique v (interp_expr map.empty (map.put map.empty hole v) to_idx).
+      Proof.
+        unfold idx_wf_unique; intros.
+        split; [ eapply to_idx_wf | ]; eauto.
+      Qed.
+
+      Instance unique_dict_idx_ok_pre :
+        IndexInterface.ok_pre unique_dict_idx idx_wf_unique keys_distinct :=
+        {| IndexInterface.ok_pre_idx_ty_wf := idx_ty_wf;
+           IndexInterface.ok_pre_to_idx_ty := to_idx_ty;
+           IndexInterface.ok_pre_to_idx_wf := to_idx_wf_unique |}.
+
+      (* ------------------------------------------------------------------
          The index's keys are exactly the table's keys.
          ------------------------------------------------------------------ *)
 
@@ -398,6 +436,38 @@ Section WithHole.
                miss, the declared guard would have passed *)
             rewrite H_f. f_equal. apply option_is_some_bool.
             intro H_none. rewrite (proj2 H_iff H_none) in H_f. discriminate H_f. }
+      Qed.
+
+
+      (* The same soundness with one store hypothesis instead of two.
+
+         This is the shape a rewrite rule can be stated in.  What
+         expr_aug_transf_sound hands a rule is a single predicate about the
+         store entry it rewrites at, so a rule that wants two facts about that
+         entry has nowhere to put the second one.  Folding the constraint into
+         the index's own well-formedness puts it exactly where the framework
+         already carries it, at the cost of a precondition on installation --
+         which is unique_dict_idx_ok_pre above. *)
+      Corollary unique_guard_sound_pre :
+        forall rt kt free_vars y e idx_e tbl l (Gstore Genv : tenv) (store env : locals),
+          tenv_wf Gstore -> tenv_wf Genv -> type_wf (TRecord rt) ->
+          access_record rt attr = Success kt ->
+          map.get Gstore tbl = Some (TList (TRecord rt)) ->
+          type_of Gstore Genv e (TRecord rt) ->
+          incl (get_free_vars Genv) free_vars ->
+          locals_wf Gstore store -> locals_wf Genv env ->
+          map.get store tbl = Some (VList l) ->
+          idx_wf_unique (VList l) (interp_expr store env idx_e) ->
+          interp_expr store env (unique_guard idx_e y e)
+          = interp_expr store env
+              (constr_guard (unique_constr attr (TRecord rt)) free_vars
+                 (EBinop OCons e (ELoc tbl))).
+      Proof.
+        intros * H_Gs H_Ge H_rt H_attr H_tbl H_e H_fv H_store H_env E_tbl H_wf.
+        unfold idx_wf_unique in H_wf; destruct H_wf as [ H_idx H_nd ].
+        cbn [keys_distinct] in H_nd.
+        exact (unique_guard_sound rt kt free_vars y e idx_e tbl l Gstore Genv store env
+                 H_Gs H_Ge H_rt H_attr H_tbl H_e H_fv H_store H_env E_tbl H_nd H_idx).
       Qed.
 
     End WithMap.
