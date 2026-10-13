@@ -285,6 +285,108 @@ Section WithMap.
         all: eauto with fiat2_hints. }
   Qed.
 
+  (* The equation in which an expression-only rewrite's semantic transparency
+     is used below.  type_of comes first on purpose: it is what pins Gstore,
+     Genv and t at once, and leaving them to be guessed from the tenv_wf
+     premises makes the wrong environment get chosen. *)
+  Lemma fold_expr_sem_eq : forall f (Gstore Genv : tenv) e t (store env : locals),
+      type_of Gstore Genv e t ->
+      (forall (Gstore : tenv), preserve_ty Gstore f) ->
+      (forall (Gstore : tenv) (store : locals), preserve_sem Gstore store f) ->
+      tenv_wf Gstore -> tenv_wf Genv ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      interp_expr store env (fold_expr f e) = interp_expr store env e.
+  Proof.
+    intros * H_t H_ty H_sem ? ? ? ?.
+    eapply (fold_expr_preserve_sem Gstore store f (H_ty Gstore) (H_sem Gstore store));
+      eassumption.
+  Qed.
+
+  (* An expression-only rewrite preserves any parameterized_wf.
+
+     fold_command id rewrites expressions and leaves the command skeleton
+     alone, so every premise of every rule survives: the typing premises by
+     fold_expr_preserve_ty, the assignment's obligation and the value of a test
+     in CIf by fold_expr_sem_eq.
+
+     The predicate is an arbitrary P, not one of the value_wf_with_globals
+     shape, and that is what makes the CLetMut case recurse at rm_from_pred P x
+     directly.  So a rewrite that descends into a shadowing binder's body is no
+     harder here than one that stops at it.
+
+     This is what carries an invariant the program itself established -- a
+     declared constraint, say -- across a whole phase of expression rewrites,
+     which are otherwise only known to preserve typing and semantics. *)
+  Lemma fold_command_id_preserve_parameterized_wf : forall f,
+      (forall (Gstore : tenv), preserve_ty Gstore f) ->
+      (forall (Gstore : tenv) (store : locals), preserve_sem Gstore store f) ->
+      forall c (P : string -> value -> Prop) (A : locals -> locals -> Prop)
+             (Gstore Genv : tenv),
+        tenv_wf Gstore -> tenv_wf Genv ->
+        parameterized_wf Gstore Genv P A c ->
+        parameterized_wf Gstore Genv P A (fold_command id f c).
+  Proof.
+    intros f H_ty H_sem.
+    induction c; simpl; intros * H_Gs H_Ge H_wf; inversion H_wf; subst.
+    (* CSkip *)
+    1: constructor.
+    (* CSeq *)
+    1:{ econstructor; [ eapply IHc1 | eapply IHc2 ]; eauto. }
+    (* CLet *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        eapply IHc; eauto with fiat2_hints. }
+    (* CLetMut: the body is rewritten even where it shadows, and the predicate
+       it is checked against is the relaxed rm_from_pred P x *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        eapply IHc; eauto with fiat2_hints. }
+    (* CAssign: the written value is unchanged, so the original obligation
+       discharges the new one *)
+    1:{ econstructor.
+        2: eassumption.
+        2: apply fold_expr_preserve_ty; eauto.
+        intros * H_A H_inv H_lws H_lwe.
+        erewrite fold_expr_sem_eq; [ | eauto .. ].
+        lazymatch goal with
+          H : forall _ _, _ -> _ -> _ -> _ -> P _ _ |- _ => apply H; assumption
+        end. }
+    (* CIf: the rewrite leaves the test's value alone, so each branch keeps the
+       assumption the original derivation gave it *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        1:{ eapply parameterized_wf_weaken; [ | eapply IHc1; eauto ].
+            intros * H_lws H_lwe H_inv [ H_A H_g ]; split; [ exact H_A | ].
+            erewrite <- fold_expr_sem_eq; [ exact H_g | eauto .. ]. }
+        1:{ eapply parameterized_wf_weaken; [ | eapply IHc2; eauto ].
+            intros * H_lws H_lwe H_inv [ H_A H_g ]; split; [ exact H_A | ].
+            erewrite <- fold_expr_sem_eq; [ exact H_g | eauto .. ]. } }
+    (* CForeach *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        eapply IHc; eauto with fiat2_hints. }
+  Qed.
+
+  (* The form the basic transformation phase is built from: every rewrite in it
+     is fold_command id applied to an expression rule, so the phase as a whole
+     keeps any parameterized_wf. *)
+  Corollary expr_transf_sound__preserve_parameterized_wf : forall f,
+      expr_transf_sound (locals:=locals) f ->
+      forall c (P : string -> value -> Prop) (A : locals -> locals -> Prop)
+             (Gstore Genv : tenv),
+        tenv_wf Gstore -> tenv_wf Genv ->
+        parameterized_wf Gstore Genv P A c ->
+        parameterized_wf Gstore Genv P A (fold_command id f c).
+  Proof.
+    unfold expr_transf_sound; intros f H_f.
+    apply fold_command_id_preserve_parameterized_wf;
+      unfold preserve_ty, preserve_sem; intros;
+      lazymatch goal with
+        H : context[_ -> _ /\ _], H' : type_of _ _ _ _ |- _ =>
+          apply H in H'; auto
+      end; intuition auto.
+  Qed.
+
   Lemma fold_command_id_sound : forall f,
       expr_transf_sound (locals:=locals) f ->
       transf_sound (locals:=locals) (fun _ _ => fold_command id f).
