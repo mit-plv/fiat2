@@ -32,6 +32,35 @@ Import ListNotations.
    elaboration, where the variables are in scope -- costs nothing and avoids
    both. *)
 
+(* A declared constraint, classified.
+
+   constr is a boolean expression over a row and the table, which is the right
+   notion to *mean* and the wrong notion to *match*: a transformation that
+   wants to know whether a declaration is a primary key would have to compare
+   expressions, and the language has no equality decider for them.  A
+   declaration names its class instead, and constr_of_decl says what the class
+   means.  DCheck is the general case, so nothing becomes inexpressible --
+   every constr is constr_of_decl rt (DCheck (c_row k) (c_body k)) -- and a
+   declaration written that way is simply one no rewrite recognizes, which
+   costs an optimization and never soundness.
+
+   The classes are chosen by what some rewrite can exploit, not by what can be
+   written. *)
+Inductive decl : Type :=
+(* attr is a key: no two rows of the table agree on it *)
+| DUnique (attr : string)
+(* row is the binder, body the predicate every row must satisfy *)
+| DCheck (row : string) (body : expr).
+
+Definition constr_of_decl (row_ty : type) (d : decl) : constr :=
+  match d with
+  | DUnique attr => unique_constr attr row_ty
+  | DCheck row body => mk_constr row body
+  end.
+
+Definition constrs_of_decls (row_ty : type) (ds : list decl) : list constr :=
+  List.map (constr_of_decl row_ty) ds.
+
 Inductive scommand : Type :=
 | SSkip
 | SSeq (c1 c2 : scommand)
@@ -39,7 +68,7 @@ Inductive scommand : Type :=
 | SLetMut (e : expr) (x : string) (c : scommand)
 (* x is born empty, holds rows of row_ty, and every constraint in ks must hold
    of it for as long as it is in scope *)
-| SLetConstrained (x : string) (row_ty : type) (ks : list constr) (c : scommand)
+| SLetConstrained (x : string) (row_ty : type) (ds : list decl) (c : scommand)
 (* policy is what runs instead of the write when a constraint would break; it
    is dead syntax when x carries no constraint *)
 | SAssign (x : string) (e : expr) (policy : scommand)
@@ -49,9 +78,9 @@ Inductive scommand : Type :=
 (* Which constraints are in force on which variable.  Entries are added by a
    declaration and removed when the variable is shadowed, so a write is checked
    against exactly the constraints that are standing where it occurs. *)
-Definition cenv : Type := list (string * list constr).
+Definition cenv : Type := list (string * (type * list decl)).
 
-Fixpoint cenv_lookup (x : string) (ce : cenv) : option (list constr) :=
+Fixpoint cenv_lookup (x : string) (ce : cenv) : option (type * list decl) :=
   match ce with
   | nil => None
   | (y, ks) :: ce => if String.eqb y x then Some ks else cenv_lookup x ce
@@ -80,14 +109,15 @@ Fixpoint elab (ce : cenv) (free_vars : list string) (sc : scommand) : command :=
   | SSeq c1 c2 => CSeq (elab ce free_vars c1) (elab ce free_vars c2)
   | SLet e x c => CLet e x (elab ce (x :: free_vars) c)
   | SLetMut e x c => CLetMut e x (elab (cenv_rm x ce) free_vars c)
-  | SLetConstrained x row_ty ks c =>
+  | SLetConstrained x row_ty ds c =>
       CLetMut (EAtom (ANil (Some row_ty))) x
-        (elab ((x, ks) :: cenv_rm x ce) free_vars c)
+        (elab ((x, (row_ty, ds)) :: cenv_rm x ce) free_vars c)
   | SAssign x e policy =>
       match cenv_lookup x ce with
       | None => CAssign x e
-      | Some ks =>
-          CIf (conj_guards ks free_vars e) (CAssign x e) (elab ce free_vars policy)
+      | Some (row_ty, ds) =>
+          CIf (conj_guards (constrs_of_decls row_ty ds) free_vars e)
+            (CAssign x e) (elab ce free_vars policy)
       end
   | SIf e c1 c2 => CIf e (elab ce free_vars c1) (elab ce free_vars c2)
   | SForeach e x c => CForeach e x (elab ce (x :: free_vars) c)
@@ -128,16 +158,17 @@ Section WithWord.
      declaration itself supplies the base case, since the variable is born
      empty (constrs_declared). *)
   Theorem elab_constr_wf :
-    forall sc ce free_vars (Gstore Genv : tenv) tbl row_ty ks
+    forall sc ce free_vars (Gstore Genv : tenv) tbl row_ty ds
            (A : locals -> locals -> Prop),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
       incl (get_free_vars Genv) free_vars ->
       map.get Gstore tbl = Some (TList row_ty) ->
-      Forall (constr_wf row_ty) ks ->
-      cenv_lookup tbl ce = Some ks ->
+      Forall (constr_wf row_ty) (constrs_of_decls row_ty ds) ->
+      cenv_lookup tbl ce = Some (row_ty, ds) ->
       well_typed Gstore Genv (elab ce free_vars sc) ->
       parameterized_wf Gstore Genv
-        (value_wf_with_globals (constrs_hold ks) (tbl :: nil)) A
+        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+           (tbl :: nil)) A
         (elab ce free_vars sc).
   Proof.
     (* the inversion of the elaborated command is done case by case, since at
@@ -176,7 +207,8 @@ Section WithWord.
             1: rewrite_map_get_put_goal; eauto.
             1: cbn [cenv_lookup]; rewrite E, cenv_lookup_rm_diff; auto. } }
     (* SAssign *)
-    1:{ destruct (cenv_lookup x ce) eqn:E_look; invert_well_typed.
+    1:{ destruct (cenv_lookup x ce) as [ [ row_ty' ds' ] | ] eqn:E_look;
+          invert_well_typed.
         2:{ (* x carries no constraint, so it is not tbl, and the write cannot
                break tbl's constraints *)
             econstructor; eauto.
@@ -190,7 +222,8 @@ Section WithWord.
         destruct (String.eqb x tbl) eqn:E.
         1:{ (* the write is checked against exactly tbl's constraints *)
             rewrite eqb_eq in E; subst.
-            rewrite H_ce in E_look; do_injection.
+            rewrite H_ce in E_look; symmetry in E_look.
+            injection E_look as H_rt' H_ds'; subst.
             eapply checked_assign_wf with (row_ty := row_ty); eauto.
             lazymatch goal with
               H: type_of Gstore Genv e ?t |- _ =>
@@ -217,16 +250,18 @@ Section WithWord.
      invariant because the variable is born empty, and elaboration carries it
      over every write. *)
   Corollary elab_prog_constr_wf :
-    forall sc free_vars (Gstore Genv : tenv) (store env : locals) tbl row_ty ks,
+    forall sc free_vars (Gstore Genv : tenv) (store env : locals) tbl row_ty ds,
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
       incl (get_free_vars Genv) free_vars ->
       map.get Gstore tbl = Some (TList row_ty) ->
-      Forall (constr_wf row_ty) ks ->
-      well_typed Gstore Genv (elab ((tbl, ks) :: nil) free_vars sc) ->
+      Forall (constr_wf row_ty) (constrs_of_decls row_ty ds) ->
+      well_typed Gstore Genv (elab ((tbl, (row_ty, ds)) :: nil) free_vars sc) ->
       locals_wf Gstore (map.put store tbl (VList nil)) -> locals_wf Genv env ->
-      holds_for_all_entries (value_wf_with_globals (constrs_hold ks) (tbl :: nil))
+      holds_for_all_entries
+        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+           (tbl :: nil))
         (interp_command (map.put store tbl (VList nil)) env
-           (elab ((tbl, ks) :: nil) free_vars sc)).
+           (elab ((tbl, (row_ty, ds)) :: nil) free_vars sc)).
   Proof.
     intros.
     eapply parameterized_wf__preserve_P
