@@ -197,6 +197,61 @@ Section WithConcreteMaps.
     1: apply positive_id_row_wf.
   Qed.
 
+  (* ---------------------------------------------------------------------
+     Both exploited classes at once.
+
+     Declaring the primary key alongside the check constraint, elaboration
+     emits a lookup-ready filter for the key and a single test of the written
+     row for the check -- neither of which reads the table once per row, which
+     is what the general guard would do twice over.
+     --------------------------------------------------------------------- *)
+  Definition both_constrs : list decl :=
+    [ DUnique "id"; DRow "_r" (c_body positive_id) ].
+
+  Lemma both_constrs_wf : Forall (decl_wf (tenv:=ctenv) row_ty) both_constrs.
+  Proof.
+    unfold both_constrs; constructor; [ | constructor; [ | constructor ] ].
+    1:{ cbn [decl_wf]. exists [("id", TInt); ("name", TString)], TInt.
+        split; reflexivity. }
+    1:{ cbn [decl_wf]. split.
+        1: apply positive_id_hygienic.
+        1: apply positive_id_row_wf. }
+  Qed.
+
+  Definition both_prog : scommand :=
+    SLetConstrained "users" row_ty both_constrs body.
+
+  Definition both_core : command := elab nil (get_free_vars init_Genv) both_prog.
+
+  Compute (typecheck init_Gstore init_Genv both_core).
+
+  Theorem both_keeps_constraints : forall (store env : clocals),
+      locals_wf init_Gstore store ->
+      locals_wf init_Genv env ->
+      holds_for_all_entries
+        (value_wf_with_globals
+           (constrs_hold (constrs_of_decls row_ty both_constrs)) ["users"])
+        (interp_command (map.put store "users" (VList nil)) env
+           (elab [("users", (row_ty, both_constrs))] (get_free_vars init_Genv) body)).
+  Proof.
+    intros.
+    eapply elab_prog_constr_wf with (row_ty := row_ty) (Gstore := body_Gstore).
+    1: apply body_Gstore_wf.
+    1: apply init_Genv_wf.
+    1: apply row_ty_wf.
+    1: apply incl_refl.
+    1: unfold body_Gstore; rewrite_map_get_put_goal; reflexivity.
+    1: apply both_constrs_wf.
+    1:{ eapply command_typechecker_sound.
+        1: apply body_Gstore_wf.
+        1: apply init_Genv_wf.
+        reflexivity. }
+    1:{ unfold body_Gstore.
+        apply locals_wf_step with (t := TList row_ty); auto.
+        repeat constructor. }
+    1: assumption.
+  Qed.
+
   (* The same program on a concrete input: the third row repeats a key, so it
      is rejected and the table keeps the two rows it accepted. *)
   Definition demo_store : clocals :=

@@ -50,12 +50,15 @@ Import ListNotations.
 Inductive decl : Type :=
 (* attr is a key: no two rows of the table agree on it *)
 | DUnique (attr : string)
+(* body holds of every row, and reads only the row it is given *)
+| DRow (row : string) (body : expr)
 (* row is the binder, body the predicate every row must satisfy *)
 | DCheck (row : string) (body : expr).
 
 Definition constr_of_decl (row_ty : type) (d : decl) : constr :=
   match d with
   | DUnique attr => unique_constr attr row_ty
+  | DRow row body => mk_constr row body
   | DCheck row body => mk_constr row body
   end.
 
@@ -81,6 +84,7 @@ Definition decl_guard (row_ty : type) (tbl : string) (free_vars : list string)
   (d : decl) (e : expr) : expr :=
   match d, cons_onto tbl e with
   | DUnique attr, Some row => unique_guard_let tbl attr row
+  | DRow r b, Some row => row_guard (mk_constr r b) free_vars row
   | _, _ => constr_guard (constr_of_decl row_ty d) free_vars e
   end.
 
@@ -204,6 +208,7 @@ Section WithWord.
     match d with
     | DUnique attr =>
         exists rt kt, row_ty = TRecord rt /\ access_record rt attr = Success kt
+    | DRow row body => row <> c_all /\ row_constr_wf row_ty (mk_constr row body)
     | DCheck row body => constr_wf row_ty (mk_constr row body)
     end.
 
@@ -214,6 +219,8 @@ Section WithWord.
     destruct d; cbn [constr_of_decl decl_wf]; intros H_wf H_d.
     1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
         eapply unique_constr_wf; eauto. }
+    1:{ destruct H_d as [ H_ne H_row ].
+        apply row_constr_wf__constr_wf; assumption. }
     1: assumption.
   Qed.
 
@@ -246,8 +253,19 @@ Section WithWord.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv.
     unfold decl_guard.
-    destruct d as [ attr | r b ]; destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
-    2,3,4: eapply constr_guard_ty; eauto using decl_wf__constr_wf.
+    destruct d as [ attr | r b | r b ];
+      destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
+    2,4,5,6: eapply constr_guard_ty; eauto using decl_wf__constr_wf.
+    2:{ (* a row constraint tests the row being written *)
+        destruct H_d as [ H_ne H_row ].
+        apply cons_onto_eq in E_cons; subst.
+        eapply row_guard_ty with (row_ty := row_ty).
+        1: exact H_Gs.
+        1: exact H_Ge.
+        1: exact H_wf.
+        1: exact H_row.
+        1: eapply type_of_cons_inv; exact H_u.
+        1: exact H_fv. }
     (* the cheap guard, for a primary key written by a cons onto the table *)
     destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
     apply cons_onto_eq in E_cons; subst.
@@ -296,12 +314,34 @@ Section WithWord.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv H_guard.
     unfold decl_guard in H_guard.
-    destruct d as [ attr | r b ]; destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
-    2,3,4: (eapply constr_guard_sound with (row_ty := row_ty) (free_vars := free_vars);
-            [ exact H_Gs | exact H_Ge | exact H_wf
-            | apply decl_wf__constr_wf; assumption
-            | exact H_u | exact H_fv | exact H_store | exact H_env
-            | exact H_guard ]).
+    destruct d as [ attr | r b | r b ];
+      destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
+    2,4,5,6: (eapply constr_guard_sound with (row_ty := row_ty) (free_vars := free_vars);
+              [ exact H_Gs | exact H_Ge | exact H_wf
+              | apply decl_wf__constr_wf; assumption
+              | exact H_u | exact H_fv | exact H_store | exact H_env
+              | exact H_guard ]).
+    2:{ (* a row constraint: its guard is the declared guard, by
+           row_split_guard_sound, so the declared guard passed too *)
+        destruct H_d as [ H_ne H_row ].
+        apply cons_onto_eq in E_cons; subst.
+        cbn [constr_of_decl] in H_inv |- *.
+        destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
+          as [ l [ E_tbl H_l ] ].
+        assert (H_at : constr_holds (mk_constr r b) (get_local store tbl))
+          by (unfold get_local; rewrite E_tbl; apply H_inv; exact E_tbl).
+        eapply constr_guard_sound with (row_ty := row_ty) (free_vars := free_vars);
+          [ exact H_Gs | exact H_Ge | exact H_wf
+          | apply row_constr_wf__constr_wf; [ exact H_ne | exact H_row ]
+          | econstructor; [ constructor
+                          | eapply type_of_cons_inv; exact H_u
+                          | constructor; exact H_tbl ]
+          | exact H_fv | exact H_store | exact H_env | ].
+        erewrite row_split_guard_sound with (row_ty := row_ty);
+          [ exact H_guard
+          | exact H_Gs | exact H_Ge | exact H_wf | exact H_ne | exact H_row
+          | exact H_tbl | eapply type_of_cons_inv; exact H_u | exact H_fv
+          | exact H_store | exact H_env | exact H_at ]. }
     (* the cheap guard *)
     destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
     apply cons_onto_eq in E_cons; subst.
@@ -434,8 +474,21 @@ Section WithWord.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv.
     unfold decl_guard.
-    destruct d as [ attr | r b ]; destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
-    2,3,4: reflexivity.
+    destruct d as [ attr | r b | r b ];
+      destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
+    2,4,5,6: reflexivity.
+    2:{ (* a row constraint: this is exactly row_split_guard_sound *)
+        destruct H_d as [ H_ne H_row ].
+        apply cons_onto_eq in E_cons; subst.
+        cbn [constr_of_decl] in H_inv |- *.
+        destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
+          as [ l [ E_tbl H_l ] ].
+        symmetry.
+        eapply row_split_guard_sound with (row_ty := row_ty);
+          [ exact H_Gs | exact H_Ge | exact H_wf | exact H_ne | exact H_row
+          | exact H_tbl | eapply type_of_cons_inv; exact H_u | exact H_fv
+          | exact H_store | exact H_env
+          | unfold get_local; rewrite E_tbl; apply H_inv; exact E_tbl ]. }
     destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
     apply cons_onto_eq in E_cons; subst.
     cbn [constr_of_decl].
