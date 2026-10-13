@@ -407,6 +407,110 @@ Section WithWord.
         exact (proj1 (Forall_map _ _ _) H_h). }
   Qed.
 
+  (* ---------------------------------------------------------------------
+     The guard elaboration emits decides what the declared guard decides.
+
+     decls_guard_sound above is the half the invariant needs.  This is the
+     whole equality, and it says that choosing a class-specific guard changes
+     no behaviour whatever -- including which writes run their policy -- so
+     elab is an optimization of the reference elaboration that always emits
+     conj_guards, not a different language.  It holds in any store where the
+     declaration already holds of the table, which is everywhere the program
+     can reach.
+     --------------------------------------------------------------------- *)
+  Lemma decl_guard_agrees :
+    forall row_ty d free_vars tbl u (Gstore Genv : tenv) (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+      decl_wf row_ty d ->
+      map.get Gstore tbl = Some (TList row_ty) ->
+      type_of Gstore Genv u (TList row_ty) ->
+      incl (get_free_vars Genv) free_vars ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      (forall v, map.get store tbl = Some v ->
+                 constr_holds (constr_of_decl row_ty d) v) ->
+      interp_expr store env (decl_guard row_ty tbl free_vars d u)
+      = interp_expr store env
+          (constr_guard (constr_of_decl row_ty d) free_vars u).
+  Proof.
+    intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv.
+    unfold decl_guard.
+    destruct d as [ attr | r b ]; destruct (cons_onto tbl u) as [ row | ] eqn:E_cons.
+    2,3,4: reflexivity.
+    destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    apply cons_onto_eq in E_cons; subst.
+    cbn [constr_of_decl].
+    destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
+      as [ l [ E_tbl H_l ] ].
+    assert (H_nd : NoDup (List.map (row_key attr) l)).
+    { eapply (proj1 (unique_constr_holds_iff attr rt kt l H_wf H_attr H_l)).
+      cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+    eapply unique_guard_let_sound with (kt := kt) (l := l);
+      [ exact H_Gs | exact H_Ge | exact H_wf | exact H_attr | exact H_tbl
+      | eapply type_of_cons_inv; exact H_u | exact H_fv | exact H_store
+      | exact H_env | exact E_tbl | exact H_nd ].
+  Qed.
+
+  Lemma decls_guard_agrees :
+    forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+      Forall (decl_wf row_ty) ds ->
+      map.get Gstore tbl = Some (TList row_ty) ->
+      type_of Gstore Genv u (TList row_ty) ->
+      incl (get_free_vars Genv) free_vars ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      (forall v, map.get store tbl = Some v ->
+                 Forall (fun d => constr_holds (constr_of_decl row_ty d) v) ds) ->
+      interp_expr store env (decls_guard row_ty tbl free_vars ds u)
+      = interp_expr store env
+          (conj_guards (constrs_of_decls row_ty ds) free_vars u).
+  Proof.
+    induction ds as [ | d ds IH ]; intros * H_Gs H_Ge H_wf H_ds H_tbl H_u H_fv
+      H_store H_env H_inv.
+    1: reflexivity.
+    invert_Forall.
+    cbn [decls_guard constrs_of_decls List.map conj_guards fold_right].
+    rewrite !interp_EBinop.
+    f_equal.
+    1:{ eapply decl_guard_agrees with (row_ty := row_ty) (tbl := tbl)
+                                      (free_vars := free_vars);
+          [ exact H_Gs | exact H_Ge | exact H_wf | eassumption | exact H_tbl
+          | exact H_u | exact H_fv | exact H_store | exact H_env
+          | intros v H_v; specialize (H_inv v H_v); invert_Forall; assumption ]. }
+    1:{ eapply IH with (row_ty := row_ty) (tbl := tbl) (free_vars := free_vars);
+          [ exact H_Gs | exact H_Ge | exact H_wf | eassumption | exact H_tbl
+          | exact H_u | exact H_fv | exact H_store | exact H_env
+          | intros v H_v; specialize (H_inv v H_v); invert_Forall; assumption ]. }
+  Qed.
+
+  Corollary decls_guard_agrees_constrs :
+    forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+      Forall (decl_wf row_ty) ds ->
+      map.get Gstore tbl = Some (TList row_ty) ->
+      type_of Gstore Genv u (TList row_ty) ->
+      incl (get_free_vars Genv) free_vars ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      holds_for_all_entries
+        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+           (tbl :: nil)) store ->
+      interp_expr store env (decls_guard row_ty tbl free_vars ds u)
+      = interp_expr store env
+          (conj_guards (constrs_of_decls row_ty ds) free_vars u).
+  Proof.
+    intros * H_Gs H_Ge H_wf H_ds H_tbl H_u H_fv H_store H_env H_inv.
+    eapply decls_guard_agrees with (row_ty := row_ty) (tbl := tbl)
+                                   (free_vars := free_vars);
+      [ exact H_Gs | exact H_Ge | exact H_wf | exact H_ds | exact H_tbl
+      | exact H_u | exact H_fv | exact H_store | exact H_env | ].
+    intros v H_v. pose proof (H_inv tbl v H_v) as H_at.
+    unfold value_wf_with_globals in H_at; invert_Forall.
+    lazymatch goal with
+      H: tbl <> tbl \/ _ |- _ => destruct H as [ H_ne | H_h ]; [ congruence | ]
+    end.
+    unfold constrs_hold, constrs_of_decls in H_h.
+    exact (proj1 (Forall_map _ _ _) H_h).
+  Qed.
+
   Lemma checked_assign_wf_decls :
     forall row_ty ds free_vars tbl u policy (A : locals -> locals -> Prop)
            (Gstore Genv : tenv),

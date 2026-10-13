@@ -457,4 +457,76 @@ Section WithWord.
     1: exact H_guard.
   Qed.
 
+
+  (* And the elaboration-ready guard decides what the declared guard decides,
+     so emitting it in place of the declared one changes no behaviour at all --
+     including which writes run their policy. *)
+  Theorem unique_guard_let_sound :
+    forall tbl attr rt kt free_vars row l (Gstore Genv : tenv) (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf (TRecord rt) ->
+      access_record rt attr = Success kt ->
+      map.get Gstore tbl = Some (TList (TRecord rt)) ->
+      type_of Gstore Genv row (TRecord rt) ->
+      incl (get_free_vars Genv) free_vars ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      map.get store tbl = Some (VList l) ->
+      NoDup (List.map (row_key attr) l) ->
+      interp_expr store env (unique_guard_let tbl attr row)
+      = interp_expr store env
+          (constr_guard (unique_constr attr (TRecord rt)) free_vars
+             (EBinop OCons row (ELoc tbl))).
+  Proof.
+    intros * H_Gs H_Ge H_rt H_attr H_tbl H_row H_fv H_store H_env E_tbl H_nd.
+    assert (H_rv : type_of_value (interp_expr store env row) (TRecord rt))
+      by (eapply type_sound; eauto).
+    assert (H_Ge' : tenv_wf (map.put Genv pk_row (TRecord rt)))
+      by (apply tenv_wf_step; assumption).
+    assert (H_env' : locals_wf (map.put Genv pk_row (TRecord rt))
+                       (map.put env pk_row (interp_expr store env row)))
+      by (apply locals_wf_step; assumption).
+    assert (H_fv' : incl (get_free_vars (map.put Genv pk_row (TRecord rt)))
+                      (pk_row :: free_vars))
+      by eauto using incl_tran, incl_cons_step, get_free_vars_put.
+    assert (H_pk : type_of Gstore (map.put Genv pk_row (TRecord rt))
+                     (EVar pk_row) (TRecord rt))
+      by (constructor; apply map.get_put_same).
+    assert (H_k : constr_wf (TRecord rt) (unique_constr attr (TRecord rt)))
+      by (eapply unique_constr_wf; eassumption).
+    (* the two writes store the same value *)
+    assert (E_val : interp_expr store (map.put env pk_row (interp_expr store env row))
+                      (EBinop OCons (EVar pk_row) (ELoc tbl))
+                    = interp_expr store env (EBinop OCons row (ELoc tbl))).
+    { rewrite !interp_EBinop, !interp_ELoc, interp_EVar; unfold get_local.
+      rewrite map.get_put_same, E_tbl; reflexivity. }
+    (* the left side, by fresh_guard_sound in the environment the ELet makes *)
+    unfold unique_guard_let; rewrite interp_ELet.
+    rewrite (fresh_guard_sound tbl attr pk_scan rt kt (pk_row :: free_vars)
+               (EVar pk_row) l Gstore (map.put Genv pk_row (TRecord rt)) store
+               (map.put env pk_row (interp_expr store env row))
+               H_Gs H_Ge' H_rt H_attr H_tbl H_pk H_fv' H_store H_env' E_tbl H_nd
+               (eq_refl : free_immut_in pk_scan (EVar pk_row) = false)).
+    (* both declared guards read the constraint off the value being stored *)
+    erewrite constr_guard_interp with (row_ty := TRecord rt) (Gstore := Gstore)
+      (Genv := map.put Genv pk_row (TRecord rt)).
+    2: exact H_Gs.
+    2: exact H_Ge'.
+    2: exact H_rt.
+    2: exact H_k.
+    2:{ econstructor; [ constructor | exact H_pk | constructor; exact H_tbl ]. }
+    2: exact H_fv'.
+    2: exact H_store.
+    2: exact H_env'.
+    erewrite constr_guard_interp with (row_ty := TRecord rt) (Gstore := Gstore)
+      (Genv := Genv).
+    2: exact H_Gs.
+    2: exact H_Ge.
+    2: exact H_rt.
+    2: exact H_k.
+    2:{ econstructor; [ constructor | exact H_row | constructor; exact H_tbl ]. }
+    2: exact H_fv.
+    2: exact H_store.
+    2: exact H_env.
+    rewrite E_val; reflexivity.
+  Qed.
+
 End WithWord.
