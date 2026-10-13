@@ -325,6 +325,42 @@ end.
     destruct a; eauto with transf_hints.
   Qed.
 
+  (* The basic phase keeps whatever the program established.
+
+     Each basic rewrite is fold_command id applied to an expression rule, so
+     none of them touches the command skeleton, and a semantics-preserving
+     expression rewrite preserves any parameterized_wf.  That matters because
+     this phase runs before any index is installed: an invariant a declared
+     constraint puts on a table has to survive it to be usable at the
+     installation. *)
+  Lemma mk_basic_transf_preserve_parameterized_wf :
+    forall a c P A (Gstore Genv : ctenv),
+      tenv_wf Gstore -> tenv_wf Genv ->
+      parameterized_wf (locals:=clocals) Gstore Genv P A c ->
+      parameterized_wf Gstore Genv P A (mk_basic_transf a c).
+  Proof.
+    intros * H_Gs H_Ge H_wf. destruct a; cbn [mk_basic_transf];
+      unfold swap_if_nil_transf, merge_if_transf, split_if_transf,
+        swap_flatmap_if_transf, if_nil_into_flatmap_transf, swap_conjuncts_transf,
+        annotate_collection_transf, push_down_collection_transf,
+        flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
+        flatmap_if_transf, swap_flatmap_likebag_transf;
+      eapply expr_transf_sound__preserve_parameterized_wf;
+      eauto with transf_hints.
+  Qed.
+
+  Lemma compose_basic_transfs_preserve_parameterized_wf :
+    forall fs c P A (Gstore Genv : ctenv),
+      tenv_wf Gstore -> tenv_wf Genv ->
+      parameterized_wf (locals:=clocals) Gstore Genv P A c ->
+      parameterized_wf Gstore Genv P A
+        (compose_basic_transfs (map mk_basic_transf fs) c).
+  Proof.
+    induction fs; cbn [map compose_basic_transfs fold_right]; auto; intros.
+    unfold Basics.compose.
+    apply mk_basic_transf_preserve_parameterized_wf; auto.
+  Qed.
+
   Lemma apply_below_n_letmuts_sound : forall n f,
       transf_sound (locals:=clocals) f ->
       transf_sound (locals:=clocals) (apply_below_n_letmuts n f).
