@@ -1,5 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute.
+  fiat2.CollectionTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
+  fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
@@ -618,4 +619,228 @@ end.
     repeat destruct_match_hyp. subst.
     eapply mk_idx_related_transfs_sound; eauto.
   Qed.
+
+  (* ====================================================================
+     The constraint-dependent installation, joined to this pipeline.
+
+     A declared index cannot be chosen the way the others are.  mk_idx hands
+     compo_idx a list of plain IndexInterface.ok indexes, and "this dictionary
+     represents that table" is not an ok fact for a primary-key index: it holds
+     of tables with distinct keys and of no others.  So the gated installation
+     of UniqueIndexGate runs as its own layer, and what it reads is the
+     declaration environment the program was elaborated with.
+
+     It is placed between the two existing phases.  The basic phase runs first,
+     as it already does, because the index rules match annotated forms; the
+     unconstrained index layer runs last and needs nothing from the cenv, being
+     sound for every well-typed program.  Only the middle layer has a premise,
+     and only the first phase has to be shown to keep it.
+     ==================================================================== *)
+
+  (* The basic phase leaves a declared variable's initial value alone: it is an
+     annotated empty list, and every basic rule matches a compound expression.
+     This is what lets the gate's premise cross the phase -- see
+     fold_command_id_preserve_cenv_respected for why a semantic argument would
+     not be enough. *)
+  Lemma mk_basic_transf_letmut_atom : forall bt (ai : atom) tbl body,
+      mk_basic_transf bt (CLetMut (EAtom ai) tbl body)
+      = CLetMut (EAtom ai) tbl (mk_basic_transf bt body).
+  Proof. destruct bt; reflexivity. Qed.
+
+  Lemma compose_basic_transfs_letmut_atom : forall fs (ai : atom) tbl body,
+      exists body',
+        compose_basic_transfs (map mk_basic_transf fs) (CLetMut (EAtom ai) tbl body)
+        = CLetMut (EAtom ai) tbl body'.
+  Proof.
+    induction fs; cbn [map compose_basic_transfs fold_right]; intros.
+    1: eexists; reflexivity.
+    unfold Basics.compose.
+    destruct (IHfs ai tbl body) as [ body' E ]; rewrite E.
+    rewrite mk_basic_transf_letmut_atom. eexists; reflexivity.
+  Qed.
+
+  Lemma mk_basic_transf_preserve_cenv_respected :
+    forall bt ce (Gstore Genv : ctenv) (ai : atom) tbl body,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      cenv_respected (locals:=clocals) ce Gstore Genv (CLetMut (EAtom ai) tbl body) ->
+      cenv_respected (locals:=clocals) ce Gstore Genv
+        (mk_basic_transf bt (CLetMut (EAtom ai) tbl body)).
+  Proof.
+    intros * H_Gs H_Ge H_ce; destruct bt; cbn [mk_basic_transf];
+      unfold swap_if_nil_transf, merge_if_transf, split_if_transf,
+        swap_flatmap_if_transf, if_nil_into_flatmap_transf, swap_conjuncts_transf,
+        annotate_collection_transf, push_down_collection_transf,
+        flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
+        flatmap_if_transf, swap_flatmap_likebag_transf;
+      eapply (expr_transf_sound__preserve_cenv_respected (tenv := ctenv) (locals := clocals));
+      eauto with transf_hints.
+  Qed.
+
+  Lemma compose_basic_transfs_preserve_cenv_respected :
+    forall fs ce (Gstore Genv : ctenv) (ai : atom) tbl body,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      cenv_respected (locals:=clocals) ce Gstore Genv (CLetMut (EAtom ai) tbl body) ->
+      cenv_respected (locals:=clocals) ce Gstore Genv
+        (compose_basic_transfs (map mk_basic_transf fs) (CLetMut (EAtom ai) tbl body)).
+  Proof.
+    induction fs; cbn [map compose_basic_transfs fold_right]; auto; intros.
+    unfold Basics.compose.
+    destruct (compose_basic_transfs_letmut_atom fs ai tbl body) as [ body' E ].
+    rewrite E.
+    apply mk_basic_transf_preserve_cenv_respected; auto.
+    rewrite <- E. apply IHfs; auto.
+  Qed.
+
+  (* The unconstrained index layer on its own, as apply_all_transfs_sound
+     already proves it inside its own composition. *)
+  Definition idx_transfs_of (reps : nat) (icss : list (list index_choice)) :
+    list (ctenv -> ctenv -> command -> command) :=
+    map (fun ics =>
+           let '(idxs, transfs, _) := mk_idxs O reps ics in
+           mk_idx_related_transfs (mk_compo_idx idxs) (mk_idx_use_transfs transfs)) icss.
+
+  Lemma compose_all_idx_transfs_of_sound : forall reps icss,
+      transf_sound (locals:=clocals) (compose_all_idx_transfs O (idx_transfs_of reps icss)).
+  Proof.
+    intros. apply compose_all_idx_transfs_sound.
+    rewrite Forall_forall; intros.
+    unfold idx_transfs_of in *.
+    rewrite in_map_iff in *.
+    destruct_exists; intuition idtac.
+    repeat destruct_match_hyp. subst.
+    eapply mk_idx_related_transfs_sound; eauto.
+  Qed.
+
+  (* A declared index is chosen by naming the attribute the declaration is
+     about; which rules it brings is fixed, as it is for the others. *)
+  Variant constrained_index_choice :=
+    | UniqueDictIdx (attr : string).
+
+  Definition mk_constrained_idx_transf (ce : cenv) (cic : constrained_index_choice) :
+    ctenv -> ctenv -> command -> command :=
+    match cic with
+    | UniqueDictIdx attr =>
+        apply_unique_idx_transfs "hole" attr "tup" "acc" "id_tag" "aux_tag" ce
+          (unique_lookup_transf attr "id_tag" "aux_tag" "y")
+    end.
+
+  Definition apply_all_transfs_constrained (ce : cenv) (reps : nat)
+    (fs : list basic_transf) (cic : option constrained_index_choice)
+    (icss : list (list index_choice)) (Gstore Genv : ctenv) : command -> command :=
+    Basics.compose
+      (compose_all_idx_transfs O (idx_transfs_of reps icss) Gstore Genv)
+      (Basics.compose
+         (match cic with
+          | None => id
+          | Some cic => mk_constrained_idx_transf ce cic Gstore Genv
+          end)
+         (compose_basic_transfs (map mk_basic_transf fs))).
+
+  Theorem apply_all_transfs_constrained_sound :
+    forall ce reps fs cic icss (Gstore Genv : ctenv) (ai : atom) tbl body,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      well_typed Gstore Genv (CLetMut (EAtom ai) tbl body) ->
+      cenv_respected (locals:=clocals) ce Gstore Genv (CLetMut (EAtom ai) tbl body) ->
+      well_typed Gstore Genv
+        (apply_all_transfs_constrained ce reps fs cic icss Gstore Genv
+           (CLetMut (EAtom ai) tbl body))
+      /\ forall (store env : clocals),
+          locals_wf Gstore store -> locals_wf Genv env ->
+          interp_command store env
+            (apply_all_transfs_constrained ce reps fs cic icss Gstore Genv
+               (CLetMut (EAtom ai) tbl body))
+          = interp_command store env (CLetMut (EAtom ai) tbl body).
+  Proof.
+    intros * H_Gs H_Ge H_wt H_ce.
+    unfold apply_all_transfs_constrained, Basics.compose.
+    (* the basic phase: sound, and it keeps the gate's premise *)
+    pose proof (compose_basic_transfs_sound fs Gstore Genv _ H_Gs H_Ge H_wt)
+      as [ H_wt1 H_sem1 ].
+    pose proof (compose_basic_transfs_preserve_cenv_respected
+                  fs ce Gstore Genv ai tbl body H_Gs H_Ge H_ce) as H_ce1.
+    cbn in H_wt1, H_sem1.
+    (* the gated layer: sound where the declarations say it may fire *)
+    assert (H_mid :
+             well_typed Gstore Genv
+               (match cic with
+                | None => id
+                | Some cic => mk_constrained_idx_transf ce cic Gstore Genv
+                end (compose_basic_transfs (map mk_basic_transf fs)
+                       (CLetMut (EAtom ai) tbl body)))
+             /\ forall (store env : clocals),
+                 locals_wf Gstore store -> locals_wf Genv env ->
+                 interp_command store env
+                   (match cic with
+                    | None => id
+                    | Some cic => mk_constrained_idx_transf ce cic Gstore Genv
+                    end (compose_basic_transfs (map mk_basic_transf fs)
+                           (CLetMut (EAtom ai) tbl body)))
+                 = interp_command store env
+                     (compose_basic_transfs (map mk_basic_transf fs)
+                        (CLetMut (EAtom ai) tbl body))).
+    1:{ destruct cic as [ [ attr ] | ]; [ | split; auto ].
+        cbn [mk_constrained_idx_transf].
+        apply (unique_idx_pipeline_sound "hole" attr "tup" "acc"
+                 ltac:(discriminate) "id_tag" "aux_tag" ltac:(discriminate) "y");
+          assumption. }
+    destruct H_mid as [ H_wt2 H_sem2 ].
+    (* the unconstrained index layer: sound for every well-typed program *)
+    pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H_Gs H_Ge H_wt2)
+      as [ H_wt3 H_sem3 ].
+    split; [ assumption | ].
+    intros store env H_lws H_lwe.
+    rewrite H_sem3 by assumption.
+    rewrite H_sem2 by assumption.
+    apply H_sem1; assumption.
+  Qed.
+
+
+  (* The annotation a program is optimized with, now also carrying the
+     declaration environment it was elaborated with and which declared index to
+     install.  A separate variant, since the existing one is what every
+     unconstrained example is written against. *)
+  Variant canno_command :=
+    | CAC (ce : cenv) (basic_transfs : list basic_transf)
+        (constrained_choice : option constrained_index_choice)
+        (all_index_choices : list (list index_choice)) (c : command).
+
+  Definition apply_optimize_anno_constrained (ac : canno_command) (Gstore Genv : ctenv) :=
+    match ac with
+    | CAC ce fs cic icss c =>
+        apply_all_transfs_constrained ce 10000 fs cic icss Gstore Genv c
+    end.
+
+  (* The end of the chain: on a program the surface language elaborated, the
+     whole pipeline -- basic rewrites, the declared index, and whatever
+     unconstrained indexes were chosen -- is sound with no side condition
+     beyond the ordinary typing ones, and for any hints.  Nothing is assumed
+     about the index choices, and the declarations the program carries are what
+     make the constrained installation available. *)
+  Theorem elab_apply_optimize_anno_constrained_sound :
+    forall sc ce free_vars fs cic icss (Gstore Genv : ctenv) tbl row_ty ds,
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+      incl (get_free_vars Genv) free_vars ->
+      Forall (decl_wf row_ty) ds ->
+      well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
+      well_typed Gstore Genv
+        (apply_optimize_anno_constrained
+           (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) fs cic icss
+              (elab ce free_vars (SLetConstrained tbl row_ty ds sc))) Gstore Genv)
+      /\ forall (store env : clocals),
+          locals_wf Gstore store -> locals_wf Genv env ->
+          interp_command store env
+            (apply_optimize_anno_constrained
+               (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) fs cic icss
+                  (elab ce free_vars (SLetConstrained tbl row_ty ds sc))) Gstore Genv)
+          = interp_command store env (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).
+  Proof.
+    intros * H_Gs H_Ge H_rt H_fv H_ds H_wt.
+    pose proof (elab_cenv_respected (locals := clocals)
+                  sc ce free_vars Gstore Genv tbl row_ty ds
+                  H_Gs H_Ge H_rt H_fv H_ds H_wt) as H_ce.
+    cbn [apply_optimize_anno_constrained].
+    cbn [elab] in H_wt, H_ce |- *.
+    apply apply_all_transfs_constrained_sound; assumption.
+  Qed.
+
 End WithConcreteMaps.

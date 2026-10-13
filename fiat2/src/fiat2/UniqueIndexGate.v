@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.Utils fiat2.Substitute
   fiat2.IndexTransf fiat2.Constraint fiat2.UniqueDictIndexImpl
-  fiat2.UniqueIndexInstall fiat2.Surface.
+  fiat2.UniqueIndexInstall fiat2.Surface fiat2.TransfUtils.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
 
@@ -217,6 +217,65 @@ Section WithIndexVars.
               | cbn [cenv_lookup]; rewrite String.eqb_refl; reflexivity
               | assumption ].
             apply tenv_wf_step; [ exact H_Gs | constructor; exact H_rt ]. }
+      Qed.
+
+
+      (* The premise also survives the phase that runs before the installation.
+
+         A basic rewrite is an expression rewrite under fold_command id: it
+         leaves the command skeleton alone, and it leaves an annotated empty
+         list -- what elaboration gives a declared variable as its initial
+         value -- untouched.  The body's judgment then transports by
+         fold_command_id_preserve_parameterized_wf.
+
+         The initial value is pinned syntactically rather than only
+         semantically because idx_install_pre quantifies over every type the
+         initializer can be given, and type_of is not deterministic: an
+         unannotated empty list has every list type.  Semantic preservation
+         alone would give the invariant of the new initializer's value but not
+         the body's judgment at the new initializer's types. *)
+      Lemma fold_command_id_preserve_cenv_respected : forall f,
+          (forall (Gstore : tenv), preserve_ty Gstore f) ->
+          (forall (Gstore : tenv) (store : locals), preserve_sem Gstore store f) ->
+          forall (a : atom) ce (Gstore Genv : tenv) tbl body,
+            f (EAtom a) = EAtom a ->
+            tenv_wf Gstore -> tenv_wf Genv ->
+            cenv_respected ce Gstore Genv (CLetMut (EAtom a) tbl body) ->
+            cenv_respected ce Gstore Genv (fold_command id f (CLetMut (EAtom a) tbl body)).
+      Proof.
+        intros f H_ty H_sem * H_fix H_Gs H_Ge H_ce.
+        cbn [fold_command fold_expr]; unfold id at 1; rewrite H_fix.
+        cbn [cenv_respected] in H_ce |- *.
+        intros row_ty ds E_look.
+        specialize (H_ce _ _ E_look).
+        cbn [idx_install_pre] in H_ce |- *.
+        destruct H_ce as [ H_init H_body ]; split; [ exact H_init | ].
+        intros t H_t.
+        eapply fold_command_id_preserve_parameterized_wf;
+          [ exact H_ty | exact H_sem | | exact H_Ge | apply H_body; exact H_t ].
+        apply tenv_wf_step; [ exact H_Gs | ].
+        eapply type_of__type_wf; [ exact H_Gs | exact H_Ge | exact H_t ].
+      Qed.
+
+
+      (* The same, stated for the hypothesis the basic rewrites are proved
+         against, so a phase of them can be composed without reopening what
+         each rule does. *)
+      Corollary expr_transf_sound__preserve_cenv_respected : forall f,
+          expr_transf_sound (locals:=locals) f ->
+          forall (a : atom) ce (Gstore Genv : tenv) tbl body,
+            f (EAtom a) = EAtom a ->
+            tenv_wf Gstore -> tenv_wf Genv ->
+            cenv_respected ce Gstore Genv (CLetMut (EAtom a) tbl body) ->
+            cenv_respected ce Gstore Genv (fold_command id f (CLetMut (EAtom a) tbl body)).
+      Proof.
+        unfold expr_transf_sound; intros f H_f.
+        apply fold_command_id_preserve_cenv_respected;
+          unfold preserve_ty, preserve_sem; intros;
+          lazymatch goal with
+            H : context[_ -> _ /\ _], H' : type_of _ _ _ _ |- _ =>
+              apply H in H'; auto
+          end; intuition auto.
       Qed.
 
 
