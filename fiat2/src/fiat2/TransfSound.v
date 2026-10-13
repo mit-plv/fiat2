@@ -391,6 +391,32 @@ Section WithMap.
     Qed.
   End WithIndex.
 
+  (* An expression rule may be used where MORE is known about the table than
+     it was proved against.
+
+     aug_transf_sound is not monotone in aux_wf either way, since it both
+     assumes and re-establishes the parameterized_wf the predicate appears in.
+     An expression rule only ever assumes it, so a rule proved against a
+     record of ordinary indexes keeps working in a record that also carries a
+     declared index's invariant -- which is what lets indexes that need a
+     declaration and indexes that do not share one record. *)
+  Lemma expr_aug_transf_sound_strengthen_wf :
+    forall is_tbl_ty aux_ty (P Q : value -> Prop) f,
+      (forall v, Q v -> P v) ->
+      expr_aug_transf_sound is_tbl_ty aux_ty P f ->
+      expr_aug_transf_sound is_tbl_ty aux_ty Q f.
+  Proof.
+    unfold expr_aug_transf_sound; intros * H_imp H_f * H_Gs H_Ge H_twf H_tbl H_glob H_t.
+    specialize (H_f _ _ _ _ _ _ H_Gs H_Ge H_twf H_tbl H_glob H_t).
+    destruct H_f as [ H_ty H_sem ]; split; [ exact H_ty | ].
+    intros store env H_lws H_lwe H_inv.
+    apply H_sem; auto.
+    unfold holds_for_all_entries, value_wf_with_globals in *.
+    intros k v E_k. specialize (H_inv _ _ E_k).
+    eapply Forall_impl; [ | exact H_inv ].
+    intros tbl' [ H_ne | H_q ]; [ left; exact H_ne | right; apply H_imp; exact H_q ].
+  Qed.
+
   Fixpoint repeat_transf (f : command -> command) (n : nat) :=
     match n with
     | O => id

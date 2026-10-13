@@ -72,3 +72,18 @@ Definition ok__ok_pre (idx : index)
   {| ok_pre_idx_ty_wf := idx_ty_wf;
      ok_pre_to_idx_ty := to_idx_ty;
      ok_pre_to_idx_wf := fun v t H_wf H_tbl H_v _ => to_idx_wf v t H_wf H_tbl H_v |}.
+
+(* And an index whose precondition is trivial is an ordinary index.  This is
+   the converse of ok__ok_pre; the two together are what let a record of
+   indexes be built once, through the interface that admits a precondition,
+   and still be used as an ordinary index when none of its members needs one. *)
+Definition ok_pre__ok (idx : index)
+  {width: Z} {word: word.word width} {word_ok: word.ok word}
+  (idx_wf : value (width:=width) -> value (width:=width) -> Prop)
+  {tenv : map.map string type} {tenv_ok : map.ok tenv}
+  {locals : map.map string value} {locals_ok : map.ok locals}
+  (idx_ok_pre : ok_pre idx idx_wf (fun _ => True)) : ok idx idx_wf :=
+  {| idx_ty_wf := ok_pre_idx_ty_wf;
+     to_idx_ty := ok_pre_to_idx_ty;
+     to_idx_wf := fun v t H_wf H_tbl H_v =>
+                    ok_pre_to_idx_wf v t H_wf H_tbl H_v I |}.

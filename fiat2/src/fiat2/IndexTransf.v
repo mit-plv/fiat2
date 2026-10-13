@@ -24,7 +24,11 @@ Section compo_idx.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Context (idxs : list (string * IndexInterface.index * (value -> value -> Prop))).
-  Context {idxs_ok : Forall (fun '(_, idx, idx_wf) => ok idx idx_wf) idxs}.
+  (* What the record needs of a table before it may be built: the conjunction
+     of what its members need, which for a record of ordinary indexes is
+     nothing.  A member that needs nothing ignores it, by ok__ok_pre. *)
+  Context (tbl_pre : value -> Prop).
+  Context {idxs_ok : Forall (fun '(_, idx, idx_wf) => ok_pre idx idx_wf tbl_pre) idxs}.
   Context (H_tag_NoDup : NoDup (List.map fst (List.map fst idxs))).
   Context (hole0 : string).
   Context (H_holes_eq : Forall (fun '(_, idx, _) => @hole idx = hole0) idxs).
@@ -60,7 +64,7 @@ Section compo_idx.
     1:{ induction idxs; auto. cbn in *.
         repeat invert_Forall; invert_NoDup; rewrite Bool.andb_true_iff in *; intuition idtac.
         constructor; auto.
-        do 2 case_match; cbn; subst. eapply (to_idx_ty (idx:=i)); eauto. }
+        do 2 case_match; cbn; subst. eapply (ok_pre_to_idx_ty (idx:=i)); eauto. }
     1:{ revert H_tag_NoDup; clear; intros.
         induction idxs; intros; cbn; auto using NoDup_nil.
         cbn in *; invert_NoDup.
@@ -89,7 +93,7 @@ Section compo_idx.
         induction H; cbn in *; auto.
         repeat invert_Forall; invert_NoDup.
         constructor; repeat case_match; auto.
-        cbn; apply idx_ty_wf; auto. }
+        cbn; apply ok_pre_idx_ty_wf; auto. }
   Qed.
 
   Lemma NoDup_In_access_record : forall A (l : list (string * A)),
@@ -123,9 +127,10 @@ Section compo_idx.
     1:{ eapply Permutation_in; eauto. }
   Qed.
 
-  Lemma to_compo_idx_wf : forall (v : value) (t : type),
+  Lemma to_compo_idx_wf_pre : forall (v : value) (t : type),
       type_wf t -> compo_is_tbl_ty t = true ->
       type_of_value v t ->
+      tbl_pre v ->
       compo_idx_wf v (interp_expr map.empty (map.put map.empty hole0 v) to_compo_idx).
   Proof.
     intros.
@@ -148,7 +153,7 @@ Section compo_idx.
     eapply List.forallb_to_Forall with (P:=fun '(_, idx, _) => @is_tbl_ty idx t = true) in H0.
     2: intros; repeat case_match; auto.
     repeat apply_Forall_In. cbn in *.
-    apply to_idx_wf in H1; auto.
+    eapply ok_pre_to_idx_wf in H1; eauto.
     erewrite NoDup_In_access_record; eauto.
     2:{ erewrite in_map_iff. exists (s, to_idx).
         subst; intuition auto.
@@ -158,9 +163,38 @@ Section compo_idx.
 
   Instance compo_idx : IndexInterface.index := IndexInterface.mk hole0 to_compo_idx compo_idx_ty compo_is_tbl_ty.
 
-  Instance compo_idx_ok : IndexInterface.ok compo_idx compo_idx_wf :=
-    IndexInterface.Build_ok compo_idx compo_idx_wf compo_idx_ty_wf to_compo_idx_ty to_compo_idx_wf.
+  Instance compo_idx_ok_pre : IndexInterface.ok_pre compo_idx compo_idx_wf tbl_pre.
+  Proof.
+    constructor;
+      [ exact compo_idx_ty_wf | exact to_compo_idx_ty | exact to_compo_idx_wf_pre ].
+  Defined.
 End compo_idx.
+
+Section compo_idx_plain.
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+  Notation value := (value (width:=width)).
+  Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+  Context (idxs : list (string * IndexInterface.index * (value -> value -> Prop))).
+  Context {idxs_ok : Forall (fun '(_, idx, idx_wf) => ok idx idx_wf) idxs}.
+  Context (H_tag_NoDup : NoDup (List.map fst (List.map fst idxs))).
+  Context (hole0 : string).
+  Context (H_holes_eq : Forall (fun '(_, idx, _) => @hole idx = hole0) idxs).
+
+  (* A record of ordinary indexes: the precondition is trivial, so nothing
+     that already satisfies ok has to be restated to be put in one. *)
+  Instance compo_idx_ok :
+    IndexInterface.ok (compo_idx idxs hole0) (compo_idx_wf idxs).
+  Proof.
+    assert (H_pre : Forall (fun '(_, idx, idx_wf) => ok_pre idx idx_wf (fun _ => True)) idxs).
+    1:{ eapply Forall_impl; [ | exact idxs_ok ].
+        intros [ [ tag idx ] idx_wf ] H_ok. apply ok__ok_pre; exact H_ok. }
+    eapply ok_pre__ok.
+    exact (compo_idx_ok_pre idxs (fun _ => True) (idxs_ok:=H_pre)
+             H_tag_NoDup hole0 H_holes_eq).
+  Defined.
+End compo_idx_plain.
 
 Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
