@@ -103,6 +103,17 @@ Section WithIndexVars.
       eapply declares_unique__key_holds; eassumption.
     Qed.
 
+    (* An annotated empty list has only the one type, which both the
+       installation's precondition and the elaborated letmut's own typing
+       derivation speak about.  Stated separately because there are two such
+       derivations in scope at once below, and the inversion tactics pick
+       whichever they find first. *)
+    Lemma type_of_ANil_Some : forall (Gstore Genv : tenv) rty t,
+        type_of Gstore Genv (EAtom (ANil (Some rty))) t -> t = TList rty.
+    Proof.
+      intros * H. invert_type_of_clear; invert_type_of_atom. reflexivity.
+    Qed.
+
     Section WithGate.
       (* The gated transformation.  Same shape as every other: match, and be
          the identity when the match fails. *)
@@ -160,6 +171,81 @@ Section WithIndexVars.
           [ apply H_f | assumption .. | ].
         apply H_ce; reflexivity.
       Qed.
+
+      (* The premise is not vacuous: elaboration discharges it.
+
+         A declared variable is born empty, so its declarations hold of the
+         initial value outright, and elab_constr_wf is exactly the statement
+         that every write elaboration inserts a guard at keeps them.  So for a
+         program the surface language can express, the gate's premise is free
+         -- which is what it means for the declarations to be part of the
+         program rather than a hint about it. *)
+      Lemma elab_cenv_respected :
+        forall sc ce free_vars (Gstore Genv : tenv) tbl row_ty ds,
+          tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+          incl (get_free_vars Genv) free_vars ->
+          Forall (decl_wf row_ty) ds ->
+          well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
+          cenv_respected ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) Gstore Genv
+            (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).
+      Proof.
+        intros * H_Gs H_Ge H_rt H_fv H_ds H_wt.
+        cbn [elab] in H_wt |- *.
+        cbn [cenv_respected]; intros row_ty0 ds0 E_look.
+        cbn [cenv_lookup] in E_look; rewrite String.eqb_refl in E_look.
+        injection E_look as E_rt E_ds; subst row_ty0 ds0.
+        cbn [idx_install_pre]; split.
+        (* born empty *)
+        1:{ intros. unfold declared_holds. cbn [interp_expr interp_atom].
+            apply constrs_hold_nil. }
+        (* and every write keeps the declarations *)
+        1:{ intros t H_t.
+            apply type_of_ANil_Some in H_t; subst t.
+            invert_well_typed.
+            lazymatch goal with
+              H : type_of _ _ (EAtom (ANil (Some row_ty))) ?t' |- _ =>
+                apply type_of_ANil_Some in H; subst t'
+            end.
+            unfold declared_holds.
+            eapply elab_constr_wf with (row_ty := row_ty) (ds := ds);
+              [ | exact H_Ge | exact H_rt | exact H_fv
+              | apply map.get_put_same
+              | exact H_ds
+              | cbn [cenv_lookup]; rewrite String.eqb_refl; reflexivity
+              | assumption ].
+            apply tenv_wf_step; [ exact H_Gs | constructor; exact H_rt ]. }
+      Qed.
+
+
+      (* The two together: on an elaborated program the gated pipeline is sound
+         with no side condition beyond the ordinary typing ones.  The
+         declarations are what make the installation available, and nothing
+         about the hints is assumed. *)
+      Corollary elab_unique_idx_transfs_sound :
+        forall sc ce free_vars f (Gstore Genv : tenv) tbl row_ty ds,
+          (forall row_ty ds,
+              aug_transf_sound (@IndexInterface.is_tbl_ty uidx)
+                (aux_ty (idx := uidx) id_tag aux_tag)
+                (unique_aux_declared row_ty ds) f) ->
+          tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+          incl (get_free_vars Genv) free_vars ->
+          Forall (decl_wf row_ty) ds ->
+          well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
+          well_typed Gstore Genv
+            (apply_unique_idx_transfs ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) f Gstore Genv
+               (elab ce free_vars (SLetConstrained tbl row_ty ds sc)))
+          /\ forall (store env : locals),
+              locals_wf Gstore store -> locals_wf Genv env ->
+              interp_command store env
+                (apply_unique_idx_transfs ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) f Gstore Genv
+                   (elab ce free_vars (SLetConstrained tbl row_ty ds sc)))
+              = interp_command store env (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).
+      Proof.
+        intros * H_f H_Gs H_Ge H_rt H_fv H_ds H_wt.
+        apply apply_unique_idx_transfs_sound; auto.
+        apply elab_cenv_respected; auto.
+      Qed.
+
     End WithGate.
   End WithMap.
 End WithIndexVars.
