@@ -1,7 +1,8 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.Utils fiat2.Substitute
   fiat2.IndexTransf fiat2.Constraint fiat2.UniqueDictIndexImpl
-  fiat2.UniqueIndexInstall fiat2.UniqueIndexGate fiat2.Surface.
+  fiat2.UniqueIndexInstall fiat2.UniqueIndexGate fiat2.UniqueIndexUse
+  fiat2.Surface.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface
   coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
@@ -126,4 +127,39 @@ Section WithConcreteMaps.
       | apply Gstore0_wf | apply Genv0_wf | apply row_ty_wf
       | apply incl_refl | apply decl_wf_unique_id | exact H_wt ].
   Qed.
+
+  (* ------------------------------------------------------------------
+     And with the rule installed below it, the write guard stops scanning.
+     ------------------------------------------------------------------ *)
+
+  Definition uhit := "_pk_hit".
+
+  Definition optimized (ds : list decl) : command :=
+    apply_unique_idx_transfs uhole "id" utup uacc uid uaux
+      (inner_cenv ds) (unique_lookup_transf "id" uid uaux uhit) Gstore0 Genv0
+      (elaborated ds).
+
+  (* The quadratic guard -- scan the table, keep the rows whose id matches the
+     new row's, test that there are none -- has become one dictionary lookup. *)
+  Compute (optimized [DUnique "id"]).
+
+  (* Still nothing without the declaration, rule or no rule. *)
+  Lemma optimized_closed_without_decl : optimized [] = elaborated [].
+  Proof. reflexivity. Qed.
+
+  Theorem optimized_sound :
+    well_typed Gstore0 Genv0 (elaborated [DUnique "id"]) ->
+    well_typed Gstore0 Genv0 (optimized [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf Gstore0 store -> locals_wf Genv0 env ->
+        interp_command store env (optimized [DUnique "id"])
+        = interp_command store env (elaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold optimized, elaborated, inner_cenv, prog in *.
+    apply (elab_unique_idx_pipeline_sound uhole "id" utup uacc utup_neq_uacc
+             uid uaux uid_neq_uaux uhit);
+      [ apply Gstore0_wf | apply Genv0_wf | apply row_ty_wf
+      | apply incl_refl | apply decl_wf_unique_id | exact H_wt ].
+  Qed.
+
 End WithConcreteMaps.
