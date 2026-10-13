@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Surface fiat2.Constraint fiat2.Substitute fiat2.PrimaryKeyCheck
-  fiat2.TransfUtils fiat2.Utils fiat2.OptimizeAnno.
+  fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.OptimizeAnno.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
 From Stdlib Require Import String ZArith List.
 
@@ -197,6 +197,106 @@ Section WithConcreteMaps.
   Proof.
     rewrite <- poptimized_is, <- pelaborated_is.
     unfold poptimized; apply poptimized_sound.
+  Qed.
+
+
+  (* ====================================================================
+     A read query, not just the write guard.
+
+     The rule the installation brings is not about guards: it matches a
+     key-equality filter of the table at bag level, which is what a read of
+     one row by its key looks like once the collection phase has annotated
+     it.  Here one program does both -- insert if the key is free, then look
+     a key up -- so the same rule fires twice.
+     ==================================================================== *)
+
+  Definition qGstore0 : ctenv := map.put map.empty "out" (TBag prow_ty).
+  Definition qGenv0 : ctenv :=
+    map.put (map.put map.empty "u" prow_ty) "k" TInt.
+
+  (* The query is written as a list filter, as one would write it, and
+     converted to a bag by the context that consumes it.  push_down_collection
+     moves that coercion inside, which is what puts the query in the shape the
+     rule matches. *)
+  Definition qprog (ds : list decl) : scommand :=
+    SLetConstrained "users" prow_ty ds
+      (SSeq (SAssign "users" (EBinop OCons (EVar "u") (ELoc "users")) SSkip)
+         (SAssign "out"
+            (EBagOf (flatmap_filter_list (ELoc "users") "r"
+                       (EBinop OEq (EAccess (EVar "r") "id") (EVar "k")) "r"
+                       (Some prow_ty) (Some prow_ty)))
+            SSkip)).
+
+  Definition qelaborated (ds : list decl) : command :=
+    elab [] (get_free_vars qGenv0) (qprog ds).
+
+  Definition qanno (ds : list decl) (icss : list (list index_choice)) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+      pbasics (Some (UniqueDictIdx "id")) icss (qelaborated ds).
+
+  Definition qoptimized (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (qanno ds []) qGstore0 qGenv0.
+
+  Compute (qelaborated [DUnique "id"]).
+  Compute (qoptimized [DUnique "id"]).
+
+  (* The probe the rule leaves behind: the bag of rows stored at the key,
+     which the declaration guarantees holds at most one row. *)
+  Definition qprobe (k : expr) : expr :=
+    EOptMatch (EBinop OLookup (EAccess (ELoc "users") "aux_tag") k)
+      (EAtom (AEmptyBag None)) "y"
+      (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")).
+
+  Definition qoptimized_expected : command :=
+    CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
+                      ("aux_tag", punique_idx_of (EAtom (ANil (Some prow_ty))))])
+      "users"
+      (CSeq
+         (* the write guard: one probe *)
+         (CIf (EBinop OAnd
+                 (ELet (EVar "u") "_pk_row"
+                    (EBinop OEq (qprobe (EAccess (EVar "_pk_row") "id"))
+                       (EAtom (AEmptyBag None))))
+                 (EAtom (ABool true)))
+            (CAssign "users"
+               (ERecord
+                  [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
+                   ("aux_tag",
+                     punique_idx_of
+                       (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
+            CSkip)
+         (* and the read query: the same probe, at the key the query asks for *)
+         (CAssign "out" (qprobe (EVar "k")))).
+
+  Lemma qoptimized_is : qoptimized [DUnique "id"] = qoptimized_expected.
+  Proof. reflexivity. Qed.
+
+  Lemma qGstore0_wf : tenv_wf qGstore0.
+  Proof.
+    unfold qGstore0; apply tenv_wf_step;
+      [ apply tenv_wf_empty | constructor; apply prow_ty_wf ].
+  Qed.
+
+  Lemma qGenv0_wf : tenv_wf qGenv0.
+  Proof.
+    unfold qGenv0; apply tenv_wf_step;
+      [ apply tenv_wf_step; [ apply tenv_wf_empty | apply prow_ty_wf ]
+      | constructor ].
+  Qed.
+
+  Theorem qoptimized_sound :
+      well_typed qGstore0 qGenv0 (qelaborated [DUnique "id"]) ->
+      well_typed qGstore0 qGenv0 qoptimized_expected /\
+        forall (store env : clocals),
+          locals_wf qGstore0 store -> locals_wf qGenv0 env ->
+          interp_command store env qoptimized_expected
+          = interp_command store env (qelaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. rewrite <- qoptimized_is.
+    unfold qoptimized, qanno, qelaborated, qprog in *.
+    apply elab_apply_optimize_anno_constrained_sound;
+      [ apply qGstore0_wf | apply qGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
 
 End WithConcreteMaps.
