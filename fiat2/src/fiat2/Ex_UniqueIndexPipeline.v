@@ -57,6 +57,73 @@ Section WithConcreteMaps.
      whether the key was free -- a scan of the table -- is one lookup in it. *)
   Compute (poptimized [DUnique "id"]).
 
+  (* The same, machine-checked rather than read off the output above.
+
+     Before: the guard iterates over the whole table and keeps the rows whose
+     id matches the new row's, then tests that there are none. *)
+  Definition pelaborated_expected : command :=
+    CLetMut (EAtom (ANil (Some prow_ty))) "users"
+      (CIf (EBinop OAnd
+              (ELet (EVar "u") "_pk_row"
+                 (EBinop OEq
+                    (EFlatmap LikeBag (EBagOf (ELoc "users")) "_pk_scan"
+                       (EIf (EBinop OEq (EAccess (EVar "_pk_scan") "id")
+                               (EAccess (EVar "_pk_row") "id"))
+                          (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "_pk_scan"))
+                          (EAtom (AEmptyBag None))))
+                    (EAtom (AEmptyBag None))))
+              (EAtom (ABool true)))
+         (CAssign "users" (EBinop OCons (EVar "u") (ELoc "users")))
+         CSkip).
+
+  Lemma pelaborated_is : pelaborated [DUnique "id"] = pelaborated_expected.
+  Proof. reflexivity. Qed.
+
+  (* The index that is installed is the unique one: each id maps to THE row.
+     DictIndexImpl's to_idx reads the bucket already at the key and
+     OBagInsert's into it; this one inserts the row itself, which is only
+     faithful to the table because the key is declared. *)
+  Definition punique_idx_of (tbl : expr) : expr :=
+    EFold tbl (EAtom (AEmptyDict None)) "tup" "acc"
+      (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "id") (EVar "tup")).
+
+  (* After: the table is the pair of the list and that dictionary, every read
+     of the table goes through id_tag, and the guard is one lookup in
+     aux_tag. *)
+  Definition poptimized_expected : command :=
+    CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
+                      ("aux_tag", punique_idx_of (EAtom (ANil (Some prow_ty))))])
+      "users"
+      (CIf (EBinop OAnd
+              (ELet (EVar "u") "_pk_row"
+                 (EBinop OEq
+                    (EOptMatch
+                       (EBinop OLookup (EAccess (ELoc "users") "aux_tag")
+                          (EAccess (EVar "_pk_row") "id"))
+                       (EAtom (AEmptyBag None)) "y"
+                       (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")))
+                    (EAtom (AEmptyBag None))))
+              (EAtom (ABool true)))
+         (CAssign "users"
+            (ERecord
+               [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
+                ("aux_tag",
+                  punique_idx_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
+         CSkip).
+
+  Lemma poptimized_is : poptimized [DUnique "id"] = poptimized_expected.
+  Proof. reflexivity. Qed.
+
+  (* So the two differ: the pipeline did something, and what it did was install
+     and use the declared index. *)
+  Lemma poptimized_neq_pelaborated :
+    poptimized [DUnique "id"] <> pelaborated [DUnique "id"].
+  Proof.
+    rewrite poptimized_is, pelaborated_is.
+    unfold poptimized_expected, pelaborated_expected.
+    intro H; injection H as H_init _; discriminate H_init.
+  Qed.
+
   (* Without the declaration the declared index is not installed, and what is
      left is exactly the basic phase: the pipeline does what it would have done
      with no constrained choice at all. *)
@@ -114,6 +181,22 @@ Section WithConcreteMaps.
     apply elab_apply_optimize_anno_constrained_sound;
       [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
+  Qed.
+
+
+  (* And the soundness claim, restated on those two explicit programs: the one
+     that probes the declared index computes what the one that scans the table
+     computes. *)
+  Corollary poptimized_expected_sound :
+      well_typed pGstore0 pGenv0 pelaborated_expected ->
+      well_typed pGstore0 pGenv0 poptimized_expected /\
+        forall (store env : clocals),
+          locals_wf pGstore0 store -> locals_wf pGenv0 env ->
+          interp_command store env poptimized_expected
+          = interp_command store env pelaborated_expected.
+  Proof.
+    rewrite <- poptimized_is, <- pelaborated_is.
+    unfold poptimized; apply poptimized_sound.
   Qed.
 
 End WithConcreteMaps.
