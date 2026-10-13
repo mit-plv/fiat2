@@ -1072,6 +1072,40 @@ Section WithWord.
         end.
   Proof. reflexivity. Qed.
 
+  Lemma interp_EAccess : forall (store env : locals) e x,
+      interp_expr store env (EAccess e x)
+      = match interp_expr store env e with
+        | VRecord fs => record_proj x fs
+        | _ => VUnit
+        end.
+  Proof. reflexivity. Qed.
+
+  Lemma interp_ETernop : forall (store env : locals) o e1 e2 e3,
+      interp_expr store env (ETernop o e1 e2 e3)
+      = interp_ternop o (interp_expr store env e1)
+          (interp_expr store env e2) (interp_expr store env e3).
+  Proof. reflexivity. Qed.
+
+  Lemma interp_EFold : forall (store env : locals) e1 e2 x y e3,
+      interp_expr store env (EFold e1 e2 x y e3)
+      = match interp_expr store env e1 with
+        | VList l =>
+            fold_right
+              (fun v a => interp_expr store (map.put (map.put env x v) y a) e3)
+              (interp_expr store env e2) l
+        | _ => VUnit
+        end.
+  Proof. reflexivity. Qed.
+
+  Lemma interp_EOptMatch : forall (store env : locals) e e_none x e_some,
+      interp_expr store env (EOptMatch e e_none x e_some)
+      = match interp_expr store env e with
+        | VOption (Some v) => interp_expr store (map.put env x v) e_some
+        | VOption None => interp_expr store env e_none
+        | _ => VUnit
+        end.
+  Proof. reflexivity. Qed.
+
   (* One element of the inner scan: the row is kept exactly when its key
      matches. *)
   Lemma unique_inner_interp : forall attr rt (r v : value) (l0 : list value),
