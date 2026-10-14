@@ -234,6 +234,168 @@ Section WithIndexUse.
           end.
     Proof. reflexivity. Qed.
 
+    (* ------------------------------------------------------------------
+       Maintaining the index: inserting a row updates its buckets.
+
+       Unlike the lookup rules this one needs no invariant and no
+       declaration at all: it is the equation
+
+         to_idx (r :: l)  =  <r's own update> (to_idx l)
+
+       which holds by the very shape of to_idx, a fold over the rows.  So it
+       is a plain expression rule, and it fires on every table whether
+       anything is declared or not.
+
+       The emitted form reuses the index's OWN per-row body: bind the index
+       of the rest to acc, bind the new row to tup, and run tri_row_body.
+       Nothing new has to be written down, and nothing about trigrams has to
+       be re-proved -- which is the payoff of having written to_idx as a fold
+       in the first place.
+       ------------------------------------------------------------------ *)
+
+    Notation tri_row_body' :=
+      (TrigramIndexImpl.tri_row_body attr key tup acc pos sacc bkt).
+
+    Definition to_idx_at (d : expr) : expr :=
+      EFold d (EAtom (AEmptyDict None)) tup acc tri_row_body'.
+
+    (* to_idx_at spelled out, so that the rule can match it.  Every binder
+       and attribute occurrence is a pattern variable, and the guard checks
+       that they are the ones this index uses. *)
+    Notation etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
+      pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1 d :=
+      (EFold d (EAtom (AEmptyDict None)) tup0 acc0
+         (EFold (EBinop ORange (EAtom (AInt 0))
+                   (EBinop OMinus
+                      (EUnop OLengthString (EAccess (EVar tup1) attr0))
+                      (EAtom (AInt 2))))
+            (EVar acc1) pos0 sacc0
+            (ETernop OInsert (EVar sacc1)
+               (ETernop OSubstring (EAccess (EVar tup2) attr1) (EVar pos1)
+                  (EAtom (AInt 3)))
+               (EOptMatch
+                  (EBinop OLookup (EVar sacc2)
+                     (ETernop OSubstring (EAccess (EVar tup3) attr2) (EVar pos2)
+                        (EAtom (AInt 3))))
+                  (EBinop OSetInsert (EAtom (AEmptySet None))
+                     (EAccess (EVar tup4) key0))
+                  bkt0 (EBinop OSetInsert (EVar bkt1)
+                          (EAccess (EVar tup5) key1)))))).
+
+    Definition cons_to_tri_insert_head (e : expr) : expr :=
+      match e with
+      | etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
+          pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1
+          (EBinop OCons e1 e2) =>
+          if (all_eqb [(tup, [tup0; tup1; tup2; tup3; tup4; tup5]);
+                       (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
+                       (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
+                       (attr, [attr0; attr1; attr2]); (key, [key0; key1])]
+              && negb (free_immut_in acc e1))%bool
+          then ELet (to_idx_at e2) acc (ELet e1 tup tri_row_body')
+          else e
+      | _ => e
+      end.
+
+    Lemma interp_ELet_step : forall (store env : locals) e1 x e2,
+        interp_expr store env (ELet e1 x e2)
+        = interp_expr store (map.put env x (interp_expr store env e1)) e2.
+    Proof. reflexivity. Qed.
+
+    Lemma fold_right_pointwise :
+      forall (f g : value -> value -> value) (a : value) (l : list value),
+        (forall v acc', f v acc' = g v acc') -> fold_right f a l = fold_right g a l.
+    Proof.
+      intros f g a l H; induction l as [ | v l IH ]; cbn [fold_right];
+        [ reflexivity | rewrite H, IH; reflexivity ].
+    Qed.
+
+    Lemma cons_to_tri_insert_head_preserve_ty : forall (Gstore : tenv),
+        tup <> acc -> preserve_ty Gstore cons_to_tri_insert_head.
+    Proof.
+      unfold preserve_ty; intros Gstore H_ne e t Genv H_Gs H_Ge H_t.
+      repeat destruct_subexpr.
+      cbn [cons_to_tri_insert_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      (* only the top of the source is inverted: the fold's body typing is
+         exactly what both occurrences of the fold need, so it is reused
+         rather than rebuilt *)
+      lazymatch goal with
+      | H : type_of _ _ (EFold _ _ _ _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OCons _ _) _ |- _ =>
+          inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      eapply TyELet.
+      1:{ unfold to_idx_at. eapply TyEFold; eassumption. }
+      1:{ eapply TyELet.
+          (* the row is typed under acc's binder now, which is what the
+             rule's freshness side condition is for *)
+          1:{ apply not_free_immut_put_ty2; [ assumption | eassumption ]. }
+          1:{ rewrite <- (Properties.map.put_comm _ _ _ _ Genv H_ne).
+              eassumption. } }
+    Qed.
+
+    Lemma cons_to_tri_insert_head_preserve_sem :
+      forall (Gstore : tenv) (store : locals),
+        tup <> acc -> preserve_sem Gstore store cons_to_tri_insert_head.
+    Proof.
+      unfold preserve_sem; intros Gstore store H_ne e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+      repeat destruct_subexpr.
+      cbn [cons_to_tri_insert_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      (* the rest of the table really is a list: without that the equation
+         is false, since the index of a non-list is VUnit while one row's
+         update of VUnit is not *)
+      lazymatch type of H_t with
+      | type_of _ _ (EFold (EBinop OCons _ ?rest) _ _ _ _) _ =>
+          assert (H_l : exists l, interp_expr store env rest = VList l)
+      end.
+      1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+          lazymatch goal with
+          | H : type_of _ _ ?rest (TList ?t1) |- context[interp_expr _ _ ?rest] =>
+              pose proof (type_sound Gstore Genv rest (TList t1) H H_Gs H_Ge
+                            store env H_sw H_ew) as H_v
+          end.
+          apply type_of_value_TList_inv in H_v as [ l [ E_l _ ] ].
+          exists l; exact E_l. }
+      destruct H_l as [ l E_l ].
+      rewrite interp_ELet_step, interp_ELet_step.
+      unfold to_idx_at.
+      rewrite !interp_EFold, interp_EBinop, E_l.
+      cbn [interp_binop].
+      rewrite <- (not_free_immut_put_sem _ acc store env) by assumption.
+      cbn [fold_right].
+      rewrite (Properties.map.put_comm _ _ _ _ env H_ne).
+      reflexivity.
+    Qed.
+
+    Lemma cons_to_tri_insert_head_sound :
+      tup <> acc -> expr_transf_sound (locals := locals) cons_to_tri_insert_head.
+    Proof.
+      unfold expr_transf_sound; intros H_ne *; intros.
+      intuition idtac.
+      1: eapply cons_to_tri_insert_head_preserve_ty; eauto.
+      1: eapply cons_to_tri_insert_head_preserve_sem; [ | | | eauto .. ]; auto.
+    Qed.
+
+    Lemma cons_to_tri_insert_sound : forall is_tbl_ty' aux_ty aux_wf,
+        tup <> acc ->
+        aug_transf_sound (locals := locals) is_tbl_ty' aux_ty aux_wf
+          (fun tbl => fold_command_with_globals [tbl] cons_to_tri_insert_head).
+    Proof.
+      intros * H_ne.
+      apply fold_command_with_globals_sound.
+      apply expr_transf_sound__expr_aug_transf_sound.
+      apply cons_to_tri_insert_head_sound; exact H_ne.
+    Qed.
+
     Section WithTable.
       Context (tbl : string).
 
