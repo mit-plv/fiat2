@@ -48,7 +48,7 @@ Section WithConcreteMaps.
 
   Definition panno (ds : list decl) (icss : list (list index_choice)) : canno_command :=
     CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
-      pbasics (Some (UniqueDictIdx "id")) icss (pelaborated ds).
+      pbasics [UniqueDictIdx "id"] icss (pelaborated ds).
 
   Definition poptimized (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width) (panno ds []) pGstore0 pGenv0.
@@ -90,10 +90,13 @@ Section WithConcreteMaps.
   (* The index RECORD the installation builds.  One member here, sitting under
      a tag of its own -- which is why every read of the index goes through
      aux_tag and then that tag, exactly as a set or range index's would. *)
+  (* "0" because the declared index is now an ordinary member of the record
+     and takes the first tag mk_idxs hands out, exactly as a set or range
+     index would. *)
   Definition punique_rec_of (tbl : expr) : expr :=
-    ERecord [("u", punique_idx_of tbl)].
+    ERecord [("0", punique_idx_of tbl)].
 
-  Definition pidx : expr := EAccess (EAccess (ELoc "users") "aux_tag") "u".
+  Definition pidx : expr := EAccess (EAccess (ELoc "users") "aux_tag") "0".
 
   (* After: the table is the pair of the list and that index record, every read
      of the table goes through id_tag, and the guard is one lookup in the
@@ -138,7 +141,7 @@ Section WithConcreteMaps.
      never fires. *)
   Definition pinstall_only (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width)
-      (CAC [] pbasics (Some (UniqueDictIdx "id")) [] (pelaborated ds))
+      (CAC [] pbasics [UniqueDictIdx "id"] [] (pelaborated ds))
       pGstore0 pGenv0.
 
   (* Without the declaration the use rule is the identity, so the pipeline is
@@ -249,7 +252,7 @@ Section WithConcreteMaps.
 
   Definition qanno (ds : list decl) (icss : list (list index_choice)) : canno_command :=
     CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
-      pbasics (Some (UniqueDictIdx "id")) icss (qelaborated ds).
+      pbasics [UniqueDictIdx "id"] icss (qelaborated ds).
 
   Definition qoptimized (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width) (qanno ds []) qGstore0 qGenv0.
@@ -334,7 +337,7 @@ Section WithConcreteMaps.
 
   Definition manno (ds : list decl) : canno_command :=
     CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
-      mbasics None [[SetAgg "id"]] (pelaborated ds).
+      mbasics [] [[SetAgg "id"]] (pelaborated ds).
 
   Definition moptimized (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width) (manno ds) pGstore0 pGenv0.
@@ -386,6 +389,58 @@ Section WithConcreteMaps.
     unfold moptimized, manno.
     apply apply_all_transfs_constrained_None_sound;
       [ apply pGstore0_wf | apply pGenv0_wf | exact H_wt ].
+  Qed.
+
+  (* ------------------------------------------------------------------
+     One record, both kinds of index.
+
+     This is what folding the declared index into index_choice buys.  Before,
+     a declared table could carry ONLY the declared index: the second layer
+     installed its own record on a table whose is_tbl_ty was already false,
+     so it did nothing (punconstrained_layer_after above pins exactly that).
+     Now the declared member and an ordinary one are members of the same
+     record, chosen in the same list, installed by the same transformation.
+     ------------------------------------------------------------------ *)
+  Definition banno (ds : list decl) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+      pbasics [UniqueDictIdx "id"; SetAgg "id"] [] (pelaborated ds).
+
+  Definition boptimized (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (banno ds) pGstore0 pGenv0.
+
+  (* The table is now a record of the list, the key-to-row dictionary at tag
+     "0", and the set of keys at tag "1". *)
+  Compute (boptimized [DUnique "id"]).
+
+  (* Both members really went in: the table's index field is a record holding
+     the key-to-row dictionary at "0" and the set of keys at "1".  Only the
+     initializer is pinned -- that is where the record's shape is decided. *)
+  Lemma boptimized_installs_both :
+    exists rest,
+      boptimized [DUnique "id"]
+      = CLetMut
+          (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
+                    ("aux_tag",
+                      ERecord [("0", punique_idx_of (EAtom (ANil (Some prow_ty))));
+                               ("1", mkeys (EAtom (ANil (Some prow_ty))))])])
+          "users" rest.
+  Proof. eexists; reflexivity. Qed.
+
+  (* And the mixed record is sound, on the same premise as before: that the
+     cenv describes the program.  Nothing is assumed about which choices were
+     made, declared or not. *)
+  Theorem boptimized_sound :
+    well_typed pGstore0 pGenv0 (pelaborated [DUnique "id"]) ->
+    well_typed pGstore0 pGenv0 (boptimized [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf pGstore0 store -> locals_wf pGenv0 env ->
+        interp_command store env (boptimized [DUnique "id"])
+        = interp_command store env (pelaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold boptimized, banno, pelaborated, pprog in *.
+    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+      [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
 
 End WithConcreteMaps.
