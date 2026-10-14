@@ -47,7 +47,7 @@ Section WithConcreteMaps.
     [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap].
 
   Definition panno (ds : list decl) (icss : list (list index_choice)) : canno_command :=
-    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
       pbasics [UniqueDictIdx "id"] icss (pelaborated ds).
 
   Definition poptimized (ds : list decl) : command :=
@@ -141,7 +141,7 @@ Section WithConcreteMaps.
      never fires. *)
   Definition pinstall_only (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width)
-      (CAC [] pbasics [UniqueDictIdx "id"] [] (pelaborated ds))
+      (CAC [] O pbasics [UniqueDictIdx "id"] [] (pelaborated ds))
       pGstore0 pGenv0.
 
   (* Without the declaration the use rule is the identity, so the pipeline is
@@ -251,7 +251,7 @@ Section WithConcreteMaps.
     elab [] (get_free_vars qGenv0) (qprog ds).
 
   Definition qanno (ds : list decl) (icss : list (list index_choice)) : canno_command :=
-    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
       pbasics [UniqueDictIdx "id"] icss (qelaborated ds).
 
   Definition qoptimized (ds : list decl) : command :=
@@ -336,7 +336,7 @@ Section WithConcreteMaps.
   Definition mbasics : list basic_transf := [FilterEmptyToSetMem].
 
   Definition manno (ds : list decl) : canno_command :=
-    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
       mbasics [] [[SetAgg "id"]] (pelaborated ds).
 
   Definition moptimized (ds : list decl) : command :=
@@ -402,7 +402,7 @@ Section WithConcreteMaps.
      record, chosen in the same list, installed by the same transformation.
      ------------------------------------------------------------------ *)
   Definition banno (ds : list decl) : canno_command :=
-    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" [])
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
       pbasics [UniqueDictIdx "id"; SetAgg "id"] [] (pelaborated ds).
 
   Definition boptimized (ds : list decl) : command :=
@@ -441,6 +441,65 @@ Section WithConcreteMaps.
     apply (elab_apply_optimize_anno_constrained_sound (width:=width));
       [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
+  Qed.
+
+  (* ------------------------------------------------------------------
+     The declared table one level down.
+
+     An ordinary mutable variable encloses the declared one.  The pipeline is
+     the same; only the depth it is told to look at changes, and the premise
+     with it -- the enclosing initializer has to synthesize, which an integer
+     literal does.
+     ------------------------------------------------------------------ *)
+  Definition nprog (ds : list decl) : scommand :=
+    SLetMut (EAtom (AInt 0)) "n"
+      (SLetConstrained "users" prow_ty ds
+         (SAssign "users" (EBinop OCons (EVar "u") (ELoc "users")) SSkip)).
+
+  Definition nelaborated (ds : list decl) : command :=
+    elab [] (get_free_vars pGenv0) (nprog ds).
+
+  Definition nanno (depth : nat) (ds : list decl) : canno_command :=
+    CAC [("users", (prow_ty, ds))] depth pbasics [UniqueDictIdx "id"] []
+      (nelaborated ds).
+
+  Definition noptimized (depth : nat) (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (nanno depth ds) pGstore0 pGenv0.
+
+  Compute (noptimized (S O) [DUnique "id"]).
+
+  (* Told to look at the outermost letmut, the layer finds "n" -- which no
+     index is a table type of -- and the pipeline is the basic phase alone. *)
+  Lemma noptimized_depth_0_is_basics_only :
+    noptimized O [DUnique "id"]
+    = compose_basic_transfs (map mk_basic_transf pbasics) (nelaborated [DUnique "id"]).
+  Proof. reflexivity. Qed.
+
+  (* Told to look one letmut down, it finds the declared table and installs
+     the index there. *)
+  Lemma noptimized_installs_at_depth_1 :
+    exists rest,
+      noptimized (S O) [DUnique "id"]
+      = CLetMut (EAtom (AInt 0)) "n"
+          (CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
+                             ("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
+             "users" rest).
+  Proof. eexists; reflexivity. Qed.
+
+  Theorem noptimized_sound :
+    well_typed pGstore0 pGenv0 (nelaborated [DUnique "id"]) ->
+    well_typed pGstore0 pGenv0 (noptimized (S O) [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf pGstore0 store -> locals_wf pGenv0 env ->
+        interp_command store env (noptimized (S O) [DUnique "id"])
+        = interp_command store env (nelaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold noptimized, nanno, nelaborated, nprog in *.
+    apply (elab_apply_optimize_anno_constrained_nested_sound (width:=width)
+             "n" (EAtom (AInt 0)) _ [] _ pbasics [UniqueDictIdx "id"] []
+             pGstore0 pGenv0 "users" prow_ty [DUnique "id"] TInt (EAtom (AInt 0)));
+      [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | reflexivity | exact H_wt ].
   Qed.
 
 End WithConcreteMaps.

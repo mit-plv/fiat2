@@ -235,6 +235,62 @@ Section WithMap.
             [ | | | eauto ]; assumption. }
     Qed.
 
+    (* ------------------------------------------------------------------
+       The premise-carrying companion of apply_below_letmut_sound.
+
+       A transformation that is sound only under a condition on the command it
+       is handed can still be pushed below a letmut: the condition is then
+       asked of the BODY, in the store the letmut extends.  The type the store
+       is extended with is the SYNTHESIZED one, exactly as apply_below_letmut
+       itself computes it -- not an arbitrary type_of derivation.  That
+       matters: synthesize_expr is a function, so this condition can be
+       carried across a rewrite of the initializer, whereas type_of is not
+       deterministic and a type_of premise could not be.
+       ------------------------------------------------------------------ *)
+    Definition below_letmut_pre (P : tenv -> tenv -> command -> Prop)
+      (Gstore Genv : tenv) (c : command) : Prop :=
+      match c with
+      | CLetMut e x c' =>
+          match synthesize_expr Gstore Genv e with
+          | Success (t, _) => P (map.put Gstore x t) Genv c'
+          | Failure _ => True
+          end
+      | _ => True
+      end.
+
+    Lemma apply_below_letmut_pre_sound : forall (P : tenv -> tenv -> command -> Prop) f,
+        (forall (Gstore Genv : tenv) c,
+            tenv_wf Gstore -> tenv_wf Genv -> well_typed Gstore Genv c ->
+            P Gstore Genv c ->
+            well_typed Gstore Genv (f Gstore Genv c)
+            /\ forall (store env : locals),
+                locals_wf Gstore store -> locals_wf Genv env ->
+                interp_command store env (f Gstore Genv c) = interp_command store env c) ->
+        forall (Gstore Genv : tenv) c,
+          tenv_wf Gstore -> tenv_wf Genv -> well_typed Gstore Genv c ->
+          below_letmut_pre P Gstore Genv c ->
+          well_typed Gstore Genv (apply_below_letmut f Gstore Genv c)
+          /\ forall (store env : locals),
+              locals_wf Gstore store -> locals_wf Genv env ->
+              interp_command store env (apply_below_letmut f Gstore Genv c)
+              = interp_command store env c.
+    Proof.
+      intros P f H_f * H_Gs H_Ge H_wt H_pre.
+      unfold apply_below_letmut, below_letmut_pre in *.
+      destruct c as [ | | | e x c' | | | ]; auto.
+      destruct (synthesize_expr Gstore Genv e) as [ [ t a ] | ] eqn:E; auto.
+      apply typechecker_sound in E as H_ty; auto.
+      invert_well_typed.
+      eapply synthesizable_ty_unique in E as E'; eauto; subst.
+      assert (H_Gs' : tenv_wf (map.put Gstore x t)).
+      1:{ eapply tenv_wf_step, type_of__type_wf; [ | | | eauto ]; assumption. }
+      specialize (H_f _ _ _ H_Gs' H_Ge ltac:(eassumption) H_pre) as [ H_wt' H_sem' ].
+      split.
+      1:{ econstructor; eauto. }
+      1:{ intros. cbn. rewrite H_sem'; auto.
+          apply locals_wf_step; eauto using type_sound. }
+    Qed.
+
     Section WithIndex.
       Context {idx : IndexInterface.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
       Context (id_tag aux_tag: string).

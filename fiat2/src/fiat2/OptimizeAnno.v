@@ -863,6 +863,191 @@ end.
   Qed.
 
   (* ------------------------------------------------------------------
+     A declared table that is not the outermost one.
+
+     The declared-table layer is pushed below n letmuts, so its premise has to
+     be pushed below them too.  below_letmut_pre does that one level at a
+     time, extending the store with the SYNTHESIZED type of each enclosing
+     initializer -- which is what makes the premise survive the basic phase.
+     A type_of premise could not: type_of is not deterministic (an
+     unannotated empty list has every list type), so there is no way back from
+     a rewritten initializer's typing to the original's.  synthesize_expr is a
+     function, and synthesizable_ty_unique pins its result, so the two agree.
+     ------------------------------------------------------------------ *)
+  Fixpoint below_n_letmuts_pre (n : nat) (P : ctenv -> ctenv -> command -> Prop) :
+    ctenv -> ctenv -> command -> Prop :=
+    match n with
+    | O => P
+    | S n => below_n_letmuts_pre n (below_letmut_pre P)
+    end.
+
+  Lemma apply_below_n_letmuts_pre_sound :
+    forall n (P : ctenv -> ctenv -> command -> Prop) f,
+      (forall (Gstore Genv : ctenv) c,
+          tenv_wf Gstore -> tenv_wf Genv -> well_typed Gstore Genv c ->
+          P Gstore Genv c ->
+          well_typed Gstore Genv (f Gstore Genv c)
+          /\ forall (store env : clocals),
+              locals_wf Gstore store -> locals_wf Genv env ->
+              interp_command store env (f Gstore Genv c) = interp_command store env c) ->
+      forall (Gstore Genv : ctenv) c,
+        tenv_wf Gstore -> tenv_wf Genv -> well_typed Gstore Genv c ->
+        below_n_letmuts_pre n P Gstore Genv c ->
+        well_typed Gstore Genv (apply_below_n_letmuts n f Gstore Genv c)
+        /\ forall (store env : clocals),
+            locals_wf Gstore store -> locals_wf Genv env ->
+            interp_command store env (apply_below_n_letmuts n f Gstore Genv c)
+            = interp_command store env c.
+  Proof.
+    induction n; cbn [below_n_letmuts_pre apply_below_n_letmuts];
+      intros P f H_f * H_Gs H_Ge H_wt H_pre.
+    1: apply H_f; assumption.
+    1:{ eapply IHn; [ | exact H_Gs | exact H_Ge | exact H_wt | exact H_pre ].
+        intros * H_Gs' H_Ge' H_wt' H_pre'.
+        eapply apply_below_letmut_pre_sound;
+          [ exact H_f | exact H_Gs' | exact H_Ge' | exact H_wt' | exact H_pre' ]. }
+  Qed.
+
+  Lemma expr_transf_sound__preserve_ty : forall (f : expr -> expr) (Gstore : ctenv),
+      expr_transf_sound (locals := clocals) f -> preserve_ty Gstore f.
+  Proof.
+    unfold expr_transf_sound, preserve_ty; intros f Gstore H_f * H_Gs H_Ge H_t.
+    apply H_f; assumption.
+  Qed.
+
+  (* A basic transform commutes with a letmut, rewriting the initializer to one
+     of the same type.  Both halves are needed: the shape, to push the premise
+     down, and the typing, to know the store is extended with the same type on
+     both sides. *)
+  Lemma mk_basic_transf_letmut : forall bt (Gstore Genv : ctenv) e tbl body,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      exists e',
+        mk_basic_transf bt (CLetMut e tbl body) = CLetMut e' tbl (mk_basic_transf bt body)
+        /\ forall t, type_of Gstore Genv e t -> type_of Gstore Genv e' t.
+  Proof.
+    intros bt * H_Gs H_Ge.
+    destruct bt; cbn [mk_basic_transf];
+      unfold swap_if_nil_transf, merge_if_transf, swap_flatmap_if_transf,
+        if_nil_into_flatmap_transf, swap_conjuncts_transf, split_if_transf,
+        flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
+        flatmap_if_transf, annotate_collection_transf, push_down_collection_transf,
+        swap_flatmap_likebag_transf, filter_eq_empty_to_set_mem_transf;
+      cbn [fold_command]; unfold id;
+      eexists; split; try reflexivity;
+      intros t H_t; eapply fold_expr_preserve_ty;
+      try exact H_t; try assumption;
+      apply expr_transf_sound__preserve_ty; eauto with transf_hints.
+  Qed.
+
+  Lemma compose_basic_transfs_letmut : forall fs (Gstore Genv : ctenv) e tbl body,
+      tenv_wf Gstore -> tenv_wf Genv ->
+      exists e',
+        compose_basic_transfs (map mk_basic_transf fs) (CLetMut e tbl body)
+        = CLetMut e' tbl (compose_basic_transfs (map mk_basic_transf fs) body)
+        /\ forall t, type_of Gstore Genv e t -> type_of Gstore Genv e' t.
+  Proof.
+    induction fs; cbn [map compose_basic_transfs fold_right]; intros * H_Gs H_Ge.
+    1: eexists; split; [ reflexivity | auto ].
+    unfold Basics.compose.
+    destruct (IHfs Gstore Genv e tbl body H_Gs H_Ge) as [ e1 [ E1 H_ty1 ] ]; rewrite E1.
+    destruct (mk_basic_transf_letmut a Gstore Genv e1 tbl
+                (compose_basic_transfs (map mk_basic_transf fs) body) H_Gs H_Ge)
+      as [ e2 [ E2 H_ty2 ] ]; rewrite E2.
+    eexists; split; [ reflexivity | ].
+    intros t H_t; apply H_ty2, H_ty1; exact H_t.
+  Qed.
+
+  (* ------------------------------------------------------------------
+     Carrying the premise across the basic phase, at any depth.
+
+     The declared table's own initializer is pinned to an atom: elab emits
+     one, no basic head matches an atom, and nothing weaker would do, since
+     the premise speaks about the initializer's type and type_of cannot be
+     transported backwards.  The ENCLOSING initializers are pinned instead by
+     being synthesizable, which is the deterministic handle.
+     ------------------------------------------------------------------ *)
+  Definition cenv_respected_atom (ce : cenv) (Gstore Genv : ctenv) (c : command) : Prop :=
+    match c with
+    | CLetMut (EAtom _) _ _ => cenv_respected (locals := clocals) ce Gstore Genv c
+    | _ => False
+    end.
+
+  Definition below_letmut_pre_syn (P : ctenv -> ctenv -> command -> Prop)
+    (Gstore Genv : ctenv) (c : command) : Prop :=
+    match c with
+    | CLetMut e x c' =>
+        exists t a, synthesize_expr Gstore Genv e = Success (t, a)
+                    /\ P (map.put Gstore x t) Genv c'
+    | _ => False
+    end.
+
+  Fixpoint below_n_letmuts_pre_syn (n : nat) (P : ctenv -> ctenv -> command -> Prop) :
+    ctenv -> ctenv -> command -> Prop :=
+    match n with
+    | O => P
+    | S n => below_n_letmuts_pre_syn n (below_letmut_pre_syn P)
+    end.
+
+  Definition pre_transported (fs : list basic_transf)
+    (Pat P : ctenv -> ctenv -> command -> Prop) : Prop :=
+    forall (Gstore Genv : ctenv) c,
+      tenv_wf Gstore -> tenv_wf Genv -> Pat Gstore Genv c ->
+      P Gstore Genv (compose_basic_transfs (map mk_basic_transf fs) c).
+
+  Lemma pre_transported_below : forall fs Pat P,
+      pre_transported fs Pat P ->
+      pre_transported fs (below_letmut_pre_syn Pat) (below_letmut_pre P).
+  Proof.
+    unfold pre_transported, below_letmut_pre_syn, below_letmut_pre.
+    intros fs Pat P H_tr * H_Gs H_Ge H_syn.
+    destruct c as [ | | | e x c' | | | ]; try contradiction.
+    destruct H_syn as [ t [ a [ E_syn H_rest ] ] ].
+    destruct (compose_basic_transfs_letmut fs Gstore Genv e x c' H_Gs H_Ge)
+      as [ e' [ E_shape H_ty' ] ].
+    rewrite E_shape.
+    destruct (synthesize_expr Gstore Genv e') as [ [ t' a' ] | ] eqn:E_syn'; auto.
+    apply typechecker_sound in E_syn as H_t; auto.
+    apply H_ty' in H_t.
+    pose proof (synthesizable_ty_unique Gstore Genv e' t H_t H_Gs H_Ge a' t' E_syn')
+      as E_eq; subst t'.
+    apply H_tr; [ | assumption | exact H_rest ].
+    apply tenv_wf_step; [ assumption | ].
+    eapply type_of__type_wf; [ exact H_Gs | exact H_Ge | exact H_t ].
+  Qed.
+
+  Lemma pre_transported_below_n : forall n fs Pat P,
+      pre_transported fs Pat P ->
+      pre_transported fs (below_n_letmuts_pre_syn n Pat) (below_n_letmuts_pre n P).
+  Proof.
+    induction n; cbn [below_n_letmuts_pre_syn below_n_letmuts_pre]; intros * H_tr.
+    1: exact H_tr.
+    1: apply IHn, pre_transported_below, H_tr.
+  Qed.
+
+
+  Lemma pre_transported_cenv_respected : forall fs ce,
+      pre_transported fs (cenv_respected_atom ce) (cenv_respected (locals := clocals) ce).
+  Proof.
+    unfold pre_transported, cenv_respected_atom; intros * H_Gs H_Ge H_at.
+    destruct c as [ | | | e x c' | | | ]; try contradiction.
+    destruct e; try contradiction.
+    apply compose_basic_transfs_preserve_cenv_respected; assumption.
+  Qed.
+
+  Lemma apply_below_n_letmuts_id : forall n f,
+      (forall (Gstore Genv : ctenv) c, f Gstore Genv c = c) ->
+      forall (Gstore Genv : ctenv) c, apply_below_n_letmuts n f Gstore Genv c = c.
+  Proof.
+    induction n; cbn [apply_below_n_letmuts]; intros f H_f *.
+    1: apply H_f.
+    1:{ apply IHn. clear Gstore Genv c.
+        intros Gstore Genv c; unfold apply_below_letmut.
+        destruct c as [ | | | e x c' | | | ]; auto.
+        destruct (synthesize_expr Gstore Genv e) as [ [ t a ] | ]; auto.
+        rewrite H_f; reflexivity. }
+  Qed.
+
+  (* ------------------------------------------------------------------
      One record for a declared table.
 
      The choices here are ordinary index_choices and may mix a declared
@@ -926,41 +1111,47 @@ end.
         apply H_ts; assumption. }
   Qed.
 
-  Definition apply_all_transfs_constrained (ce : cenv) (reps : nat)
+  Definition apply_all_transfs_constrained (ce : cenv) (depth : nat) (reps : nat)
     (fs : list basic_transf) (cics : list index_choice)
     (icss : list (list index_choice)) (Gstore Genv : ctenv) : command -> command :=
     Basics.compose
       (compose_all_idx_transfs O (idx_transfs_of reps icss) Gstore Genv)
       (Basics.compose
-         (idx_transf_of ce reps cics Gstore Genv)
+         (apply_below_n_letmuts depth (idx_transf_of ce reps cics) Gstore Genv)
          (compose_basic_transfs (map mk_basic_transf fs))).
 
+  (* The premise: at the declared table's depth, the cenv describes the
+     program, its initializer is an atom, and every enclosing initializer
+     synthesizes.  At depth 0 that is exactly the old hypotheses -- the
+     command is a letmut of an atom whose cenv entry is respected -- so this
+     is a generalization of the previous statement, not a weakening. *)
   Theorem apply_all_transfs_constrained_sound :
-    forall ce reps fs cics icss (Gstore Genv : ctenv) (ai : atom) tbl body,
+    forall ce depth reps fs cics icss (Gstore Genv : ctenv) c,
       tenv_wf Gstore -> tenv_wf Genv ->
-      well_typed Gstore Genv (CLetMut (EAtom ai) tbl body) ->
-      cenv_respected (locals:=clocals) ce Gstore Genv (CLetMut (EAtom ai) tbl body) ->
+      well_typed Gstore Genv c ->
+      below_n_letmuts_pre_syn depth (cenv_respected_atom ce) Gstore Genv c ->
       well_typed Gstore Genv
-        (apply_all_transfs_constrained ce reps fs cics icss Gstore Genv
-           (CLetMut (EAtom ai) tbl body))
+        (apply_all_transfs_constrained ce depth reps fs cics icss Gstore Genv c)
       /\ forall (store env : clocals),
           locals_wf Gstore store -> locals_wf Genv env ->
           interp_command store env
-            (apply_all_transfs_constrained ce reps fs cics icss Gstore Genv
-               (CLetMut (EAtom ai) tbl body))
-          = interp_command store env (CLetMut (EAtom ai) tbl body).
+            (apply_all_transfs_constrained ce depth reps fs cics icss Gstore Genv c)
+          = interp_command store env c.
   Proof.
-    intros * H_Gs H_Ge H_wt H_ce.
+    intros * H_Gs H_Ge H_wt H_pre.
     unfold apply_all_transfs_constrained, Basics.compose.
-    (* the basic phase: sound, and it keeps the gate's premise *)
+    (* the basic phase: sound, and it carries the premise down to the
+       declared table's depth *)
     pose proof (compose_basic_transfs_sound fs Gstore Genv _ H_Gs H_Ge H_wt)
-      as [ H_wt1 H_sem1 ].
-    pose proof (compose_basic_transfs_preserve_cenv_respected
-                  fs ce Gstore Genv ai tbl body H_Gs H_Ge H_ce) as H_ce1.
-    cbn in H_wt1, H_sem1.
+      as [ H_wt1 H_sem1 ]; cbn in H_wt1, H_sem1.
+    pose proof (pre_transported_below_n depth fs _ _
+                  (pre_transported_cenv_respected fs ce)
+                  Gstore Genv c H_Gs H_Ge H_pre) as H_pre1.
     (* the record for the declared table: sound given only that the cenv
        describes the program, and nothing about which choices were made *)
-    pose proof (idx_transf_of_sound ce reps cics Gstore Genv _ H_Gs H_Ge H_wt1 H_ce1)
+    pose proof (apply_below_n_letmuts_pre_sound depth _ _
+                  (fun Gs Ge c' H1 H2 H3 H4 => idx_transf_of_sound ce reps cics Gs Ge c' H1 H2 H3 H4)
+                  Gstore Genv _ H_Gs H_Ge H_wt1 H_pre1)
       as [ H_wt2 H_sem2 ].
     (* the unconstrained index layer: sound for every well-typed program *)
     pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H_Gs H_Ge H_wt2)
@@ -978,11 +1169,13 @@ end.
      about the declarations because none is consulted -- which is what makes a
      rewrite like the one in ExistsTransf, that needs no declaration, usable
      without one. *)
-  Lemma apply_all_transfs_constrained_None_sound : forall ce reps fs icss,
-      transf_sound (locals:=clocals) (apply_all_transfs_constrained ce reps fs [] icss).
+  Lemma apply_all_transfs_constrained_None_sound : forall ce depth reps fs icss,
+      transf_sound (locals:=clocals) (apply_all_transfs_constrained ce depth reps fs [] icss).
   Proof.
-    unfold apply_all_transfs_constrained, Basics.compose, transf_sound,
-      idx_transf_of, id; intros.
+    unfold apply_all_transfs_constrained, Basics.compose, transf_sound; intros.
+    rewrite (apply_below_n_letmuts_id depth (idx_transf_of ce reps [])
+               (fun Gs Ge c' => eq_refl)).
+    unfold id.
     pose proof (compose_basic_transfs_sound fs Gstore Genv _ H H0 H1)
       as [ H_wt1 H_sem1 ]; cbn in H_wt1, H_sem1.
     pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H H0 H_wt1)
@@ -997,14 +1190,14 @@ end.
      install.  A separate variant, since the existing one is what every
      unconstrained example is written against. *)
   Variant canno_command :=
-    | CAC (ce : cenv) (basic_transfs : list basic_transf)
+    | CAC (ce : cenv) (declared_table_depth : nat) (basic_transfs : list basic_transf)
         (declared_table_choices : list index_choice)
         (all_index_choices : list (list index_choice)) (c : command).
 
   Definition apply_optimize_anno_constrained (ac : canno_command) (Gstore Genv : ctenv) :=
     match ac with
-    | CAC ce fs cics icss c =>
-        apply_all_transfs_constrained ce 10000 fs cics icss Gstore Genv c
+    | CAC ce depth fs cics icss c =>
+        apply_all_transfs_constrained ce depth 10000 fs cics icss Gstore Genv c
     end.
 
   (* The end of the chain: on a program the surface language elaborated, the
@@ -1021,13 +1214,13 @@ end.
       well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
       well_typed Gstore Genv
         (apply_optimize_anno_constrained
-           (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) fs cics icss
+           (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) O fs cics icss
               (elab ce free_vars (SLetConstrained tbl row_ty ds sc))) Gstore Genv)
       /\ forall (store env : clocals),
           locals_wf Gstore store -> locals_wf Genv env ->
           interp_command store env
             (apply_optimize_anno_constrained
-               (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) fs cics icss
+               (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) O fs cics icss
                   (elab ce free_vars (SLetConstrained tbl row_ty ds sc))) Gstore Genv)
           = interp_command store env (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).
   Proof.
@@ -1038,6 +1231,59 @@ end.
     cbn [apply_optimize_anno_constrained].
     cbn [elab] in H_wt, H_ce |- *.
     apply apply_all_transfs_constrained_sound; assumption.
+  Qed.
+
+  (* ------------------------------------------------------------------
+     And a declared table one letmut down.
+
+     Nothing about the pipeline changes -- only the depth the declared-table
+     layer is pushed to, and the premise with it.  The enclosing initializer
+     has to synthesize, which is what pins its type across the basic phase;
+     apply_below_letmut asks for exactly the same thing before it will descend
+     at all, so this costs nothing a program the layer could reach does not
+     already have.
+     ------------------------------------------------------------------ *)
+  Corollary elab_apply_optimize_anno_constrained_nested_sound :
+    forall x e sc ce free_vars fs cics icss (Gstore Genv : ctenv) tbl row_ty ds t a,
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+      incl (get_free_vars Genv) free_vars ->
+      Forall (decl_wf row_ty) ds ->
+      synthesize_expr Gstore Genv e = Success (t, a) ->
+      well_typed Gstore Genv
+        (elab ce free_vars (SLetMut e x (SLetConstrained tbl row_ty ds sc))) ->
+      well_typed Gstore Genv
+        (apply_optimize_anno_constrained
+           (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl (cenv_rm x ce)) (S O) fs cics icss
+              (elab ce free_vars (SLetMut e x (SLetConstrained tbl row_ty ds sc))))
+           Gstore Genv)
+      /\ forall (store env : clocals),
+          locals_wf Gstore store -> locals_wf Genv env ->
+          interp_command store env
+            (apply_optimize_anno_constrained
+               (CAC ((tbl, (row_ty, ds)) :: cenv_rm tbl (cenv_rm x ce)) (S O) fs cics icss
+                  (elab ce free_vars (SLetMut e x (SLetConstrained tbl row_ty ds sc))))
+               Gstore Genv)
+          = interp_command store env
+              (elab ce free_vars (SLetMut e x (SLetConstrained tbl row_ty ds sc))).
+  Proof.
+    intros * H_Gs H_Ge H_rt H_fv H_ds E_syn H_wt.
+    cbn [apply_optimize_anno_constrained].
+    apply apply_all_transfs_constrained_sound; [ assumption .. | ].
+    apply typechecker_sound in E_syn as H_t; auto.
+    assert (H_Gs' : tenv_wf (map.put Gstore x t)).
+    1:{ apply tenv_wf_step; [ assumption | ].
+        eapply type_of__type_wf; [ exact H_Gs | exact H_Ge | exact H_t ]. }
+    cbn [elab] in H_wt |- *.
+    cbn [below_n_letmuts_pre_syn below_letmut_pre_syn].
+    exists t, a; split; [ exact E_syn | ].
+    invert_well_typed.
+    lazymatch goal with
+      H : type_of Gstore Genv e ?t' |- _ =>
+        pose proof (synthesizable_ty_unique Gstore Genv e t' H H_Gs H_Ge a t E_syn)
+          as E_eq; subst t'
+    end.
+    cbn [cenv_respected_atom].
+    apply elab_cenv_respected; assumption.
   Qed.
 
 End WithConcreteMaps.
