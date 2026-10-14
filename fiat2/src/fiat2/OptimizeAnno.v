@@ -490,17 +490,35 @@ end.
     repeat destruct_match_hyp; intuition idtac;
     repeat invert_pair; rewrite_l_to_r; try eassumption.
 
-  Lemma mk_idx_sound : forall ic init_tag reps idxs transfs next_tag f,
+  (* The soundness of one index's own rewrites, against any invariant at least
+     as strong as the index's own.
+
+     This cannot be a corollary of the instance below: aug_transf_sound is
+     monotone in the invariant in NEITHER direction, since it both assumes and
+     re-establishes the same parameterized_wf.  So the generalization has to be
+     what is proved.  It costs one tactic per rewrite, because every rewrite
+     here is really an expression rule, and an expression rule only ever
+     assumes the invariant -- see expr_aug_transf_sound_strengthen_wf.
+
+     What this buys: an index record that also carries an index whose
+     correctness rests on a declared constraint is installed under the stronger
+     invariant "the record is well formed AND the declarations hold", and the
+     ordinary indexes' rewrites have to be usable there too. *)
+  Lemma mk_idx_sound_strengthen : forall ic init_tag reps idxs transfs next_tag f,
       (idxs, transfs, next_tag) = mk_idx init_tag reps ic ->
       In f transfs ->
-      forall l,
+      forall l (Q : value -> Prop),
         incl idxs l ->
         NoDup (map fst (map fst l)) ->
+        (forall v, Q v -> @aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v) ->
         @aug_transf_sound width word ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
-          (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") (@aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag") f.
+          (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") Q f.
   Proof.
+    intros ic init_tag reps idxs transfs next_tag f H_mk H_in l Q H_incl H_nd H_Q.
+    revert H_mk H_in H_incl H_nd.
     destruct ic; cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply sum_to_agg_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -512,6 +530,7 @@ end.
         1: eapply filter_neq_to_sub_head_sound; auto using ctenv_ok, clocals_ok.
         1: eapply cons_to_add_head_sound. }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply min_to_agg_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -523,6 +542,7 @@ end.
         1: eapply cons_to_min_head_sound.
         1: eapply filter_neq_to_min_guard_head_sound; auto using ctenv_ok, clocals_ok. }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply set_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -535,6 +555,7 @@ end.
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_set_insert_head_sound; auto using ctenv_ok, clocals_ok. } }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply eq_filter_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
             1:{ rewrite is_NoDup_to_transparent.
                 instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
@@ -571,6 +592,17 @@ end.
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_insert_head_sound;
               eauto with transf_hints. } }
+  Qed.
+  Lemma mk_idx_sound : forall ic init_tag reps idxs transfs next_tag f,
+      (idxs, transfs, next_tag) = mk_idx init_tag reps ic ->
+      In f transfs ->
+      forall l,
+        incl idxs l ->
+        NoDup (map fst (map fst l)) ->
+        @aug_transf_sound width word ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
+          (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") (@aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag") f.
+  Proof.
+    intros. eapply mk_idx_sound_strengthen; eauto.
   Qed.
 
   Lemma mk_idxs_mk_idx : forall ics init_tag reps idxs transfs next_tag f,
