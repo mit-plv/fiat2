@@ -760,8 +760,10 @@ end.
     ctenv -> ctenv -> command -> command :=
     match cic with
     | UniqueDictIdx attr =>
-        apply_unique_idx_transfs "hole" attr "tup" "acc" "id_tag" "aux_tag" ce
-          (unique_lookup_transf attr "id_tag" "aux_tag" "y")
+        (* installed unconditionally, like any other index; it is the use rule
+           that is the identity where the declarations are silent *)
+        unique_idx_transf (locals := clocals) (word := word)
+          "hole" attr "tup" "acc" "id_tag" "aux_tag" "u" "y" ce
     end.
 
   Definition apply_all_transfs_constrained (ce : cenv) (reps : nat)
@@ -820,8 +822,8 @@ end.
                         (CLetMut (EAtom ai) tbl body))).
     1:{ destruct cic as [ [ attr ] | ]; [ | split; auto ].
         cbn [mk_constrained_idx_transf].
-        apply (unique_idx_pipeline_sound "hole" attr "tup" "acc"
-                 ltac:(discriminate) "id_tag" "aux_tag" ltac:(discriminate) "y");
+        apply (unique_idx_transf_sound "hole" attr "tup" "acc"
+                 ltac:(discriminate) "id_tag" "aux_tag" ltac:(discriminate) "u" "y");
           assumption. }
     destruct H_mid as [ H_wt2 H_sem2 ].
     (* the unconstrained index layer: sound for every well-typed program *)

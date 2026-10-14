@@ -83,6 +83,32 @@ Section WithIndexVars.
       end.
 
     (* ------------------------------------------------------------------
+       The value-level core of the bridge.  It says nothing about how the
+       installation lays its record out, only about a table and its index side
+       by side, so every layout can go through it: the flat record the
+       single-index installation builds, and the nested one an index record
+       builds, where the dictionary sits under a tag of its own.
+       ------------------------------------------------------------------ *)
+    Lemma idx_wf__idx_wf_unique : forall rt kt (v_id v_aux : value),
+        type_wf (TRecord rt) ->
+        access_record rt attr = Success kt ->
+        type_of_value v_id (TList (TRecord rt)) ->
+        uidx_wf v_id v_aux ->
+        constr_holds (locals := locals) (unique_constr attr (TRecord rt)) v_id ->
+        idx_wf_unique hole attr tup acc v_id v_aux.
+    Proof.
+      intros * H_rt H_attr H_ty H_wf H_constr.
+      inversion H_ty; subst.
+      unfold idx_wf_unique; split; [ exact H_wf | ].
+      cbn [keys_distinct].
+      lazymatch goal with
+        H_fa : Forall _ ?l |- NoDup (List.map (row_key attr) ?l) =>
+          apply (proj1 (unique_constr_holds_iff attr rt kt l H_rt H_attr H_fa))
+      end.
+      exact H_constr.
+    Qed.
+
+    (* ------------------------------------------------------------------
        The bridge.  The constraint is a statement about counting and the
        index assumes NoDup on the keys, so the step from one to the other
        goes through unique_constr_holds_iff, which needs the table value to
@@ -106,14 +132,8 @@ Section WithIndexVars.
           assert (H_vid : type_of_value vid (TList (TRecord rt)))
             by (eapply type_of_value_at_id_tag; [ exact H_tags_diff | exact H_ty | exact E ])
       end.
-      inversion H_vid; subst.
-      unfold idx_wf_unique; split; [ assumption | ].
-      cbn [keys_distinct].
-      lazymatch goal with
-        H_fa : Forall _ ?l |- NoDup (List.map (row_key attr) ?l) =>
-          apply (proj1 (unique_constr_holds_iff attr rt kt l H_rt H_attr H_fa))
-      end.
-      assumption.
+      eapply idx_wf__idx_wf_unique;
+        [ exact H_rt | exact H_attr | exact H_vid | assumption | assumption ].
     Qed.
 
     Section WithGlobal.

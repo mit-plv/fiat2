@@ -87,18 +87,26 @@ Section WithConcreteMaps.
     EFold tbl (EAtom (AEmptyDict None)) "tup" "acc"
       (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "id") (EVar "tup")).
 
-  (* After: the table is the pair of the list and that dictionary, every read
-     of the table goes through id_tag, and the guard is one lookup in
-     aux_tag. *)
+  (* The index RECORD the installation builds.  One member here, sitting under
+     a tag of its own -- which is why every read of the index goes through
+     aux_tag and then that tag, exactly as a set or range index's would. *)
+  Definition punique_rec_of (tbl : expr) : expr :=
+    ERecord [("u", punique_idx_of tbl)].
+
+  Definition pidx : expr := EAccess (EAccess (ELoc "users") "aux_tag") "u".
+
+  (* After: the table is the pair of the list and that index record, every read
+     of the table goes through id_tag, and the guard is one lookup in the
+     dictionary. *)
   Definition poptimized_expected : command :=
     CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                      ("aux_tag", punique_idx_of (EAtom (ANil (Some prow_ty))))])
+                      ("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
       "users"
       (CIf (EBinop OAnd
               (ELet (EVar "u") "_pk_row"
                  (EBinop OEq
                     (EOptMatch
-                       (EBinop OLookup (EAccess (ELoc "users") "aux_tag")
+                       (EBinop OLookup pidx
                           (EAccess (EVar "_pk_row") "id"))
                        (EAtom (AEmptyBag None)) "y"
                        (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")))
@@ -108,7 +116,7 @@ Section WithConcreteMaps.
             (ERecord
                [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
                 ("aux_tag",
-                  punique_idx_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
+                  punique_rec_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
          CSkip).
 
   Lemma poptimized_is : poptimized [DUnique "id"] = poptimized_expected.
@@ -124,18 +132,27 @@ Section WithConcreteMaps.
     intro H; injection H as H_init _; discriminate H_init.
   Qed.
 
-  (* Without the declaration the declared index is not installed, and what is
-     left is exactly the basic phase: the pipeline does what it would have done
-     with no constrained choice at all. *)
-  Lemma pgate_closed_without_decl :
-    poptimized [] = compose_basic_transfs (map mk_basic_transf pbasics) (pelaborated []).
+  (* The same pipeline told nothing about the table.  The declared index is
+     still INSTALLED -- it is an ordinary index, sound on any table -- so this
+     is not the basic phase alone; it is the installation with a use rule that
+     never fires. *)
+  Definition pinstall_only (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width)
+      (CAC [] pbasics (Some (UniqueDictIdx "id")) [] (pelaborated ds))
+      pGstore0 pGenv0.
+
+  (* Without the declaration the use rule is the identity, so the pipeline is
+     the installation and nothing else.  Asking for this index on a table with
+     no declared key therefore costs a dictionary nobody reads: it is still
+     sound, and it disables nothing. *)
+  Lemma puse_closed_without_decl : poptimized [] = pinstall_only [].
   Proof. reflexivity. Qed.
 
-  (* A key, but on another attribute: the same.  This is the case a gate that
-     looked for the guard's syntax would get wrong. *)
-  Lemma pgate_closed_on_other_key :
-    poptimized [DUnique "name"]
-    = compose_basic_transfs (map mk_basic_transf pbasics) (pelaborated [DUnique "name"]).
+  (* A key, but on another attribute: the same.  This is the case a rule that
+     looked for the guard's syntax would get wrong, since the program does
+     carry a primary key check -- just not this index's. *)
+  Lemma puse_closed_on_other_key :
+    poptimized [DUnique "name"] = pinstall_only [DUnique "name"].
   Proof. reflexivity. Qed.
 
   (* The unconstrained layer still runs, and finds nothing left to do on a
@@ -243,13 +260,13 @@ Section WithConcreteMaps.
   (* The probe the rule leaves behind: the bag of rows stored at the key,
      which the declaration guarantees holds at most one row. *)
   Definition qprobe (k : expr) : expr :=
-    EOptMatch (EBinop OLookup (EAccess (ELoc "users") "aux_tag") k)
+    EOptMatch (EBinop OLookup pidx k)
       (EAtom (AEmptyBag None)) "y"
       (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")).
 
   Definition qoptimized_expected : command :=
     CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                      ("aux_tag", punique_idx_of (EAtom (ANil (Some prow_ty))))])
+                      ("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
       "users"
       (CSeq
          (* the write guard: one probe *)
@@ -262,7 +279,7 @@ Section WithConcreteMaps.
                (ERecord
                   [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
                    ("aux_tag",
-                     punique_idx_of
+                     punique_rec_of
                        (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
             CSkip)
          (* and the read query: the same probe, at the key the query asks for *)

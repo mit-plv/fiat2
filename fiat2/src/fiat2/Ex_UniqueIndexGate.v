@@ -133,19 +133,38 @@ Section WithConcreteMaps.
      ------------------------------------------------------------------ *)
 
   Definition uhit := "_pk_hit".
+  Definition uix := "u".
 
+  (* The index goes in whatever is declared -- it is an ordinary index, sound
+     on any table.  What the declarations decide is whether the use rule may
+     fire, and that decision is taken inside the soundness proof, not by the
+     transformation. *)
   Definition optimized (ds : list decl) : command :=
-    apply_unique_idx_transfs uhole "id" utup uacc uid uaux
-      (inner_cenv ds) (unique_lookup_transf "id" uid uaux uhit) Gstore0 Genv0
+    unique_idx_transf (locals := clocals) (word := word)
+      uhole "id" utup uacc uid uaux uix uhit (inner_cenv ds) Gstore0 Genv0
       (elaborated ds).
+
+  (* The same pipeline told nothing about the table: the installation alone. *)
+  Definition installed (ds : list decl) : command :=
+    unique_idx_transf (locals := clocals) (word := word)
+      uhole "id" utup uacc uid uaux uix uhit [] Gstore0 Genv0 (elaborated ds).
 
   (* The quadratic guard -- scan the table, keep the rows whose id matches the
      new row's, test that there are none -- has become one dictionary lookup. *)
   Compute (optimized [DUnique "id"]).
 
-  (* Still nothing without the declaration, rule or no rule. *)
-  Lemma optimized_closed_without_decl : optimized [] = elaborated [].
+  (* Where the declarations are silent the rule is literally the identity, so
+     the pipeline is the installation and nothing else.  A hint asking for
+     this index on a table with no declared key therefore costs a dictionary
+     nobody reads -- it does not disable anything and it is still sound. *)
+  Lemma optimized_without_decl_is_install_only : optimized [] = installed [].
   Proof. reflexivity. Qed.
+
+  (* And the declaration is what introduces the lookup: same installation,
+     different program. *)
+  Lemma decl_introduces_the_lookup :
+    optimized [DUnique "id"] <> installed [DUnique "id"].
+  Proof. unfold optimized, installed; cbn; congruence. Qed.
 
   Theorem optimized_sound :
     well_typed Gstore0 Genv0 (elaborated [DUnique "id"]) ->
@@ -156,8 +175,8 @@ Section WithConcreteMaps.
         = interp_command store env (elaborated [DUnique "id"]).
   Proof.
     intros H_wt. unfold optimized, elaborated, inner_cenv, prog in *.
-    apply (elab_unique_idx_pipeline_sound uhole "id" utup uacc utup_neq_uacc
-             uid uaux uid_neq_uaux uhit);
+    apply (elab_unique_idx_transf_sound uhole "id" utup uacc utup_neq_uacc
+             uid uaux uid_neq_uaux uix uhit);
       [ apply Gstore0_wf | apply Genv0_wf | apply row_ty_wf
       | apply incl_refl | apply decl_wf_unique_id | exact H_wt ].
   Qed.
