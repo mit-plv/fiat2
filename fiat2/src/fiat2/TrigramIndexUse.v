@@ -5,7 +5,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.UniqueDictIndexImpl fiat2.UniqueIndexInstall fiat2.UniqueIndexGate
   fiat2.UniqueIndexUse fiat2.TrigramIndexImpl fiat2.Surface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-From Stdlib Require Import String ZArith List Permutation Sorted.
+From Stdlib Require Import String ZArith List Permutation Sorted Lia.
 
 Import ListNotations.
 
@@ -365,8 +365,11 @@ Section WithIndexUse.
       Lemma interp_trigram_probe :
         forall (store env : locals) (g p : expr) (gv : value) (pv : string)
                (td pd : list (value * value)),
-          (forall (env' : locals), interp_expr store env' g = gv) ->
-          (forall (env' : locals), interp_expr store env' p = VString pv) ->
+          (* g is read outside the binders the probe introduces, p inside
+             them: a pattern that mentions neither k nor y is enough *)
+          interp_expr store env g = gv ->
+          (forall (v r : value),
+              interp_expr store (map.put (map.put env k v) y r) p = VString pv) ->
           interp_expr store env tri_e = VDict td ->
           interp_expr store env pk_e = VDict pd ->
           Forall (fun e : value * value =>
@@ -383,7 +386,7 @@ Section WithIndexUse.
         intros * E_g E_p E_tri E_pk H_sets.
         unfold trigram_probe. rewrite interp_EFlatmap_set.
         (* the source: the bucket of the trigram, present or absent *)
-        rewrite interp_EOptMatch, interp_EBinop, E_tri, (E_g env).
+        rewrite interp_EOptMatch, interp_EBinop, E_tri, E_g.
         cbn [interp_binop]. unfold tri_bucket.
         destruct (dict_lookup gv td) as [ bkv | ] eqn:E_lk.
         2:{ rewrite interp_EAtom. cbn [interp_atom].
@@ -411,7 +414,7 @@ Section WithIndexUse.
         2:{ rewrite interp_EAtom; cbn [interp_atom]; reflexivity. }
         rewrite interp_EIf, interp_EBinop, interp_EAccess, interp_EVar.
         unfold get_local; rewrite map.get_put_same.
-        rewrite (E_p (map.put (map.put env k v) y r)).
+        rewrite (E_p v r).
         unfold contains_test, row_key.
         destruct (interp_binop OStrContains
                     (match r with VRecord fs => record_proj attr fs | _ => VUnit end)
@@ -526,12 +529,12 @@ Section WithIndexUse.
         subst.
         (* everything the probe's semantics asks for, before rewriting with
            it, so that no step depends on the order of side goals *)
-        assert (H_g : forall (env' : locals),
-                   interp_expr store env' (EAtom (AString (String.substring 0 3 pstr)))
-                   = VString (String.substring 0 3 pstr)) by reflexivity.
-        assert (H_pv : forall (env' : locals),
-                   interp_expr store env' (EAtom (AString pstr)) = VString pstr)
-          by reflexivity.
+        assert (H_g : interp_expr store env
+                        (EAtom (AString (String.substring 0 3 pstr)))
+                      = VString (String.substring 0 3 pstr)) by reflexivity.
+        assert (H_pv : forall (v r : value),
+                   interp_expr store (map.put (map.put env k v) y r)
+                     (EAtom (AString pstr)) = VString pstr) by reflexivity.
         assert (H_tri_e : interp_expr store env
                             (EAccess (EAccess (ELoc tbl) aux_tag) tri_tag) = VDict td)
           by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_tri ]).
@@ -639,6 +642,221 @@ Section WithIndexUse.
                 1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf. } }
       Qed.
 
+      (* ------------------------------------------------------------------
+         The guarded form, for a pattern that is not a literal.
+
+         Whether the pattern has a trigram at all cannot be decided at
+         rewrite time, so the rule decides it at run time and keeps the
+         original scan for the short case.  Every production engine does
+         this -- PostgreSQL's index scan "degenerates to a full-index scan"
+         for a pattern with no extractable trigrams, Google Code Search's
+         trigram query for a short literal collapses to ANY -- while two
+         mainstream n-gram indexes instead return nothing, which is simply
+         wrong.  The difference here is that the length condition is a
+         soundness obligation: probe_recheck_eq does not hold without it, so
+         the fallback cannot be dropped.
+         ------------------------------------------------------------------ *)
+      Definition pattern_has_trigram (p : expr) : expr :=
+        EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString p).
+
+      Definition first_trigram (p : expr) : expr :=
+        ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3)).
+
+      Definition trigram_lookup_guarded_head (e : expr) : expr :=
+        match e with
+        | flatmap_filter_set
+            (ESetOf (EAccess (ELoc tbl0) id_tag0))
+            x0 (EBinop OStrContains (EAccess (EVar x1) attr0) p) x2 _ _ =>
+            if (all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1; x2]);
+                         (id_tag, [id_tag0])]
+                && negb (free_immut_in x0 p)
+                && negb (free_immut_in k p)
+                && negb (free_immut_in y p))%bool
+            then EIf (pattern_has_trigram p) (trigram_probe (first_trigram p) p) e
+            else e
+        | _ => e
+        end.
+
+      Lemma trigram_lookup_guarded_head_preserve_ty : forall tl ctl t (Gstore : tenv),
+          type_wf t -> @IndexInterface.is_tbl_ty tridx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (@IndexInterface.idx_ty tridx t) ->
+          access_record ctl pk_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore trigram_lookup_guarded_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_tri E_pk.
+        cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty trigram_idx
+               unique_dict_idx] in H_is, E_tri, E_pk.
+        unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty,
+          UniqueDictIndexImpl.idx_ty in H_is, E_tri, E_pk.
+        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr;
+          try discriminate.
+        destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
+        apply type_eqb_eq in H_is; subst at_ty.
+        assert (E_kt : get_attr_type rt key = kt)
+          by (unfold get_attr_type; rewrite E_key; reflexivity).
+        rewrite E_kt in E_tri, E_pk.
+        assert (H_rtwf : type_wf (TRecord rt)) by (inversion H_twf; assumption).
+        assert (H_ktwf : type_wf kt)
+          by (rewrite <- E_kt; apply get_attr_type_ty_wf; exact H_rtwf).
+        clear E_kt.
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr_keep_str.
+        unfold trigram_lookup_guarded_head. cbv beta iota.
+        case_match; auto.
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        repeat rewrite Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        (* destruct_subexpr stops at the pattern, which is the only
+           expression variable left: give it a name to use below *)
+        lazymatch goal with pe : expr |- _ => rename pe into pat end.
+        (* the pattern's type, read off the source by inversions that are
+           kept local so the source's own typing survives for the else
+           branch below *)
+        assert (H_pty : type_of Gstore Genv pat TString).
+        1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+            eapply not_free_immut_put_ty; [ eassumption | eassumption ]. }
+        unfold pattern_has_trigram, first_trigram, trigram_probe.
+        eapply TyEIf.
+        3: exact H_t.
+        1:{ (* the guard: 2 < strlen(pattern) *)
+            eapply TyEBinop; [ apply TyOLess | apply TyEAtom; apply TyAInt | ].
+            eapply TyEUnop; [ apply TyOLengthString | exact H_pty ]. }
+        1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
+            repeat (rewrite_l_to_r; do_injection2).
+            eapply TyEFlatmap_Set with (t1 := kt).
+            1:{ eapply TyEOptMatch with (t1 := TSet kt).
+                1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+                    1:{ eapply TyEAccess;
+                        [ eapply TyEAccess;
+                          [ apply TyELoc; exact E_tbl | exact E_aux ]
+                        | exact E_tri ]. }
+                    1:{ eapply TyETernop;
+                        [ apply TyOSubstring | exact H_pty
+                        | apply TyEAtom; apply TyAInt
+                        | apply TyEAtom; apply TyAInt ]. } }
+                1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
+                1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+            1:{ eapply TyEOptMatch.
+                1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+                    1:{ eapply TyEAccess;
+                        [ eapply TyEAccess;
+                          [ apply TyELoc; exact E_tbl | exact E_aux ]
+                        | exact E_pk ]. }
+                    1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+                1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
+                1:{ eapply TyEIf.
+                    1:{ eapply TyEBinop; [ apply TyOStrContains | | ].
+                        1:{ eapply TyEAccess;
+                            [ apply TyEVar; rewrite map.get_put_same; reflexivity
+                            | exact E_attr ]. }
+                        1:{ apply not_free_immut_put_ty2; [ assumption | ].
+                            apply not_free_immut_put_ty2;
+                              [ assumption | exact H_pty ]. } }
+                    1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+                        1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
+                        1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+                    1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf. } } }
+      Qed.
+
+      (* --- *)
+      Lemma trigram_lookup_guarded_head_preserve_sem :
+        forall tl rt (Gstore : tenv) (store : locals),
+          access_record rt attr = Success TString ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          match map.get store tbl with
+          | Some v =>
+              type_of_value v (TRecord tl) /\ tri_aux_wf_at v /\ unique_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store trigram_lookup_guarded_head.
+      Proof.
+        unfold preserve_sem; intros * H_attr E_tbl E_id H_store.
+        intros e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+        destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+        destruct H_store as [ H_vty [ H_tri H_pk ] ].
+        destruct (invariants__probe_data tl rt v H_attr E_id H_vty H_tri H_pk)
+          as [ rv [ rv_aux [ rows [ td [ E_vrec [ E_rows [ E_aux
+             [ E_tri [ E_pk [ E_te [ H_sets H_nd ] ] ] ] ] ] ] ] ] ] ].
+        subst v.
+        repeat destruct_subexpr_keep_str.
+        unfold trigram_lookup_guarded_head. cbv beta iota.
+        case_match; auto.
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        repeat rewrite Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        (* destruct_subexpr stops at the pattern, which is the only
+           expression variable left: give it a name to use below *)
+        lazymatch goal with pe : expr |- _ => rename pe into pat end.
+        (* the pattern is a string, so the guard really is a boolean *)
+        assert (H_pty : type_of Gstore Genv pat TString).
+        1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+            eapply not_free_immut_put_ty; [ eassumption | eassumption ]. }
+        pose proof (type_sound Gstore Genv pat TString H_pty H_Gs H_Ge
+                      store env H_sw H_ew) as H_pval.
+        assert (H_pstr : exists pv, interp_expr store env pat = VString pv).
+        1:{ destruct (interp_expr store env pat)
+              as [ | | | pv | | | | | | | ] eqn:E_pv.
+            4: exists pv; reflexivity.
+            all: inversion H_pval. }
+        destruct H_pstr as [ pv E_pv ].
+        (* the guard *)
+        unfold pattern_has_trigram, first_trigram.
+        rewrite interp_EIf, interp_EBinop, interp_EUnop, interp_EAtom, E_pv.
+        cbn [interp_unop interp_binop interp_atom].
+        destruct (Z.ltb 2 (Z.of_nat (String.length pv))) eqn:E_long.
+        2: reflexivity.
+        assert (H_len : 3 <= String.length pv)
+          by (apply Z.ltb_lt in E_long; lia).
+        (* the probe, as in the literal case, with the trigram taken at run
+           time instead of at rewrite time *)
+        assert (H_g : interp_expr store env
+                        (ETernop OSubstring pat (EAtom (AInt 0)) (EAtom (AInt 3)))
+                      = VString (String.substring 0 3 pv)).
+        1:{ rewrite interp_ETernop, E_pv.
+            cbn [interp_expr interp_atom interp_ternop]. reflexivity. }
+        assert (H_pv' : forall (v r : value),
+                   interp_expr store (map.put (map.put env k v) y r) pat
+                   = VString pv).
+        1:{ intros v r.
+            rewrite <- (not_free_immut_put_sem pat y store (map.put env k v) r)
+              by assumption.
+            rewrite <- (not_free_immut_put_sem pat k store env v) by assumption.
+            exact E_pv. }
+        assert (H_tri_e : interp_expr store env
+                            (EAccess (EAccess (ELoc tbl) aux_tag) tri_tag) = VDict td)
+          by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_tri ]).
+        assert (H_pk_e : interp_expr store env
+                           (EAccess (EAccess (ELoc tbl) aux_tag) pk_tag)
+                         = VDict (UniqueDictIndexImpl.idx_entries key rows))
+          by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_pk ]).
+        rewrite (interp_trigram_probe store env _ _ _ pv td _
+                   H_g H_pv' H_tri_e H_pk_e H_sets).
+        rewrite interp_flatmap_filter_set, interp_ESetOf,
+          interp_EAccess, interp_ELoc.
+        unfold get_local; rewrite E_v; cbv beta iota.
+        rewrite E_rows; cbv beta iota.
+        erewrite filter_pointwise with (f2 := contains_test attr pv).
+        2:{ intros w.
+            rewrite interp_EBinop, interp_EAccess, interp_EVar.
+            unfold get_local; rewrite map.get_put_same.
+            rewrite <- (not_free_immut_put_sem pat x store env w) by assumption.
+            rewrite E_pv.
+            unfold contains_test, row_key. reflexivity. }
+        rewrite (probe_recheck_eq attr key rows pv H_len H_nd), E_te.
+        unfold probe_body. reflexivity.
+      Qed.
+
     End WithTable.
 
     Lemma tri_is_tbl_ty_inv : forall t,
@@ -719,9 +937,49 @@ Section WithIndexUse.
           assumption. }
     Qed.
 
-    (* The rule, applied everywhere below the installation. *)
+    (* The same, for the guarded form.  The two proofs differ only in which
+       head they appeal to. *)
+    Lemma trigram_lookup_guarded_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_guarded_head.
+    Proof.
+      unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty1 [ H_aty2 [ H_is H_wf ] ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      apply H_is in H_is' as H_is_tri.
+      apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+      specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply trigram_lookup_guarded_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply trigram_lookup_guarded_head_preserve_sem; try eassumption.
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | ].
+          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
+          lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+          assumption. }
+    Qed.
+
+    (* The rules, applied everywhere below the installation. *)
     Definition trigram_lookup_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl] (trigram_lookup_head tbl).
+
+    Definition trigram_lookup_guarded_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (trigram_lookup_guarded_head tbl).
 
     Lemma trigram_lookup_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
         trigram_bridges is_tbl_ty' aux_ty aux_wf ->
@@ -730,6 +988,15 @@ Section WithIndexUse.
       intros * H_br. unfold trigram_lookup_transf.
       apply fold_command_with_globals_sound.
       apply trigram_lookup_head_sound; exact H_br.
+    Qed.
+
+    Lemma trigram_lookup_guarded_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_guarded_transf.
+    Proof.
+      intros * H_br. unfold trigram_lookup_guarded_transf.
+      apply fold_command_with_globals_sound.
+      apply trigram_lookup_guarded_head_sound; exact H_br.
     Qed.
 
     (* ------------------------------------------------------------------
@@ -741,8 +1008,14 @@ Section WithIndexUse.
        a declaration is resolving a bucket's keys back to single rows, and
        that is the primary-key index's business.
        ------------------------------------------------------------------ *)
+    (* The literal rule runs first, so a literal pattern gets the probe
+       without a guard and the guarded rule then finds nothing left to do
+       there.  A pattern that is not a literal is left to the guard. *)
     Definition trigram_lookup_gated (ds : list decl) : string -> command -> command :=
-      if declares_unique key ds then trigram_lookup_transf else fun _ => id.
+      if declares_unique key ds
+      then fun tbl => Basics.compose (trigram_lookup_guarded_transf tbl)
+                        (trigram_lookup_transf tbl)
+      else fun _ => id.
 
     Lemma trigram_lookup_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
         (declares_unique key ds = true -> trigram_bridges is_tbl_ty' aux_ty aux_wf) ->
@@ -750,7 +1023,9 @@ Section WithIndexUse.
     Proof.
       intros * H_br. unfold trigram_lookup_gated.
       destruct (declares_unique key ds) eqn:E_uq.
-      1: apply trigram_lookup_transf_sound, H_br; reflexivity.
+      1:{ apply aug_transf_sound_compose.
+          1: apply trigram_lookup_guarded_transf_sound, H_br; reflexivity.
+          1: apply trigram_lookup_transf_sound, H_br; reflexivity. }
       1: unfold aug_transf_sound, id; intros; repeat split; auto.
     Qed.
   End WithMap.
