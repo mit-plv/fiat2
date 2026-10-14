@@ -540,6 +540,48 @@ Section WithHole.
             apply IH. lia. }
       Qed.
 
+      (* The other half: a key in a bucket came from a row of the table.
+         Not the same as soundness of the SEARCH -- the row's text need not
+         contain the pattern, only one trigram of it -- but it is what keeps a
+         lookup from inventing rows, and so what a rewrite needs beside
+         completeness. *)
+      Lemma tri_step_inv : forall txt k' g k p a,
+          key_at g k (tri_step txt k' p a) -> k = k' \/ key_at g k a.
+      Proof.
+        unfold key_at, tri_step; intros * H.
+        destruct a as [ | | | | | | | d | | | ]; try contradiction.
+        destruct (value_eqb_dec (tri_key txt p) g) as [ E | E ].
+        1:{ subst g. rewrite DictIndexImpl.dict_lookup_insert_same in H.
+            unfold bucket_insert in H.
+            destruct (dict_lookup (tri_key txt p) d) as [ b | ].
+            1:{ destruct b; try contradiction.
+                apply set_insert_incl in H; intuition auto. }
+            1:{ apply set_insert_incl in H; cbn in H; intuition auto. } }
+        1:{ rewrite DictIndexImpl.dict_lookup_insert_diff in H by congruence.
+            right; exact H. }
+      Qed.
+
+      Lemma tri_fold_inv : forall txt k' g k l a,
+          key_at g k (fold_right (tri_step txt k') a l) -> k = k' \/ key_at g k a.
+      Proof.
+        intros * H; induction l as [ | p l IH ]; cbn [fold_right] in H;
+          [ right; exact H | ].
+        apply tri_step_inv in H; intuition auto.
+      Qed.
+
+      Lemma tri_entries_inv : forall l g k,
+          key_at g k (tri_entries l) -> exists r, In r l /\ row_key key r = k.
+      Proof.
+        unfold tri_entries; intros l g k.
+        induction l as [ | r l IH ]; cbn [fold_right]; intros H.
+        1:{ unfold key_at in H; cbn [dict_lookup] in H; contradiction. }
+        unfold tri_row_step in H.
+        apply tri_fold_inv in H as [ E | H ].
+        1: exists r; split; [ left; reflexivity | symmetry; exact E ].
+        1:{ destruct (IH H) as [ r' [ H_in E ] ].
+            exists r'; split; [ right; exact H_in | exact E ]. }
+      Qed.
+
       (* Every trigram of a text is the trigram at one of its positions. *)
       Lemma In_trigrams_tri_key : forall txt g,
           In g (trigrams txt) ->
