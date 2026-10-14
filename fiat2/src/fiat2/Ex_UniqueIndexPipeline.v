@@ -1,6 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Surface fiat2.Constraint fiat2.Substitute fiat2.PrimaryKeyCheck
-  fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.OptimizeAnno.
+  fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.TrigramIndexUse
+  fiat2.OptimizeAnno.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
 From Stdlib Require Import String ZArith List.
 
@@ -509,11 +510,11 @@ Section WithConcreteMaps.
      The trigram dictionary holds KEYS, not rows, so on its own it can only
      narrow a substring search down to a set of keys.  What turns a key back
      into its row is the primary-key index -- which is why a trigram index is
-     only useful on a table that declares a key, and why it had to become
-     possible for the two to be members of the same record.  Written out below
-     is exactly what the installation builds at "1": the fold over rows, the
-     fold over the positions at which the row's text has a trigram, and the
-     read-modify-write of the bucket at that trigram.
+     only useful on a table that declares a key, and why ONE choice installs
+     both members: TrigramIdx brings the primary-key index it leans on.
+     Written out below is exactly what the installation builds at "0": the
+     fold over rows, the fold over the positions at which the row's text has
+     a trigram, and the read-modify-write of the bucket at that trigram.
      ------------------------------------------------------------------ *)
   Definition ptri_at (p : expr) : expr :=
     ETernop OSubstring (EAccess (EVar "tup") "name") p (EAtom (AInt 3)).
@@ -532,27 +533,53 @@ Section WithConcreteMaps.
                "bkt"
                (EBinop OSetInsert (EVar "bkt") (EAccess (EVar "tup") "id"))))).
 
+  (* One choice, two members: asking for UniqueDictIdx "id" as well would
+     install a second, redundant copy of the same dictionary. *)
   Definition tanno (ds : list decl) : canno_command :=
     CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
-      pbasics [UniqueDictIdx "id"; TrigramIdx "name" "id"] [] (pelaborated ds).
+      pbasics [TrigramIdx "name" "id"] [] (pelaborated ds).
 
   Definition toptimized (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width) (tanno ds) pGstore0 pGenv0.
 
   Compute (toptimized [DUnique "id"]).
 
-  (* The record holds the key-to-row dictionary at "0" and the trigram
-     dictionary at "1", and both are maintained at the write. *)
+  (* The one choice installs the trigram dictionary at "0" and the
+     key-to-row dictionary it points through at "1". *)
   Lemma toptimized_installs_both :
     exists rest,
       toptimized [DUnique "id"]
       = CLetMut
           (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
                     ("aux_tag",
-                      ERecord [("0", punique_idx_of (EAtom (ANil (Some prow_ty))));
-                               ("1", ptrigram_of (EAtom (ANil (Some prow_ty))))])])
+                      ERecord [("0", ptrigram_of (EAtom (ANil (Some prow_ty))));
+                               ("1", punique_idx_of (EAtom (ANil (Some prow_ty))))])])
           "users" rest.
   Proof. eexists; reflexivity. Qed.
+
+  (* And the write no longer recomputes the dictionary.  What the install
+     leaves at the write is the index of the EXTENDED table; the maintenance
+     rule turns that into the index of the rest, with one row's buckets added
+     -- the index's own per-row body, run once.  This is the rewrite as it
+     applies to exactly the shape the install produces. *)
+  Lemma tri_insert_is_incremental :
+    cons_to_tri_insert_head "name" "id" "tup" "acc" "pos" "sacc" "bkt"
+      (ptrigram_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))
+    = ELet (ptrigram_of (EAccess (ELoc "users") "id_tag")) "acc"
+        (ELet (EVar "u") "tup"
+           (EFold (EBinop ORange (EAtom (AInt 0))
+                     (EBinop OMinus
+                        (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                        (EAtom (AInt 2))))
+              (EVar "acc") "pos" "sacc"
+              (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
+                 (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+                    (EBinop OSetInsert (EAtom (AEmptySet None))
+                       (EAccess (EVar "tup") "id"))
+                    "bkt"
+                    (EBinop OSetInsert (EVar "bkt")
+                       (EAccess (EVar "tup") "id")))))).
+  Proof. reflexivity. Qed.
 
   (* And the pair is sound on the same premise as before: nothing is assumed
      about which indexes were chosen, only that the cenv describes the

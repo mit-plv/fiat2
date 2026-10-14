@@ -1052,10 +1052,14 @@ Section WithIndexUse.
       aux_ty_for_idx id_tag aux_tag tri_tag (@IndexInterface.idx_ty tridx) aux_ty
       /\ aux_ty_for_idx id_tag aux_tag pk_tag (@IndexInterface.idx_ty uidx) aux_ty
       /\ (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty tridx t = true)
+      (* the trigram member's own relation, which any index establishes from
+         typing, and the primary-key member's STRONG one, which none does *)
       /\ (forall (t : type) (v : value),
              type_wf t -> is_tbl_ty' t = true ->
-             type_of_value v (aux_ty t) -> aux_wf v ->
-             tri_aux_wf_at v /\ unique_aux_wf_at v).
+             type_of_value v (aux_ty t) -> aux_wf v -> tri_aux_wf_at v)
+      /\ (forall (t : type) (v : value),
+             type_wf t -> is_tbl_ty' t = true ->
+             type_of_value v (aux_ty t) -> aux_wf v -> unique_aux_wf_at v).
 
     Lemma trigram_lookup_head_sound :
       forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
@@ -1063,7 +1067,7 @@ Section WithIndexUse.
         expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_head.
     Proof.
       unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
-      intros * [ H_aty1 [ H_aty2 [ H_is H_wf ] ] ] *.
+      intros * [ H_aty1 [ H_aty2 [ H_is [ H_wf1 H_wf2 ] ] ] ] *.
       intros H_Gs H_Ge H_twf H_is' H_glob H_t.
       unfold tenv_wf_with_globals in H_glob; invert_Forall2.
       lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
@@ -1093,10 +1097,13 @@ Section WithIndexUse.
           lazymatch goal with
             H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
           end.
-          split; [ assumption | ].
-          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
-          lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
-          assumption. }
+          split; [ assumption | split ].
+          1:{ eapply H_wf1; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. }
+          1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. } }
     Qed.
 
     (* The same, for the guarded form.  The two proofs differ only in which
@@ -1107,7 +1114,7 @@ Section WithIndexUse.
         expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_guarded_head.
     Proof.
       unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
-      intros * [ H_aty1 [ H_aty2 [ H_is H_wf ] ] ] *.
+      intros * [ H_aty1 [ H_aty2 [ H_is [ H_wf1 H_wf2 ] ] ] ] *.
       intros H_Gs H_Ge H_twf H_is' H_glob H_t.
       unfold tenv_wf_with_globals in H_glob; invert_Forall2.
       lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
@@ -1130,10 +1137,13 @@ Section WithIndexUse.
           lazymatch goal with
             H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
           end.
-          split; [ assumption | ].
-          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
-          lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
-          assumption. }
+          split; [ assumption | split ].
+          1:{ eapply H_wf1; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. }
+          1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. } }
     Qed.
 
     (* The rules, applied everywhere below the installation. *)

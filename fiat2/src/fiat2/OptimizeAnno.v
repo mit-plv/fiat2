@@ -1,9 +1,9 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
-  fiat2.TrigramIndexImpl.
+  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
-From Stdlib Require Import List String ZArith Permutation.
+From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
 
 Require Import fiat2.Notations.
@@ -178,6 +178,24 @@ Section WithConcreteMaps.
     apply trigram_idx_ok; discriminate.
     Qed.
 
+    (* The trigram index's two rules.
+
+       The lookup needs TWO members at once -- the trigram dictionary, and
+       the primary-key dictionary whose keys its buckets hold -- so it is
+       told both tags.  The choice that asks for the index is what installs
+       both members, which is why one choice here produces two entries.
+
+       Maintenance needs neither the other member nor a declaration: it is
+       the index's own fold, run on one more row. *)
+    Definition trigram_lookup_gated_transf (pk_tag : string) (ds : list decl) :=
+      trigram_lookup_gated trigram_text_attr trigram_key_attr "id_tag" "aux_tag"
+        tag pk_tag "b" "k" "y" ds.
+
+    Definition cons_to_tri_insert_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (cons_to_tri_insert_head trigram_text_attr trigram_key_attr
+                      "tup" "acc" "pos" "sacc" "bkt").
+
   End CommonPipelineParts.
 
   (* ds is the installed table's declarations.  Only the use rules look at
@@ -230,13 +248,17 @@ Section WithConcreteMaps.
           [unique_lookup_gated_transf u_tag attr ds],
           S cur_tag)
     | TrigramIdx attr key =>
+        (* two members from one choice: the trigram dictionary, and the
+           primary-key dictionary its buckets point through.  Only the
+           lookup rule is gated -- reading the trigram dictionary needs no
+           declaration, resolving its keys to single rows does. *)
         let t_tag := String.of_nat cur_tag in
-        ([(t_tag, ctrigram_idx attr key, trigram_idx_wf attr key)],
-          (* installed and maintained by recomputation; the lookup rule that
-             reads it is not written yet, and a member with no rules is sound
-             for the same reason an unchosen index is *)
-          [],
-          S cur_tag)
+        let u_tag := String.of_nat (S cur_tag) in
+        ([(t_tag, ctrigram_idx attr key, trigram_idx_wf attr key);
+          (u_tag, cunique_idx key, unique_idx_wf key)],
+          [trigram_lookup_gated_transf t_tag attr key u_tag ds;
+           cons_to_tri_insert_transf attr key],
+          S (S cur_tag))
 end.
 
   Fixpoint mk_idxs (ds : list decl) (cur_tag : nat) (reps : nat) (ics : list index_choice) :
@@ -280,11 +302,28 @@ end.
         NoDup (map fst (map fst idxs)) /\
         Forall (fun '(_, idx, _) => hole = "hole") idxs.
   Proof.
-    destruct ic; unfold mk_idx; intros;
-      invert_pair; intuition idtac; constructor;
-      auto using NoDup_nil, csum_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
-        cunique_idx_ok, ctrigram_idx_ok; auto.
-    1-6: eexists; intuition eauto.
+    destruct ic; unfold mk_idx; intros; invert_pair; intuition idtac.
+    all: try lia.
+    (* one member per choice, except the trigram choice, which installs the
+       primary-key member it leans on too -- so the lists are taken apart by
+       shape rather than by a fixed count, and in particular not by
+       constructor, which would also take the ok goals apart *)
+    (* the tag lists are maps over the member lists, so reduce them before
+       taking them apart *)
+    all: cbn [List.map fst].
+    all: repeat lazymatch goal with
+         | |- Forall _ (_ :: _) => constructor
+         | |- Forall _ nil => constructor
+         | |- NoDup (_ :: _) => constructor
+         | |- NoDup nil => constructor
+         end.
+    all: auto using csum_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
+      cunique_idx_ok, ctrigram_idx_ok.
+    all: try (eexists; intuition eauto; lia).
+    (* and that choice's two tags are distinct, by of_nat's injectivity *)
+    (* no cbn here: it would unfold of_nat into its decimal definition and
+       of_nat_inj would no longer apply *)
+    all: intros [ E | [] ]; apply String.of_nat_inj in E; lia.
   Qed.
 
   Lemma mk_idxs_ok : forall ics ds init_tag reps idxs transfs next_tag,
@@ -551,6 +590,23 @@ end.
      own well-formedness cannot give, read off the declarations the
      installation propagates.  The other two bridges are the same tactics
      every ordinary member uses. *)
+  (* Projecting ONE member's own well-formedness out of a record.  The
+     prove_idx_wf tactic does this for a record with a single member; with
+     two it cannot tell which member is wanted, so the projection is named
+     here and the In fact picks the member. *)
+  Lemma compo_member_wf : forall tg idx' idx_wf' l (v : value),
+      In (tg, idx', idx_wf') l ->
+      @aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v ->
+      aux_wf_for_idx "id_tag" "aux_tag" tg idx_wf' v.
+  Proof.
+    unfold aux_wf, aux_wf_for_idx, compo_idx_wf.
+    intros tg idx' idx_wf' l v H_in H_aux.
+    repeat destruct_match_hyp; try contradiction.
+    eapply List.Forall_In in H_aux as H_mem; [ | exact H_in ]; cbn in H_mem.
+    repeat destruct_match_hyp; try contradiction.
+    assumption.
+  Qed.
+
   Lemma compo_unique_bridge_wf : forall attr u_tag l row_ty ds,
       In (u_tag, cunique_idx attr, unique_idx_wf attr) l ->
       declares_unique attr ds = true ->
@@ -709,10 +765,51 @@ end.
               [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
             1: eassumption.
             1: split; [ apply H_Q; exact H_Qv | apply H_decl with (a := a); assumption ]. } }
-    (* the trigram index brings no use rule yet, so there is nothing here to
-       prove: a member with no rules is sound for the same reason an index
-       nobody chose is *)
-    1:{ apply_in_nil. }
+    (* the trigram choice: two members, and two rules.  The lookup is the
+       only rule in the development that needs two members at once, so it is
+       the only one owed two layouts; maintenance is owed nothing, being the
+       index's own fold run on one more row. *)
+    1:{ repeat destruct_In; try apply_in_nil.
+        1:{ unfold trigram_lookup_gated_transf.
+            eapply (trigram_lookup_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
+                      "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (String.of_nat (S init_tag)) "b" "k" "y"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            intros H_uq. unfold trigram_bridges.
+            split; [ | split; [ | split; [ | split ] ] ].
+            (* the two members' places in the record *)
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            (* the trigram member's own relation, which typing establishes;
+               the In fact is what says which member is meant *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
+            (* and the primary-key member's strong one, which the
+               declaration pays for *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        1:{ unfold cons_to_tri_insert_transf.
+            (* maintenance does not mention the hole, so it is not a
+               parameter of this rule *)
+            eapply (cons_to_tri_insert_sound a ak "tup" "acc" "pos" "sacc" "bkt"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            discriminate. } }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)
