@@ -1,6 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
-  fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse.
+  fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
+  fiat2.TrigramIndexImpl.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
@@ -35,7 +36,13 @@ Variant index_choice :=
      an ordinary choice: the index itself is sound on any table, and its USE
      rule is the identity where the declarations are silent.  So a list of
      choices may mix it with the others, and one record holds them all. *)
-  | UniqueDictIdx (attr : string).
+  | UniqueDictIdx (attr : string)
+  (* An inverted index for substring search: each trigram of the text
+     attribute maps to the primary keys of the rows whose text contains it.
+     It holds keys, not rows, so it is only useful beside a UniqueDictIdx on
+     the same key -- which is now expressible, since both are members of one
+     record. *)
+  | TrigramIdx (attr key : string).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -159,6 +166,18 @@ Section WithConcreteMaps.
     Definition unique_lookup_gated_transf (ds : list decl) :=
       unique_lookup_gated unique_idx_attr "id_tag" "aux_tag" tag "y" ds.
 
+    Context (trigram_text_attr trigram_key_attr : string).
+
+    Definition trigram_idx_wf :=
+      (TrigramIndexImpl.idx_wf (locals := clocals) "hole" trigram_text_attr
+         trigram_key_attr "tup" "acc" "pos" "sacc" "bkt").
+    Instance ctrigram_idx : IndexInterface.index :=
+      (trigram_idx "hole" trigram_text_attr trigram_key_attr
+         "tup" "acc" "pos" "sacc" "bkt").
+    Instance ctrigram_idx_ok : IndexInterface.ok ctrigram_idx trigram_idx_wf.
+    apply trigram_idx_ok; discriminate.
+    Qed.
+
   End CommonPipelineParts.
 
   (* ds is the installed table's declarations.  Only the use rules look at
@@ -210,6 +229,14 @@ Section WithConcreteMaps.
         ([(u_tag, cunique_idx attr, unique_idx_wf attr)],
           [unique_lookup_gated_transf u_tag attr ds],
           S cur_tag)
+    | TrigramIdx attr key =>
+        let t_tag := String.of_nat cur_tag in
+        ([(t_tag, ctrigram_idx attr key, trigram_idx_wf attr key)],
+          (* installed and maintained by recomputation; the lookup rule that
+             reads it is not written yet, and a member with no rules is sound
+             for the same reason an unchosen index is *)
+          [],
+          S cur_tag)
 end.
 
   Fixpoint mk_idxs (ds : list decl) (cur_tag : nat) (reps : nat) (ics : list index_choice) :
@@ -256,8 +283,8 @@ end.
     destruct ic; unfold mk_idx; intros;
       invert_pair; intuition idtac; constructor;
       auto using NoDup_nil, csum_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
-        cunique_idx_ok; auto.
-    1-5: eexists; intuition eauto.
+        cunique_idx_ok, ctrigram_idx_ok; auto.
+    1-6: eexists; intuition eauto.
   Qed.
 
   Lemma mk_idxs_ok : forall ics ds init_tag reps idxs transfs next_tag,
@@ -587,7 +614,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a ];
+    destruct ic as [ a | a | a | a | a | a ak ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -682,6 +709,10 @@ end.
               [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
             1: eassumption.
             1: split; [ apply H_Q; exact H_Qv | apply H_decl with (a := a); assumption ]. } }
+    (* the trigram index brings no use rule yet, so there is nothing here to
+       prove: a member with no rules is sound for the same reason an index
+       nobody chose is *)
+    1:{ apply_in_nil. }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)

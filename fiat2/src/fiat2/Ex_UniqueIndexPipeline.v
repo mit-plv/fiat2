@@ -502,4 +502,73 @@ Section WithConcreteMaps.
       | apply incl_refl | apply pdecl_wf_unique_id | reflexivity | exact H_wt ].
   Qed.
 
+  (* ------------------------------------------------------------------
+     The pairing a trigram index needs: the inverted index beside the
+     primary-key index, in one record.
+
+     The trigram dictionary holds KEYS, not rows, so on its own it can only
+     narrow a substring search down to a set of keys.  What turns a key back
+     into its row is the primary-key index -- which is why a trigram index is
+     only useful on a table that declares a key, and why it had to become
+     possible for the two to be members of the same record.  Written out below
+     is exactly what the installation builds at "1": the fold over rows, the
+     fold over the positions at which the row's text has a trigram, and the
+     read-modify-write of the bucket at that trigram.
+     ------------------------------------------------------------------ *)
+  Definition ptri_at (p : expr) : expr :=
+    ETernop OSubstring (EAccess (EVar "tup") "name") p (EAtom (AInt 3)).
+
+  Definition ptrigram_of (tbl : expr) : expr :=
+    EFold tbl (EAtom (AEmptyDict None)) "tup" "acc"
+      (EFold (EBinop ORange (EAtom (AInt 0))
+                (EBinop OMinus
+                   (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                   (EAtom (AInt 2))))
+         (EVar "acc") "pos" "sacc"
+         (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
+            (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+               (EBinop OSetInsert (EAtom (AEmptySet None))
+                  (EAccess (EVar "tup") "id"))
+               "bkt"
+               (EBinop OSetInsert (EVar "bkt") (EAccess (EVar "tup") "id"))))).
+
+  Definition tanno (ds : list decl) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
+      pbasics [UniqueDictIdx "id"; TrigramIdx "name" "id"] [] (pelaborated ds).
+
+  Definition toptimized (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (tanno ds) pGstore0 pGenv0.
+
+  Compute (toptimized [DUnique "id"]).
+
+  (* The record holds the key-to-row dictionary at "0" and the trigram
+     dictionary at "1", and both are maintained at the write. *)
+  Lemma toptimized_installs_both :
+    exists rest,
+      toptimized [DUnique "id"]
+      = CLetMut
+          (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
+                    ("aux_tag",
+                      ERecord [("0", punique_idx_of (EAtom (ANil (Some prow_ty))));
+                               ("1", ptrigram_of (EAtom (ANil (Some prow_ty))))])])
+          "users" rest.
+  Proof. eexists; reflexivity. Qed.
+
+  (* And the pair is sound on the same premise as before: nothing is assumed
+     about which indexes were chosen, only that the cenv describes the
+     program. *)
+  Theorem toptimized_sound :
+    well_typed pGstore0 pGenv0 (pelaborated [DUnique "id"]) ->
+    well_typed pGstore0 pGenv0 (toptimized [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf pGstore0 store -> locals_wf pGenv0 env ->
+        interp_command store env (toptimized [DUnique "id"])
+        = interp_command store env (pelaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold toptimized, tanno, pelaborated, pprog in *.
+    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+      [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
+  Qed.
+
 End WithConcreteMaps.
