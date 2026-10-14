@@ -619,6 +619,22 @@ Section WithHole.
         apply tri_entries_buckets. cbn [buckets_are_sets]. constructor.
       Qed.
 
+      (* And the hypothesis above is exactly what a substring query's filter
+         computes, so nothing is lost in translation: OStrContains IS
+         String.index. *)
+      Corollary tri_lookup_complete_contains : forall (l : list value) r p,
+          In r l ->
+          3 <= String.length p ->
+          interp_binop OStrContains (VString (row_str r) : value) (VString p)
+          = VBool true ->
+          key_at (VString (String.substring 0 3 p)) (row_key key r) (tri_entries l).
+      Proof.
+        intros * H_in H_len H_c.
+        apply tri_lookup_complete; [ exact H_in | exact H_len | ].
+        intro E_none. cbn [interp_binop] in H_c.
+        rewrite E_none in H_c. discriminate.
+      Qed.
+
       Instance trigram_idx : IndexInterface.index :=
         IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
