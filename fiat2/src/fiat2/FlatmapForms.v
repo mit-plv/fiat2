@@ -18,6 +18,11 @@ Notation flatmap_filter_bag e x p y t1 t2 :=
   (EFlatmap LikeBag e x
      (EIf p (EBinop OBagInsert (EAtom (AEmptyBag t1)) (EVar y)) (EAtom (AEmptyBag t2)))).
 
+(* The set version of flatmap_filter_list, as produced by set_of *)
+Notation flatmap_filter_set e x p y t1 t2 :=
+  (EFlatmap LikeSet e x
+     (EIf p (EBinop OSetInsert (EAtom (AEmptySet t1)) (EVar y)) (EAtom (AEmptySet t2)))).
+
 (* map e x r on bags, as produced by bag_of from [x <- e, ret r] *)
 Notation flatmap_proj_bag e x r t :=
   (EFlatmap LikeBag e x (EBinop OBagInsert (EAtom (AEmptyBag t)) r)).
@@ -212,6 +217,30 @@ Section WithWord.
     Proof.
       intros. cbn [interp_expr]. case_match; auto.
       do 2 f_equal. induction (bag_to_list l) as [| v l' IH]; auto.
+      cbn [flat_map filter]. rewrite IH.
+      unfold get_local. rewrite map.get_put_same.
+      case_match; auto.
+      destruct b; auto.
+    Qed.
+
+    Lemma interp_flatmap_filter_set : forall (store env : locals) e x p t1 t2,
+        interp_expr store env (flatmap_filter_set e x p x t1 t2) =
+          match interp_expr store env e with
+          | VSet l =>
+              VSet (list_to_set
+                      (filter (fun v => match interp_expr store (map.put env x v) p with
+                                        | VBool b => b
+                                        | _ => false
+                                        end) l))
+          | _ => VUnit
+          end.
+    Proof.
+      intros. cbn [interp_expr]. case_match; auto.
+      do 2 f_equal.
+      (* the equation naming the set must go before the induction, or it is
+         generalized along with the list and the IH becomes conditional *)
+      lazymatch goal with H : interp_expr _ _ _ = VSet _ |- _ => clear H end.
+      induction l as [| v l' IH]; auto.
       cbn [flat_map filter]. rewrite IH.
       unfold get_local. rewrite map.get_put_same.
       case_match; auto.
