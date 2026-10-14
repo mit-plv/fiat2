@@ -2,7 +2,8 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TransfSound fiat2.IndexInterface fiat2.Utils fiat2.Substitute
   fiat2.IndexTransf fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms fiat2.TransfUtils
   fiat2.CollectionTransf fiat2.StringFacts
-  fiat2.UniqueDictIndexImpl fiat2.UniqueIndexUse fiat2.TrigramIndexImpl.
+  fiat2.UniqueDictIndexImpl fiat2.UniqueIndexInstall fiat2.UniqueIndexGate
+  fiat2.UniqueIndexUse fiat2.TrigramIndexImpl fiat2.Surface.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List Permutation Sorted.
 
@@ -555,6 +556,202 @@ Section WithIndexUse.
         unfold probe_body. reflexivity.
       Qed.
 
+      Lemma trigram_lookup_head_preserve_ty : forall tl ctl t (Gstore : tenv),
+          type_wf t -> @IndexInterface.is_tbl_ty tridx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (@IndexInterface.idx_ty tridx t) ->
+          access_record ctl pk_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore trigram_lookup_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_tri E_pk.
+        (* the table type's shape, forced by the index's own is_tbl_ty *)
+        cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty trigram_idx
+               unique_dict_idx] in H_is, E_tri, E_pk.
+        unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty,
+          UniqueDictIndexImpl.idx_ty in H_is, E_tri, E_pk.
+        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr;
+          try discriminate.
+        destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
+        apply type_eqb_eq in H_is; subst at_ty.
+        (* so both dictionaries' types are known *)
+        assert (E_kt : get_attr_type rt key = kt)
+          by (unfold get_attr_type; rewrite E_key; reflexivity).
+        rewrite E_kt in E_tri, E_pk.
+        assert (H_rtwf : type_wf (TRecord rt)) by (inversion H_twf; assumption).
+        assert (H_ktwf : type_wf kt)
+          by (rewrite <- E_kt; apply get_attr_type_ty_wf; exact H_rtwf).
+        (* E_kt orients as "term = kt", so a later subst would eliminate kt
+           along with it; it has done its work here *)
+        clear E_kt.
+        (* now the rewrite's two sides *)
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr_keep_str.
+        unfold trigram_lookup_head. cbv beta iota.
+        case_match; auto.
+        destruct (literal_trigram _) as [ g | ] eqn:E_lit; auto.
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        repeat (rewrite eqb_eq in *; subst).
+        apply literal_trigram_Some in E_lit as [ pstr [ E_p [ H_len E_g ] ] ].
+        subst.
+        (* the source's type is the set of rows, which the target also has *)
+        repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+        repeat rewrite_map_get_put_hyp.
+        repeat (clear_refl; repeat do_injection2).
+        repeat (rewrite_l_to_r; do_injection2).
+        unfold trigram_probe.
+        eapply TyEFlatmap_Set with (t1 := kt).
+        1:{ (* the bucket of the pattern's trigram *)
+            eapply TyEOptMatch with (t1 := TSet kt).
+            1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+                1:{ eapply TyEAccess;
+                    [ eapply TyEAccess;
+                      [ apply TyELoc; exact E_tbl | exact E_aux ]
+                    | exact E_tri ]. }
+                1: apply TyEAtom; apply TyAString. }
+            1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
+            1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        1:{ (* each key back to its row, then the recheck *)
+            (* the row type is left to unification: the inversions above
+               renamed it, and the primary-key dictionary's type pins it *)
+            eapply TyEOptMatch.
+            1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+                1:{ eapply TyEAccess;
+                    [ eapply TyEAccess;
+                      [ apply TyELoc; exact E_tbl | exact E_aux ]
+                    | exact E_pk ]. }
+                1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+            1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
+            1:{ eapply TyEIf.
+                1:{ eapply TyEBinop; [ apply TyOStrContains | | ].
+                    1:{ eapply TyEAccess;
+                        [ apply TyEVar; rewrite map.get_put_same; reflexivity
+                        | exact E_attr ]. }
+                    1: apply TyEAtom; apply TyAString. }
+                1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+                    1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
+                    1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+                1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf. } }
+      Qed.
+
     End WithTable.
+
+    Lemma tri_is_tbl_ty_inv : forall t,
+        @IndexInterface.is_tbl_ty tridx t = true ->
+        exists rt kt, t = TList (TRecord rt)
+                      /\ access_record rt attr = Success TString
+                      /\ access_record rt key = Success kt.
+    Proof.
+      cbn [IndexInterface.is_tbl_ty trigram_idx]; unfold TrigramIndexImpl.is_tbl_ty.
+      intros t H.
+      destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+      destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+      destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr; try discriminate.
+      destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
+      apply type_eqb_eq in H; subst at_ty.
+      exists rt, kt; split; [ reflexivity | split; [ exact E_attr | exact E_key ] ].
+    Qed.
+
+    (* ------------------------------------------------------------------
+       What whoever assembles the index record owes this rule.
+
+       Two members' layouts instead of one, because the trigram buckets hold
+       keys and only the primary-key index can resolve them -- that is the
+       price of a rule that needs a second index to interpret the first
+       one's answer.  And one invariant bridge delivering both members'
+       relations, where the primary-key one is the STRONG relation that no
+       index establishes from typing and the declaration pays for.
+       ------------------------------------------------------------------ *)
+    Definition trigram_bridges (is_tbl_ty' : type -> bool) (aux_ty : type -> type)
+      (aux_wf : value -> Prop) : Prop :=
+      aux_ty_for_idx id_tag aux_tag tri_tag (@IndexInterface.idx_ty tridx) aux_ty
+      /\ aux_ty_for_idx id_tag aux_tag pk_tag (@IndexInterface.idx_ty uidx) aux_ty
+      /\ (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty tridx t = true)
+      /\ (forall (t : type) (v : value),
+             type_wf t -> is_tbl_ty' t = true ->
+             type_of_value v (aux_ty t) -> aux_wf v ->
+             tri_aux_wf_at v /\ unique_aux_wf_at v).
+
+    Lemma trigram_lookup_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_head.
+    Proof.
+      unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty1 [ H_aty2 [ H_is H_wf ] ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      (* the table type's shape, and both members' places in the record *)
+      apply H_is in H_is' as H_is_tri.
+      apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+      specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      (* destruct_match_hyp names the record's field equations itself, so
+         they are picked up by eassumption rather than by name *)
+      1:{ (* preserve_ty's own premises come as goals too, so everything
+             that is already in context goes by eassumption and only the
+             index's is_tbl_ty is left to the bridge *)
+          eapply trigram_lookup_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply trigram_lookup_head_preserve_sem; try eassumption.
+          (* and the store carries both invariants at the table *)
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | ].
+          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
+          lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+          assumption. }
+    Qed.
+
+    (* The rule, applied everywhere below the installation. *)
+    Definition trigram_lookup_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (trigram_lookup_head tbl).
+
+    Lemma trigram_lookup_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_transf.
+    Proof.
+      intros * H_br. unfold trigram_lookup_transf.
+      apply fold_command_with_globals_sound.
+      apply trigram_lookup_head_sound; exact H_br.
+    Qed.
+
+    (* ------------------------------------------------------------------
+       The rule as the pipeline uses it: the identity unless the table's
+       declarations name the key the buckets hold.
+
+       The gate is on the PRIMARY KEY, not on anything about trigrams.  The
+       trigram index is sound to install and to read on any table; what needs
+       a declaration is resolving a bucket's keys back to single rows, and
+       that is the primary-key index's business.
+       ------------------------------------------------------------------ *)
+    Definition trigram_lookup_gated (ds : list decl) : string -> command -> command :=
+      if declares_unique key ds then trigram_lookup_transf else fun _ => id.
+
+    Lemma trigram_lookup_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
+        (declares_unique key ds = true -> trigram_bridges is_tbl_ty' aux_ty aux_wf) ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf (trigram_lookup_gated ds).
+    Proof.
+      intros * H_br. unfold trigram_lookup_gated.
+      destruct (declares_unique key ds) eqn:E_uq.
+      1: apply trigram_lookup_transf_sound, H_br; reflexivity.
+      1: unfold aug_transf_sound, id; intros; repeat split; auto.
+    Qed.
   End WithMap.
 End WithIndexUse.
