@@ -39,9 +39,11 @@ Variant index_choice :=
   | UniqueDictIdx (attr : string)
   (* An inverted index for substring search: each trigram of the text
      attribute maps to the primary keys of the rows whose text contains it.
-     It holds keys, not rows, so it is only useful beside a UniqueDictIdx on
-     the same key -- which is now expressible, since both are members of one
-     record. *)
+     It holds keys, not rows, so it needs a key-to-row dictionary beside it
+     -- and brings one, as its second member.  That member carries every
+     rule UniqueDictIdx would (trigram_subsumes_unique_dict), so this choice
+     subsumes UniqueDictIdx on the same key and there is no reason to ask
+     for both. *)
   | TrigramIdx (attr key : string).
 
 Variant anno_command :=
@@ -293,6 +295,12 @@ Section WithConcreteMaps.
         ([(t_tag, ctrigram_idx attr key, trigram_idx_wf attr key);
           (u_tag, cunique_idx key, unique_idx_wf key)],
           [trigram_lookup_gated_transf t_tag attr key u_tag ds;
+           (* the primary-key member's own lookup, pointed at this record's
+              second member.  With it the choice subsumes UniqueDictIdx on
+              the same key: every rule that choice installs is installed
+              here, so asking for both would only duplicate the
+              dictionary. *)
+           unique_lookup_gated_transf u_tag key ds;
            (* last in the list is first to run: maintenance leaves the index
               of the unchanged rows behind, and the use rules above it turn
               those recomputations into reads.  Both members are maintained,
@@ -307,6 +315,22 @@ Section WithConcreteMaps.
            cons_to_unique_insert_transf' key],
           S (S cur_tag))
 end.
+
+  (* TrigramIdx subsumes UniqueDictIdx on the key it points through.  The
+     pair's second member IS a primary-key dictionary -- same index, same
+     well-formedness -- and every rule the standalone choice installs is
+     installed here too, pointed at that member.  So the two choices
+     together are never better than the trigram choice alone: they would
+     only build, and maintain, a second copy of the same dictionary.  Stated
+     at the tag the standalone choice would get if it ran second, which is
+     the tag the pair gives its own key member. *)
+  Lemma trigram_subsumes_unique_dict : forall ds a k cur_tag reps,
+      let '(tri_idxs, tri_transfs, _) := mk_idx ds cur_tag reps (TrigramIdx a k) in
+      let '(u_idxs, u_transfs, _) := mk_idx ds (S cur_tag) reps (UniqueDictIdx k) in
+      incl u_idxs tri_idxs /\ incl u_transfs tri_transfs.
+  Proof.
+    intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
+  Qed.
 
   Fixpoint mk_idxs (ds : list decl) (cur_tag : nat) (reps : nat) (ics : list index_choice) :
     list (string * IndexInterface.index * (value -> value -> Prop)) * list (string -> command -> command) * nat :=
@@ -870,6 +894,27 @@ end.
                 eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
             (* and the primary-key member's strong one, which the
                declaration pays for *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        (* the primary-key member's lookup, at the second tag.  Same rule,
+           same gate, same bridge as the UniqueDictIdx choice's -- only the
+           attribute and the tag differ, and the declaration pays for the
+           strong relation here exactly as it does there. *)
+        1:{ unfold unique_lookup_gated_transf.
+            eapply (unique_lookup_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag)) "y"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
             1:{ intros t v H_twf H_is H_ty H_Qv.
                 eapply compo_unique_bridge_wf;
                   [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].

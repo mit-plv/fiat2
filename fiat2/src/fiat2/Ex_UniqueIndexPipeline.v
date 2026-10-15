@@ -539,8 +539,11 @@ Section WithConcreteMaps.
                "bkt"
                (EBinop OSetInsert (EVar "bkt") (EAccess (EVar "tup") "id"))))).
 
-  (* One choice, two members: asking for UniqueDictIdx "id" as well would
-     install a second, redundant copy of the same dictionary. *)
+  (* One choice, two members -- and UniqueDictIdx "id" is not among the
+     choices, because it would be pointless: the pair's second member is a
+     primary-key dictionary carrying all four of that choice's rules
+     (trigram_subsumes_unique_dict), so asking for both would build and
+     maintain a second copy of the same dictionary for nothing. *)
   Definition tanno (ds : list decl) : canno_command :=
     CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
       pbasics [TrigramIdx "name" "id"] [] (pelaborated ds).
@@ -598,10 +601,25 @@ Section WithConcreteMaps.
      over the table.  The recomputations the two insert rules leave behind
      are what the two use rules turn into those reads, so this is the
      statement that says maintenance actually paid. *)
-  Lemma tri_pair_insert_is_incremental : exists inst grd,
+  (* The write guard, too, is now one probe -- into the SECOND member.  The
+     primary-key member of this pair carries the same four rules the
+     UniqueDictIdx choice installs, this lookup among them, so the
+     uniqueness check that used to scan the table as a bag is the same
+     single dictionary probe it is there (qprobe), only read at "1". *)
+  Definition tprobe (k : expr) : expr :=
+    EOptMatch
+      (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1") k)
+      (EAtom (AEmptyBag None)) "y"
+      (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")).
+
+  Lemma tri_pair_insert_is_incremental : exists inst,
       toptimized [DUnique "id"]
       = CLetMut inst "users"
-          (CIf grd
+          (CIf (EBinop OAnd
+                  (ELet (EVar "u") "_pk_row"
+                     (EBinop OEq (tprobe (EAccess (EVar "_pk_row") "id"))
+                        (EAtom (AEmptyBag None))))
+                  (EAtom (ABool true)))
              (CAssign "users"
                 (ERecord
                    [("id_tag",
@@ -616,7 +634,7 @@ Section WithConcreteMaps.
                             (EAccess (EAccess (ELoc "users") "aux_tag") "1")
                             (EVar "u"))])]))
              CSkip).
-  Proof. do 2 eexists; reflexivity. Qed.
+  Proof. eexists; reflexivity. Qed.
 
   (* And the pair is sound on the same premise as before: nothing is assumed
      about which indexes were chosen, only that the cenv describes the
