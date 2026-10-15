@@ -807,6 +807,111 @@ Section WithWord.
             * simpl. rewrite value_compare_antisym. rewrite E. auto.
             * eapply List.Forall_In in H3; eauto.
   Qed.
+
+  Local Notation value := (value (width:=width)).
+
+  (* Deleting a key from a sorted dictionary, and how it interacts with an
+     insertion.  These are facts about dict_insert and dict_delete alone, so
+     they live here rather than beside any one index: the bag-valued
+     dictionary of DictIndexImpl and the key-to-row dictionary of
+     UniqueDictIndexImpl both maintain themselves with them. *)
+  Lemma value_ltb_leb_trans : forall (a b c : value),
+      value_ltb a b = true -> value_leb b c = true -> value_ltb a c = true.
+  Proof.
+    unfold value_ltb, value_leb, leb_from_compare; intros a b c H_ab H_bc.
+    destruct (value_compare a b) eqn:E_ab; try discriminate.
+    destruct (value_compare b c) eqn:E_bc; try discriminate.
+    - apply value_compare_Eq_eq in E_bc; subst. rewrite E_ab; reflexivity.
+    - rewrite (value_compare_trans _ _ _ E_ab E_bc); reflexivity.
+  Qed.
+
+  Lemma value_ltb__value_eqb_false : forall (a b : value),
+      value_ltb a b = true -> value_eqb a b = false.
+  Proof.
+    unfold value_ltb, value_eqb; intros.
+    destruct (value_compare a b); congruence.
+  Qed.
+
+  Lemma neq__value_eqb_false : forall (a b : value),
+      a <> b -> value_eqb a b = false.
+  Proof.
+    intros a b H_neq. destruct (value_eqb a b) eqn:E; [ | reflexivity ].
+    apply value_eqb_eq in E; congruence.
+  Qed.
+
+  Lemma dict_lookup_delete_diff : forall k k' (d : list (value * value)),
+      k <> k' -> dict_lookup k (dict_delete k' d) = dict_lookup k d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn; intros; auto.
+    destruct (value_eqb k' k0) eqn:E.
+    - apply value_eqb_eq in E; subst.
+      rewrite neq__value_eqb_false; auto.
+    - cbn. destruct (value_eqb k k0); auto.
+  Qed.
+
+  Lemma dict_delete_lt_head : forall k k0 (v0 : value) d,
+      value_ltb k k0 = true ->
+      StronglySorted dict_entry_leb ((k0, v0) :: d) ->
+      dict_delete k ((k0, v0) :: d) = (k0, v0) :: d.
+  Proof.
+    intros * H_lt H_sort.
+    apply not_In__dict_delete. intro H_in.
+    apply in_map_iff in H_in as [[k1 v1] [H_k H_in]]; cbn in H_k; subst.
+    destruct H_in as [H_eq | H_in].
+    - injection H_eq; intros; subst.
+      apply value_ltb__value_eqb_false in H_lt.
+      rewrite value_eqb_refl in H_lt; discriminate.
+    - inversion H_sort; subst.
+      rewrite Forall_forall in *.
+      lazymatch goal with
+        H: forall x, In x d -> _ |- _ => apply H in H_in
+      end.
+      unfold dict_entry_leb in H_in; cbn in H_in.
+      pose proof (value_ltb_leb_trans _ _ _ H_lt H_in) as H_kk.
+      apply value_ltb__value_eqb_false in H_kk.
+      rewrite value_eqb_refl in H_kk; discriminate.
+  Qed.
+
+  Lemma dict_delete_insert_same : forall k (v : value) d,
+      StronglySorted dict_entry_leb d ->
+      dict_delete k (dict_insert k v d) = dict_delete k d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; intros H_sort.
+    - cbn. rewrite value_eqb_refl; reflexivity.
+    - cbn [dict_insert]. destruct (value_ltb k k0) eqn:E_lt.
+      + cbn [dict_delete]. rewrite value_eqb_refl.
+        symmetry. apply dict_delete_lt_head; auto.
+      + destruct (value_eqb k k0) eqn:E_eq; cbn [dict_delete].
+        * rewrite value_eqb_refl, E_eq; reflexivity.
+        * rewrite E_eq. inversion H_sort; subst.
+          rewrite IH; auto.
+  Qed.
+
+  Lemma dict_delete_insert_diff : forall k k' (v : value) d,
+      k <> k' -> StronglySorted dict_entry_leb d ->
+      dict_delete k (dict_insert k' v d) = dict_insert k' v (dict_delete k d).
+  Proof.
+    induction d as [| [k0 v0] d IH]; intros H_neq H_sort.
+    - cbn. rewrite neq__value_eqb_false; auto.
+    - inversion H_sort; subst.
+      cbn [dict_insert]. destruct (value_ltb k' k0) eqn:E_lt.
+      + cbn [dict_delete]. rewrite neq__value_eqb_false; auto.
+        destruct (value_eqb k k0) eqn:E_eq.
+        * (* the deleted key is the head that k' is inserted before *)
+          destruct d as [| [k1 v1] d]; cbn [dict_insert]; auto.
+          lazymatch goal with
+            H: Forall _ ((k1, v1) :: d) |- _ => inversion H; subst
+          end.
+          unfold dict_entry_leb in *; cbn in *.
+          rewrite (value_ltb_leb_trans _ _ _ E_lt); auto.
+        * cbn [dict_insert]. rewrite E_lt; reflexivity.
+      + destruct (value_eqb k' k0) eqn:E_eq'.
+        * apply value_eqb_eq in E_eq'; subst.
+          cbn [dict_delete]. rewrite !neq__value_eqb_false; auto.
+          cbn [dict_insert]. rewrite E_lt, value_eqb_refl; reflexivity.
+        * cbn [dict_delete]. destruct (value_eqb k k0) eqn:E_eq; auto.
+          cbn [dict_insert]. rewrite E_lt, E_eq', IH; auto.
+  Qed.
 End WithWord.
 
 

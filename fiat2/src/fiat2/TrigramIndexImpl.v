@@ -1282,7 +1282,7 @@ Section WithHole.
         destruct (dict_lookup (tri_key txt p) d) as [ bk | ]; [ | reflexivity ].
         destruct bk as [ | | | | | | | | | b | ]; try reflexivity.
         destruct (value_eqb (VSet (bucket_remove k b)) (VSet nil)).
-        1: apply DictIndexImpl.dict_lookup_delete_diff; exact H_ne.
+        1: apply dict_lookup_delete_diff; exact H_ne.
         1: apply DictIndexImpl.dict_lookup_insert_diff; exact H_ne.
       Qed.
 
