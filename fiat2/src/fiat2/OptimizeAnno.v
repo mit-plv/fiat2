@@ -166,6 +166,21 @@ Section WithConcreteMaps.
     Definition unique_lookup_gated_transf (ds : list decl) :=
       unique_lookup_gated unique_idx_attr "id_tag" "aux_tag" tag "y" ds.
 
+    (* Maintaining the dictionary.  An insertion adds one entry and a keyed
+       delete removes one, and neither needs the declaration: a row
+       contributes only to its own key's entry, so the rows a keyed filter
+       drops can only affect the entry they share (idx_entries_filter_neq).
+       The use rule then turns the recomputation they leave behind into a
+       read of the stored dictionary, as the trigram member's does. *)
+    Definition cons_to_unique_insert_transf' : string -> command -> command :=
+      cons_to_unique_insert_transf unique_idx_attr "tup" "acc".
+
+    Definition filter_neq_to_unique_delete_transf' : string -> command -> command :=
+      filter_neq_to_unique_delete_transf unique_idx_attr "tup" "acc".
+
+    Definition unique_use_idx_transf' : string -> command -> command :=
+      unique_use_idx_transf unique_idx_attr "tup" "acc" "id_tag" "aux_tag" tag.
+
     Context (trigram_text_attr trigram_key_attr : string).
 
     Definition trigram_idx_wf :=
@@ -260,7 +275,13 @@ Section WithConcreteMaps.
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
         ([(u_tag, cunique_idx attr, unique_idx_wf attr)],
-          [unique_lookup_gated_transf u_tag attr ds],
+          [unique_lookup_gated_transf u_tag attr ds;
+           (* last in the list is first to run: maintenance leaves the index
+              of the unchanged rows behind, and the use rule above it turns
+              that recomputation into a read *)
+           unique_use_idx_transf' u_tag attr;
+           filter_neq_to_unique_delete_transf' attr;
+           cons_to_unique_insert_transf' attr],
           S cur_tag)
     | TrigramIdx attr key =>
         (* two members from one choice: the trigram dictionary, and the
@@ -273,11 +294,17 @@ Section WithConcreteMaps.
           (u_tag, cunique_idx key, unique_idx_wf key)],
           [trigram_lookup_gated_transf t_tag attr key u_tag ds;
            (* last in the list is first to run: maintenance leaves the index
-              of the unchanged rows behind, and the use rule above it turns
-              that recomputation into a read *)
+              of the unchanged rows behind, and the use rules above it turn
+              those recomputations into reads.  Both members are maintained,
+              and their rules never meet: each matches only its own member's
+              fold, and the trigram rules read the primary-key member rather
+              than rebuilding it. *)
            tri_use_idx_transf' t_tag attr key;
+           unique_use_idx_transf' u_tag key;
            tri_delete_gated_transf attr key u_tag ds;
-           cons_to_tri_insert_transf attr key],
+           filter_neq_to_unique_delete_transf' key;
+           cons_to_tri_insert_transf attr key;
+           cons_to_unique_insert_transf' key],
           S (S cur_tag))
 end.
 
@@ -767,24 +794,50 @@ end.
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_insert_head_sound;
               eauto with transf_hints. } }
-    (* the declared member: one rule, gated on the declarations *)
+    (* the declared member: the lookup is gated on the declarations, the
+       three maintenance rules are not -- the use rule needs the member's own
+       weak relation, and the insert and the delete need nothing *)
     1:{ repeat destruct_In; try apply_in_nil.
-        unfold unique_lookup_gated_transf.
-        eapply (unique_lookup_gated_sound "hole" a "tup" "acc" ltac:(discriminate)
-                  "id_tag" "aux_tag" (String.of_nat init_tag) "y"
-                  (tenv := ctenv) (tenv_ok := ctenv_ok)
-                  (word_ok := word_ok) (locals_ok := clocals_ok)).
-        intros H_uq. unfold unique_bridges; split; [ | split ].
-        1: prove_aux_ty_for_idx;
-        [ prove_access_record_idx_ty
-        | prove_NoDup_map_fst_sort_map
-        | prove_In_map_fst_sort_map ].
-        1: prove_is_tbl_ty.
-        1:{ intros t v H_twf H_is H_ty H_Qv.
-            eapply compo_unique_bridge_wf;
-              [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
-            1: eassumption.
-            1: split; [ apply H_Q; exact H_Qv | apply H_decl with (a := a); assumption ]. } }
+        1:{ unfold unique_lookup_gated_transf.
+            eapply (unique_lookup_gated_sound "hole" a "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag) "y"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := a); assumption ]. } }
+        1:{ unfold unique_use_idx_transf'.
+            eapply (unique_use_idx_transf_sound "hole" a "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            unfold unique_idx_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
+        1:{ unfold filter_neq_to_unique_delete_transf'.
+            eapply (filter_neq_to_unique_delete_transf_sound a "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+        1:{ unfold cons_to_unique_insert_transf'.
+            eapply (cons_to_unique_insert_transf_sound a "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)). } }
     (* the trigram choice: two members, and two rules.  The lookup is the
        only rule in the development that needs two members at once, so it is
        the only one owed two layouts; maintenance is owed nothing, being the
@@ -840,6 +893,21 @@ end.
             1: prove_is_tbl_ty.
             1:{ intros t v H_twf H_is H_ty H_Qv.
                 eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
+        (* the primary-key member's use rule, at the second tag: the same
+           rule the UniqueDictIdx choice installs, pointed at this member *)
+        1:{ unfold unique_use_idx_transf'.
+            eapply (unique_use_idx_transf_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag))
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            unfold unique_idx_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
         (* the delete rule: both members, and the declaration *)
         1:{ unfold tri_delete_gated_transf.
             eapply (tri_delete_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
@@ -872,13 +940,26 @@ end.
                 1: eassumption.
                 1: split; [ apply H_Q; exact H_Qv
                           | apply H_decl with (a := ak); assumption ]. } }
+        (* and its delete, which needs nothing at all *)
+        1:{ unfold filter_neq_to_unique_delete_transf'.
+            eapply (filter_neq_to_unique_delete_transf_sound ak "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
         1:{ unfold cons_to_tri_insert_transf.
             (* maintenance does not mention the hole, so it is not a
                parameter of this rule *)
             eapply (cons_to_tri_insert_sound a ak "tup" "acc" "pos" "sacc" "bkt"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
                       (word_ok := word_ok) (locals_ok := clocals_ok)).
-            discriminate. } }
+            discriminate. }
+        (* and its insert, likewise *)
+        1:{ unfold cons_to_unique_insert_transf'.
+            eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+        }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)

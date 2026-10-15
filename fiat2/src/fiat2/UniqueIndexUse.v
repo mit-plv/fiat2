@@ -114,6 +114,317 @@ Section WithIndexUse.
       (aux_wf_for_idx id_tag aux_tag idx_tag
          (idx_wf_unique hole attr tup acc (locals := locals))).
 
+    (* The weak invariant, as it appears inside an index record: the member
+       at idx_tag is the dictionary to_idx builds from the table at id_tag.
+       This is what the installation establishes from typing alone, and it is
+       all the maintenance rules below ever need -- a declaration decides
+       which questions the index can ANSWER, not whether it is up to date. *)
+    Notation unique_weak_aux_wf_at :=
+      (aux_wf_for_idx id_tag aux_tag idx_tag uidx_wf).
+
+    (* ==================================================================
+       Maintaining the index.
+
+       The installation rewrites a write into an assignment of a record
+       whose index member RECOMPUTES the dictionary from the new table.  The
+       rules here rewrite that recomputation into an update of the stored
+       one, which is the whole point of keeping an index at all.
+
+       The first two are plain expression rules: both of their sides
+       recompute, so they hold of any store and owe no bridges.  Only the
+       third, which turns a recomputation into a READ, needs the invariant.
+       ================================================================== *)
+
+    Notation uidx_body' :=
+      (ETernop OInsert (EVar acc) (EAccess (EVar tup) attr) (EVar tup)).
+
+    (* to_idx with a table EXPRESSION in place of the hole, which is the
+       shape the installation leaves behind. *)
+    Definition uto_idx_at (d : expr) : expr :=
+      EFold d (EAtom (AEmptyDict None)) tup acc uidx_body'.
+
+    (* uto_idx_at spelled out, so that a rule can match it.  Every binder and
+       attribute occurrence is a pattern variable; the guard checks that they
+       are the ones this index uses. *)
+    Notation euidx tup0 tup1 tup2 acc0 acc1 attr0 d :=
+      (EFold d (EAtom (AEmptyDict None)) tup0 acc0
+         (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr0) (EVar tup2))).
+
+    Lemma interp_ELet_step : forall (store env : locals) e1 x e2,
+        interp_expr store env (ELet e1 x e2)
+        = interp_expr store (map.put env x (interp_expr store env e1)) e2.
+    Proof. reflexivity. Qed.
+
+    (* A record's field has the type the record type gives it. *)
+    Lemma type_of_value_field : forall (rv : list (string * value)) tl x (v : value) t,
+        type_of_value (VRecord rv) (TRecord tl) ->
+        access_record rv x = Success v ->
+        access_record tl x = Success t ->
+        type_of_value v t.
+    Proof.
+      intros * H_ty H_v H_t.
+      invert_type_of_value_clear.
+      lazymatch goal with H : Forall2 _ rv _ |- _ =>
+        eapply Forall2_access_record; [ exact H | exact H_v | exact H_t ] end.
+    Qed.
+
+    Lemma type_of_value_TList_inv : forall (v : value) t,
+        type_of_value v (TList t) ->
+        exists l, v = VList l /\ Forall (fun r => type_of_value r t) l.
+    Proof.
+      intros v t H; inversion H; subst; eexists; split; [ reflexivity | assumption ].
+    Qed.
+
+    (* ------------------------------------------------------------------
+       An insertion: the index of a table with one more row is the stored
+       index with that row's entry added.
+
+       Nothing is assumed, and nothing needs to be: to_idx is a fold, so the
+       index of r :: l is literally one step of its own body applied to the
+       index of l.  The rule only has to say so.
+       ------------------------------------------------------------------ *)
+    Definition cons_to_unique_insert_head (e : expr) : expr :=
+      match e with
+      | euidx tup0 tup1 tup2 acc0 acc1 attr0 (EBinop OCons e1 e2) =>
+          if (all_eqb [(tup, [tup0; tup1; tup2]); (acc, [acc0; acc1]);
+                       (attr, [attr0])]
+              && negb (free_immut_in acc e1))%bool
+          then ELet (uto_idx_at e2) acc (ELet e1 tup uidx_body')
+          else e
+      | _ => e
+      end.
+
+    Lemma cons_to_unique_insert_head_preserve_ty : forall (Gstore : tenv),
+        preserve_ty Gstore cons_to_unique_insert_head.
+    Proof.
+      unfold preserve_ty; intros Gstore e t Genv H_Gs H_Ge H_t.
+      repeat destruct_subexpr.
+      cbn [cons_to_unique_insert_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      (* only the top of the source is inverted: the fold's body typing is
+         exactly what both occurrences of the fold need, so it is reused
+         rather than rebuilt *)
+      lazymatch goal with
+      | H : type_of _ _ (EFold _ _ _ _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      eapply TyELet.
+      1:{ unfold uto_idx_at. eapply TyEFold; eassumption. }
+      1:{ eapply TyELet.
+          (* the row is typed under acc's binder now, which is what the
+             rule's freshness side condition is for *)
+          1:{ apply not_free_immut_put_ty2; [ assumption | eassumption ]. }
+          1:{ rewrite <- (Properties.map.put_comm _ _ _ _ Genv H_ne).
+              eassumption. } }
+    Qed.
+
+    Lemma cons_to_unique_insert_head_preserve_sem :
+      forall (Gstore : tenv) (store : locals),
+        preserve_sem Gstore store cons_to_unique_insert_head.
+    Proof.
+      unfold preserve_sem; intros Gstore store e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+      repeat destruct_subexpr.
+      cbn [cons_to_unique_insert_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      (* the rest of the table really is a list: without that the equation is
+         false, since the index of a non-list is VUnit while one row's update
+         of VUnit is not *)
+      lazymatch type of H_t with
+      | type_of _ _ (EFold (EBinop OCons _ ?rest) _ _ _ _) _ =>
+          assert (H_l : exists l, interp_expr store env rest = VList l)
+      end.
+      1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+          lazymatch goal with
+          | H : type_of _ _ ?rest (TList ?t1) |- context[interp_expr _ _ ?rest] =>
+              pose proof (type_sound Gstore Genv rest (TList t1) H H_Gs H_Ge
+                            store env H_sw H_ew) as H_v
+          end.
+          apply type_of_value_TList_inv in H_v as [ l [ E_l _ ] ].
+          exists l; exact E_l. }
+      destruct H_l as [ l E_l ].
+      rewrite interp_ELet_step, interp_ELet_step.
+      unfold uto_idx_at.
+      rewrite !interp_EFold, interp_EBinop, E_l.
+      cbn [interp_binop].
+      rewrite <- (not_free_immut_put_sem _ acc store env) by assumption.
+      cbn [fold_right].
+      rewrite (Properties.map.put_comm _ _ _ _ env H_ne).
+      reflexivity.
+    Qed.
+
+    Lemma cons_to_unique_insert_head_sound :
+      expr_transf_sound (locals := locals) cons_to_unique_insert_head.
+    Proof.
+      unfold expr_transf_sound; intros Gstore Genv e t H_Gs H_Ge H_t.
+      split.
+      1: exact (cons_to_unique_insert_head_preserve_ty Gstore e t Genv
+                  H_Gs H_Ge H_t).
+      1:{ intros store env H_sw H_ew.
+          exact (cons_to_unique_insert_head_preserve_sem Gstore store e t Genv env
+                   H_Gs H_Ge H_t H_sw H_ew). }
+    Qed.
+
+    Definition cons_to_unique_insert_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] cons_to_unique_insert_head.
+
+    Lemma cons_to_unique_insert_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        aug_transf_sound (locals := locals) is_tbl_ty' aux_ty aux_wf
+          cons_to_unique_insert_transf.
+    Proof.
+      intros. unfold cons_to_unique_insert_transf.
+      apply fold_command_with_globals_sound.
+      apply expr_transf_sound__expr_aug_transf_sound.
+      apply cons_to_unique_insert_head_sound.
+    Qed.
+
+    (* What uto_idx_at computes, in Gallina.  The insert rule needed nothing
+       of the sort because both of its sides recompute; every rule that
+       relates the recomputation to the dictionary's CONTENTS has to go
+       through this. *)
+    Lemma interp_uto_idx_at :
+      forall (store env : locals) (d : expr) (rows : list value),
+        interp_expr store env d = VList rows ->
+        interp_expr store env (uto_idx_at d)
+        = VDict (UniqueDictIndexImpl.idx_entries attr rows).
+    Proof.
+      intros * E_d. unfold uto_idx_at.
+      rewrite interp_EFold, E_d, interp_EAtom. cbn [interp_atom].
+      (* the index's own section hypothesis, which every lemma from it
+         carries: the two binders it folds with are distinct *)
+      rewrite UniqueDictIndexImpl.interp_to_idx_fold by assumption.
+      apply UniqueDictIndexImpl.fold_idx_step.
+    Qed.
+
+    (* ------------------------------------------------------------------
+       A keyed delete: the index of the table with every row carrying k
+       dropped is the stored index with k's entry deleted.
+
+       Like the insert, this needs no declaration -- see
+       idx_entries_filter_neq for why.  What it does need is that the key the
+       filter compares against does not mention the filter's own row binder,
+       which is the usual side condition for moving an expression out from
+       under a binder.
+       ------------------------------------------------------------------ *)
+    Definition filter_neq_to_unique_delete_head (e : expr) : expr :=
+      match e with
+      | euidx tup0 tup1 tup2 acc0 acc1 attr0
+          (flatmap_filter_list e'
+             y0 (EUnop ONot (EBinop OEq (EAccess (EVar y1) attr1) kexp)) y2 _ _) =>
+          if (all_eqb [(tup, [tup0; tup1; tup2]); (acc, [acc0; acc1]);
+                       (attr, [attr0; attr1]); (y0, [y1; y2])]
+              && negb (free_immut_in y0 kexp))%bool
+          then EBinop ODelete (uto_idx_at e') kexp
+          else e
+      | _ => e
+      end.
+
+    Lemma filter_neq_to_unique_delete_head_preserve_ty : forall (Gstore : tenv),
+        preserve_ty Gstore filter_neq_to_unique_delete_head.
+    Proof.
+      unfold preserve_ty; intros Gstore e t Genv H_Gs H_Ge H_t.
+      repeat destruct_subexpr.
+      cbn [filter_neq_to_unique_delete_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+      repeat rewrite_map_get_put_hyp.
+      repeat (try clear_refl; repeat do_injection).
+      repeat (rewrite_l_to_r; do_injection).
+      econstructor; [ constructor | | ].
+      (* the emitted index is rebuilt from the index's own typing: the
+         accumulator, one insertion of the row under its key *)
+      1:{ unfold uto_idx_at. eapply TyEFold; try eassumption.
+          1: apply TyEAtom; assumption.
+          1:{ econstructor.
+              1: constructor.
+              1:{ constructor. rewrite map.get_put_same. reflexivity. }
+              1:{ econstructor.
+                  1:{ constructor. rewrite map.get_put_diff by congruence.
+                      rewrite map.get_put_same. reflexivity. }
+                  1: eassumption. }
+              1:{ constructor. rewrite map.get_put_diff by congruence.
+                  rewrite map.get_put_same. reflexivity. } } }
+      1: eapply not_free_immut_put_ty; eauto.
+    Qed.
+
+    Lemma filter_neq_to_unique_delete_head_preserve_sem :
+      forall (Gstore : tenv) (store : locals),
+        preserve_sem Gstore store filter_neq_to_unique_delete_head.
+    Proof.
+      unfold preserve_sem; intros Gstore store e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+      repeat destruct_subexpr.
+      cbn [filter_neq_to_unique_delete_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      (* the table the filter runs over is a list *)
+      repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+      lazymatch goal with
+      | H : type_of _ _ ?tbl_e (TList ?rt) |- _ =>
+          pose proof (type_sound Gstore Genv tbl_e (TList rt) H H_Gs H_Ge
+                        store env H_sw H_ew) as H_v
+      end.
+      apply type_of_value_TList_inv in H_v as [ rows [ E_rows _ ] ].
+      (* the source: the index of the rows the filter keeps.  Bound by a
+         match on the goal because destruct_subexpr has spelled the fold
+         out, so only CONVERSION relates it to uto_idx_at *)
+      lazymatch goal with
+      | |- _ = interp_expr _ _ ?src =>
+          assert (E_src :
+                   interp_expr store env src
+                   = VDict (UniqueDictIndexImpl.idx_entries attr
+                              (filter (fun r => negb (value_eqb (row_key attr r)
+                                                        (interp_expr store env e1_2_1_2)))
+                                 rows)))
+      end.
+      1:{ eapply interp_uto_idx_at.
+          rewrite interp_flatmap_filter_list, E_rows. f_equal.
+          apply In_filter_ext; intros v H_in.
+          cbn [interp_expr interp_unop interp_binop].
+          unfold get_local; rewrite map.get_put_same.
+          erewrite <- not_free_immut_put_sem by eassumption.
+          unfold row_key; reflexivity. }
+      rewrite E_src, interp_EBinop.
+      rewrite (interp_uto_idx_at store env e1_1 rows E_rows).
+      cbn [interp_binop].
+      f_equal. symmetry. apply UniqueDictIndexImpl.idx_entries_filter_neq.
+      (* the instance an eapply above left open *)
+      exact word_ok.
+    Qed.
+
+    Lemma filter_neq_to_unique_delete_head_sound :
+      expr_transf_sound (locals := locals) filter_neq_to_unique_delete_head.
+    Proof.
+      unfold expr_transf_sound; intros Gstore Genv e t H_Gs H_Ge H_t.
+      split.
+      1: exact (filter_neq_to_unique_delete_head_preserve_ty Gstore e t Genv
+                  H_Gs H_Ge H_t).
+      1:{ intros store env H_sw H_ew.
+          exact (filter_neq_to_unique_delete_head_preserve_sem Gstore store e t Genv env
+                   H_Gs H_Ge H_t H_sw H_ew). }
+    Qed.
+
+    Definition filter_neq_to_unique_delete_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] filter_neq_to_unique_delete_head.
+
+    Lemma filter_neq_to_unique_delete_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        aug_transf_sound (locals := locals) is_tbl_ty' aux_ty aux_wf
+          filter_neq_to_unique_delete_transf.
+    Proof.
+      intros. unfold filter_neq_to_unique_delete_transf.
+      apply fold_command_with_globals_sound.
+      apply expr_transf_sound__expr_aug_transf_sound.
+      apply filter_neq_to_unique_delete_head_sound.
+    Qed.
+
     Section WithTable.
       Context (tbl : string).
 
@@ -230,6 +541,154 @@ Section WithIndexUse.
         intros rty1 rty2 v H. rewrite <- H.
         cbn [interp_expr interp_atom]. reflexivity.
       Qed.
+      (* ------------------------------------------------------------------
+         The index of the table's rows IS the index the table stores.
+
+         This is the rule that makes the two maintenance rules above pay: a
+         maintained write still mentions the index of the UNCHANGED rows,
+         which is a recomputation, and this turns it into a read of the
+         stored dictionary.  Without it a maintained write still folds over
+         every row.
+
+         Unlike the two above, this one is sound only because of the
+         invariant -- it IS the invariant, read from left to right.  It needs
+         no declaration, since the weak relation is what the installation
+         establishes on any table.
+         ------------------------------------------------------------------ *)
+      Definition unique_use_idx_head (e : expr) : expr :=
+        match e with
+        | euidx tup0 tup1 tup2 acc0 acc1 attr0 (EAccess (ELoc tbl0) id_tag0) =>
+            if all_eqb [(tup, [tup0; tup1; tup2]); (acc, [acc0; acc1]);
+                        (attr, [attr0]); (tbl, [tbl0]); (id_tag, [id_tag0])]
+            then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
+            else e
+        | _ => e
+        end.
+
+      Lemma interp_aux_member : forall (store env : locals) rv rv_aux (w : value),
+          map.get store tbl = Some (VRecord rv) ->
+          record_proj aux_tag rv = VRecord rv_aux ->
+          record_proj idx_tag rv_aux = w ->
+          interp_expr store env (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) = w.
+      Proof.
+        intros * E_tbl E_aux E_idx.
+        rewrite !interp_EAccess, interp_ELoc.
+        unfold get_local; rewrite E_tbl; cbv beta iota.
+        rewrite E_aux; cbv beta iota. exact E_idx.
+      Qed.
+
+      Lemma unique_invariant__rows :
+        forall tl rt (v : value),
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          type_of_value v (TRecord tl) ->
+          unique_weak_aux_wf_at v ->
+          exists rv rv_aux rows,
+            v = VRecord rv
+            /\ record_proj id_tag rv = VList rows
+            /\ record_proj aux_tag rv = VRecord rv_aux
+            /\ record_proj idx_tag rv_aux
+               = VDict (UniqueDictIndexImpl.idx_entries attr rows).
+      Proof.
+        unfold aux_wf_for_idx, UniqueDictIndexImpl.idx_wf.
+        intros tl rt v E_id.
+        destruct v as [ | | | | | | rv | | | | ];
+          intros H_vty H_wf; cbv beta iota in H_wf; try contradiction.
+        destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
+          cbv beta iota in H_wf; try contradiction.
+        destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
+          cbv beta iota in H_wf; try contradiction.
+        destruct v_aux as [ | | | | | | rv_aux | | | | ];
+          cbv beta iota in H_wf; try contradiction.
+        destruct (access_record rv_aux idx_tag) as [ v_idx | ] eqn:E_vidx;
+          cbv beta iota in H_wf; try contradiction.
+        assert (H_idty : type_of_value v_id (TList (TRecord rt)))
+          by (eapply type_of_value_field; [ exact H_vty | exact E_vid | exact E_id ]).
+        apply type_of_value_TList_inv in H_idty as [ rows [ E_rows _ ] ].
+        subst v_id.
+        rewrite UniqueDictIndexImpl.fiat2_gallina_to_idx in H_wf by assumption.
+        apply access_record__record_proj in E_vid, E_vaux, E_vidx.
+        exists rv, rv_aux, rows.
+        split; [ reflexivity | ].
+        split; [ exact E_vid | ].
+        split; [ exact E_vaux | ].
+        rewrite E_vidx; exact H_wf.
+      Qed.
+
+      Lemma unique_use_idx_head_preserve_sem :
+        forall tl rt (Gstore : tenv) (store : locals),
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          match map.get store tbl with
+          | Some v => type_of_value v (TRecord tl) /\ unique_weak_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store unique_use_idx_head.
+      Proof.
+        unfold preserve_sem; intros * E_tbl E_id H_store.
+        intros e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+        destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+        destruct H_store as [ H_vty H_wf ].
+        destruct (unique_invariant__rows tl rt v E_id H_vty H_wf)
+          as [ rv [ rv_aux [ rows [ E_vrec [ E_rows [ E_aux E_idx ] ] ] ] ] ].
+        subst v.
+        repeat destruct_subexpr.
+        cbn [unique_use_idx_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        (* the read *)
+        erewrite interp_aux_member; [ | exact E_v | exact E_aux | reflexivity ].
+        rewrite E_idx.
+        (* and the recomputation: apply, not rewrite, since destruct_subexpr
+           has left the fold spelled out and only conversion relates it to
+           uto_idx_at *)
+        symmetry. eapply (interp_uto_idx_at store env _ rows).
+        rewrite interp_EAccess, interp_ELoc.
+        unfold get_local; rewrite E_v; cbv beta iota.
+        exact E_rows.
+      Qed.
+
+      Lemma unique_use_idx_head_preserve_ty : forall tl ctl t (Gstore : tenv),
+          type_wf t -> @IndexInterface.is_tbl_ty uidx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl idx_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore unique_use_idx_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_idx.
+        cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty unique_dict_idx] in H_is, E_idx.
+        unfold UniqueDictIndexImpl.is_tbl_ty, UniqueDictIndexImpl.idx_ty in H_is, E_idx.
+        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        rewrite inb_true_iff in H_is.
+        apply In_access_record in H_is as [ kt E_attr ].
+        assert (E_kt : get_attr_type rt attr = kt)
+          by (unfold get_attr_type; rewrite E_attr; reflexivity).
+        rewrite E_kt in E_idx. clear E_kt.
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr.
+        cbn [unique_use_idx_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+        repeat rewrite_map_get_put_hyp.
+        (* the type the source fold produces is the dictionary's own: the
+           table's row type fixes the dictionary's value type, and the
+           body's OInsert takes its key type from the row's attribute *)
+        lazymatch goal with
+        | |- type_of _ _ _ (TDict ?k ?v) =>
+            assert (E_vt : v = TRecord rt) by congruence;
+            assert (E_kt : k = kt) by congruence;
+            subst k v
+        end.
+        eapply TyEAccess;
+          [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
+          | exact E_idx ].
+      Qed.
+
     End WithTable.
     (* aux_ty_access_id's companion.  IndexTransf proves only the id side,
        since the installation itself never reads the index field by name. *)
@@ -407,6 +866,98 @@ Section WithIndexUse.
       destruct (declares_unique attr ds) eqn:E_uq.
       1: apply unique_lookup_transf_sound, H_br; reflexivity.
       1: unfold aug_transf_sound, id; intros; repeat split; auto.
+    Qed.
+
+    (* ------------------------------------------------------------------
+       What the maintenance rules owe.
+
+       The insert and the delete owe nothing at all: both of their sides
+       recompute, so they are plain expression rewrites.  The use rule owes
+       the member's own WEAK relation -- the one the installation establishes
+       from typing alone -- which is strictly less than the lookup rule's
+       unique_bridges, and in particular needs no declaration.
+       ------------------------------------------------------------------ *)
+    Definition unique_idx_bridges (is_tbl_ty' : type -> bool) (aux_ty : type -> type)
+      (aux_wf : value -> Prop) : Prop :=
+      aux_ty_for_idx id_tag aux_tag idx_tag (@IndexInterface.idx_ty uidx) aux_ty
+      /\ (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty uidx t = true)
+      /\ (forall (t : type) (v : value),
+             type_wf t -> is_tbl_ty' t = true ->
+             type_of_value v (aux_ty t) -> aux_wf v -> unique_weak_aux_wf_at v).
+
+    (* Whoever owes the lookup rule's bridges owes these too. *)
+    Lemma unique_bridges__idx_bridges : forall is_tbl_ty' aux_ty aux_wf,
+        unique_bridges is_tbl_ty' aux_ty aux_wf ->
+        unique_idx_bridges is_tbl_ty' aux_ty aux_wf.
+    Proof.
+      unfold unique_bridges, unique_idx_bridges.
+      intros * [ H_aty [ H_is H_wf ] ].
+      split; [ exact H_aty | split; [ exact H_is | ] ].
+      intros t v H_twf H_is' H_vty H_aw.
+      specialize (H_wf t v H_twf H_is' H_vty H_aw).
+      unfold aux_wf_for_idx, UniqueDictIndexImpl.idx_wf_unique in *.
+      repeat (destruct_match_hyp; try contradiction).
+      intuition idtac.
+    Qed.
+
+    Lemma uidx_is_tbl_ty_inv : forall t,
+        @IndexInterface.is_tbl_ty uidx t = true ->
+        exists rt kt, t = TList (TRecord rt) /\ access_record rt attr = Success kt.
+    Proof.
+      cbn [IndexInterface.is_tbl_ty unique_dict_idx].
+      unfold UniqueDictIndexImpl.is_tbl_ty; intros t H_is.
+      destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+      destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+      rewrite inb_true_iff in H_is.
+      apply In_access_record in H_is as [ kt E_attr ].
+      exists rt, kt; split; [ reflexivity | exact E_attr ].
+    Qed.
+
+    Lemma unique_use_idx_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        unique_idx_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf unique_use_idx_head.
+    Proof.
+      unfold unique_idx_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty [ H_is H_wf ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      apply H_is in H_is' as H_is_u.
+      apply uidx_is_tbl_ty_inv in H_is_u as [ rt [ kt [ E_t E_attr ] ] ].
+      specialize (H_aty tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply unique_use_idx_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply unique_use_idx_head_preserve_sem; try eassumption.
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | ].
+          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
+          lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+          assumption. }
+    Qed.
+
+    Definition unique_use_idx_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (unique_use_idx_head tbl).
+
+    Lemma unique_use_idx_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        unique_idx_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf unique_use_idx_transf.
+    Proof.
+      intros * H_br. unfold unique_use_idx_transf.
+      apply fold_command_with_globals_sound.
+      apply unique_use_idx_head_sound; exact H_br.
     Qed.
 
     (* ------------------------------------------------------------------

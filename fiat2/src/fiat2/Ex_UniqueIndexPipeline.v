@@ -99,6 +99,15 @@ Section WithConcreteMaps.
 
   Definition pidx : expr := EAccess (EAccess (ELoc "users") "aux_tag") "0".
 
+  (* What the write does to the index now: it reads the stored dictionary and
+     puts one row in it, instead of folding over the whole table again.  This
+     is the index's own fold body, run once -- the same shape the trigram
+     member's insert rule leaves. *)
+  Definition punique_insert_of (idx_e row : expr) : expr :=
+    ELet idx_e "acc"
+      (ELet row "tup"
+         (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "id") (EVar "tup"))).
+
   (* After: the table is the pair of the list and that index record, every read
      of the table goes through id_tag, and the guard is one lookup in the
      dictionary. *)
@@ -119,8 +128,7 @@ Section WithConcreteMaps.
          (CAssign "users"
             (ERecord
                [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
-                ("aux_tag",
-                  punique_rec_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
+                ("aux_tag", ERecord [("0", punique_insert_of pidx (EVar "u"))])]))
          CSkip).
 
   Lemma poptimized_is : poptimized [DUnique "id"] = poptimized_expected.
@@ -282,9 +290,7 @@ Section WithConcreteMaps.
             (CAssign "users"
                (ERecord
                   [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
-                   ("aux_tag",
-                     punique_rec_of
-                       (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))]))
+                   ("aux_tag", ERecord [("0", punique_insert_of pidx (EVar "u"))])]))
             CSkip)
          (* and the read query: the same probe, at the key the query asks for *)
          (CAssign "out" (qprobe (EVar "k")))).
@@ -562,24 +568,55 @@ Section WithConcreteMaps.
      rule turns that into the index of the rest, with one row's buckets added
      -- the index's own per-row body, run once.  This is the rewrite as it
      applies to exactly the shape the install produces. *)
+  (* one row's trigrams, added to whatever dictionary it is given *)
+  Definition ptri_add (idx_e row : expr) : expr :=
+    ELet idx_e "acc"
+      (ELet row "tup"
+         (EFold (EBinop ORange (EAtom (AInt 0))
+                   (EBinop OMinus
+                      (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                      (EAtom (AInt 2))))
+            (EVar "acc") "pos" "sacc"
+            (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
+               (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+                  (EBinop OSetInsert (EAtom (AEmptySet None))
+                     (EAccess (EVar "tup") "id"))
+                  "bkt"
+                  (EBinop OSetInsert (EVar "bkt")
+                     (EAccess (EVar "tup") "id")))))).
+
   Lemma tri_insert_is_incremental :
     cons_to_tri_insert_head "name" "id" "tup" "acc" "pos" "sacc" "bkt"
       (ptrigram_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))
-    = ELet (ptrigram_of (EAccess (ELoc "users") "id_tag")) "acc"
-        (ELet (EVar "u") "tup"
-           (EFold (EBinop ORange (EAtom (AInt 0))
-                     (EBinop OMinus
-                        (EUnop OLengthString (EAccess (EVar "tup") "name"))
-                        (EAtom (AInt 2))))
-              (EVar "acc") "pos" "sacc"
-              (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
-                 (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
-                    (EBinop OSetInsert (EAtom (AEmptySet None))
-                       (EAccess (EVar "tup") "id"))
-                    "bkt"
-                    (EBinop OSetInsert (EVar "bkt")
-                       (EAccess (EVar "tup") "id")))))).
+    = ptri_add (ptrigram_of (EAccess (ELoc "users") "id_tag")) (EVar "u").
   Proof. reflexivity. Qed.
+
+  (* And the whole write, as the pipeline leaves it: NEITHER member is
+     recomputed.  The trigram dictionary is the stored one with this row's
+     trigrams added, and the primary-key dictionary is the stored one with
+     this row's entry put in -- both read through aux_tag rather than folded
+     over the table.  The recomputations the two insert rules leave behind
+     are what the two use rules turn into those reads, so this is the
+     statement that says maintenance actually paid. *)
+  Lemma tri_pair_insert_is_incremental : exists inst grd,
+      toptimized [DUnique "id"]
+      = CLetMut inst "users"
+          (CIf grd
+             (CAssign "users"
+                (ERecord
+                   [("id_tag",
+                     EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
+                    ("aux_tag",
+                      ERecord
+                        [("0",
+                          ptri_add (EAccess (EAccess (ELoc "users") "aux_tag") "0")
+                            (EVar "u"));
+                         ("1",
+                          punique_insert_of
+                            (EAccess (EAccess (ELoc "users") "aux_tag") "1")
+                            (EVar "u"))])]))
+             CSkip).
+  Proof. do 2 eexists; reflexivity. Qed.
 
   (* And the pair is sound on the same premise as before: nothing is assumed
      about which indexes were chosen, only that the cenv describes the
@@ -773,8 +810,10 @@ Section WithConcreteMaps.
                         (EBinop OSetInsert (EAtom (AEmptySet None))
                            (EAccess (EVar "tup") "id")))))))).
 
-  (* The write recomputes nothing of the trigram index: it reads the stored
-     dictionary and takes one row's keys out of it. *)
+  (* The write recomputes NEITHER member: the trigram dictionary reads the
+     stored one and takes one row's keys out of it, and the primary-key
+     dictionary loses exactly the entry the filter named.  Only the list at
+     id_tag is still traversed, which is the table itself. *)
   Lemma dtri_delete_is_incremental : exists inst grd,
       doptimized [DUnique "id"]
       = CLetMut inst "users"
@@ -787,8 +826,9 @@ Section WithConcreteMaps.
                         [("0",
                           dremove (EAccess (EAccess (ELoc "users") "aux_tag") "0"));
                          ("1",
-                          punique_idx_of
-                            (dfiltered (EAccess (ELoc "users") "id_tag")))])]))
+                          EBinop ODelete
+                            (EAccess (EAccess (ELoc "users") "aux_tag") "1")
+                            (EVar "k"))])]))
              CSkip).
   Proof. do 2 eexists; reflexivity. Qed.
 

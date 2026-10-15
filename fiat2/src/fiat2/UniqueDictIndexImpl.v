@@ -3,7 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.Constraint.
 Require fiat2.DictIndexImpl.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
-From Stdlib Require Import List String ZArith.
+From Stdlib Require Import List String ZArith Sorted.
 Import ListNotations.
 
 Open Scope string_scope.
@@ -144,8 +144,12 @@ Section WithHole.
       Definition idx_entries (l : list value) : list (value * value) :=
         fold_right (fun r d => dict_insert (row_key attr r) r d) nil l.
 
-      Lemma interp_idx_body : forall (env : locals) r d,
-          interp_expr map.empty (map.put (map.put env tup r) acc d)
+      (* stated for an arbitrary store, since the maintenance rules below
+         rewrite the index inside a program, where the store is whatever the
+         program's is -- to_idx itself is only ever interpreted with the
+         empty one *)
+      Lemma interp_idx_body : forall (store env : locals) r d,
+          interp_expr store (map.put (map.put env tup r) acc d)
             (ETernop OInsert (EVar acc) (EAccess (EVar tup) attr) (EVar tup))
           = idx_step r d.
       Proof.
@@ -166,9 +170,9 @@ Section WithHole.
         rewrite IH; reflexivity.
       Qed.
 
-      Lemma interp_to_idx_fold : forall (env : locals) (l : list value) (d0 : value),
+      Lemma interp_to_idx_fold : forall (store env : locals) (l : list value) (d0 : value),
           fold_right
-            (fun v a => interp_expr map.empty (map.put (map.put env tup v) acc a)
+            (fun v a => interp_expr store (map.put (map.put env tup v) acc a)
                           (ETernop OInsert (EVar acc) (EAccess (EVar tup) attr) (EVar tup)))
             d0 l
           = fold_right idx_step d0 l.
@@ -186,6 +190,52 @@ Section WithHole.
         unfold get_local; rewrite map.get_put_same.
         cbn beta iota; cbn [interp_atom].
         rewrite interp_to_idx_fold. apply fold_idx_step.
+      Qed.
+
+      (* ------------------------------------------------------------------
+         What maintaining the index takes, in Gallina.
+
+         Both facts are about idx_entries alone, so they are proved here and
+         the rewrite rules in UniqueIndexUse only have to connect a program
+         to them.
+         ------------------------------------------------------------------ *)
+
+      Local Coercion is_true : bool >-> Sortclass.
+
+      (* The entries are a canonical dictionary: every row goes in through
+         dict_insert, which keeps the keys strictly increasing. *)
+      Lemma idx_entries_SSorted : forall (l : list value),
+          StronglySorted dict_entry_leb (idx_entries l).
+      Proof.
+        induction l as [| r l IH]; cbn [idx_entries fold_right].
+        - constructor.
+        - apply dict_insert_preserve_SSorted; exact IH.
+      Qed.
+
+      (* Dropping from the table every row whose key is k deletes exactly k's
+         entry.  Nothing is assumed about the keys being distinct: a row
+         contributes only to its own key's entry, so the rows that leave can
+         only affect the entry they all share.  This is the whole reason a
+         keyed delete is maintainable here without the declaration the
+         trigram index needs -- there, a row contributes to as many buckets
+         as its text has trigrams, and which keys share a bucket is exactly
+         what the declaration settles. *)
+      Lemma idx_entries_filter_neq : forall (l : list value) (k : value),
+          idx_entries (filter (fun r => negb (value_eqb (row_key attr r) k)) l)
+          = dict_delete k (idx_entries l).
+      Proof.
+        induction l as [| r l IH]; intros k; cbn [idx_entries filter fold_right];
+          [ reflexivity | ].
+        destruct (value_eqb (row_key attr r) k) eqn:E; cbn [negb].
+        - (* the row leaves, and its key's entry is the one being deleted *)
+          apply value_eqb_eq in E; rewrite E.
+          rewrite dict_delete_insert_same by apply idx_entries_SSorted.
+          apply IH.
+        - (* the row stays, and the deletion passes under its insertion *)
+          cbn [idx_entries fold_right]. rewrite IH.
+          symmetry; apply dict_delete_insert_diff;
+            [ apply not_eq_sym, value_eqb_neq; exact E
+            | apply idx_entries_SSorted ].
       Qed.
 
       Instance unique_dict_idx : IndexInterface.index :=
