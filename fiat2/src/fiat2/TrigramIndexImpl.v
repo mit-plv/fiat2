@@ -248,10 +248,15 @@ Section WithHole.
         fold_right (fun r a => tri_row_step (row_str r) (row_key key r) a)
           (VDict nil) l.
 
-      Lemma interp_trigram_positions : forall (env : locals) r txt,
+      (* The store is universally quantified in this group of lemmas: none of
+         to_idx's parts mentions a global, so the index of a list of rows is
+         the same whatever store it is computed in.  The maintenance rules
+         need that, since they recompute the index where the table's own
+         store is in scope. *)
+      Lemma interp_trigram_positions : forall (store env : locals) r txt,
           row_key attr r = VString txt ->
           map.get env tup = Some r ->
-          interp_expr map.empty env (trigram_positions (row_text (EVar tup)))
+          interp_expr store env (trigram_positions (row_text (EVar tup)))
           = VList (tri_positions txt).
       Proof.
         unfold trigram_positions, row_text, tri_positions, row_key in *.
@@ -269,12 +274,12 @@ Section WithHole.
           interp_ternop OSubstring (VString txt) p (VInt 3) = tri_key txt p.
       Proof. unfold tri_key; intros; destruct p; reflexivity. Qed.
 
-      Lemma interp_tri_insert : forall (env : locals) r txt p a,
+      Lemma interp_tri_insert : forall (store env : locals) r txt p a,
           row_key attr r = VString txt ->
           map.get env tup = Some r ->
           map.get env pos = Some p ->
           map.get env sacc = Some a ->
-          interp_expr map.empty env tri_insert_body
+          interp_expr store env tri_insert_body
           = tri_step txt (row_key key r) p a.
       Proof.
         unfold tri_insert_body, trigram_at, row_text, row_pk, tri_step.
@@ -296,11 +301,11 @@ Section WithHole.
       Qed.
 
       (* The inner fold, over the positions. *)
-      Lemma interp_tri_fold : forall (env : locals) r txt a l,
+      Lemma interp_tri_fold : forall (store env : locals) r txt a l,
           row_key attr r = VString txt ->
           map.get env tup = Some r ->
           fold_right
-            (fun p a' => interp_expr map.empty
+            (fun p a' => interp_expr store
                            (map.put (map.put env pos p) sacc a') tri_insert_body)
             a l
           = fold_right (tri_step txt (row_key key r)) a l.
@@ -315,31 +320,31 @@ Section WithHole.
       Qed.
 
       (* One row's contribution. *)
-      Lemma interp_tri_row : forall (env : locals) r txt a,
+      Lemma interp_tri_row : forall (store env : locals) r txt a,
           row_key attr r = VString txt ->
           map.get env tup = Some r ->
           map.get env acc = Some a ->
-          interp_expr map.empty env tri_row_body
+          interp_expr store env tri_row_body
           = tri_row_step txt (row_key key r) a.
       Proof.
         intros * H_txt E_tup E_acc. unfold tri_row_body, tri_row_step.
         rewrite interp_EFold.
-        rewrite (interp_trigram_positions env r txt H_txt E_tup).
+        rewrite (interp_trigram_positions store env r txt H_txt E_tup).
         rewrite interp_EVar; unfold get_local; rewrite E_acc.
         apply interp_tri_fold; assumption.
       Qed.
 
       (* The outer fold, over the rows.  Every row has to carry a string at
          attr, which is what is_tbl_ty asks of the table's type. *)
-      Lemma interp_to_idx_fold : forall (env : locals) (l : list value) a,
+      Lemma interp_to_idx_fold : forall (store env : locals) (l : list value) a,
           Forall (fun r => exists txt, row_key attr r = VString txt) l ->
           fold_right
-            (fun r a' => interp_expr map.empty
+            (fun r a' => interp_expr store
                            (map.put (map.put env tup r) acc a') tri_row_body)
             a l
           = fold_right (fun r a' => tri_row_step (row_str r) (row_key key r) a') a l.
       Proof.
-        intros env l a H_all.
+        intros store env l a H_all.
         induction l as [ | r l IH ]; cbn [fold_right]; [ reflexivity | ].
         invert_Forall.
         rewrite IH by assumption.

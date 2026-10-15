@@ -396,6 +396,27 @@ Section WithIndexUse.
       apply cons_to_tri_insert_head_sound; exact H_ne.
     Qed.
 
+    (* What to_idx_at computes, in Gallina.  The insert rule above needed
+       nothing of the sort, because both of its sides recompute; every rule
+       that turns a recomputation into a READ of the stored index has to go
+       through this, since the index's invariant is stated in these terms. *)
+    Lemma interp_to_idx_at :
+      forall (store env : locals) (d : expr) rt (rows : list value),
+        access_record rt attr = Success TString ->
+        Forall (fun r => type_of_value r (TRecord rt)) rows ->
+        interp_expr store env d = VList rows ->
+        interp_expr store env (to_idx_at d)
+        = TrigramIndexImpl.tri_entries attr key rows.
+    Proof.
+      intros * H_attr H_rows E_d.
+      unfold to_idx_at, TrigramIndexImpl.tri_entries.
+      rewrite interp_EFold, E_d, interp_EAtom. cbn [interp_atom].
+      (* the index's own section hypotheses, which every lemma from it
+         carries: the binders it folds with are distinct *)
+      apply TrigramIndexImpl.interp_to_idx_fold; try assumption.
+      eapply TrigramIndexImpl.typed_rows_have_text; eassumption.
+    Qed.
+
     Section WithTable.
       Context (tbl : string).
 
@@ -1019,6 +1040,163 @@ Section WithIndexUse.
         unfold probe_body. reflexivity.
       Qed.
 
+      (* ------------------------------------------------------------------
+         The index of the table's rows IS the index the table stores.
+
+         This is the rule that makes the maintenance rules pay.  A rule like
+         cons_to_tri_insert_head leaves behind the index of the UNCHANGED
+         part of the table -- still a recomputation -- and this one turns
+         that recomputation into a read of the stored dictionary.  Without
+         it a maintained write still folds over every row and re-tokenizes
+         every text, which is exactly what the index is there to avoid.
+
+         Unlike the insert rule, this one is sound only because of the
+         invariant: it IS the invariant, read from left to right.  It needs
+         no declaration, though, since the trigram member's invariant holds
+         of any table the index was installed on.
+         ------------------------------------------------------------------ *)
+      Definition tri_use_idx_head (e : expr) : expr :=
+        match e with
+        | etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
+            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1
+            (EAccess (ELoc tbl0) id_tag0) =>
+            if all_eqb [(tup, [tup0; tup1; tup2; tup3; tup4; tup5]);
+                        (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
+                        (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
+                        (attr, [attr0; attr1; attr2]); (key, [key0; key1]);
+                        (tbl, [tbl0]); (id_tag, [id_tag0])]
+            then tri_e
+            else e
+        | _ => e
+        end.
+
+      (* What the trigram member's invariant says on its own, without the
+         declaration the lookups also need. *)
+      Lemma tri_invariant__rows :
+        forall tl rt (v : value),
+          access_record rt attr = Success TString ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          type_of_value v (TRecord tl) ->
+          tri_aux_wf_at v ->
+          exists rv rv_aux rows,
+            v = VRecord rv
+            /\ record_proj id_tag rv = VList rows
+            /\ record_proj aux_tag rv = VRecord rv_aux
+            /\ Forall (fun r => type_of_value r (TRecord rt)) rows
+            /\ record_proj tri_tag rv_aux
+               = TrigramIndexImpl.tri_entries attr key rows.
+      Proof.
+        unfold aux_wf_for_idx, TrigramIndexImpl.idx_wf.
+        intros tl rt v H_attr E_id.
+        destruct v as [ | | | | | | rv | | | | ];
+          intros H_vty H_tri; cbv beta iota in H_tri; try contradiction.
+        destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
+          cbv beta iota in H_tri; try contradiction.
+        destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
+          cbv beta iota in H_tri; try contradiction.
+        destruct v_aux as [ | | | | | | rv_aux | | | | ];
+          cbv beta iota in H_tri; try contradiction.
+        destruct (access_record rv_aux tri_tag) as [ v_tri | ] eqn:E_vtri;
+          cbv beta iota in H_tri; try contradiction.
+        assert (H_idty : type_of_value v_id (TList (TRecord rt)))
+          by (eapply type_of_value_field; [ exact H_vty | exact E_vid | exact E_id ]).
+        apply type_of_value_TList_inv in H_idty as [ rows [ E_rows H_rows ] ].
+        subst v_id.
+        rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc pos sacc bkt
+                   H_tup_acc H_tup_pos H_tup_sacc H_tup_bkt H_pos_sacc
+                   (locals_ok := locals_ok) rows
+                   (TrigramIndexImpl.typed_rows_have_text attr rows rt H_attr H_rows))
+          in H_tri.
+        apply access_record__record_proj in E_vid, E_vaux, E_vtri.
+        exists rv, rv_aux, rows.
+        (* one conjunct at a time: "repeat split" would prove the reflexive
+           one by eq_refl and renumber everything after it *)
+        split; [ reflexivity | ].
+        split; [ exact E_vid | ].
+        split; [ exact E_vaux | ].
+        split; [ exact H_rows | ].
+        rewrite E_vtri; exact H_tri.
+      Qed.
+
+      Lemma tri_use_idx_head_preserve_sem :
+        forall tl rt (Gstore : tenv) (store : locals),
+          access_record rt attr = Success TString ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          match map.get store tbl with
+          | Some v => type_of_value v (TRecord tl) /\ tri_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store tri_use_idx_head.
+      Proof.
+        unfold preserve_sem; intros * H_attr E_tbl E_id H_store.
+        intros e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+        destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+        destruct H_store as [ H_vty H_tri ].
+        destruct (tri_invariant__rows tl rt v H_attr E_id H_vty H_tri)
+          as [ rv [ rv_aux [ rows [ E_vrec [ E_rows [ E_aux [ H_rows E_tri ] ] ] ] ] ] ].
+        subst v.
+        repeat destruct_subexpr.
+        (* destruct_subexpr stops where the rule's pattern is still stuck on
+           the fold's body, so the case analysis is finished by hand, as in
+           the insert rule above *)
+        cbn [tri_use_idx_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        (* the read *)
+        erewrite interp_tbl_field; [ | exact E_v | exact E_aux | reflexivity ].
+        (* and the recomputation.  apply, not rewrite: destruct_subexpr has
+           left the fold's body spelled out, so it is only CONVERTIBLE with
+           to_idx_at's body, which rewrite's syntactic match will not see *)
+        rewrite E_tri. symmetry.
+        eapply (interp_to_idx_at store env _ rt rows H_attr H_rows).
+        rewrite interp_EAccess, interp_ELoc.
+        unfold get_local; rewrite E_v; cbv beta iota.
+        exact E_rows.
+      Qed.
+
+      Lemma tri_use_idx_head_preserve_ty : forall tl ctl t (Gstore : tenv),
+          type_wf t -> @IndexInterface.is_tbl_ty tridx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (@IndexInterface.idx_ty tridx t) ->
+          preserve_ty Gstore tri_use_idx_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_tri.
+        cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty trigram_idx] in H_is, E_tri.
+        unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty in H_is, E_tri.
+        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr; try discriminate.
+        destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
+        apply type_eqb_eq in H_is; subst at_ty.
+        assert (E_kt : get_attr_type rt key = kt)
+          by (unfold get_attr_type; rewrite E_key; reflexivity).
+        rewrite E_kt in E_tri. clear E_kt.
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr.
+        cbn [tri_use_idx_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        (* the type the source fold produces is the dictionary's own *)
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+        repeat rewrite_map_get_put_hyp.
+        (* the accumulator's type, chased back to the index's own: the
+           table's row type fixes the key's type, and the body's OInsert
+           fixes the dictionary's *)
+        rewrite E_tbl in H5; injection H5 as H5; subst tl5.
+        rewrite E_id in H45; injection H45 as H45; subst t1.
+        injection H0 as H0; subst tl0.
+        rewrite E_key in H15; injection H15 as H15; subst t9.
+        eapply TyEAccess;
+          [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
+          | exact E_tri ].
+      Qed.
+
     End WithTable.
 
     Lemma tri_is_tbl_ty_inv : forall t,
@@ -1047,6 +1225,18 @@ Section WithIndexUse.
        relations, where the primary-key one is the STRONG relation that no
        index establishes from typing and the declaration pays for.
        ------------------------------------------------------------------ *)
+    (* What a rule that only READS the trigram member needs: where that
+       member sits in the index record, and that its own invariant holds.
+       Not the primary key's -- so such a rule is not gated on a
+       declaration. *)
+    Definition trigram_idx_bridges (is_tbl_ty' : type -> bool) (aux_ty : type -> type)
+      (aux_wf : value -> Prop) : Prop :=
+      aux_ty_for_idx id_tag aux_tag tri_tag (@IndexInterface.idx_ty tridx) aux_ty
+      /\ (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty tridx t = true)
+      /\ (forall (t : type) (v : value),
+             type_wf t -> is_tbl_ty' t = true ->
+             type_of_value v (aux_ty t) -> aux_wf v -> tri_aux_wf_at v).
+
     Definition trigram_bridges (is_tbl_ty' : type -> bool) (aux_ty : type -> type)
       (aux_wf : value -> Prop) : Prop :=
       aux_ty_for_idx id_tag aux_tag tri_tag (@IndexInterface.idx_ty tridx) aux_ty
@@ -1147,6 +1337,63 @@ Section WithIndexUse.
     Qed.
 
     (* The rules, applied everywhere below the installation. *)
+    (* and the lookups' bridges include them *)
+    Lemma trigram_bridges__idx_bridges : forall is_tbl_ty' aux_ty aux_wf,
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        trigram_idx_bridges is_tbl_ty' aux_ty aux_wf.
+    Proof.
+      unfold trigram_bridges, trigram_idx_bridges.
+      intros * [ H_aty1 [ _ [ H_is [ H_wf1 _ ] ] ] ].
+      split; [ exact H_aty1 | split; [ exact H_is | exact H_wf1 ] ].
+    Qed.
+
+    Lemma tri_use_idx_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        trigram_idx_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf tri_use_idx_head.
+    Proof.
+      unfold trigram_idx_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty [ H_is H_wf ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      apply H_is in H_is' as H_is_tri.
+      apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+      specialize (H_aty tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply tri_use_idx_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply tri_use_idx_head_preserve_sem; try eassumption.
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | ].
+          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
+          lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+          assumption. }
+    Qed.
+
+    Definition tri_use_idx_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (tri_use_idx_head tbl).
+
+    Lemma tri_use_idx_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        trigram_idx_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf tri_use_idx_transf.
+    Proof.
+      intros * H_br. unfold tri_use_idx_transf.
+      apply fold_command_with_globals_sound.
+      apply tri_use_idx_head_sound; exact H_br.
+    Qed.
+
     Definition trigram_lookup_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl] (trigram_lookup_head tbl).
 

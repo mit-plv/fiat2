@@ -196,6 +196,14 @@ Section WithConcreteMaps.
                    (cons_to_tri_insert_head trigram_text_attr trigram_key_attr
                       "tup" "acc" "pos" "sacc" "bkt").
 
+    (* What makes maintenance pay: the recomputation a maintenance rule
+       leaves behind, over the part of the table that did not change, is the
+       dictionary the table already stores.  This reads only the trigram
+       member, so it needs no declaration. *)
+    Definition tri_use_idx_transf' : string -> command -> command :=
+      tri_use_idx_transf trigram_text_attr trigram_key_attr
+        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" tag.
+
   End CommonPipelineParts.
 
   (* ds is the installed table's declarations.  Only the use rules look at
@@ -257,6 +265,10 @@ Section WithConcreteMaps.
         ([(t_tag, ctrigram_idx attr key, trigram_idx_wf attr key);
           (u_tag, cunique_idx key, unique_idx_wf key)],
           [trigram_lookup_gated_transf t_tag attr key u_tag ds;
+           (* last in the list is first to run: maintenance leaves the index
+              of the unchanged rows behind, and the use rule above it turns
+              that recomputation into a read *)
+           tri_use_idx_transf' t_tag attr key;
            cons_to_tri_insert_transf attr key],
           S (S cur_tag))
 end.
@@ -803,6 +815,23 @@ end.
                 1: eassumption.
                 1: split; [ apply H_Q; exact H_Qv
                           | apply H_decl with (a := ak); assumption ]. } }
+        (* the use rule: one member, and no declaration -- the trigram
+           member's invariant holds of any table it was installed on *)
+        1:{ unfold tri_use_idx_transf'.
+            eapply (tri_use_idx_transf_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            unfold trigram_idx_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
         1:{ unfold cons_to_tri_insert_transf.
             (* maintenance does not mention the hole, so it is not a
                parameter of this rule *)
