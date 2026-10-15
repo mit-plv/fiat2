@@ -23,7 +23,10 @@ Import ListNotations.
    classifies them, so matching one is a constructor match and a string
    compare, with no need to compare expressions.  The gate is then exactly as
    local and as decidable as every other rewrite's pattern match, and it fires
-   only on a table whose declarations name the key the index is built on.
+   only on a table whose declarations name the key the index is built on.  The
+   gate itself is UniqueIndexUse.unique_lookup_gated; this file supplies what
+   it decides on (declares_unique) and what the pipeline owes for it
+   (cenv_respected).
 
    What the cenv cannot supply by itself is that the declarations are true of
    the running program.  That is cenv_respected below, a condition on the
@@ -70,39 +73,6 @@ Section WithIndexVars.
     Definition declared_holds (row_ty : type) (ds : list decl) : value -> Prop :=
       constrs_hold (locals:=locals) (constrs_of_decls row_ty ds).
 
-    Definition unique_aux_declared (row_ty : type) (ds : list decl) (v : value) : Prop :=
-      aux_wf (idx_wf := uidx_wf) id_tag aux_tag v
-      /\ at_id_tag id_tag (declared_holds row_ty ds) v.
-
-    (* A declared key is one of the constraints, so the conjunction gives it. *)
-    Lemma declares_unique__key_holds : forall rt ds (v : value),
-        declares_unique ds = true ->
-        declared_holds (TRecord rt) ds v ->
-        key_holds attr (locals:=locals) rt v.
-    Proof.
-      unfold declares_unique, declared_holds, key_holds, constrs_hold.
-      intros * H_ex H_all.
-      apply existsb_exists in H_ex as [ d [ H_in H_d ] ].
-      destruct d; cbn [decl_is_unique] in H_d; try discriminate.
-      rewrite String.eqb_eq in H_d; subst.
-      constructor; [ | constructor ].
-      rewrite Forall_forall in H_all. apply H_all.
-      unfold constrs_of_decls. apply in_map_iff.
-      exists (DUnique attr); split; [ reflexivity | assumption ].
-    Qed.
-
-    Lemma unique_aux_declared__unique_aux_pre : forall rt ds (v : value),
-        declares_unique ds = true ->
-        unique_aux_declared (TRecord rt) ds v ->
-        unique_aux_pre hole attr tup acc id_tag aux_tag (locals:=locals) rt v.
-    Proof.
-      unfold unique_aux_declared, unique_aux_pre, at_id_tag.
-      intros * H_ex [ H_aux H_id ].
-      split; [ assumption | ].
-      repeat destruct_match_hyp; try contradiction.
-      eapply declares_unique__key_holds; eassumption.
-    Qed.
-
     (* An annotated empty list has only the one type, which both the
        installation's precondition and the elaborated letmut's own typing
        derivation speak about.  Stated separately because there are two such
@@ -114,31 +84,7 @@ Section WithIndexVars.
       intros * H. invert_type_of_clear; invert_type_of_atom. reflexivity.
     Qed.
 
-    Section WithGate.
-      (* The gated transformation.  Same shape as every other: match, and be
-         the identity when the match fails. *)
-      (* Gating the INSTALL, which the pipeline does not do: it installs
-         unconditionally and gates the use rule instead
-         (UniqueIndexUse.unique_lookup_gated).  Gating the install is never
-         necessary, since this index satisfies IndexInterface.ok at its weak
-         idx_wf and so installs soundly on any table; what the declarations
-         decide is only which invariant the installation propagates.  This
-         definition and Ex_UniqueIndexGate are the exhibit of the other
-         choice, and nothing else uses them. *)
-      Definition apply_unique_idx_transfs (ce : cenv)
-        (f : string -> command -> command) (Gstore Genv : tenv) (c : command) : command :=
-        match c with
-        | CLetMut _ tbl _ =>
-            match cenv_lookup tbl ce with
-            | Some (_, ds) =>
-                if declares_unique ds
-                then apply_idx_related_transfs (idx := uidx) id_tag aux_tag f Gstore Genv c
-                else c
-            | None => c
-            end
-        | _ => c
-        end.
-
+    Section CenvRespected.
       (* The cenv describes the program it is paired with: a declared variable
          is born satisfying its declarations and every write keeps them. *)
       Definition cenv_respected (ce : cenv) (Gstore Genv : tenv) (c : command) : Prop :=
@@ -149,39 +95,6 @@ Section WithIndexVars.
               idx_install_pre (declared_holds row_ty ds) Gstore Genv (CLetMut e tbl body)
         | _ => True
         end.
-
-      Theorem apply_unique_idx_transfs_sound : forall ce f,
-          (* only where the gate fires is the rule's soundness needed, so a
-             rule that reads a declared key may assume the declaration *)
-          (forall row_ty ds,
-              declares_unique ds = true ->
-              aug_transf_sound (@IndexInterface.is_tbl_ty uidx)
-                (aux_ty (idx := uidx) id_tag aux_tag)
-                (unique_aux_declared row_ty ds) f) ->
-          forall (Gstore Genv : tenv) c,
-            tenv_wf Gstore -> tenv_wf Genv ->
-            well_typed Gstore Genv c ->
-            cenv_respected ce Gstore Genv c ->
-            well_typed Gstore Genv (apply_unique_idx_transfs ce f Gstore Genv c) /\
-              forall (store env : locals),
-                locals_wf Gstore store -> locals_wf Genv env ->
-                interp_command store env (apply_unique_idx_transfs ce f Gstore Genv c)
-                = interp_command store env c.
-      Proof.
-        intros ce f H_f * H_Gs H_Ge H_wt H_ce.
-        unfold apply_unique_idx_transfs.
-        destruct c; auto.
-        cbn [cenv_respected] in H_ce.
-        destruct (cenv_lookup x ce) as [ [ row_ty ds ] | ] eqn:E_look; auto.
-        destruct (declares_unique ds) eqn:E_uq; auto.
-        unfold unique_aux_declared in H_f.
-        eapply (apply_idx_related_transfs_pre_sound
-                  (idx_ok := unique_dict_idx_ok hole attr tup acc H_ne)
-                  id_tag aux_tag H_tags_diff
-                  (declared_holds row_ty ds) f);
-          [ apply H_f; exact E_uq | assumption .. | ].
-        apply H_ce; reflexivity.
-      Qed.
 
       (* The premise is not vacuous: elaboration discharges it.
 
@@ -287,38 +200,7 @@ Section WithIndexVars.
       Qed.
 
 
-      (* The two together: on an elaborated program the gated pipeline is sound
-         with no side condition beyond the ordinary typing ones.  The
-         declarations are what make the installation available, and nothing
-         about the hints is assumed. *)
-      Corollary elab_unique_idx_transfs_sound :
-        forall sc ce free_vars f (Gstore Genv : tenv) tbl row_ty ds,
-          (* only where the gate fires is the rule's soundness needed, so a
-             rule that reads a declared key may assume the declaration *)
-          (forall row_ty ds,
-              declares_unique ds = true ->
-              aug_transf_sound (@IndexInterface.is_tbl_ty uidx)
-                (aux_ty (idx := uidx) id_tag aux_tag)
-                (unique_aux_declared row_ty ds) f) ->
-          tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-          incl (get_free_vars Genv) free_vars ->
-          Forall (decl_wf row_ty) ds ->
-          well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
-          well_typed Gstore Genv
-            (apply_unique_idx_transfs ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) f Gstore Genv
-               (elab ce free_vars (SLetConstrained tbl row_ty ds sc)))
-          /\ forall (store env : locals),
-              locals_wf Gstore store -> locals_wf Genv env ->
-              interp_command store env
-                (apply_unique_idx_transfs ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) f Gstore Genv
-                   (elab ce free_vars (SLetConstrained tbl row_ty ds sc)))
-              = interp_command store env (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).
-      Proof.
-        intros * H_f H_Gs H_Ge H_rt H_fv H_ds H_wt.
-        apply apply_unique_idx_transfs_sound; auto.
-        apply elab_cenv_respected; auto.
-      Qed.
 
-    End WithGate.
+    End CenvRespected.
   End WithMap.
 End WithIndexVars.
