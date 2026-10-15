@@ -196,6 +196,13 @@ Section WithConcreteMaps.
                    (cons_to_tri_insert_head trigram_text_attr trigram_key_attr
                       "tup" "acc" "pos" "sacc" "bkt").
 
+    (* A filter-shaped delete: the row that goes is read out of the
+       primary-key member, so this one is gated on the declaration -- as the
+       lookups are, and for its own reason. *)
+    Definition tri_delete_gated_transf (pk_tag : string) (ds : list decl) :=
+      tri_delete_gated trigram_text_attr trigram_key_attr
+        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" pk_tag ds.
+
     (* What makes maintenance pay: the recomputation a maintenance rule
        leaves behind, over the part of the table that did not change, is the
        dictionary the table already stores.  This reads only the trigram
@@ -269,6 +276,7 @@ Section WithConcreteMaps.
               of the unchanged rows behind, and the use rule above it turns
               that recomputation into a read *)
            tri_use_idx_transf' t_tag attr key;
+           tri_delete_gated_transf attr key u_tag ds;
            cons_to_tri_insert_transf attr key],
           S (S cur_tag))
 end.
@@ -832,6 +840,38 @@ end.
             1: prove_is_tbl_ty.
             1:{ intros t v H_twf H_is H_ty H_Qv.
                 eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
+        (* the delete rule: both members, and the declaration *)
+        1:{ unfold tri_delete_gated_transf.
+            eapply (tri_delete_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
+                      "tup" "acc" ltac:(discriminate)
+                      (* this rule mentions neither the bucket binder nor
+                         the probe's, so they are not its parameters *)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (String.of_nat (S init_tag))
+                      ltac:(discriminate) ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            intros H_uq. unfold trigram_bridges.
+            split; [ | split; [ | split; [ | split ] ] ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
         1:{ unfold cons_to_tri_insert_transf.
             (* maintenance does not mention the hole, so it is not a
                parameter of this rule *)

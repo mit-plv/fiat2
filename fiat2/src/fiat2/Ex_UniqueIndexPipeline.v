@@ -713,4 +713,104 @@ Section WithConcreteMaps.
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
 
+  (* ====================================================================
+     A delete, maintained.
+
+     The row that leaves is not in the program -- only its key is -- so the
+     rule reads it out of the primary-key member and then walks that row's
+     own trigrams, taking its key out of each bucket and dropping a bucket
+     that empties.  That is also why this rule, unlike the insert rule, is
+     gated on the declaration: without a unique key another row could carry
+     the same one, and taking its contributions out of buckets this rule
+     never visits would lose rows from the index.
+     ==================================================================== *)
+  Definition dGenv0 : ctenv := map.put (map.put map.empty "u" prow_ty) "k" TInt.
+
+  Definition dfiltered (tbl_e : expr) : expr :=
+    flatmap_filter_list tbl_e "r"
+      (EUnop ONot (EBinop OEq (EAccess (EVar "r") "id") (EVar "k"))) "r"
+      (Some prow_ty) (Some prow_ty).
+
+  Definition dprog (ds : list decl) : scommand :=
+    SLetConstrained "users" prow_ty ds
+      (SAssign "users" (dfiltered (ELoc "users")) SSkip).
+
+  Definition delaborated (ds : list decl) : command :=
+    elab [] (get_free_vars dGenv0) (dprog ds).
+
+  Definition danno (ds : list decl) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
+      pbasics [TrigramIdx "name" "id"] [] (delaborated ds).
+
+  Definition doptimized (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (danno ds) pGstore0 dGenv0.
+
+  Compute (doptimized [DUnique "id"]).
+
+  (* the removal, as the rule emits it: the stored dictionary, the row the
+     key names, and one fold over that row's trigram positions *)
+  Definition dremove (idx_e : expr) : expr :=
+    ELet idx_e "acc"
+      (EOptMatch
+         (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1")
+            (EVar "k"))
+         (EVar "acc") "tup"
+         (EFold (EBinop ORange (EAtom (AInt 0))
+                   (EBinop OMinus
+                      (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                      (EAtom (AInt 2))))
+            (EVar "acc") "pos" "sacc"
+            (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+               (EVar "sacc") "bkt"
+               (EIf (EBinop OEq
+                       (EBinop OSetDiff (EVar "bkt")
+                          (EBinop OSetInsert (EAtom (AEmptySet None))
+                             (EAccess (EVar "tup") "id")))
+                       (EAtom (AEmptySet None)))
+                  (EBinop ODelete (EVar "sacc") (ptri_at (EVar "pos")))
+                  (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
+                     (EBinop OSetDiff (EVar "bkt")
+                        (EBinop OSetInsert (EAtom (AEmptySet None))
+                           (EAccess (EVar "tup") "id")))))))).
+
+  (* The write recomputes nothing of the trigram index: it reads the stored
+     dictionary and takes one row's keys out of it. *)
+  Lemma dtri_delete_is_incremental : exists inst grd,
+      doptimized [DUnique "id"]
+      = CLetMut inst "users"
+          (CIf grd
+             (CAssign "users"
+                (ERecord
+                   [("id_tag", dfiltered (EAccess (ELoc "users") "id_tag"));
+                    ("aux_tag",
+                      ERecord
+                        [("0",
+                          dremove (EAccess (EAccess (ELoc "users") "aux_tag") "0"));
+                         ("1",
+                          punique_idx_of
+                            (dfiltered (EAccess (ELoc "users") "id_tag")))])]))
+             CSkip).
+  Proof. do 2 eexists; reflexivity. Qed.
+
+  Lemma dGenv0_wf : tenv_wf dGenv0.
+  Proof.
+    unfold dGenv0; apply tenv_wf_step;
+      [ apply tenv_wf_step; [ apply tenv_wf_empty | apply prow_ty_wf ]
+      | constructor ].
+  Qed.
+
+  Theorem doptimized_sound :
+    well_typed pGstore0 dGenv0 (delaborated [DUnique "id"]) ->
+    well_typed pGstore0 dGenv0 (doptimized [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf pGstore0 store -> locals_wf dGenv0 env ->
+        interp_command store env (doptimized [DUnique "id"])
+        = interp_command store env (delaborated [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold doptimized, danno, delaborated, dprog in *.
+    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+      [ apply pGstore0_wf | apply dGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
+  Qed.
+
 End WithConcreteMaps.

@@ -163,6 +163,10 @@ Section WithIndexUse.
   Context (tri_tag pk_tag : string).
   (* the binders the rewritten form introduces: a bucket, a key, its row *)
   Context (b k y : string).
+  (* last, so that the lemmas above keep the arguments they had: only the
+     delete rule needs these two, since the delete body is the only one that
+     reads a position and a bucket under each other's binders *)
+  Context (H_sacc_bkt : sacc <> bkt) (H_pos_bkt : pos <> bkt).
 
   Notation tridx := (trigram_idx hole attr key tup acc pos sacc bkt).
   Notation uidx := (unique_dict_idx hole key utup uacc).
@@ -415,6 +419,22 @@ Section WithIndexUse.
          carries: the binders it folds with are distinct *)
       apply TrigramIndexImpl.interp_to_idx_fold; try assumption.
       eapply TrigramIndexImpl.typed_rows_have_text; eassumption.
+    Qed.
+
+    Lemma tri_is_tbl_ty_inv : forall t,
+        @IndexInterface.is_tbl_ty tridx t = true ->
+        exists rt kt, t = TList (TRecord rt)
+                      /\ access_record rt attr = Success TString
+                      /\ access_record rt key = Success kt.
+    Proof.
+      cbn [IndexInterface.is_tbl_ty trigram_idx]; unfold TrigramIndexImpl.is_tbl_ty.
+      intros t H.
+      destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+      destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+      destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr; try discriminate.
+      destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
+      apply type_eqb_eq in H; subst at_ty.
+      exists rt, kt; split; [ reflexivity | split; [ exact E_attr | exact E_key ] ].
     Qed.
 
     Section WithTable.
@@ -1197,23 +1217,245 @@ Section WithIndexUse.
           | exact E_tri ].
       Qed.
 
+      (* ==================================================================
+         Maintaining the index when a row goes.
+
+         A filter-shaped delete, as the other indexes' delete rules match
+         it: keep the rows whose key is not k.  The row that leaves is not
+         in the expression at all -- only its key is -- so the rule reads it
+         out of the PRIMARY-KEY member, and that is also why it is sound
+         only where the key is declared unique.  Without that, some other
+         row could carry the same key, and taking its contributions out of
+         buckets this rule never visits would lose rows from the index.
+
+         So the trigram index needs the declaration twice over: once to
+         resolve a bucket's keys at a lookup, and once to maintain itself on
+         a delete.  Its INSERT rule, by contrast, needs nothing.
+         ================================================================== *)
+      Notation tri_row_delete_body' :=
+        (TrigramIndexImpl.tri_row_delete_body attr key tup acc pos sacc bkt).
+
+      Definition filter_neq_to_tri_delete_head (e : expr) : expr :=
+        match e with
+        | etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
+            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1
+            (flatmap_filter_list (EAccess (ELoc tbl0) id_tag0) y0
+               (EUnop ONot (EBinop OEq (EAccess (EVar y1) key2) kexp)) y2 _ _) =>
+            if (all_eqb [(tup, [tup0; tup1; tup2; tup3; tup4; tup5]);
+                         (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
+                         (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
+                         (attr, [attr0; attr1; attr2]);
+                         (key, [key0; key1; key2]);
+                         (tbl, [tbl0]); (id_tag, [id_tag0]); (y0, [y1; y2])]
+                && negb (free_immut_in y0 kexp)
+                && negb (free_immut_in acc kexp))%bool
+            then ELet (to_idx_at (EAccess (ELoc tbl) id_tag)) acc
+                   (EOptMatch (EBinop OLookup pk_e kexp) (EVar acc) tup
+                      tri_row_delete_body')
+            else e
+        | _ => e
+        end.
+
+      Lemma filter_neq_to_tri_delete_head_preserve_ty :
+        forall tl ctl t (Gstore : tenv),
+          type_wf t -> @IndexInterface.is_tbl_ty tridx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl pk_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore filter_neq_to_tri_delete_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_pk.
+        (* the table type's shape, from the index's own is_tbl_ty *)
+        apply tri_is_tbl_ty_inv in H_is as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+        subst t.
+        cbn [IndexInterface.idx_ty unique_dict_idx UniqueDictIndexImpl.idx_ty]
+          in E_pk.
+        assert (E_kt : get_attr_type rt key = kt)
+          by (unfold get_attr_type; rewrite E_key; reflexivity).
+        rewrite E_kt in E_pk.
+        assert (H_rtwf : type_wf (TRecord rt)) by (inversion H_twf; assumption).
+        assert (H_ktwf : type_wf kt)
+          by (rewrite <- E_kt; apply get_attr_type_ty_wf; exact H_rtwf).
+        clear E_kt.
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr.
+        cbn [filter_neq_to_tri_delete_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        (* the source's typing, taken apart for the types it fixes: the
+           dictionary's, the row's, and the deleted key's.  Nothing of the
+           source's own derivation is reused -- the emitted form is built
+           from the index's typing lemmas -- so the inversion may consume
+           everything. *)
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+        repeat rewrite_map_get_put_hyp.
+        (* The table read fixes the element type, which fixes the key's.
+           match, not lazymatch: the first hypothesis of each shape is the
+           one this lemma was given, and rewriting it with itself fails, so
+           the search has to be allowed to go on to the inverted copy. *)
+        match goal with
+        | H : map.get Gstore tbl = Some (TRecord _) |- _ =>
+            rewrite E_tbl in H; injection H as H; subst
+        end.
+        match goal with
+        | H : access_record _ id_tag = Success (TList _) |- _ =>
+            rewrite E_id in H; injection H as H; subst
+        end.
+        repeat match goal with
+               | H : Some _ = Some _ |- _ => injection H as H; subst
+               end.
+        (* every copy of the key's type collapses onto kt *)
+        repeat match goal with
+               | H : access_record _ key = Success ?t0 |- _ =>
+                   is_var t0; rewrite E_key in H; injection H as H; subst t0
+               end.
+        (* and now the emitted form, from the index's own typing lemmas *)
+        eapply TyELet.
+        1:{ unfold to_idx_at. eapply TyEFold.
+            1:{ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_id ]. }
+            1:{ apply TyEAtom; apply TyAEmptyDict';
+                [ apply WFTString | apply WFTSet; exact H_ktwf ]. }
+            1:{ (* the index's own body, which the lemma's own hypotheses
+                   (distinct binders, the row type, the key type) cover *)
+                (* eassumption, not assumption: the row type is an evar
+                   until the record's own field equations fix it *)
+                eapply TrigramIndexImpl.tri_row_body_ty; try eassumption.
+                (* the two environment reads, whichever order they come in *)
+                all: repeat (rewrite map.get_put_diff by congruence).
+                all: rewrite map.get_put_same; reflexivity. } }
+        eapply TyEOptMatch.
+        1:{ (* the deleted row, from the primary-key member *)
+            eapply TyEBinop; [ apply TyOLookup | | ].
+            1:{ eapply TyEAccess;
+                [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
+                | exact E_pk ]. }
+            1:{ apply not_free_immut_put_ty2; [ assumption | ].
+                eapply not_free_immut_put_ty; [ eassumption | eassumption ]. } }
+        1:{ apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        1:{ eapply TrigramIndexImpl.tri_row_delete_body_ty; try eassumption.
+            all: repeat (rewrite map.get_put_diff by congruence).
+            all: rewrite map.get_put_same; reflexivity. }
+      Qed.
+
+      Lemma filter_neq_to_tri_delete_head_preserve_sem :
+        forall tl rt (Gstore : tenv) (store : locals),
+          access_record rt attr = Success TString ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          match map.get store tbl with
+          | Some v =>
+              type_of_value v (TRecord tl) /\ tri_aux_wf_at v /\ unique_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store filter_neq_to_tri_delete_head.
+      Proof.
+        unfold preserve_sem; intros * H_attr E_tbl E_id H_store.
+        intros e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+        destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+        destruct H_store as [ H_vty [ H_tri H_pk ] ].
+        destruct (invariants__probe_data tl rt v H_attr E_id H_vty H_tri H_pk)
+          as [ rv [ rv_aux [ rows [ td [ E_vrec [ E_rows [ E_aux
+             [ E_tri [ E_pk [ E_te [ H_sets H_nd ] ] ] ] ] ] ] ] ] ] ].
+        (* the rows' typing, which the texts the index reads come from.  The
+           weaker extractor returns it, and names the same rows. *)
+        destruct (tri_invariant__rows tl rt v H_attr E_id H_vty H_tri)
+          as [ rv' [ rv_aux' [ rows' [ E_vrec' [ E_rows' [ E_aux' [ H_rows _ ] ] ] ] ] ] ].
+        rewrite E_vrec in E_vrec'; injection E_vrec' as E_vrec'; subst rv'.
+        rewrite E_rows in E_rows'; injection E_rows' as E_rows'; subst rows'.
+        subst v.
+        (* the dictionary the invariant names is the index of the rows *)
+        rewrite TrigramIndexImpl.tri_entries_VDict in E_te.
+        injection E_te as E_te; subst td.
+        repeat destruct_subexpr.
+        cbn [filter_neq_to_tri_delete_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        (* the deleted key's expression, which destruct_subexpr named for us *)
+        lazymatch goal with pe : expr |- _ => rename pe into kexp end.
+        (* the table read, on both sides *)
+        assert (E_tr : interp_expr store env (EAccess (ELoc tbl) id_tag)
+                       = VList rows).
+        1:{ rewrite interp_EAccess, interp_ELoc.
+            unfold get_local; rewrite E_v; cbv beta iota. exact E_rows. }
+        (* The source, settled first and separately: destruct_subexpr has
+           spelled its fold out, so only conversion relates it to to_idx_at
+           and rewrite's syntactic match would not see it. *)
+        lazymatch goal with
+        | |- _ = interp_expr store env ?src =>
+            assert (E_src : interp_expr store env src
+                            = VDict (TrigramIndexImpl.tri_dict attr key
+                                       (filter (fun r =>
+                                                  negb (value_eqb (row_key key r)
+                                                          (interp_expr store env kexp)))
+                                          rows)))
+        end.
+        1:{ rewrite <- TrigramIndexImpl.tri_entries_VDict.
+            apply (interp_to_idx_at store env _ rt _ H_attr).
+            1:{ apply Forall_forall; intros w H_w.
+                apply filter_In in H_w as [ H_w _ ].
+                rewrite Forall_forall in H_rows; apply H_rows; exact H_w. }
+            1:{ rewrite interp_flatmap_filter_list, E_tr.
+                f_equal. apply filter_pointwise; intro w.
+                rewrite interp_EUnop, interp_EBinop, interp_EAccess, interp_EVar.
+                unfold get_local; rewrite map.get_put_same.
+                erewrite <- not_free_immut_put_sem by eassumption.
+                cbn [interp_unop interp_binop]. unfold row_key. reflexivity. } }
+        rewrite E_src.
+        (* and the emitted form *)
+        rewrite interp_ELet_step.
+        rewrite (interp_to_idx_at store env _ rt rows H_attr H_rows E_tr).
+        rewrite TrigramIndexImpl.tri_entries_VDict.
+        rewrite interp_EOptMatch, interp_EBinop.
+        rewrite (interp_tbl_field store _ rv rv_aux pk_tag _ E_v E_aux E_pk).
+        rewrite <- (not_free_immut_put_sem kexp acc store env) by assumption.
+        cbn [interp_binop].
+        destruct (dict_lookup (interp_expr store env kexp)
+                    (UniqueDictIndexImpl.idx_entries key rows)) as [ r | ] eqn:E_lk.
+        1:{ (* the row the key names, which the primary-key member resolves *)
+            apply (UniqueDictIndexImpl.idx_lookup_Some_inv key (word_ok := word_ok))
+              in E_lk as [ H_in E_k ].
+            (* its text, from the row's type *)
+            pose proof (TrigramIndexImpl.typed_rows_have_text attr rows rt
+                          H_attr H_rows) as H_txts.
+            rewrite Forall_forall in H_txts.
+            destruct (H_txts r H_in) as [ txt E_txt ].
+            (* what the delete body computes, the binders it reads through
+               and the invariant it needs discharged by shape rather than
+               by position *)
+            erewrite TrigramIndexImpl.interp_tri_row_delete; try eassumption.
+            all: try exact E_txt.
+            all: try apply map.get_put_same.
+            all: try (rewrite map.get_put_diff by congruence;
+                      apply map.get_put_same).
+            all: try apply TrigramIndexImpl.tri_dict_tri_wf.
+            (* erewrite leaves the map instance open as well *)
+            all: try exact word_ok.
+            (* and the equation: taking the row out of the recomputation is
+               taking its key out of the stored index *)
+            f_equal.
+            assert (E_str : TrigramIndexImpl.row_str attr r = txt)
+              by (unfold TrigramIndexImpl.row_str; rewrite E_txt; reflexivity).
+            rewrite <- E_str, E_k.
+            symmetry.
+            (* the lemma carries the index's own section hypotheses, so its
+               premises are discharged by shape here too *)
+            apply TrigramIndexImpl.tri_dict_filter_neq; try eassumption. }
+        1:{ (* no row carries the key, so the filter removes nothing *)
+            rewrite interp_EVar; unfold get_local; rewrite map.get_put_same.
+            f_equal. symmetry.
+            apply TrigramIndexImpl.tri_dict_filter_neq_absent; try assumption.
+            all: intros r H_in E_k;
+              pose proof (UniqueDictIndexImpl.idx_lookup_Some key
+                            (word_ok := word_ok) rows r H_nd H_in) as E_s;
+              rewrite E_k, E_lk in E_s; discriminate. }
+      Qed.
+
     End WithTable.
 
-    Lemma tri_is_tbl_ty_inv : forall t,
-        @IndexInterface.is_tbl_ty tridx t = true ->
-        exists rt kt, t = TList (TRecord rt)
-                      /\ access_record rt attr = Success TString
-                      /\ access_record rt key = Success kt.
-    Proof.
-      cbn [IndexInterface.is_tbl_ty trigram_idx]; unfold TrigramIndexImpl.is_tbl_ty.
-      intros t H.
-      destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-      destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
-      destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr; try discriminate.
-      destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
-      apply type_eqb_eq in H; subst at_ty.
-      exists rt, kt; split; [ reflexivity | split; [ exact E_attr | exact E_key ] ].
-    Qed.
 
     (* ------------------------------------------------------------------
        What whoever assembles the index record owes this rule.
@@ -1416,6 +1658,76 @@ Section WithIndexUse.
       intros * H_br. unfold trigram_lookup_guarded_transf.
       apply fold_command_with_globals_sound.
       apply trigram_lookup_guarded_head_sound; exact H_br.
+    Qed.
+
+    Lemma filter_neq_to_tri_delete_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
+          filter_neq_to_tri_delete_head.
+    Proof.
+      unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty1 [ H_aty2 [ H_is [ H_wf1 H_wf2 ] ] ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      apply H_is in H_is' as H_is_tri.
+      apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+      specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply filter_neq_to_tri_delete_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply filter_neq_to_tri_delete_head_preserve_sem; try eassumption.
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | split ].
+          1:{ eapply H_wf1; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. }
+          1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. } }
+    Qed.
+
+    Definition filter_neq_to_tri_delete_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (filter_neq_to_tri_delete_head tbl).
+
+    Lemma filter_neq_to_tri_delete_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf filter_neq_to_tri_delete_transf.
+    Proof.
+      intros * H_br. unfold filter_neq_to_tri_delete_transf.
+      apply fold_command_with_globals_sound.
+      apply filter_neq_to_tri_delete_head_sound; exact H_br.
+    Qed.
+
+    (* The delete rule is gated on the same declaration as the lookups, for
+       a different reason: a lookup needs the key to resolve a bucket's keys
+       to single rows, while maintenance needs it to know that the row it
+       takes out of the buckets is the only one the filter removed. *)
+    Definition tri_delete_gated (ds : list decl) : string -> command -> command :=
+      if declares_unique key ds
+      then filter_neq_to_tri_delete_transf
+      else fun _ => id.
+
+    Lemma tri_delete_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
+        (declares_unique key ds = true -> trigram_bridges is_tbl_ty' aux_ty aux_wf) ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf (tri_delete_gated ds).
+    Proof.
+      intros * H_br. unfold tri_delete_gated.
+      destruct (declares_unique key ds) eqn:E_uq.
+      1: apply filter_neq_to_tri_delete_transf_sound, H_br; reflexivity.
+      1: unfold aug_transf_sound, id; intros; repeat split; auto.
     Qed.
 
     (* ------------------------------------------------------------------
