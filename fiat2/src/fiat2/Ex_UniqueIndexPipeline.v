@@ -598,4 +598,119 @@ Section WithConcreteMaps.
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
 
+  (* ====================================================================
+     The read a trigram index is for: a substring filter.
+
+     The query is written as a list filter and consumed as a set, so the
+     collection pushdown is what puts it in the shape the rule matches --
+     which is why set_of needed the EIf case bag_of already had.  The index
+     answers it in two hops: the bucket at one trigram of the pattern gives a
+     set of KEYS, and the key-to-row dictionary turns each one back into its
+     row.  The recheck on the way out is not a leftover: a shared trigram is
+     necessary for a substring match and not sufficient, so the rows the
+     bucket names still have to be filtered.
+     ==================================================================== *)
+
+  Definition sGstore0 : ctenv := map.put map.empty "out" (TSet prow_ty).
+  Definition sGenv0 : ctenv := map.put (map.put map.empty "u" prow_ty) "p" TString.
+
+  Definition sprog (p : expr) (ds : list decl) : scommand :=
+    SLetConstrained "users" prow_ty ds
+      (SSeq (SAssign "users" (EBinop OCons (EVar "u") (ELoc "users")) SSkip)
+         (SAssign "out"
+            (ESetOf (flatmap_filter_list (ELoc "users") "r"
+                       (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
+                       (Some prow_ty) (Some prow_ty)))
+            SSkip)).
+
+  Definition selaborated (p : expr) (ds : list decl) : command :=
+    elab [] (get_free_vars sGenv0) (sprog p ds).
+
+  Definition sanno (p : expr) (ds : list decl) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
+      pbasics [TrigramIdx "name" "id"] [] (selaborated p ds).
+
+  Definition soptimized (p : expr) (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (sanno p ds) sGstore0 sGenv0.
+
+  Compute (soptimized (EAtom (AString "abc")) [DUnique "id"]).
+  Compute (soptimized (EVar "p") [DUnique "id"]).
+
+  (* probe the bucket at g, resolve each key, recheck p *)
+  Definition sprobe (g p : expr) : expr :=
+    EFlatmap LikeSet
+      (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "0") g)
+         (EAtom (AEmptySet None)) "b" (EVar "b"))
+      "k"
+      (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1")
+                    (EVar "k"))
+         (EAtom (AEmptySet None)) "y"
+         (EIf (EBinop OStrContains (EAccess (EVar "y") "name") p)
+            (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
+            (EAtom (AEmptySet None)))).
+
+  (* the query the pushdown leaves, which is also the fallback below *)
+  Definition sscan (p : expr) : expr :=
+    flatmap_filter_set (ESetOf (EAccess (ELoc "users") "id_tag")) "r"
+      (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
+      (Some prow_ty) (Some prow_ty).
+
+  (* A literal pattern that has a trigram: the trigram is computed at rewrite
+     time, and nothing of the scan is left. *)
+  Lemma sliteral_probes : exists inst grd,
+      soptimized (EAtom (AString "abc")) [DUnique "id"]
+      = CLetMut inst "users"
+          (CSeq grd
+             (CAssign "out"
+                (sprobe (EAtom (AString "abc")) (EAtom (AString "abc"))))).
+  Proof. do 2 eexists; reflexivity. Qed.
+
+  (* A pattern that is not a literal cannot be measured at rewrite time, so
+     the rule emits the test instead: long enough, probe; shorter than a
+     trigram, scan.  The fallback is the source query, unchanged -- the
+     length condition is a soundness obligation of probe_recheck_eq, not a
+     heuristic, so it cannot be dropped the way two mainstream n-gram indexes
+     drop it (and silently return nothing). *)
+  Lemma sguarded_splits : exists inst grd,
+      soptimized (EVar "p") [DUnique "id"]
+      = CLetMut inst "users"
+          (CSeq grd
+             (CAssign "out"
+                (EIf (EBinop OLess (EAtom (AInt 2))
+                        (EUnop OLengthString (EVar "p")))
+                   (sprobe (ETernop OSubstring (EVar "p")
+                              (EAtom (AInt 0)) (EAtom (AInt 3)))
+                      (EVar "p"))
+                   (sscan (EVar "p"))))).
+  Proof. do 2 eexists; reflexivity. Qed.
+
+  Lemma sGstore0_wf : tenv_wf sGstore0.
+  Proof.
+    unfold sGstore0; apply tenv_wf_step;
+      [ apply tenv_wf_empty | constructor; apply prow_ty_wf ].
+  Qed.
+
+  Lemma sGenv0_wf : tenv_wf sGenv0.
+  Proof.
+    unfold sGenv0; apply tenv_wf_step;
+      [ apply tenv_wf_step; [ apply tenv_wf_empty | apply prow_ty_wf ]
+      | constructor ].
+  Qed.
+
+  (* and the whole thing -- install, maintenance, and the guarded probe --
+     is sound on the same premise as every other pipeline here *)
+  Theorem soptimized_sound :
+    well_typed sGstore0 sGenv0 (selaborated (EVar "p") [DUnique "id"]) ->
+    well_typed sGstore0 sGenv0 (soptimized (EVar "p") [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf sGstore0 store -> locals_wf sGenv0 env ->
+        interp_command store env (soptimized (EVar "p") [DUnique "id"])
+        = interp_command store env (selaborated (EVar "p") [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold soptimized, sanno, selaborated, sprog in *.
+    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+      [ apply sGstore0_wf | apply sGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
+  Qed.
+
 End WithConcreteMaps.

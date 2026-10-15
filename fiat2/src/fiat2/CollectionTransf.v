@@ -34,6 +34,7 @@ Fixpoint set_of (e : expr) : expr :=
   match e with
   | EFlatmap LikeList e1 x e2 => EFlatmap LikeSet (set_of e1) x (set_of e2)
   | EBinop OCons e1 e2 => EBinop OSetInsert (set_of e2) e1
+  | EIf e1 e2 e3 => EIf e1 (set_of e2) (set_of e3)
   | EAtom (ANil t) => EAtom (AEmptySet t)
   | _ => ESetOf e
   end.
@@ -440,6 +441,9 @@ Section WithWord.
     Proof.
       induction e using expr_IH; cbn; intros.
       all: try now (econstructor; eauto).
+      (* the EIf case: its branches are the lists, so the source typing has to
+         be taken apart before the branches' IHs apply *)
+      all: try now (invert_type_of; econstructor; eauto).
       all: case_match; invert_type_of; try invert_type_of_op;
         repeat (econstructor; eauto).
       all: (* EAtom (ANil _) *)
@@ -628,6 +632,11 @@ Section WithWord.
       1:{ (* TyEAtom *)
           cbn. destruct a; reflexivity. }
       1:{ cbn. case_match; auto; cbn; use_set_of_sem_IH; auto.
+          case_match; auto. }
+      1:{ (* TyEIf, as in bag_of_sem: the branch taken is the same one on both
+             sides, so only e1's value has to be pinned down *)
+          cbn. apply_type_sound e1.
+          invert_type_of_value_clear.
           case_match; auto. }
       1:{ cbn. use_set_of_sem_IH; auto.
           case_match; auto. f_equal.
