@@ -11,6 +11,10 @@ Import ListNotations.
 
 (* The gate fires on the declarations and on nothing else.
 
+   The gate here is on the INSTALL, which the pipeline does not do: it installs
+   unconditionally and gates the use rule instead.  What the file shows about
+   where a gate may read its pattern holds either way.
+
    Three surface programs, identical but for what they declare about the
    table.  The index is the key-to-row dictionary on "id", so the gate fires
    on the first and is the identity on the other two -- and the one that

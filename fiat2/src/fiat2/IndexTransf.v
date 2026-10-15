@@ -158,9 +158,8 @@ Section compo_idx.
 
   Instance compo_idx : IndexInterface.index := IndexInterface.mk hole0 to_compo_idx compo_idx_ty compo_is_tbl_ty.
 
-  (* A record of indexes is an index: nothing is owed before it may be built,
-     because each member's to_idx is an expression and its idx_wf says the
-     member is what that expression computed. *)
+  (* A record of indexes is an index: each member satisfies ok, which asks
+     nothing of the table, so the record asks nothing either. *)
   Instance compo_idx_ok : IndexInterface.ok compo_idx compo_idx_wf.
   Proof.
     constructor;
@@ -716,7 +715,7 @@ Section WithMap.
         apply aux_ty_access_id.
       Qed.
 
-      (* Everything the transformed program's store tells us about the table.
+      (* Everything the transformed program's store says about the table.
          The shape comes from the index invariant, which says the entry is a
          record with both fields; the typing comes from the store being well
          typed at the augmented type; and Pv is what the original program's

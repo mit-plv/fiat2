@@ -191,8 +191,9 @@ Section WithConcreteMaps.
   Qed.
 
   (* The index's well-formedness for a primary key, which is the two facts
-     above as one.  This is what an installation owes, and it is discharged
-     here on a concrete table to check that it is dischargeable at all. *)
+     above as one.  This is what a rule that reads a row back out of the index
+     needs, discharged here on a concrete table to check that it is
+     dischargeable at all. *)
   Lemma demo_idx_wf_unique : forall (env : clocals),
       idx_wf_unique uhole "id" utup uacc (VList demo_rows)
         (interp_expr demo_store env (ELoc "idx")).

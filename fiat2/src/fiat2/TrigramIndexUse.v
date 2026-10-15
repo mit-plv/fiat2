@@ -11,23 +11,18 @@ Import ListNotations.
 
 (* Using the trigram index: a substring query becomes a probe and a recheck.
 
-   Three things make this rule unlike every other lookup rule here.
-
    A trigram match is NECESSARY but not SUFFICIENT: a row sharing a trigram
    with the pattern need not contain the pattern.  So the rewrite keeps the
    source's own `contains` test, applied to the rows the probe produced.
-   TrigramIndexImpl.tri_lookup_complete is one inclusion of the equation
-   below; the recheck is what supplies the other.
 
-   The probe needs TWO members of the index record at once.  The trigram
-   dictionary maps a trigram to a set of primary KEYS, so only the
-   primary-key index can turn those keys back into rows.  That is why the
-   rule below is stated against two sets of bridges, and why the primary-key
-   work had to come first.
+   The probe needs TWO members of the index record at once, since the trigram
+   dictionary maps a trigram to a set of primary KEYS and only the primary-key
+   index turns those keys back into rows.  Hence the two sets of bridges
+   below.
 
-   And the rule may only fire when the pattern HAS a trigram.  Here that is
-   decided statically -- the pattern is a string literal of length at least
-   three -- which is why this first form needs no runtime guard. *)
+   The rule may fire only where the pattern HAS a trigram.  This first form
+   decides that statically, the pattern being a literal of length at least
+   three, so it needs no runtime guard. *)
 
 Section WithWord.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
@@ -252,9 +247,7 @@ Section WithIndexUse.
 
        The emitted form reuses the index's OWN per-row body: bind the index
        of the rest to acc, bind the new row to tup, and run tri_row_body.
-       Nothing new has to be written down, and nothing about trigrams has to
-       be re-proved -- which is the payoff of having written to_idx as a fold
-       in the first place.
+       Nothing about trigrams has to be re-proved.
        ------------------------------------------------------------------ *)
 
     Notation tri_row_body' :=
@@ -445,8 +438,8 @@ Section WithIndexUse.
 
       (* Probe one trigram's bucket, turn each key back into its row with
          the primary-key index, and recheck the pattern on what comes back.
-         The recheck is not an optimization that was left in: a trigram match
-         is necessary and not sufficient, so dropping it would be unsound. *)
+         A trigram match is necessary and not sufficient, so dropping the
+         recheck would be unsound. *)
       Definition trigram_probe (g p : expr) : expr :=
         EFlatmap LikeSet
           (EOptMatch (EBinop OLookup tri_e g) (EAtom (AEmptySet None)) b (EVar b))
@@ -850,14 +843,9 @@ Section WithIndexUse.
 
          Whether the pattern has a trigram at all cannot be decided at
          rewrite time, so the rule decides it at run time and keeps the
-         original scan for the short case.  Every production engine does
-         this -- PostgreSQL's index scan "degenerates to a full-index scan"
-         for a pattern with no extractable trigrams, Google Code Search's
-         trigram query for a short literal collapses to ANY -- while two
-         mainstream n-gram indexes instead return nothing, which is simply
-         wrong.  The difference here is that the length condition is a
-         soundness obligation: probe_recheck_eq does not hold without it, so
-         the fallback cannot be dropped.
+         original scan for the short case.  The length condition is a
+         soundness obligation, not a heuristic: probe_recheck_eq does not
+         hold without it, so the fallback cannot be dropped.
          ------------------------------------------------------------------ *)
       Definition pattern_has_trigram (p : expr) : expr :=
         EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString p).
@@ -1063,17 +1051,16 @@ Section WithIndexUse.
       (* ------------------------------------------------------------------
          The index of the table's rows IS the index the table stores.
 
-         This is the rule that makes the maintenance rules pay.  A rule like
-         cons_to_tri_insert_head leaves behind the index of the UNCHANGED
-         part of the table -- still a recomputation -- and this one turns
-         that recomputation into a read of the stored dictionary.  Without
-         it a maintained write still folds over every row and re-tokenizes
-         every text, which is exactly what the index is there to avoid.
+         A maintenance rule such as cons_to_tri_insert_head leaves behind
+         the index of the UNCHANGED part of the table, which is still a
+         recomputation; this rule turns that into a read of the stored
+         dictionary.  Without it a maintained write still folds over every
+         row and re-tokenizes every text.
 
-         Unlike the insert rule, this one is sound only because of the
-         invariant: it IS the invariant, read from left to right.  It needs
-         no declaration, though, since the trigram member's invariant holds
-         of any table the index was installed on.
+         It is sound only because of the invariant -- it IS the invariant,
+         read from left to right -- but it needs no declaration, since the
+         trigram member's invariant holds of any table the index was
+         installed on.
          ------------------------------------------------------------------ *)
       Definition tri_use_idx_head (e : expr) : expr :=
         match e with
@@ -1220,17 +1207,14 @@ Section WithIndexUse.
       (* ==================================================================
          Maintaining the index when a row goes.
 
-         A filter-shaped delete, as the other indexes' delete rules match
-         it: keep the rows whose key is not k.  The row that leaves is not
-         in the expression at all -- only its key is -- so the rule reads it
-         out of the PRIMARY-KEY member, and that is also why it is sound
-         only where the key is declared unique.  Without that, some other
-         row could carry the same key, and taking its contributions out of
-         buckets this rule never visits would lose rows from the index.
-
-         So the trigram index needs the declaration twice over: once to
-         resolve a bucket's keys at a lookup, and once to maintain itself on
-         a delete.  Its INSERT rule, by contrast, needs nothing.
+         A filter-shaped delete: keep the rows whose key is not k.  The row
+         that leaves is not in the expression at all -- only its key is --
+         so the rule reads it out of the PRIMARY-KEY member.  That is also
+         why it is sound only where the key is declared unique: otherwise
+         another row could carry the same key, and taking its contributions
+         out of buckets this rule never visits would lose rows from the
+         index.  The insert rule needs no declaration, because a row's own
+         contributions are all it adds.
          ================================================================== *)
       Notation tri_row_delete_body' :=
         (TrigramIndexImpl.tri_row_delete_body attr key tup acc pos sacc bkt).

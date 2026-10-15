@@ -88,21 +88,18 @@ Section WithConcreteMaps.
     EFold tbl (EAtom (AEmptyDict None)) "tup" "acc"
       (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "id") (EVar "tup")).
 
-  (* The index RECORD the installation builds.  One member here, sitting under
-     a tag of its own -- which is why every read of the index goes through
+  (* The index RECORD the installation builds: one member, under a tag of its
+     own, at "0" because the declared index is an ordinary member and takes
+     the first tag mk_idxs hands out.  So every read of it goes through
      aux_tag and then that tag, exactly as a set or range index's would. *)
-  (* "0" because the declared index is now an ordinary member of the record
-     and takes the first tag mk_idxs hands out, exactly as a set or range
-     index would. *)
   Definition punique_rec_of (tbl : expr) : expr :=
     ERecord [("0", punique_idx_of tbl)].
 
   Definition pidx : expr := EAccess (EAccess (ELoc "users") "aux_tag") "0".
 
-  (* What the write does to the index now: it reads the stored dictionary and
+  (* What the write does to the index: it reads the stored dictionary and
      puts one row in it, instead of folding over the whole table again.  This
-     is the index's own fold body, run once -- the same shape the trigram
-     member's insert rule leaves. *)
+     is the index's own fold body, run once. *)
   Definition punique_insert_of (idx_e row : expr) : expr :=
     ELet idx_e "acc"
       (ELet row "tup"
@@ -401,12 +398,11 @@ Section WithConcreteMaps.
   (* ------------------------------------------------------------------
      One record, both kinds of index.
 
-     This is what folding the declared index into index_choice buys.  Before,
-     a declared table could carry ONLY the declared index: the second layer
-     installed its own record on a table whose is_tbl_ty was already false,
-     so it did nothing (punconstrained_layer_after above pins exactly that).
-     Now the declared member and an ordinary one are members of the same
-     record, chosen in the same list, installed by the same transformation.
+     The declared member and an ordinary one are members of the same record,
+     chosen in the same list and installed by the same transformation.  This
+     is what making the declared index an ordinary index_choice buys: one
+     record holds both kinds, so a table with a primary key can carry a set
+     or range index as well.
      ------------------------------------------------------------------ *)
   Definition banno (ds : list decl) : canno_command :=
     CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O

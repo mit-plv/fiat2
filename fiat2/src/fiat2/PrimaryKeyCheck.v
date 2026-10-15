@@ -22,10 +22,11 @@ Import ListNotations.
    one lookup.  Its soundness needs no uniqueness at all, because a dictionary
    from keys to bags of rows represents the filter faithfully for every table.
 
-   So a primary key needs no index of its own.  What it needs is the
-   constraint, used once, to turn a quadratic guard into a filter; the index
-   that answers the filter is the one the optimizer already has.  The
-   uniqueness assumption appears exactly once, in checked_cons_wf below, where
+   So the write check needs no index of its own: the constraint, used once,
+   turns a quadratic guard into a filter, and an ordinary dictionary index
+   answers the filter.  A dedicated key-to-row index (UniqueDictIndexImpl)
+   buys something this route does not need -- a read that returns the row.
+   The uniqueness assumption appears exactly once, in checked_cons_wf, where
    it is discharged from the invariant being maintained -- the table's keys are
    distinct before the write, which is what makes the cheap test sufficient to
    keep them distinct after it. *)

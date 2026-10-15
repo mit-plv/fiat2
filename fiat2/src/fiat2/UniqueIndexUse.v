@@ -18,10 +18,10 @@ Import ListNotations.
 
    Uniqueness is not something the index establishes -- to_idx builds the
    dictionary for any table, keeping one row per key and forgetting the rest.
-   It is what the program maintains and what the installation carries, which
-   is why this rule is proved against the strong relation rather than against
-   the index's own idx_wf -- see unique_bridges, whose third component is the
-   only thing here that a declaration-free index does not also owe. *)
+   It is what the program maintains and what the installation carries, so
+   this rule is proved against the strong relation rather than the index's own
+   idx_wf.  That third component of unique_bridges is the only thing it asks
+   for that a declaration-free index does not. *)
 
 Section WithWord.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
@@ -128,7 +128,7 @@ Section WithIndexUse.
        The installation rewrites a write into an assignment of a record
        whose index member RECOMPUTES the dictionary from the new table.  The
        rules here rewrite that recomputation into an update of the stored
-       one, which is the whole point of keeping an index at all.
+       one.
 
        The first two are plain expression rules: both of their sides
        recompute, so they hold of any store and owe no bridges.  Only the
@@ -306,11 +306,12 @@ Section WithIndexUse.
        A keyed delete: the index of the table with every row carrying k
        dropped is the stored index with k's entry deleted.
 
-       Like the insert, this needs no declaration -- see
-       idx_entries_filter_neq for why.  What it does need is that the key the
-       filter compares against does not mention the filter's own row binder,
-       which is the usual side condition for moving an expression out from
-       under a binder.
+       Like the insert, this needs no declaration: a row contributes only to
+       its own key's entry, so the rows a keyed filter drops can affect only
+       the one entry they share (idx_entries_filter_neq).  What it does need
+       is that the key the filter compares against does not mention the
+       filter's own row binder, the usual side condition for moving an
+       expression out from under a binder.
        ------------------------------------------------------------------ *)
     Definition filter_neq_to_unique_delete_head (e : expr) : expr :=
       match e with

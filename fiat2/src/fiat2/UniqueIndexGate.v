@@ -117,13 +117,14 @@ Section WithIndexVars.
     Section WithGate.
       (* The gated transformation.  Same shape as every other: match, and be
          the identity when the match fails. *)
-      (* SUPERSEDED by UniqueIndexUse.unique_idx_transf, which installs
-         unconditionally and gates the use rule instead.  Gating the install
-         was never necessary: this index satisfies IndexInterface.ok at its
-         weak idx_wf, so installing it is sound on any table, and what the
-         declarations decide is only which invariant the installation
-         propagates.  Kept for now because Ex_UniqueIndexGate exhibits it;
-         it goes when the declared choice folds into index_choice. *)
+      (* Gating the INSTALL, which the pipeline does not do: it installs
+         unconditionally and gates the use rule instead
+         (UniqueIndexUse.unique_lookup_gated).  Gating the install is never
+         necessary, since this index satisfies IndexInterface.ok at its weak
+         idx_wf and so installs soundly on any table; what the declarations
+         decide is only which invariant the installation propagates.  This
+         definition and Ex_UniqueIndexGate are the exhibit of the other
+         choice, and nothing else uses them. *)
       Definition apply_unique_idx_transfs (ce : cenv)
         (f : string -> command -> command) (Gstore Genv : tenv) (c : command) : command :=
         match c with

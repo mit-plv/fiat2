@@ -33,8 +33,9 @@ Open Scope string_scope.
    asks whether a key is present.  It is *not* enough to answer a point query
    from the index, and the lemmas that do that (idx_lookup_Some and
    idx_lookup_Some_inv) carry the NoDup hypothesis the constraint supplies.
-   So the uniqueness assumption is recorded exactly where it is used, and this
-   index cannot be installed by a transformation that does not establish it. *)
+   So the uniqueness assumption is recorded exactly where it is used: the
+   index installs on any table, and only the rules that read a row back out of
+   it owe the declaration. *)
 
 (* A hit is not a miss.  Stated separately because the case analysis has to
    happen away from the hypotheses that mention the lookup, which a destruct
@@ -215,11 +216,8 @@ Section WithHole.
       (* Dropping from the table every row whose key is k deletes exactly k's
          entry.  Nothing is assumed about the keys being distinct: a row
          contributes only to its own key's entry, so the rows that leave can
-         only affect the entry they all share.  This is the whole reason a
-         keyed delete is maintainable here without the declaration the
-         trigram index needs -- there, a row contributes to as many buckets
-         as its text has trigrams, and which keys share a bucket is exactly
-         what the declaration settles. *)
+         affect only the entry they all share.  That is why a keyed delete is
+         maintainable here with no declaration at all. *)
       Lemma idx_entries_filter_neq : forall (l : list value) (k : value),
           idx_entries (filter (fun r => negb (value_eqb (row_key attr r) k)) l)
           = dict_delete k (idx_entries l).

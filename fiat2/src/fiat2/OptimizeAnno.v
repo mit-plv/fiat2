@@ -160,7 +160,8 @@ Section WithConcreteMaps.
       (unique_dict_idx "hole" unique_idx_attr "tup" "acc").
     (* The WEAK well-formedness, which to_idx establishes for any table, so
        this is an ordinary ok instance and the index may be installed with no
-       premise at all.  The strong one is not an instance and cannot be. *)
+       premise at all.  The strong one cannot be an instance: to_idx does not
+       make a table's keys distinct. *)
     Instance cunique_idx_ok : IndexInterface.ok cunique_idx unique_idx_wf.
     apply (unique_dict_idx_ok "hole" unique_idx_attr "tup" "acc"); discriminate.
     Qed.
@@ -214,8 +215,9 @@ Section WithConcreteMaps.
                       "tup" "acc" "pos" "sacc" "bkt").
 
     (* A filter-shaped delete: the row that goes is read out of the
-       primary-key member, so this one is gated on the declaration -- as the
-       lookups are, and for its own reason. *)
+       primary-key member, so this one is gated on the declaration too.
+       Without it another row could share the key, and its contributions
+       would be left behind in buckets this rule never visits. *)
     Definition tri_delete_gated_transf (pk_tag : string) (ds : list decl) :=
       tri_delete_gated trigram_text_attr trigram_key_attr
         "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" pk_tag ds.
@@ -296,10 +298,8 @@ Section WithConcreteMaps.
           (u_tag, cunique_idx key, unique_idx_wf key)],
           [trigram_lookup_gated_transf t_tag attr key u_tag ds;
            (* the primary-key member's own lookup, pointed at this record's
-              second member.  With it the choice subsumes UniqueDictIdx on
-              the same key: every rule that choice installs is installed
-              here, so asking for both would only duplicate the
-              dictionary. *)
+              second member; with it the choice installs every rule
+              UniqueDictIdx would (trigram_subsumes_unique_dict) *)
            unique_lookup_gated_transf u_tag key ds;
            (* last in the list is first to run: maintenance leaves the index
               of the unchanged rows behind, and the use rules above it turn
@@ -319,11 +319,10 @@ end.
   (* TrigramIdx subsumes UniqueDictIdx on the key it points through.  The
      pair's second member IS a primary-key dictionary -- same index, same
      well-formedness -- and every rule the standalone choice installs is
-     installed here too, pointed at that member.  So the two choices
-     together are never better than the trigram choice alone: they would
-     only build, and maintain, a second copy of the same dictionary.  Stated
-     at the tag the standalone choice would get if it ran second, which is
-     the tag the pair gives its own key member. *)
+     installed here too, pointed at that member.  Asking for both choices
+     therefore only builds and maintains a second copy of the same
+     dictionary.  Stated at the tag the standalone choice would get if it ran
+     second, which is the tag the pair gives its own key member. *)
   Lemma trigram_subsumes_unique_dict : forall ds a k cur_tag reps,
       let '(tri_idxs, tri_transfs, _) := mk_idx ds cur_tag reps (TrigramIdx a k) in
       let '(u_idxs, u_transfs, _) := mk_idx ds (S cur_tag) reps (UniqueDictIdx k) in
@@ -862,10 +861,11 @@ end.
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
                       (word_ok := word_ok) (locals_ok := clocals_ok)). } }
-    (* the trigram choice: two members, and two rules.  The lookup is the
-       only rule in the development that needs two members at once, so it is
-       the only one owed two layouts; maintenance is owed nothing, being the
-       index's own fold run on one more row. *)
+    (* the trigram choice: two members.  The trigram lookup and the trigram
+       delete each read BOTH of them, so each is owed two layouts; the
+       primary-key lookup is owed one, with the declaration; the two use
+       rules are owed their own member's weak relation only; the two inserts
+       and the primary-key delete are owed nothing. *)
     1:{ repeat destruct_In; try apply_in_nil.
         1:{ unfold trigram_lookup_gated_transf.
             eapply (trigram_lookup_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"

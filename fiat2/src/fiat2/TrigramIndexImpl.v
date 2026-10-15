@@ -11,33 +11,29 @@ Open Scope string_scope.
 (* An inverted index for substring search: trigram -> the primary keys of the
    rows whose text contains it.
 
-   This is the first index here that puts a row under MORE THAN ONE key: a
-   text of length n has n-2 trigrams, and the row's key goes into the bucket
-   of each.  It is also the first that is deliberately LOSSY in the other
-   direction -- the bucket holds keys, not rows -- so it only pays off beside
-   a primary-key index, which turns a key back into its row.  That pairing is
-   the point: the two indexes are members of ONE index record, the trigram
-   dictionary built here and the key-to-row dictionary of UniqueDictIndexImpl,
-   and a substring query is answered by one lookup in each.
+   This index puts a row under MORE THAN ONE key -- a text of length n has
+   n-2 trigrams, and the row's key goes into the bucket of each -- and it is
+   lossy in the other direction, a bucket holding keys rather than rows.  So
+   it pays off only beside a primary-key index, which turns a key back into
+   its row: the two are members of ONE index record, the trigram dictionary
+   built here and the key-to-row dictionary of UniqueDictIndexImpl, and a
+   substring query is one lookup in each.
 
-   Why a SET of keys and not a bag or a list.  A text may contain the same
+   Why a SET of keys, not a bag or a list.  A text may contain the same
    trigram twice ("aaaa" contains "aaa" at two positions), so a bag would hold
-   a row's key once per occurrence and a lookup that emitted one row per entry
+   a row's key once per occurrence and a lookup emitting one row per entry
    would return that row twice -- wrong, not merely slow.  Deduplication is
-   therefore part of correctness, not an optimization.  Nothing is lost by it:
-   real trigram indexes (PostgreSQL's GIN over pg_trgm, say) hold posting
-   lists of distinct row identifiers and the scan that follows returns each
-   row once, in no particular order -- so a query answered this way is a bag
-   or set query, never a list query, and the order the keys come back in is
-   not observable.  A set is also what the maintenance rewrites want: one
-   insertion per occurrence is idempotent.
+   part of correctness here.  Nothing is lost by it: a query answered this way
+   is a bag or set query, never a list query, so the order the keys come back
+   in is not observable.  A set also makes the maintenance rewrites
+   idempotent, one insertion per occurrence.
 
    What this index claims, like every other, is only that it is what to_idx
-   computes.  That is true of any table.  What it does NOT give by itself is
-   the step from "the bucket of one trigram of the pattern" to "every row that
-   contains the pattern", which rests on occurrence_first_trigram in
-   StringFacts, nor the step back from a key to its row, which rests on the
-   declared primary key. *)
+   computes, which is true of any table.  It does NOT by itself give the step
+   from "the bucket of one trigram of the pattern" to "every row that contains
+   the pattern" -- that rests on occurrence_first_trigram in StringFacts --
+   nor the step back from a key to its row, which rests on the declared
+   primary key. *)
 
 Section WithHole.
   Context (hole : string).
@@ -104,7 +100,8 @@ Section WithHole.
        entry goes with it if that was its last key.
 
        The removal is spelled twice rather than bound to a name: a let would
-       cost this rule another binder to be told, and the set is a bucket.
+       cost every rule matching this body one more binder to be told about,
+       and a bucket is small enough to take apart twice.
        ------------------------------------------------------------------ *)
     Definition tri_without_pk : expr :=
       EBinop OSetDiff (EVar bkt)
@@ -347,9 +344,8 @@ Section WithHole.
          What the index is, in Gallina.
 
          to_idx is two nested folds with a read-modify-write inside, so the
-         mirror is two nested fold_rights.  Every existing index puts a row
-         under exactly one key and so has nothing like this; the inner fold is
-         what makes a trigram index a trigram index.
+         mirror is two nested fold_rights.  The inner fold is what puts a row
+         under many keys instead of one.
          ------------------------------------------------------------------ *)
 
       (* The bucket at a trigram once this row's key has gone in. *)
