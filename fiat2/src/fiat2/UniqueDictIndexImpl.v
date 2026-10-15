@@ -250,11 +250,13 @@ Section WithHole.
          Above, idx_wf says only that the dictionary is the one to_idx builds,
          which is all that holds of every well-typed table.  A primary key's
          index claims more -- that a key names one row -- and that claim is
-         about tables with distinct keys and no others.  So it is stated with
-         the precondition that makes it true, and installing the index owes
-         that precondition.  The two are not alternatives: the weak idx_wf
-         above is what an index-maintaining transformation establishes on its
-         own, and the strong one below is what a rewrite rule needs.
+         about tables with distinct keys and no others.  So it is stated
+         separately, as a conjunction with the precondition that makes it
+         true.  The two are not alternatives: the weak idx_wf above is what an
+         index-maintaining transformation establishes on its own, and the
+         strong one below is what a rewrite rule needs.  Nothing is owed at
+         installation -- idx_wf_unique is assembled from the two where a rule
+         needs it, by UniqueIndexInstall.idx_wf__idx_wf_unique.
          ------------------------------------------------------------------ *)
 
       Definition keys_distinct (tbl_v : value) : Prop :=
@@ -265,22 +267,6 @@ Section WithHole.
 
       Definition idx_wf_unique (tbl_v idx_v : value) : Prop :=
         idx_wf tbl_v idx_v /\ keys_distinct tbl_v.
-
-      Lemma to_idx_wf_unique : forall (v : value) (t : type),
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          keys_distinct v ->
-          idx_wf_unique v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-      Proof.
-        unfold idx_wf_unique; intros.
-        split; [ eapply to_idx_wf | ]; eauto.
-      Qed.
-
-      Instance unique_dict_idx_ok_pre :
-        IndexInterface.ok_pre unique_dict_idx idx_wf_unique keys_distinct :=
-        {| IndexInterface.ok_pre_idx_ty_wf := idx_ty_wf;
-           IndexInterface.ok_pre_to_idx_ty := to_idx_ty;
-           IndexInterface.ok_pre_to_idx_wf := to_idx_wf_unique |}.
 
       (* ------------------------------------------------------------------
          The index's keys are exactly the table's keys.
@@ -496,8 +482,9 @@ Section WithHole.
          store entry it rewrites at, so a rule that wants two facts about that
          entry has nowhere to put the second one.  Folding the constraint into
          the index's own well-formedness puts it exactly where the framework
-         already carries it, at the cost of a precondition on installation --
-         which is unique_dict_idx_ok_pre above. *)
+         already carries it.  Installation is unaffected: the index goes in
+         under the weak idx_wf, and whoever uses THIS corollary owes the
+         strong one. *)
       Corollary unique_guard_sound_pre :
         forall rt kt free_vars y e idx_e tbl l (Gstore Genv : tenv) (store env : locals),
           tenv_wf Gstore -> tenv_wf Genv -> type_wf (TRecord rt) ->
