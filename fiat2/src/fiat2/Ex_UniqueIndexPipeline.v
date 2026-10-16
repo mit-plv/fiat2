@@ -720,8 +720,7 @@ Section WithConcreteMaps.
      the rule emits the test instead: long enough, probe; shorter than a
      trigram, scan.  The fallback is the source query, unchanged -- the
      length condition is a soundness obligation of probe_recheck_eq, not a
-     heuristic, so it cannot be dropped the way two mainstream n-gram indexes
-     drop it (and silently return nothing). *)
+     heuristic, so it cannot be dropped. *)
   Lemma sguarded_splits : exists inst grd,
       soptimized (EVar "p") [DUnique "id"]
       = CLetMut inst "users"
