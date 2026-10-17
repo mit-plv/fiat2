@@ -196,6 +196,22 @@ Section WithWord.
   (* A declaration carries a list of constraints, and the guard for a write is
      their conjunction.  Nothing here is specific to one constraint: a write
      must leave every constraint declared on the variable standing. *)
+  (* The converse: the general guard passes whenever the constraint really
+     does hold of the value being written.  This is what a rule that replaces
+     the guard by true has to show. *)
+  Lemma constr_guard_complete : forall row_ty k free_vars u (Gstore Genv : tenv) (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
+      constr_wf row_ty k ->
+      type_of Gstore Genv u (TList row_ty) ->
+      incl (get_free_vars Genv) free_vars ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      constr_holds k (interp_expr store env u) ->
+      interp_expr store env (constr_guard k free_vars u) = VBool true.
+  Proof.
+    unfold constr_holds; intros * ? ? ? H_k H_u ? ? ? H_holds.
+    erewrite constr_guard_interp with (Gstore := Gstore) (Genv := Genv); eauto.
+  Qed.
+
   Definition constrs_hold (ks : list constr) (v : value) : Prop :=
     Forall (fun k => constr_holds k v) ks.
 
