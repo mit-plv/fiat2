@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
-  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse.
+  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.EraseField.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -466,6 +466,27 @@ end.
           Basics.compose (apply_below_n_letmuts n f Gstore Genv) (compose_all_idx_transfs (S n) l Gstore Genv)
     end.
 
+  (* ====================================================================
+     Erasing the table's list, once the index rules have taken every read.
+
+     After installation a table is a record pairing the list with its
+     indexes.  Where the rules above have turned every read into a read of an
+     index, the list is written on every assignment and read by nothing but
+     those writes -- a self-contained dead loop, and an O(n) one whenever the
+     write is a filter.  This layer removes it.
+
+     It runs LAST, after every index rule, because that is what makes the
+     field dead; and it is the identity wherever a read survives, so a
+     program that still scans the list keeps it.  One pass per table, at the
+     same depths the index layer uses.
+     ==================================================================== *)
+  (* One pass per depth that could hold a table, counted rather than taken
+     from the choice lists: the declared table sits at its own depth, which no
+     choice list corresponds to.  Running it at a depth with no letmut, or on
+     a table it cannot touch, is the identity, so over-covering is free. *)
+  Definition erase_transfs (n : nat) : list (ctenv -> ctenv -> command -> command) :=
+    List.repeat (erase_dead_field (tenv := ctenv) "id_tag") n.
+
   Definition apply_all_transfs (reps : nat) (fs : list basic_transf) (icss : list (list index_choice)) (Gstore Genv : ctenv) :=
     let idx_transfs :=
       map (fun ics =>
@@ -473,7 +494,10 @@ end.
              let cidx := mk_compo_idx idxs in
              let idx_use_transfs := mk_idx_use_transfs transfs in
              mk_idx_related_transfs cidx idx_use_transfs) icss in
-    (Basics.compose (compose_all_idx_transfs O idx_transfs Gstore Genv) (compose_basic_transfs (map mk_basic_transf fs))).
+    (Basics.compose
+       (compose_all_idx_transfs O (erase_transfs (List.length icss)) Gstore Genv)
+       (Basics.compose (compose_all_idx_transfs O idx_transfs Gstore Genv)
+          (compose_basic_transfs (map mk_basic_transf fs)))).
 
   Definition apply_optimize_anno (ac : anno_command) (Gstore Genv : ctenv) :=
     match ac with
@@ -1079,10 +1103,20 @@ end.
     eapply mk_compo_idx_ok; eauto.
   Qed.
 
+  Lemma compose_erase_transfs_sound : forall n,
+      transf_sound (locals:=clocals) (compose_all_idx_transfs O (erase_transfs n)).
+  Proof.
+    intros. apply compose_all_idx_transfs_sound.
+    unfold erase_transfs; rewrite Forall_forall; intros.
+    apply repeat_spec in H; subst.
+    apply erase_dead_field_sound.
+  Qed.
+
   Theorem apply_all_transfs_sound : forall reps fs icss,
       transf_sound (locals:=clocals) (apply_all_transfs reps fs icss).
   Proof.
     unfold apply_all_transfs; intros.
+    apply transf_sound_compose; [ apply compose_erase_transfs_sound | ].
     apply transf_sound_compose.
     2: apply compose_basic_transfs_sound.
     apply compose_all_idx_transfs_sound.
@@ -1438,10 +1472,12 @@ end.
     (fs : list basic_transf) (cics : list index_choice)
     (icss : list (list index_choice)) (Gstore Genv : ctenv) : command -> command :=
     Basics.compose
-      (compose_all_idx_transfs O (idx_transfs_of reps icss) Gstore Genv)
+      (compose_all_idx_transfs O (erase_transfs (S depth + List.length icss)) Gstore Genv)
       (Basics.compose
-         (apply_below_n_letmuts depth (idx_transf_of ce reps cics) Gstore Genv)
-         (compose_basic_transfs (map mk_basic_transf fs))).
+         (compose_all_idx_transfs O (idx_transfs_of reps icss) Gstore Genv)
+         (Basics.compose
+            (apply_below_n_letmuts depth (idx_transf_of ce reps cics) Gstore Genv)
+            (compose_basic_transfs (map mk_basic_transf fs)))).
 
   (* The premise: at the declared table's depth, the cenv describes the
      program, its initializer is an atom, and every enclosing initializer
@@ -1479,8 +1515,13 @@ end.
     (* the unconstrained index layer: sound for every well-typed program *)
     pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H_Gs H_Ge H_wt2)
       as [ H_wt3 H_sem3 ].
+    (* and the erasure, which needs only well-typedness *)
+    pose proof (compose_erase_transfs_sound (S depth + List.length icss)
+                  Gstore Genv _ H_Gs H_Ge H_wt3)
+      as [ H_wt4 H_sem4 ].
     split; [ assumption | ].
     intros store env H_lws H_lwe.
+    rewrite H_sem4 by assumption.
     rewrite H_sem3 by assumption.
     rewrite H_sem2 by assumption.
     apply H_sem1; assumption.
@@ -1503,8 +1544,12 @@ end.
       as [ H_wt1 H_sem1 ]; cbn in H_wt1, H_sem1.
     pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H H0 H_wt1)
       as [ H_wt2 H_sem2 ].
-    split; [ exact H_wt2 | ].
+    pose proof (compose_erase_transfs_sound (S depth + List.length icss)
+                  Gstore Genv _ H H0 H_wt2)
+      as [ H_wt3 H_sem3 ].
+    split; [ exact H_wt3 | ].
     intros store env H_lws H_lwe.
+    rewrite H_sem3 by assumption.
     rewrite H_sem2 by assumption. apply H_sem1; assumption.
   Qed.
 

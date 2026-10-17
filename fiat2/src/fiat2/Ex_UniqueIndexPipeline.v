@@ -105,12 +105,12 @@ Section WithConcreteMaps.
       (ELet row "tup"
          (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "id") (EVar "tup"))).
 
-  (* After: the table is the pair of the list and that index record, every read
-     of the table goes through id_tag, and the guard is one lookup in the
-     dictionary. *)
+  (* After: the table IS the index.  The list the source wrote is gone -- the
+     guard and the write both go through aux_tag, so nothing read it, and the
+     erasure pass dropped the field.  The write is one dictionary insert, and
+     the O(n) rebuild of the list that used to sit beside it is not there. *)
   Definition poptimized_expected : command :=
-    CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                      ("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
+    CLetMut (ERecord [("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
       "users"
       (CIf (EBinop OAnd
               (ELet (EVar "u") "_pk_row"
@@ -123,9 +123,7 @@ Section WithConcreteMaps.
                     (EAtom (AEmptyBag None))))
               (EAtom (ABool true)))
          (CAssign "users"
-            (ERecord
-               [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
-                ("aux_tag", ERecord [("0", punique_insert_of pidx (EVar "u"))])]))
+            (ERecord [("aux_tag", ERecord [("0", punique_insert_of pidx (EVar "u"))])]))
          CSkip).
 
   Lemma poptimized_is : poptimized [DUnique "id"] = poptimized_expected.
@@ -274,8 +272,7 @@ Section WithConcreteMaps.
       (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")).
 
   Definition qoptimized_expected : command :=
-    CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                      ("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
+    CLetMut (ERecord [("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
       "users"
       (CSeq
          (* the write guard: one probe *)
@@ -286,8 +283,7 @@ Section WithConcreteMaps.
                  (EAtom (ABool true)))
             (CAssign "users"
                (ERecord
-                  [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
-                   ("aux_tag", ERecord [("0", punique_insert_of pidx (EVar "u"))])]))
+                  [("aux_tag", ERecord [("0", punique_insert_of pidx (EVar "u"))])]))
             CSkip)
          (* and the read query: the same probe, at the key the query asks for *)
          (CAssign "out" (qprobe (EVar "k")))).
@@ -352,9 +348,10 @@ Section WithConcreteMaps.
   Definition mkeys (tbl : expr) : expr :=
     flatmap_proj_set (ESetOf tbl) "x" (EAccess (EVar "x") "id") None.
 
+  (* The list is erased here too, though no declared index is involved: what
+     made it dead is that the set index answers the only question asked. *)
   Definition moptimized_expected : command :=
-    CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                      ("aux_tag",
+    CLetMut (ERecord [("aux_tag",
                         ERecord [("0", mkeys (EAtom (ANil (Some prow_ty))))])])
       "users"
       (CIf (EBinop OAnd
@@ -367,13 +364,12 @@ Section WithConcreteMaps.
               (EAtom (ABool true)))
          (CAssign "users"
             (ERecord
-               [("id_tag", EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
-                (* and the set is kept up to date by one insert, not refolded *)
-                ("aux_tag",
-                  ERecord
-                    [("0", EBinop OSetInsert
-                             (EAccess (EAccess (ELoc "users") "aux_tag") "0")
-                             (EAccess (EVar "u") "id"))])]))
+               [(* the set is kept up to date by one insert, not refolded *)
+                 ("aux_tag",
+                   ERecord
+                     [("0", EBinop OSetInsert
+                              (EAccess (EAccess (ELoc "users") "aux_tag") "0")
+                              (EAccess (EVar "u") "id"))])]))
          CSkip).
 
   Lemma moptimized_is : moptimized [DUnique "id"] = moptimized_expected.
@@ -411,8 +407,8 @@ Section WithConcreteMaps.
   Definition boptimized (ds : list decl) : command :=
     apply_optimize_anno_constrained (width:=width) (banno ds) pGstore0 pGenv0.
 
-  (* The table is now a record of the list, the key-to-row dictionary at tag
-     "0", and the set of keys at tag "1". *)
+  (* The table is now the key-to-row dictionary at tag "0" and the set of
+     keys at tag "1", and nothing else: the list is erased here too. *)
   Compute (boptimized [DUnique "id"]).
 
   (* Both members really went in: the table's index field is a record holding
@@ -422,8 +418,7 @@ Section WithConcreteMaps.
     exists rest,
       boptimized [DUnique "id"]
       = CLetMut
-          (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                    ("aux_tag",
+          (ERecord [("aux_tag",
                       ERecord [("0", punique_idx_of (EAtom (ANil (Some prow_ty))));
                                ("1", mkeys (EAtom (ANil (Some prow_ty))))])])
           "users" rest.
@@ -484,8 +479,8 @@ Section WithConcreteMaps.
     exists rest,
       noptimized (S O) [DUnique "id"]
       = CLetMut (EAtom (AInt 0)) "n"
-          (CLetMut (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                             ("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
+          (CLetMut (ERecord
+                      [("aux_tag", punique_rec_of (EAtom (ANil (Some prow_ty))))])
              "users" rest).
   Proof. eexists; reflexivity. Qed.
 
@@ -555,8 +550,7 @@ Section WithConcreteMaps.
     exists rest,
       toptimized [DUnique "id"]
       = CLetMut
-          (ERecord [("id_tag", EAtom (ANil (Some prow_ty)));
-                    ("aux_tag",
+          (ERecord [("aux_tag",
                       ERecord [("0", ptrigram_of (EAtom (ANil (Some prow_ty))));
                                ("1", punique_idx_of (EAtom (ANil (Some prow_ty))))])])
           "users" rest.
@@ -618,9 +612,7 @@ Section WithConcreteMaps.
                   (EAtom (ABool true)))
              (CAssign "users"
                 (ERecord
-                   [("id_tag",
-                     EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag"));
-                    ("aux_tag",
+                   [("aux_tag",
                       ERecord
                         [("0",
                           ptri_add (EAccess (EAccess (ELoc "users") "aux_tag") "0")
