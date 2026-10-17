@@ -62,12 +62,6 @@ Section WithField.
   Definition rm_field {A} (l : list (string * A)) : list (string * A) :=
     filter (fun p => negb (String.eqb (fst p) f)) l.
 
-  (* The NoDup guard is what lets everything below stay free of typing.
-     Crossing the sort the interpreter applies to a record literal is only
-     invisible when the field names are distinct, and a well-typed record
-     literal always is (TyERecord's fourth premise), so the guard costs no
-     applicability.  Where it fails the component is kept, the erased program
-     still reads the field, and the check below then declines to erase. *)
   (* A write the pass can shorten: a record literal with distinct field
      names.  Crossing the sort the interpreter applies to a literal is only
      invisible when the names are distinct, and a well-typed literal always
