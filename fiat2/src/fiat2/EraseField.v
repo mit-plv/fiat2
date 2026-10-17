@@ -68,6 +68,17 @@ Section WithField.
      literal always is (TyERecord's fourth premise), so the guard costs no
      applicability.  Where it fails the component is kept, the erased program
      still reads the field, and the check below then declines to erase. *)
+  (* A write the pass can shorten: a record literal with distinct field
+     names.  Crossing the sort the interpreter applies to a literal is only
+     invisible when the names are distinct, and a well-typed literal always
+     is (TyERecord's fourth premise), so the condition costs no
+     applicability. *)
+  Definition erasable_record (e : expr) : bool :=
+    match e with
+    | ERecord l => NoDup_comp String.eqb (List.map fst l)
+    | _ => false
+    end.
+
   Definition erase_record_field (e : expr) : expr :=
     match e with
     | ERecord l =>
@@ -167,13 +178,7 @@ Section WithField.
     | CSeq c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
     | CLet _ _ c => writes_erasable c
     | CLetMut _ x c => if String.eqb x tbl then true else writes_erasable c
-    | CAssign x e =>
-        if String.eqb x tbl
-        then match e with
-             | ERecord l => NoDup_comp String.eqb (List.map fst l)
-             | _ => false
-             end
-        else true
+    | CAssign x e => if String.eqb x tbl then erasable_record e else true
     | CIf _ c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
     | CForeach _ _ c => writes_erasable c
     end.
@@ -266,25 +271,33 @@ Qed.
    Step 3: the pass.  Identity unless the erased body reads nothing.
    ---------------------------------------------------------------- *)
 
+(* ----------------------------------------------------------------
+   The pass.
+
+   Three conditions, all decidable and all checked on the program in hand:
+   the initializer and every write to the table are record literals the
+   erasure can shorten, and once it has, nothing reads the field.  Identity
+   otherwise, as every other rule in the pipeline is.
+   ---------------------------------------------------------------- *)
 Definition erase_dead_field (f : string) {tenv : map.map string type}
   (_ _ : tenv) (c : command) : command :=
   match c with
   | CLetMut e tbl c0 =>
       let c0' := erase_body tbl f c0 in
-      if command_reads_no_field tbl f c0'
+      if (erasable_record e && writes_erasable tbl c0
+          && command_reads_no_field tbl f c0')%bool
       then CLetMut (erase_record_field f e) tbl c0'
       else c
   | _ => c
   end.
 
-(* ----------------------------------------------------------------
-   Reading a field through record_sort.
-
-   The interpreter sorts a record literal's fields, so every value-level
-   argument has to cross that sort.  With distinct field names a lookup does
-   not notice it; with duplicates it would, which is the one place this pass
-   needs the assigned record to be well typed.
-   ---------------------------------------------------------------- *)
+(* The erasure, computed, on the one shape it acts on. *)
+Lemma erase_record_field_ERecord : forall f l,
+    NoDup_comp String.eqb (List.map fst l) = true ->
+    erase_record_field f (ERecord l) = ERecord (rm_field f l).
+Proof.
+  intros * H; unfold erase_record_field; rewrite H; reflexivity.
+Qed.
 
 Lemma access_record_not_In : forall A (l : list (string * A)) s,
     ~ In s (List.map fst l) -> access_record l s = access_record nil s.
@@ -896,7 +909,7 @@ Section WithMap.
   Proof.
     intros tbl f c; induction c; intros tl Gstore Genv H_wt H_rd H_we;
       cbn [erase_body] in H_rd |- *;
-      cbn [command_reads_no_field writes_erasable] in H_rd, H_we;
+      cbn [command_reads_no_field writes_erasable erasable_record] in H_rd, H_we;
       invert_well_typed.
     (* CSkip *)
     1: constructor.
@@ -937,7 +950,8 @@ Section WithMap.
             injection H as H; subst t0
         end.
         (* the check says the write is an erasable record literal *)
-        destruct e; cbn [writes_erasable] in H_we; try discriminate.
+        destruct e; cbn [writes_erasable erasable_record] in H_we;
+          try discriminate.
         cbn [erase_record_field] in H_rd |- *.
         rewrite H_we in H_rd |- *.
         econstructor; [ apply map.get_put_same | ].
@@ -955,6 +969,69 @@ Section WithMap.
         econstructor.
         1: apply erase_preserve_ty_expr; eassumption.
         1: apply IHc; eassumption. }
+  Qed.
+
+
+  (* The initializer, where the store type is not yet changed and so no
+     expression has to be retyped. *)
+  Lemma erase_record_ty_init : forall f (Gstore : tenv) Genv l tl,
+      type_of Gstore Genv (ERecord l) (TRecord tl) ->
+      type_of Gstore Genv (ERecord (rm_field f l)) (TRecord (rm_field f tl)).
+  Proof.
+    intros * H_ty.
+    inversion H_ty as [| | | | | | | | | | | | | | l0 tl0 tl1 E_fst H_all2 H_perm H_nd H_ss | | | | | | | ];
+      subst.
+    econstructor.
+    1:{ unfold rm_field.
+        rewrite <- 2 (filter_map_swap (fun s => negb (String.eqb s f)) fst).
+        rewrite E_fst; reflexivity. }
+    1: apply Forall2_rm_field; assumption.
+    1: apply Permutation_rm_field; assumption.
+    1: apply rm_field_NoDup; assumption.
+    1: apply rm_field_SSorted; assumption.
+  Qed.
+
+  (* ================================================================
+     The pass is sound.
+
+     transf_sound quantifies over ONE store type environment for input and
+     output, which a body-level pass changing a variable's type could not
+     satisfy.  This is a letmut-level pass, so the outer environment is
+     untouched and only the body's differs -- the same reason
+     apply_idx_related_transfs is stated this way.
+     ================================================================ *)
+  Theorem erase_dead_field_sound : forall f,
+      transf_sound (locals := locals) (erase_dead_field f).
+  Proof.
+    unfold transf_sound, erase_dead_field; intros f Gstore Genv c H_Gs H_Ge H_wt.
+    destruct c as [ | | | e tbl c0 | | | ];
+      try (split; [ exact H_wt | intros; reflexivity ]).
+    destruct (erasable_record e && writes_erasable tbl c0
+              && command_reads_no_field tbl f (erase_body tbl f c0))%bool eqn:E;
+      [ | split; [ exact H_wt | intros; reflexivity ] ].
+    repeat rewrite Bool.andb_true_iff in E.
+    destruct E as [ [ E_init E_writes ] E_reads ].
+    (* the initializer is a record literal, so the table's type is a record
+       type and the erasure shortens both together *)
+    destruct e as [ | | | | | | | | | | | | l | | | | | ];
+      cbn [erasable_record] in E_init; try discriminate.
+    invert_well_typed.
+    lazymatch goal with
+    | H : type_of Gstore Genv (ERecord l) ?t |- _ =>
+        assert (E_t : exists tl, t = TRecord tl)
+          by (inversion H; subst; eauto)
+    end.
+    destruct E_t as [ tl E_t ]; subst.
+    rewrite (erase_record_field_ERecord f l E_init).
+    split.
+    (* type preservation *)
+    1:{ econstructor.
+        1: apply erase_record_ty_init; eassumption.
+        1: apply erase_preserve_ty_cmd; assumption. }
+    (* and semantics *)
+    1:{ intros store env H_store H_env.
+        rewrite <- (erase_record_field_ERecord f l E_init).
+        apply (erase_letmut_preserve_sem tbl f (ERecord l) c0 store env E_reads). }
   Qed.
 
 End WithMap.
