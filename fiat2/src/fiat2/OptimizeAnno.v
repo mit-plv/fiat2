@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
-  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.EraseField.
+  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.EraseField fiat2.RepIdx.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -44,7 +44,11 @@ Variant index_choice :=
      rule UniqueDictIdx would (trigram_subsumes_unique_dict), so this choice
      subsumes UniqueDictIdx on the same key and there is no reason to ask
      for both. *)
-  | TrigramIdx (attr key : string).
+  | TrigramIdx (attr key : string)
+  (* The table itself, as a bag or a set.  It answers no question of its own:
+     it serves the coercion the collection push-down leaves on a read of the
+     table, and once it does, nothing reads the list. *)
+  | TableRep (ctag : collection_tag).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -230,6 +234,25 @@ Section WithConcreteMaps.
       tri_use_idx_transf trigram_text_attr trigram_key_attr
         "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" tag.
 
+    Context (rep_ctag : collection_tag).
+
+    Definition rep_idx_wf := (RepIdx.idx_wf (locals:=clocals) "hole" rep_ctag).
+    Instance crep_idx : IndexInterface.index := (RepIdx.rep_idx "hole" rep_ctag).
+    Instance crep_idx_ok : IndexInterface.ok crep_idx rep_idx_wf.
+    apply RepIdx.rep_idx_ok.
+    Qed.
+
+    Definition rep_lookup_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (RepIdx.rep_to_lookup_head "id_tag" "aux_tag" tag tbl rep_ctag).
+
+    (* Maintenance is the basic push-down, run again under the globals.  The
+       write stores the coercion of the new table, and the push-down turns
+       that into an insert, or a filter at the weaker level, over the
+       coercion of the old one. *)
+    Definition rep_maintain_transf :=
+      fun tbl => fold_command_with_globals [tbl] push_down_collection.
+
   End CommonPipelineParts.
 
   (* ds is the installed table's declarations.  Only the use rules look at
@@ -314,6 +337,15 @@ Section WithConcreteMaps.
            cons_to_tri_insert_transf attr key;
            cons_to_unique_insert_transf' key],
           S (S cur_tag))
+    | TableRep ctag =>
+        let r_tag := String.of_nat cur_tag in
+        ([(r_tag, crep_idx ctag, rep_idx_wf ctag)],
+          [rep_lookup_transf r_tag ctag;
+           (* last in the list is first to run: maintenance leaves the
+              coercion of the unchanged table behind, and the rule above it
+              turns that into a read *)
+           rep_maintain_transf],
+          S cur_tag)
 end.
 
   (* TrigramIdx subsumes UniqueDictIdx on the key it points through.  The
@@ -388,7 +420,7 @@ end.
          | |- NoDup nil => constructor
          end.
     all: auto using csum_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
-      cunique_idx_ok, ctrigram_idx_ok.
+      cunique_idx_ok, ctrigram_idx_ok, crep_idx_ok.
     all: try (eexists; intuition eauto; lia).
     (* and that choice's two tags are distinct, by of_nat's injectivity *)
     (* no cbn here: it would unfold of_nat into its decimal definition and
@@ -764,7 +796,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a ak ];
+    destruct ic as [ a | a | a | a | a | a ak | ct ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -1029,6 +1061,19 @@ end.
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
                       (word_ok := word_ok) (locals_ok := clocals_ok)). }
         }
+    (* the table's own representation: one use rule, and the basic push-down
+       for maintenance *)
+    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+        1:{ eapply RepIdx.rep_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        all: apply expr_transf_sound__expr_aug_transf_sound.
+        1: apply push_down_collection_sound. }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)
