@@ -837,6 +837,47 @@ Section WithConcreteMaps.
              CSkip).
   Proof. do 2 eexists; reflexivity. Qed.
 
+  (* ---------------------------------------------------------------------
+     And the one place the list is NOT erased, with the reason.
+
+     Every other example here loses its list field: the index rules take every
+     read, and the erasure pass collects what they leave.  This one keeps it,
+     and the reason is the WRITE GUARD rather than anything about maintenance.
+
+     elab emits the cheap one-probe guard only for a write that CONSES a row
+     (Surface.recognized_write); a filter-shaped write falls back on the
+     general guard, which is the declared constraint read of the written
+     value -- a quadratic scan that reads the list twice.  So the list is
+     genuinely live and the pass correctly declines.
+
+     The guard is also vacuous: dropping rows cannot break uniqueness, since
+     NoDup of the keys survives any filter.  So what stands between this
+     delete and an O(log n) one is a missing rule -- that a filter-shaped
+     write preserves a Forall-shaped constraint, collapsing its guard -- and
+     not anything about the index or the erasure.
+     --------------------------------------------------------------------- *)
+  Lemma ddelete_keeps_the_list : exists inst grd rest,
+      doptimized [DUnique "id"]
+      = CLetMut inst "users"
+          (CIf grd
+             (CAssign "users"
+                (ERecord
+                   [("id_tag", dfiltered (EAccess (ELoc "users") "id_tag"));
+                    ("aux_tag", rest)]))
+             CSkip).
+  Proof. do 3 eexists; reflexivity. Qed.
+
+  (* The guard really is the general one, scanning the list it keeps alive. *)
+  Lemma ddelete_guard_scans : exists inst thn rest,
+      doptimized [DUnique "id"]
+      = CLetMut inst "users"
+          (CIf (EBinop OAnd
+                  (EFold (dfiltered (EAccess (ELoc "users") "id_tag"))
+                     (EAtom (ABool true)) "_r" "_all" rest)
+                  (EAtom (ABool true)))
+             thn CSkip).
+  Proof. do 3 eexists; reflexivity. Qed.
+
   Lemma dGenv0_wf : tenv_wf dGenv0.
   Proof.
     unfold dGenv0; apply tenv_wf_step;
