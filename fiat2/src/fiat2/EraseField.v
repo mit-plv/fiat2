@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.TransfSound fiat2.TransfUtils.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
@@ -675,6 +675,125 @@ Section WithMap.
                        (erased_at_refl tbl f store)
                        (fun t H_t => proj_field_erase_record f store env e t H_t)))).
     exact H_x.
+  Qed.
+
+
+  (* ================================================================
+     Type preservation.
+
+     The table's type loses one entry, so every read of it has to be retyped.
+     Every other field is still reachable at the same type
+     (access_record_rm_field), and a bare read of the table is refused by the
+     check, so no expression changes type at all.
+     ================================================================ *)
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+
+  Local Ltac apply_erase_ty_IH :=
+    lazymatch goal with
+    | IH : context[type_of _ _ ?e _] |- type_of _ _ ?e _ => apply IH
+    end.
+
+  (* Discharging a Forall2 whose relation is an implication, when the
+     antecedent holds of every element.  The record literal's components come
+     out of type_of_IH in exactly that shape. *)
+  Lemma Forall2_impl_In : forall A B (P : A -> B -> Prop) (Q : A -> Prop) la lb,
+      Forall2 (fun a b => Q a -> P a b) la lb ->
+      (forall a, In a la -> Q a) ->
+      Forall2 P la lb.
+  Proof.
+    intros * H_all2; induction H_all2 as [| a b la lb H_head H_tail IH ];
+      intros H_Q; [ constructor | ].
+    constructor.
+    1: apply H_head, H_Q; left; reflexivity.
+    1: apply IH; intros a0 H_a0; apply H_Q; right; exact H_a0.
+  Qed.
+
+  (* A field read through a mutable variable, which is the only place the
+     table's own type is consulted.  Stated as a lemma so the induction below
+     does not have to take two store-type lookups apart inline. *)
+  Lemma erase_ty_access : forall tbl f tl (Gstore : tenv) Genv y tl0 s T,
+      map.get (map.put Gstore tbl (TRecord tl)) y = Some (TRecord tl0) ->
+      access_record tl0 s = Success T ->
+      (y = tbl -> s <> f) ->
+      type_of (map.put Gstore tbl (TRecord (rm_field f tl))) Genv
+        (EAccess (ELoc y) s) T.
+  Proof.
+    intros * E_y E_s H_s.
+    destruct (String.eqb y tbl) eqn:E.
+    - apply String.eqb_eq in E; subst y.
+      rewrite map.get_put_same in E_y.
+      injection E_y as E_y; subst tl0.
+      econstructor; [ constructor; apply map.get_put_same | ].
+      rewrite access_record_rm_field by (apply H_s; reflexivity); exact E_s.
+    - apply String.eqb_neq in E.
+      rewrite map.get_put_diff in E_y by congruence.
+      econstructor;
+        [ constructor; rewrite map.get_put_diff by congruence; exact E_y
+        | exact E_s ].
+  Qed.
+
+  Lemma erase_preserve_ty_expr : forall tbl f tl (Gstore : tenv) Genv e T,
+      type_of (map.put Gstore tbl (TRecord tl)) Genv e T ->
+      expr_reads_no_field tbl f e = true ->
+      type_of (map.put Gstore tbl (TRecord (rm_field f tl))) Genv e T.
+  Proof.
+    intros tbl f tl Gstore Genv e T H_ty.
+    induction H_ty using type_of_IH; cbn [expr_reads_no_field]; intros H_rd.
+    all: repeat rewrite Bool.andb_true_iff in H_rd.
+    all: repeat lazymatch goal with H : _ /\ _ |- _ => destruct H end.
+    (* The cases that mention the table are picked by shape, not by position,
+       so the uniform step below cannot half-solve them. *)
+    (* ELoc: the check says this is not the table *)
+    all: try lazymatch goal with
+           | |- type_of _ _ (ELoc _) _ =>
+               apply Bool.negb_true_iff, String.eqb_neq in H_rd;
+               constructor;
+               rewrite map.get_put_diff by congruence;
+               lazymatch goal with
+               | Hg : map.get (map.put _ _ _) _ = Some _ |- _ =>
+                   rewrite map.get_put_diff in Hg by congruence; exact Hg
+               end
+           end.
+    (* ERecord: the literal is unchanged, so the same field types serve and
+       only each component has to be retyped *)
+    all: try lazymatch goal with
+           | |- type_of _ _ (ERecord _) _ =>
+               rewrite forallb_forall in H_rd;
+               econstructor; eauto
+           end.
+    (* EAccess: the check's own match on the accessed expression is what
+       distinguishes a read of the table, so take it apart *)
+    all: try lazymatch goal with
+           | |- type_of _ _ (EAccess _ _) _ =>
+               lazymatch goal with x : expr |- _ => destruct x end;
+               cbn [expr_reads_no_field] in H_rd
+           end.
+    (* the field read, settled before the uniform step can commit it to an
+       induction hypothesis it cannot discharge *)
+    all: try lazymatch goal with
+           | |- type_of _ _ (EAccess (ELoc _) _) _ =>
+               eapply erase_ty_access;
+               [ lazymatch goal with
+                 | H : type_of _ _ (ELoc _) _ |- _ =>
+                     inversion H; subst; eassumption
+                 end
+               | eassumption
+               | intros ->; cbn in H_rd; rewrite String.eqb_refl in H_rd;
+                 apply Bool.negb_true_iff, String.eqb_neq in H_rd; assumption ]
+           end.
+    (* everything whose type does not mention the table rebuilds as it was *)
+    all: try (econstructor; eauto; try apply_erase_ty_IH; eauto).
+    (* and the record literal's components: the literal is unchanged, so the
+       same field types serve and each component is retyped by its own IH *)
+    1:{ (* the relation is read off the goal: unifying it with the lemma's
+           implication shape would ask Coq to split an arrow it cannot *)
+        match goal with
+        | H : Forall2 _ ?la ?lb |- Forall2 ?P ?la ?lb =>
+            apply (Forall2_impl_In _ _ P
+                     (fun e => expr_reads_no_field tbl f e = true) la lb H)
+        end.
+        intros a H_a; apply in_map_iff in H_a as [ q [ E_q H_q ] ]; subst a.
+        apply H_rd; exact H_q. }
   Qed.
 
 End WithMap.
