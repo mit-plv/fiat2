@@ -275,20 +275,37 @@ Section WithMap.
   (* ----------------------------------------------------------------
      The store relation.
 
-     The two stores agree away from tbl, and at tbl they hold records that
-     agree on every field but f.  Stated extensionally, through record_proj,
-     rather than as rv' = rm_field f rv: the equational form would need
-     record_sort (map g (rm_field f l)) = rm_field f (record_sort (map g l)),
-     i.e. uniqueness of sorted permutations, which this development does not
-     have.  Agreement field by field is all any read can observe.
+     The two stores agree away from the table, and at the table they agree on
+     every field read EXCEPT the erased one.  Stated through a projection
+     rather than as rv' = rm_field f rv for two reasons: the equational form
+     would need uniqueness of sorted permutations, which this development does
+     not have; and the projection form does not insist that the table hold a
+     record at all, so nothing here needs type soundness.  A field read is
+     exactly what the check permits a program to do, so this is exactly what
+     the program can observe.
      ---------------------------------------------------------------- *)
+  Definition proj_field (t : string) (v : value) : value :=
+    match v with
+    | VRecord rv => record_proj t rv
+    | _ => VUnit
+    end.
+
+  Definition field_at (t : string) (store : locals) (tbl : string) : value :=
+    match map.get store tbl with
+    | Some v => proj_field t v
+    | None => VUnit
+    end.
+
   Definition erased_at (tbl f : string) (store store' : locals) : Prop :=
-    (match map.get store tbl, map.get store' tbl with
-     | Some (VRecord rv), Some (VRecord rv') =>
-         forall t, t <> f -> record_proj t rv' = record_proj t rv
-     | _, _ => False
-     end)
+    (forall t, t <> f -> field_at t store' tbl = field_at t store tbl)
     /\ (forall x, x <> tbl -> map.get store x = map.get store' x).
+
+  Lemma field_at_get_local : forall t (store : locals) tbl,
+      field_at t store tbl = proj_field t (get_local store tbl).
+  Proof.
+    unfold field_at, get_local; intros.
+    destruct (map.get store tbl); reflexivity.
+  Qed.
 
   Lemma erased_at__get_local : forall tbl f (store store' : locals) x,
       erased_at tbl f store store' ->
@@ -313,13 +330,78 @@ Section WithMap.
         | _ => VUnit
         end.
   Proof.
-    intros * [ H_at _ ] H_ne; unfold get_local.
-    destruct (map.get store tbl) as [ v | ]; [ | contradiction ].
-    destruct (map.get store' tbl) as [ v' | ]; [ | destruct v; contradiction ].
-    destruct v; try contradiction; destruct v'; try contradiction.
-    apply H_at; assumption.
+    intros * [ H_fields _ ] H_ne.
+    change (proj_field t (get_local store' tbl) = proj_field t (get_local store tbl)).
+    rewrite <- 2 field_at_get_local.
+    apply H_fields; assumption.
   Qed.
 
+  (* ----------------------------------------------------------------
+     Closure: the relation survives the three ways a command changes a
+     store.  Writing some other variable, writing the table itself with a
+     value whose fields agree off f, and restoring a variable at a letmut's
+     end.
+     ---------------------------------------------------------------- *)
+
+  Lemma erased_at_put : forall tbl f (store store' : locals) x v,
+      erased_at tbl f store store' ->
+      x <> tbl ->
+      erased_at tbl f (map.put store x v) (map.put store' x v).
+  Proof.
+    intros * [ H_fields H_off ] H_ne; split.
+    1:{ intros t H_t; unfold field_at.
+        repeat rewrite map.get_put_diff by congruence.
+        apply H_fields; assumption. }
+    1:{ intros y H_y. destruct (String.eqb y x) eqn:E_y.
+        1:{ apply String.eqb_eq in E_y; subst y.
+            repeat rewrite map.get_put_same; reflexivity. }
+        1:{ apply String.eqb_neq in E_y.
+            repeat rewrite map.get_put_diff by congruence.
+            apply H_off; assumption. } }
+  Qed.
+
+  Lemma erased_at_put_tbl : forall tbl f (store store' : locals) v v',
+      erased_at tbl f store store' ->
+      (forall t, t <> f -> proj_field t v' = proj_field t v) ->
+      erased_at tbl f (map.put store tbl v) (map.put store' tbl v').
+  Proof.
+    intros * [ _ H_off ] H_v; split.
+    1:{ intros t H_t; unfold field_at.
+        repeat rewrite map.get_put_same.
+        apply H_v; assumption. }
+    1:{ intros y H_y. repeat rewrite map.get_put_diff by congruence.
+        apply H_off; assumption. }
+  Qed.
+
+  (* general in x, as the letmut case needs: at x = tbl the restored values
+     are the ones the enclosing stores held, and those were already related *)
+  Lemma erased_at_update : forall tbl f (l0 l0' l l' : locals),
+      erased_at tbl f l0 l0' ->
+      erased_at tbl f l l' ->
+      forall x,
+        erased_at tbl f (map.update l x (map.get l0 x)) (map.update l' x (map.get l0' x)).
+  Proof.
+    intros * [ H_fields0 H_off0 ] [ H_fields H_off ] x.
+    destruct (String.eqb x tbl) eqn:E_x.
+    1:{ apply String.eqb_eq in E_x; subst x; split.
+        1:{ intros t H_t; unfold field_at.
+            repeat rewrite Properties.map.get_update_same.
+            apply H_fields0; assumption. }
+        1:{ intros y H_y.
+            repeat rewrite Properties.map.get_update_diff by congruence.
+            apply H_off; assumption. } }
+    1:{ apply String.eqb_neq in E_x; split.
+        1:{ intros t H_t; unfold field_at.
+            repeat rewrite Properties.map.get_update_diff by congruence.
+            apply H_fields; assumption. }
+        1:{ intros y H_y. destruct (String.eqb y x) eqn:E_y.
+            1:{ apply String.eqb_eq in E_y; subst y.
+                repeat rewrite Properties.map.get_update_same.
+                apply H_off0; assumption. }
+            1:{ apply String.eqb_neq in E_y.
+                repeat rewrite Properties.map.get_update_diff by congruence.
+                apply H_off; assumption. } } }
+  Qed.
 
   (* expr_IH renames its binders, so the induction hypotheses cannot be
      addressed by name.  Both tactics below pick whichever one applies. *)
