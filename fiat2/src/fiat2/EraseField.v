@@ -523,6 +523,45 @@ Section WithMap.
   Qed.
 
 
+  Lemma record_proj_access : forall (X Y : list (string * value)) t,
+      access_record X t = access_record Y t ->
+      record_proj t X = record_proj t Y.
+  Proof.
+    unfold record_proj; intros * H; rewrite H; reflexivity.
+  Qed.
+
+  Lemma erased_at_refl : forall tbl f (store : locals), erased_at tbl f store store.
+  Proof.
+    intros; split; intros; reflexivity.
+  Qed.
+
+  (* Erasing a component leaves every other field reading the same.  This is
+     the whole content of the pass, and it is shared by the write case and by
+     the initializer: both sides are interpreted in the SAME store here, so no
+     expression lemma is involved. *)
+  Lemma proj_field_erase_record : forall f (store env : locals) e t,
+      t <> f ->
+      proj_field t (interp_expr store env (erase_record_field f e))
+      = proj_field t (interp_expr store env e).
+  Proof.
+    intros f store env e t H_t.
+    destruct e; cbn [erase_record_field]; try reflexivity.
+    destruct (NoDup_comp String.eqb (List.map fst l)) eqn:E_nd; [ | reflexivity ].
+    apply NoDup_comp_true_iff in E_nd.
+    cbn [interp_expr proj_field].
+    apply record_proj_access.
+    assert (E_fst : List.map fst
+                      (List.map (fun '(s, e) => (s, interp_expr store env e)) l)
+                    = List.map fst l)
+      by (rewrite map_map; apply map_ext; intros [ ? ? ]; reflexivity).
+    rewrite map_rm_field by (intros [ ? ? ]; reflexivity).
+    rewrite access_record_record_sort
+      by (apply rm_field_NoDup; rewrite E_fst; exact E_nd).
+    rewrite access_record_rm_field by exact H_t.
+    symmetry. apply access_record_record_sort.
+    rewrite E_fst; exact E_nd.
+  Qed.
+
   (* Rewriting with the expression lemma has to be given its instance: the
      pattern interp_expr ?store ?env ?e matches the unprimed occurrence too,
      and rewriting that one first leaves an unsatisfiable side condition. *)
@@ -532,13 +571,6 @@ Section WithMap.
         H : expr_reads_no_field ?tbl ?f ?e = true |- _ =>
         rewrite (erase_preserve_sem_expr tbl f st st' H_er e H)
     end.
-
-  Lemma record_proj_access : forall (X Y : list (string * value)) t,
-      access_record X t = access_record Y t ->
-      record_proj t X = record_proj t Y.
-  Proof.
-    unfold record_proj; intros * H; rewrite H; reflexivity.
-  Qed.
 
   Lemma erased_at_fold_left : forall tbl f (F F' : locals -> value -> locals) l,
       (forall s s' v, erased_at tbl f s s' -> erased_at tbl f (F s v) (F' s' v)) ->
@@ -595,42 +627,11 @@ Section WithMap.
             rw_expr.
             apply erased_at_put; assumption. }
         apply String.eqb_eq in E_x; subst x.
-        (* the table itself.  Unless the write is a record literal with
-           distinct field names, nothing was removed and both sides store the
-           same value. *)
-        destruct e; cbn [erase_record_field] in H_rd |- *;
-          try (rw_expr; apply erased_at_put_tbl; [ assumption | reflexivity ]).
-        destruct (NoDup_comp String.eqb (List.map fst l)) eqn:E_nd.
-        2:{ rw_expr. apply erased_at_put_tbl; [ assumption | reflexivity ]. }
-        (* the real case: one component is gone, and every other field still
-           reads the same *)
-        apply NoDup_comp_true_iff in E_nd.
+        (* the table itself: move to the common store with the expression
+           lemma, then the field agreement is the shared lemma above *)
+        rw_expr.
         apply erased_at_put_tbl; [ exact H_er | ].
-        intros t H_t; cbn [interp_expr proj_field].
-        apply record_proj_access.
-        (* the surviving components agree, since each of them passed the
-           check *)
-        assert (E_map : List.map (fun '(s, e) => (s, interp_expr store' env e))
-                          (rm_field f l)
-                        = List.map (fun '(s, e) => (s, interp_expr store env e))
-                            (rm_field f l)).
-        1:{ apply map_ext_in; intros [ s0 e0 ] H_in; cbn.
-            f_equal.
-            cbn [expr_reads_no_field] in H_rd; rewrite forallb_forall in H_rd.
-            eapply erase_preserve_sem_expr;
-              [ exact H_er | apply (H_rd (s0, e0) H_in) ]. }
-        rewrite E_map.
-        (* and removing a component commutes with the interpreter's own map *)
-        rewrite map_rm_field by (intros [ ? ? ]; reflexivity).
-        assert (E_fst : List.map fst (List.map
-                   (fun '(s, e) => (s, interp_expr store env e)) l)
-                 = List.map fst l).
-        1:{ rewrite map_map. apply map_ext; intros [ ? ? ]; reflexivity. }
-        rewrite access_record_record_sort
-          by (apply rm_field_NoDup; rewrite E_fst; exact E_nd).
-        rewrite access_record_rm_field by exact H_t.
-        symmetry. apply access_record_record_sort.
-        rewrite E_fst; exact E_nd. }
+        intros t H_t; apply proj_field_erase_record; exact H_t. }
     (* CIf *)
     1:{ repeat rewrite Bool.andb_true_iff in H_rd.
         destruct H_rd as [ [ H1 H2 ] H3 ].
@@ -644,6 +645,36 @@ Section WithMap.
         case_match; try exact H_er.
         apply erased_at_fold_left; [ | exact H_er ].
         intros s s' v H_s. apply IHc; assumption. }
+  Qed.
+
+
+  (* ----------------------------------------------------------------
+     The letmut, where the simulation becomes an equality.
+
+     The table is let-bound, so at the end of the binding its entry is
+     restored to whatever the ENCLOSING store held -- the same value in both
+     runs.  The simulation gives agreement away from the table, and that is
+     exactly what stores_eq_except__update_eq needs.  So the field's absence
+     is unobservable not because the two runs agree at the table, but because
+     the table does not outlive the binding.
+     ---------------------------------------------------------------- *)
+  Lemma erase_letmut_preserve_sem : forall tbl f e c0 (store env : locals),
+      command_reads_no_field tbl f (erase_body tbl f c0) = true ->
+      interp_command store env
+        (CLetMut (erase_record_field f e) tbl (erase_body tbl f c0))
+      = interp_command store env (CLetMut e tbl c0).
+  Proof.
+    intros * H_rd; cbn [interp_command].
+    apply stores_eq_except__update_eq; intros x H_x; symmetry.
+    apply (proj2 (erase_preserve_sem_cmd tbl f c0 H_rd
+                    (map.put store tbl (interp_expr store env e))
+                    (map.put store tbl
+                       (interp_expr store env (erase_record_field f e)))
+                    env
+                    (erased_at_put_tbl tbl f store store _ _
+                       (erased_at_refl tbl f store)
+                       (fun t H_t => proj_field_erase_record f store env e t H_t)))).
+    exact H_x.
   Qed.
 
 End WithMap.
