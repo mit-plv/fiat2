@@ -712,7 +712,12 @@ Section WithConcreteMaps.
      the rule emits the test instead: long enough, probe; shorter than a
      trigram, scan.  The fallback is the source query, unchanged -- the
      length condition is a soundness obligation of probe_recheck_eq, not a
-     heuristic, so it cannot be dropped. *)
+     heuristic, so it cannot be dropped.
+
+     This is the one example here whose list survives, and the reason is a
+     READ the index rules could not take: the fallback branch scans.  Nothing
+     about guards or maintenance is involved -- the delete, which used to
+     survive for a guard, no longer does. *)
   Lemma sguarded_splits : exists inst grd,
       soptimized (EVar "p") [DUnique "id"]
       = CLetMut inst "users"
