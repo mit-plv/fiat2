@@ -224,6 +224,49 @@ Definition erase_dead_field (f : string) {tenv : map.map string type}
   | _ => c
   end.
 
+(* ----------------------------------------------------------------
+   Reading a field through record_sort.
+
+   The interpreter sorts a record literal's fields, so every value-level
+   argument has to cross that sort.  With distinct field names a lookup does
+   not notice it; with duplicates it would, which is the one place this pass
+   needs the assigned record to be well typed.
+   ---------------------------------------------------------------- *)
+
+Lemma access_record_not_In : forall A (l : list (string * A)) s,
+    ~ In s (List.map fst l) -> access_record l s = access_record nil s.
+Proof.
+  induction l as [| [ s0 a ] l IH ]; cbn; intros s H_nin; [ reflexivity | ].
+  destruct (String.eqb s s0) eqn:E;
+    [ apply String.eqb_eq in E; subst; exfalso; apply H_nin; left; reflexivity | ].
+  apply IH; intro H_in; apply H_nin; right; exact H_in.
+Qed.
+
+Lemma access_record_record_sort : forall A (l : list (string * A)) t,
+    NoDup (List.map fst l) ->
+    access_record (record_sort l) t = access_record l t.
+Proof.
+  intros * H_nd.
+  destruct (in_dec String.string_dec t (List.map fst l)) as [ H_in | H_nin ].
+  - symmetry.
+    apply NoDup_Permutation_access_record; auto using Permuted_record_sort.
+  - rewrite (access_record_not_In _ l t H_nin).
+    apply access_record_not_In.
+    intro H_in; apply H_nin.
+    eapply Permutation_in; [ | exact H_in ].
+    apply Permutation_sym, Permutation_map, Permuted_record_sort.
+Qed.
+
+(* map over a record's values leaves its field names alone, so removing a
+   field commutes with it *)
+Lemma map_rm_field : forall A B f (g : (string * A) -> (string * B)) l,
+    (forall p, fst (g p) = fst p) ->
+    List.map g (rm_field f l) = rm_field f (List.map g l).
+Proof.
+  unfold rm_field; induction l as [| p l IH ]; cbn; intros H_fst; [ reflexivity | ].
+  rewrite H_fst. destruct (String.eqb (fst p) f); cbn; rewrite IH; auto.
+Qed.
+
 Section WithMap.
   Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
   Notation value := (value (width:=width)).

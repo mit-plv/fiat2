@@ -92,36 +92,9 @@ Section compo_idx.
         cbn; apply idx_ty_wf; auto. }
   Qed.
 
-  Lemma NoDup_In_access_record : forall A (l : list (string * A)),
-      NoDup (List.map fst l) ->
-      forall s v, In (s, v) l ->
-                  access_record l s = Success v.
-  Proof.
-    intros * ? ? ? H_in; induction l; cbn in *.
-    1: intuition fail.
-    do 2 case_match; rewrite ?eqb_eq, ?eqb_neq in *; invert_NoDup.
-    1:{ subst. intuition idtac; try congruence.
-        apply in_map with (f:=fst) in H0;
-          cbn in *; intuition idtac. }
-    1:{ intuition idtac. congruence. }
-  Qed.
-
-  Lemma NoDup_Permutation_access_record : forall s A (l l' : list (string * A)),
-      NoDup (List.map fst l) ->
-      In s (List.map fst l) ->
-      Permutation l l' ->
-      access_record l s = access_record l' s.
-  Proof.
-    intros * H_NoDup H_in H_permu.
-    apply In_access_record in H_in. destruct_exists.
-    rewrite_l_to_r.
-    apply access_record_sound in H.
-    symmetry. apply NoDup_In_access_record.
-    1:{ eapply Permutation_NoDup.
-        1: apply Permutation_map; eauto.
-        assumption. }
-    1:{ eapply Permutation_in; eauto. }
-  Qed.
+  (* NoDup_In_access_record and NoDup_Permutation_access_record moved to
+     Utils.v: they are facts about access_record and Permutation with
+     nothing to do with an index, and the dead-field pass needs them too. *)
 
   Lemma to_compo_idx_wf : forall (v : value) (t : type),
       type_wf t -> compo_is_tbl_ty t = true ->
