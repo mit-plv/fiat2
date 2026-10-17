@@ -483,6 +483,23 @@ Section WithWord.
     1: intros [? ?]; constructor; auto.
   Qed.
 
+  (* A write that only removes rows needs no check at all: a predicate on one
+     row is still a predicate on one row when the others are gone.  This is
+     the delete-side counterpart of row_constr_holds_cons. *)
+  Corollary row_constr_holds_filter : forall row_ty k g l,
+      type_wf row_ty -> c_row k <> c_all ->
+      row_constr_wf row_ty k ->
+      Forall (fun r => type_of_value r row_ty) l ->
+      constr_holds k (VList l) ->
+      constr_holds k (VList (filter g l)).
+  Proof.
+    intros * H_wf H_ne H_k H_l H_holds.
+    apply (proj2 (row_constr_holds_iff row_ty k (filter g l) H_wf H_ne H_k
+                    (Forall_filter _ _ g l H_l))).
+    apply Forall_filter.
+    exact (proj1 (row_constr_holds_iff row_ty k l H_wf H_ne H_k H_l) H_holds).
+  Qed.
+
   (* A boolean value is one of the two booleans. *)
   Lemma type_of_value_TBool : forall (v : value),
       type_of_value v TBool -> v = VBool true \/ v = VBool false.
@@ -1209,6 +1226,23 @@ Section WithWord.
     1:{ intros H_F. apply (proj2 (Forall_forall _ l)); intros r H_rin.
         apply (proj2 (unique_tbl_sat_iff attr rt l r)).
         exact (proj1 (Forall_forall _ l) H_F r H_rin). }
+  Qed.
+
+  (* Removing rows cannot break a key: dropping entries from a list whose keys
+     are distinct leaves them distinct.  So the guard for a row-removing write
+     is free here too, as it is for a row predicate. *)
+  Corollary unique_constr_holds_filter : forall attr rt kt g l,
+      type_wf (TRecord rt) ->
+      access_record rt attr = Success kt ->
+      Forall (fun r => type_of_value r (TRecord rt)) l ->
+      constr_holds (unique_constr attr (TRecord rt)) (VList l) ->
+      constr_holds (unique_constr attr (TRecord rt)) (VList (filter g l)).
+  Proof.
+    intros * H_wf H_attr H_l H_holds.
+    apply (proj2 (unique_constr_holds_iff attr rt kt (filter g l) H_wf H_attr
+                    (Forall_filter _ _ g l H_l))).
+    apply NoDup_map_filter.
+    exact (proj1 (unique_constr_holds_iff attr rt kt l H_wf H_attr H_l) H_holds).
   Qed.
 
   Lemma unique_constr_wf : forall attr rt kt,

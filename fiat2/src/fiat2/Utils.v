@@ -626,6 +626,31 @@ Proof.
   erewrite IHl; eauto. intuition auto with *.
 Qed.
 
+Lemma Forall_filter : forall A (P : A -> Prop) (g : A -> bool) (l : list A),
+    Forall P l -> Forall P (filter g l).
+Proof.
+  intros * H. rewrite Forall_forall in H |- *; intros x H_x.
+  apply filter_In in H_x as [ H_x _ ]; auto.
+Qed.
+
+(* Dropping elements cannot create a duplicate key.  Stdlib has NoDup_filter,
+   which is the unmapped case. *)
+Lemma NoDup_map_filter : forall A B (f : A -> B) (g : A -> bool) (l : list A),
+    NoDup (List.map f l) -> NoDup (List.map f (filter g l)).
+Proof.
+  induction l as [ | a l IH ]; cbn [List.map filter]; intros H_nd.
+  1: constructor.
+  inversion H_nd as [ | ? ? H_ni H_rest ]; subst.
+  destruct (g a); cbn [List.map].
+  - constructor.
+    + intros H_in. apply H_ni.
+      apply in_map_iff in H_in as [ x [ E_x H_x ] ].
+      apply filter_In in H_x as [ H_x _ ].
+      apply in_map_iff; eauto.
+    + apply IH; assumption.
+  - apply IH; assumption.
+Qed.
+
 Lemma Forall_false__filter : forall A f (l : list A), Forall (fun x => f x = false) l -> filter f l = nil.
 Proof.
   intros * H; induction l; simpl; auto. simpl in H.
