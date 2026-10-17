@@ -62,9 +62,18 @@ Section WithField.
   Definition rm_field {A} (l : list (string * A)) : list (string * A) :=
     filter (fun p => negb (String.eqb (fst p) f)) l.
 
+  (* The NoDup guard is what lets everything below stay free of typing.
+     Crossing the sort the interpreter applies to a record literal is only
+     invisible when the field names are distinct, and a well-typed record
+     literal always is (TyERecord's fourth premise), so the guard costs no
+     applicability.  Where it fails the component is kept, the erased program
+     still reads the field, and the check below then declines to erase. *)
   Definition erase_record_field (e : expr) : expr :=
     match e with
-    | ERecord l => ERecord (rm_field l)
+    | ERecord l =>
+        if NoDup_comp String.eqb (List.map fst l)
+        then ERecord (rm_field l)
+        else e
     | _ => e
     end.
 
@@ -511,6 +520,130 @@ Section WithMap.
         (* once more, for the option the match scrutinises *)
         case_match; try reflexivity.
         apply_IH. }
+  Qed.
+
+
+  (* Rewriting with the expression lemma has to be given its instance: the
+     pattern interp_expr ?store ?env ?e matches the unprimed occurrence too,
+     and rewriting that one first leaves an unsatisfiable side condition. *)
+  Local Ltac rw_expr :=
+    match goal with
+    | H_er : erased_at ?tbl ?f ?st ?st',
+        H : expr_reads_no_field ?tbl ?f ?e = true |- _ =>
+        rewrite (erase_preserve_sem_expr tbl f st st' H_er e H)
+    end.
+
+  Lemma record_proj_access : forall (X Y : list (string * value)) t,
+      access_record X t = access_record Y t ->
+      record_proj t X = record_proj t Y.
+  Proof.
+    unfold record_proj; intros * H; rewrite H; reflexivity.
+  Qed.
+
+  Lemma erased_at_fold_left : forall tbl f (F F' : locals -> value -> locals) l,
+      (forall s s' v, erased_at tbl f s s' -> erased_at tbl f (F s v) (F' s' v)) ->
+      forall (store store' : locals),
+        erased_at tbl f store store' ->
+        erased_at tbl f (fold_left F l store) (fold_left F' l store').
+  Proof.
+    intros * H_step; induction l as [| v l IH ]; cbn; intros store store' H_er;
+      [ exact H_er | ].
+    apply IH, H_step; exact H_er.
+  Qed.
+
+  (* ----------------------------------------------------------------
+     Commands: the relation in, the relation out.
+
+     This cannot be an equality -- inside the body the two stores really do
+     differ at the table, one record carrying the field and the other not.
+     The most that holds is that the difference stays confined to that field,
+     which is what erased_at says.  Equality comes back only at the letmut,
+     below.
+     ---------------------------------------------------------------- *)
+  Lemma erase_preserve_sem_cmd : forall tbl f c,
+      command_reads_no_field tbl f (erase_body tbl f c) = true ->
+      forall (store store' env : locals),
+        erased_at tbl f store store' ->
+        erased_at tbl f (interp_command store env c)
+                        (interp_command store' env (erase_body tbl f c)).
+  Proof.
+    intros tbl f c; induction c; intros H_rd store store' env H_er;
+      cbn [erase_body] in H_rd |- *; cbn [command_reads_no_field] in H_rd;
+      cbn [interp_command].
+    (* CSkip *)
+    1: exact H_er.
+    (* CSeq *)
+    1:{ rewrite Bool.andb_true_iff in H_rd; destruct H_rd as [ H1 H2 ].
+        apply IHc2; [ exact H2 | apply IHc1; [ exact H1 | exact H_er ] ]. }
+    (* CLet: the bound value is the same on both sides *)
+    1:{ rewrite Bool.andb_true_iff in H_rd; destruct H_rd as [ H1 H2 ].
+        rw_expr.
+        apply IHc; [ exact H2 | exact H_er ]. }
+    (* CLetMut: the check refuses a binder that shadows the table, so the
+       body really was erased, and the restored value is the same *)
+    1:{ repeat rewrite Bool.andb_true_iff in H_rd.
+        destruct H_rd as [ [ H_ne H1 ] H2 ].
+        apply Bool.negb_true_iff, String.eqb_neq in H_ne.
+        rewrite (proj2 (String.eqb_neq _ _) H_ne) in H2 |- *.
+        rw_expr.
+        apply erased_at_update; [ exact H_er | ].
+        apply IHc; [ exact H2 | apply erased_at_put; assumption ]. }
+    (* CAssign *)
+    1:{ destruct (String.eqb x tbl) eqn:E_x.
+        2:{ (* some other variable: the same value goes into both *)
+            apply String.eqb_neq in E_x.
+            rw_expr.
+            apply erased_at_put; assumption. }
+        apply String.eqb_eq in E_x; subst x.
+        (* the table itself.  Unless the write is a record literal with
+           distinct field names, nothing was removed and both sides store the
+           same value. *)
+        destruct e; cbn [erase_record_field] in H_rd |- *;
+          try (rw_expr; apply erased_at_put_tbl; [ assumption | reflexivity ]).
+        destruct (NoDup_comp String.eqb (List.map fst l)) eqn:E_nd.
+        2:{ rw_expr. apply erased_at_put_tbl; [ assumption | reflexivity ]. }
+        (* the real case: one component is gone, and every other field still
+           reads the same *)
+        apply NoDup_comp_true_iff in E_nd.
+        apply erased_at_put_tbl; [ exact H_er | ].
+        intros t H_t; cbn [interp_expr proj_field].
+        apply record_proj_access.
+        (* the surviving components agree, since each of them passed the
+           check *)
+        assert (E_map : List.map (fun '(s, e) => (s, interp_expr store' env e))
+                          (rm_field f l)
+                        = List.map (fun '(s, e) => (s, interp_expr store env e))
+                            (rm_field f l)).
+        1:{ apply map_ext_in; intros [ s0 e0 ] H_in; cbn.
+            f_equal.
+            cbn [expr_reads_no_field] in H_rd; rewrite forallb_forall in H_rd.
+            eapply erase_preserve_sem_expr;
+              [ exact H_er | apply (H_rd (s0, e0) H_in) ]. }
+        rewrite E_map.
+        (* and removing a component commutes with the interpreter's own map *)
+        rewrite map_rm_field by (intros [ ? ? ]; reflexivity).
+        assert (E_fst : List.map fst (List.map
+                   (fun '(s, e) => (s, interp_expr store env e)) l)
+                 = List.map fst l).
+        1:{ rewrite map_map. apply map_ext; intros [ ? ? ]; reflexivity. }
+        rewrite access_record_record_sort
+          by (apply rm_field_NoDup; rewrite E_fst; exact E_nd).
+        rewrite access_record_rm_field by exact H_t.
+        symmetry. apply access_record_record_sort.
+        rewrite E_fst; exact E_nd. }
+    (* CIf *)
+    1:{ repeat rewrite Bool.andb_true_iff in H_rd.
+        destruct H_rd as [ [ H1 H2 ] H3 ].
+        rw_expr.
+        (* every value shape but VBool leaves the store alone *)
+        case_match; try exact H_er.
+        destruct b; [ apply IHc1 | apply IHc2 ]; assumption. }
+    (* CForeach *)
+    1:{ rewrite Bool.andb_true_iff in H_rd; destruct H_rd as [ H1 H2 ].
+        rw_expr.
+        case_match; try exact H_er.
+        apply erased_at_fold_left; [ | exact H_er ].
+        intros s s' v H_s. apply IHc; assumption. }
   Qed.
 
 End WithMap.
