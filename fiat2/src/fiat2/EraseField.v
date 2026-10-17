@@ -26,6 +26,31 @@ Open Scope string_scope.
    declaration: it is a plain dead-store elimination that happens to be
    enabled by the index rules having done their work. *)
 
+(* ----------------------------------------------------------------
+   Two facts about filter that Stdlib does not have (it has NoDup_filter
+   and filter_map_swap, which the record-level lemmas below use directly).
+   ---------------------------------------------------------------- *)
+
+Lemma StronglySorted_filter : forall A (R : A -> A -> Prop) (p : A -> bool) (l : list A),
+    StronglySorted R l -> StronglySorted R (filter p l).
+Proof.
+  induction l as [| a l IH]; cbn; intros H_ss; [ assumption | ].
+  apply StronglySorted_inv in H_ss as [ H_ss H_fa ].
+  destruct (p a); [ | apply IH; assumption ].
+  constructor; [ apply IH; assumption | ].
+  rewrite Forall_forall in *; intros x H_in.
+  apply filter_In in H_in as [ H_in _ ]; apply H_fa; assumption.
+Qed.
+
+Lemma Permutation_filter : forall A (p : A -> bool) (l l' : list A),
+    Permutation l l' -> Permutation (filter p l) (filter p l').
+Proof.
+  intros A p l l' H_perm; induction H_perm; cbn; auto.
+  - destruct (p x); auto.
+  - destruct (p x), (p y); auto using perm_swap.
+  - eapply perm_trans; eassumption.
+Qed.
+
 Section WithField.
   (* the table's variable, and the field to remove from the record it holds *)
   Context (tbl f : string).
@@ -119,6 +144,70 @@ Section WithField.
     end.
 
 End WithField.
+
+(* record_entry_leb is bool-valued, as everywhere else in the development *)
+Local Coercion is_true : bool >-> Sortclass.
+
+(* ----------------------------------------------------------------
+   What removing one field does to a record's invariants.  Every one of
+   these is needed because the table's type loses an entry, and TRecord
+   carries NoDup, sortedness and well-formedness of its field types.
+   ---------------------------------------------------------------- *)
+
+Lemma rm_field_NoDup : forall A f (l : list (string * A)),
+    NoDup (List.map fst l) -> NoDup (List.map fst (rm_field f l)).
+Proof.
+  unfold rm_field; intros * H.
+  (* the instance has to be given: matching filter_map_swap's right-hand
+     side would ask Coq to invent the predicate under the composition *)
+  rewrite <- (filter_map_swap (fun s => negb (String.eqb s f)) fst l).
+  apply NoDup_filter; assumption.
+Qed.
+
+Lemma rm_field_SSorted : forall A f (l : list (string * A)),
+    StronglySorted record_entry_leb l ->
+    StronglySorted record_entry_leb (rm_field f l).
+Proof.
+  unfold rm_field; intros; apply StronglySorted_filter; assumption.
+Qed.
+
+Lemma Forall_snd_rm_field : forall A (P : A -> Prop) f (l : list (string * A)),
+    Forall P (List.map snd l) -> Forall P (List.map snd (rm_field f l)).
+Proof.
+  unfold rm_field; intros * H.
+  rewrite Forall_forall in *; intros x H_in.
+  apply in_map_iff in H_in as [ q [ E_q H_in ] ].
+  apply filter_In in H_in as [ H_in _ ].
+  apply H, in_map_iff; exists q; auto.
+Qed.
+
+Lemma Permutation_rm_field : forall A f (l l' : list (string * A)),
+    Permutation l l' -> Permutation (rm_field f l) (rm_field f l').
+Proof.
+  unfold rm_field; intros; apply Permutation_filter; assumption.
+Qed.
+
+(* The one that makes the whole pass work: every other field is still
+   reachable, and at the same type. *)
+Lemma access_record_rm_field : forall A f t (l : list (string * A)),
+    t <> f -> access_record (rm_field f l) t = access_record l t.
+Proof.
+  induction l as [| [ s a ] l IH ]; cbn; intros H_ne; [ reflexivity | ].
+  destruct (String.eqb s f) eqn:E_sf; cbn.
+  - apply String.eqb_eq in E_sf; subst s.
+    destruct (String.eqb t f) eqn:E_tf;
+      [ apply String.eqb_eq in E_tf; congruence | apply IH; assumption ].
+  - destruct (String.eqb t s); [ reflexivity | apply IH; assumption ].
+Qed.
+
+Lemma type_wf_rm_field : forall f tl,
+    type_wf (TRecord tl) -> type_wf (TRecord (rm_field f tl)).
+Proof.
+  intros * H; inversion H; subst.
+  constructor;
+    [ apply rm_field_NoDup | apply rm_field_SSorted | apply Forall_snd_rm_field ];
+    assumption.
+Qed.
 
 (* ----------------------------------------------------------------
    Step 3: the pass.  Identity unless the erased body reads nothing.
