@@ -815,18 +815,17 @@ Section WithConcreteMaps.
                         (EBinop OSetInsert (EAtom (AEmptySet None))
                            (EAccess (EVar "tup") "id")))))))).
 
-  (* The write recomputes NEITHER member: the trigram dictionary reads the
-     stored one and takes one row's keys out of it, and the primary-key
-     dictionary loses exactly the entry the filter named.  Only the list at
-     id_tag is still traversed, which is the table itself. *)
+  (* The write recomputes NEITHER member, and there is no list left to
+     traverse: the trigram dictionary reads the stored one and takes one row's
+     keys out of it, and the primary-key dictionary loses exactly the entry the
+     filter named.  The table IS its two indexes. *)
   Lemma dtri_delete_is_incremental : exists inst grd,
       doptimized [DUnique "id"]
       = CLetMut inst "users"
           (CIf grd
              (CAssign "users"
                 (ERecord
-                   [("id_tag", dfiltered (EAccess (ELoc "users") "id_tag"));
-                    ("aux_tag",
+                   [("aux_tag",
                       ERecord
                         [("0",
                           dremove (EAccess (EAccess (ELoc "users") "aux_tag") "0"));
@@ -838,45 +837,37 @@ Section WithConcreteMaps.
   Proof. do 2 eexists; reflexivity. Qed.
 
   (* ---------------------------------------------------------------------
-     And the one place the list is NOT erased, with the reason.
+     A keyed delete, start to finish.
 
-     Every other example here loses its list field: the index rules take every
-     read, and the erasure pass collects what they leave.  This one keeps it,
-     and the reason is the WRITE GUARD rather than anything about maintenance.
+     The list is gone and the guard is free, and the two are the same fact.
+     A guard is what reads the table at a write, so a guard that scans keeps
+     the list alive no matter what the index rules do to the reads.  This one
+     does not scan because elab never emitted a scan: classify_write sees a
+     write that only removes rows, and neither a key nor a row predicate can
+     be broken by removing rows, so decl_guard emits no test at all.
 
-     elab emits the cheap one-probe guard only for a write that CONSES a row
-     (Surface.recognized_write); a filter-shaped write falls back on the
-     general guard, which is the declared constraint read of the written
-     value -- a quadratic scan that reads the list twice.  So the list is
-     genuinely live and the pass correctly declines.
-
-     The guard is also vacuous: dropping rows cannot break uniqueness, since
-     NoDup of the keys survives any filter.  So what stands between this
-     delete and an O(log n) one is a missing rule -- that a filter-shaped
-     write preserves a Forall-shaped constraint, collapsing its guard -- and
-     not anything about the index or the erasure.
+     Emitting the free guard rather than collapsing a scan later is what makes
+     this work.  At elaboration the write is still a filter over the table
+     itself; afterwards the index rules have redirected that read, so a late
+     rule would have to recognize one shape per installed index.  The
+     invariant the free guard needs -- that the declaration holds of the
+     table now -- is also already a premise of decl_guard_sound, where a late
+     rule would have to re-derive it.
      --------------------------------------------------------------------- *)
-  Lemma ddelete_keeps_the_list : exists inst grd rest,
+  Lemma ddelete_drops_the_list : exists inst grd rest,
       doptimized [DUnique "id"]
       = CLetMut inst "users"
-          (CIf grd
-             (CAssign "users"
-                (ERecord
-                   [("id_tag", dfiltered (EAccess (ELoc "users") "id_tag"));
-                    ("aux_tag", rest)]))
-             CSkip).
+          (CIf grd (CAssign "users" (ERecord [("aux_tag", rest)])) CSkip).
   Proof. do 3 eexists; reflexivity. Qed.
 
-  (* The guard really is the general one, scanning the list it keeps alive. *)
-  Lemma ddelete_guard_scans : exists inst thn rest,
+  (* No fold, no probe, nothing: the only guard left is the conjunction's
+     unit.  Folding that away is constant folding, not constraint reasoning. *)
+  Lemma ddelete_guard_is_free : exists inst thn,
       doptimized [DUnique "id"]
       = CLetMut inst "users"
-          (CIf (EBinop OAnd
-                  (EFold (dfiltered (EAccess (ELoc "users") "id_tag"))
-                     (EAtom (ABool true)) "_r" "_all" rest)
-                  (EAtom (ABool true)))
+          (CIf (EBinop OAnd (EAtom (ABool true)) (EAtom (ABool true)))
              thn CSkip).
-  Proof. do 3 eexists; reflexivity. Qed.
+  Proof. do 2 eexists; reflexivity. Qed.
 
   Lemma dGenv0_wf : tenv_wf dGenv0.
   Proof.
