@@ -152,6 +152,32 @@ Section WithField.
     | CForeach e _ c => (expr_reads_no_field e && command_reads_no_field c)%bool
     end.
 
+  (* ----------------------------------------------------------------
+     What type preservation needs beyond the reads.
+
+     The table's type loses a field, so every WRITE to the table must lose
+     one too.  A write that is not an erasable record literal would keep the
+     field and no longer match the table's shortened type, so the pass
+     refuses it.  Every write the index installation and its maintenance
+     rules produce is such a literal, so nothing is lost in practice.
+     ---------------------------------------------------------------- *)
+  Fixpoint writes_erasable (c : command) : bool :=
+    match c with
+    | CSkip => true
+    | CSeq c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
+    | CLet _ _ c => writes_erasable c
+    | CLetMut _ x c => if String.eqb x tbl then true else writes_erasable c
+    | CAssign x e =>
+        if String.eqb x tbl
+        then match e with
+             | ERecord l => NoDup_comp String.eqb (List.map fst l)
+             | _ => false
+             end
+        else true
+    | CIf _ c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
+    | CForeach _ _ c => writes_erasable c
+    end.
+
 End WithField.
 
 (* record_entry_leb is bool-valued, as everywhere else in the development *)
@@ -207,6 +233,24 @@ Proof.
     destruct (String.eqb t f) eqn:E_tf;
       [ apply String.eqb_eq in E_tf; congruence | apply IH; assumption ].
   - destruct (String.eqb t s); [ reflexivity | apply IH; assumption ].
+Qed.
+
+(* Both field lists lose the same positions, since the names agree and the
+   predicate looks only at names. *)
+Lemma Forall2_rm_field : forall A B (P : A -> B -> Prop) f
+    (l : list (string * A)) (l' : list (string * B)),
+    List.map fst l = List.map fst l' ->
+    Forall2 P (List.map snd l) (List.map snd l') ->
+    Forall2 P (List.map snd (rm_field f l)) (List.map snd (rm_field f l')).
+Proof.
+  unfold rm_field; induction l as [| [ s a ] l IH ]; cbn;
+    intros l' E_fst H_all2.
+  1: destruct l'; cbn in *; [ constructor | discriminate ].
+  destruct l' as [| [ s' b ] l' ]; cbn in *; [ discriminate | ].
+  injection E_fst as E_s E_fst; subst s'.
+  inversion H_all2 as [| a0 b0 la lb H_head H_tail ]; subst.
+  destruct (String.eqb s f); cbn; [ apply IH; assumption | ].
+  constructor; [ exact H_head | apply IH; assumption ].
 Qed.
 
 Lemma type_wf_rm_field : forall f tl,
@@ -794,6 +838,123 @@ Section WithMap.
         end.
         intros a H_a; apply in_map_iff in H_a as [ q [ E_q H_q ] ]; subst a.
         apply H_rd; exact H_q. }
+  Qed.
+
+
+  Lemma Forall2_impl_In' : forall A B (P P' : A -> B -> Prop) (Q : A -> Prop) la lb,
+      Forall2 P la lb ->
+      (forall a, In a la -> Q a) ->
+      (forall a b, Q a -> P a b -> P' a b) ->
+      Forall2 P' la lb.
+  Proof.
+    intros * H_all2; induction H_all2 as [| a b la lb H_head H_tail IH ];
+      intros H_Q H_imp; [ constructor | ].
+    constructor.
+    1: apply H_imp; [ apply H_Q; left; reflexivity | exact H_head ].
+    1: apply IH; [ intros a0 H_a0; apply H_Q; right; exact H_a0 | exact H_imp ].
+  Qed.
+
+  (* A record literal written to the table, retyped at the shortened type.
+     The same field-type list serves, minus the entry that went. *)
+  Lemma erase_record_ty : forall tbl f tl (Gstore : tenv) Genv l,
+      type_of (map.put Gstore tbl (TRecord tl)) Genv (ERecord l) (TRecord tl) ->
+      expr_reads_no_field tbl f (ERecord (rm_field f l)) = true ->
+      type_of (map.put Gstore tbl (TRecord (rm_field f tl))) Genv
+        (ERecord (rm_field f l)) (TRecord (rm_field f tl)).
+  Proof.
+    intros * H_ty H_rd.
+    inversion H_ty as [| | | | | | | | | | | | | | l0 tl0 tl1 E_fst H_all2 H_perm H_nd H_ss | | | | | | | ];
+      subst.
+    cbn [expr_reads_no_field] in H_rd; rewrite forallb_forall in H_rd.
+    econstructor.
+    (* the names of the surviving components still agree *)
+    1:{ unfold rm_field.
+        rewrite <- 2 (filter_map_swap (fun s => negb (String.eqb s f)) fst).
+        rewrite E_fst; reflexivity. }
+    (* each surviving component retypes *)
+    1:{ eapply Forall2_impl_In' with
+          (P := type_of (map.put Gstore tbl (TRecord tl)) Genv)
+          (Q := fun e => expr_reads_no_field tbl f e = true).
+        1: apply Forall2_rm_field; assumption.
+        1:{ intros a H_a; apply in_map_iff in H_a as [ q [ E_q H_q ] ]; subst a.
+            apply H_rd; exact H_q. }
+        1: intros a b H_q H_P; apply erase_preserve_ty_expr; assumption. }
+    1: apply Permutation_rm_field; assumption.
+    1: apply rm_field_NoDup; assumption.
+    1: apply rm_field_SSorted; assumption.
+  Qed.
+
+  (* ----------------------------------------------------------------
+     Commands, under the table's shortened type.
+     ---------------------------------------------------------------- *)
+  Lemma erase_preserve_ty_cmd : forall tbl f c tl (Gstore : tenv) Genv,
+      well_typed (map.put Gstore tbl (TRecord tl)) Genv c ->
+      command_reads_no_field tbl f (erase_body tbl f c) = true ->
+      writes_erasable tbl c = true ->
+      well_typed (map.put Gstore tbl (TRecord (rm_field f tl))) Genv
+        (erase_body tbl f c).
+  Proof.
+    intros tbl f c; induction c; intros tl Gstore Genv H_wt H_rd H_we;
+      cbn [erase_body] in H_rd |- *;
+      cbn [command_reads_no_field writes_erasable] in H_rd, H_we;
+      invert_well_typed.
+    (* CSkip *)
+    1: constructor.
+    (* CSeq *)
+    1:{ rewrite Bool.andb_true_iff in H_rd, H_we.
+        destruct H_rd as [ R1 R2 ]; destruct H_we as [ W1 W2 ].
+        constructor; [ apply IHc1 | apply IHc2 ]; eassumption. }
+    (* CLet *)
+    1:{ rewrite Bool.andb_true_iff in H_rd; destruct H_rd as [ R1 R2 ].
+        econstructor.
+        1: apply erase_preserve_ty_expr; eassumption.
+        1: apply IHc; eassumption. }
+    (* CLetMut: the check refuses a binder shadowing the table, so the two
+       puts commute and the body's induction hypothesis applies *)
+    1:{ repeat rewrite Bool.andb_true_iff in H_rd.
+        destruct H_rd as [ [ H_ne R1 ] R2 ].
+        apply Bool.negb_true_iff, String.eqb_neq in H_ne.
+        rewrite (proj2 (String.eqb_neq _ _) H_ne) in R2, H_we |- *.
+        econstructor; [ apply erase_preserve_ty_expr; eassumption | ].
+        (* the two puts commute, so the body's hypothesis can be read with
+           the binder folded into the store and the IH applies *)
+        rewrite (Properties.map.put_comm tbl x
+                   (TRecord (rm_field f tl)) t Gstore (not_eq_sym H_ne)).
+        apply IHc; [ | exact R2 | exact H_we ].
+        rewrite <- (Properties.map.put_comm tbl x
+                      (TRecord tl) t Gstore (not_eq_sym H_ne)).
+        eassumption. }
+    (* CAssign *)
+    1:{ destruct (String.eqb x tbl) eqn:E_x.
+        2:{ apply String.eqb_neq in E_x.
+            econstructor;
+              [ rewrite map.get_put_diff in * by congruence; eassumption
+              | apply erase_preserve_ty_expr; eassumption ]. }
+        apply String.eqb_eq in E_x; subst x.
+        rewrite map.get_put_same in *.
+        lazymatch goal with
+        | H : Some (TRecord tl) = Some ?t0 |- _ =>
+            injection H as H; subst t0
+        end.
+        (* the check says the write is an erasable record literal *)
+        destruct e; cbn [writes_erasable] in H_we; try discriminate.
+        cbn [erase_record_field] in H_rd |- *.
+        rewrite H_we in H_rd |- *.
+        econstructor; [ apply map.get_put_same | ].
+        apply erase_record_ty; eassumption. }
+    (* CIf *)
+    1:{ repeat rewrite Bool.andb_true_iff in H_rd.
+        rewrite Bool.andb_true_iff in H_we.
+        destruct H_rd as [ [ R1 R2 ] R3 ]; destruct H_we as [ W1 W2 ].
+        constructor.
+        1: apply erase_preserve_ty_expr; eassumption.
+        1: apply IHc1; eassumption.
+        1: apply IHc2; eassumption. }
+    (* CForeach *)
+    1:{ rewrite Bool.andb_true_iff in H_rd; destruct H_rd as [ R1 R2 ].
+        econstructor.
+        1: apply erase_preserve_ty_expr; eassumption.
+        1: apply IHc; eassumption. }
   Qed.
 
 End WithMap.
