@@ -47,7 +47,14 @@ Variant index_choice :=
   | TrigramIdx (attr key : string)
   (* The table itself, as a bag or a set.  It answers no question of its own:
      it serves the coercion the collection push-down leaves on a read of the
-     table, and once it does, nothing reads the list. *)
+     table, and once it does, nothing reads the list.
+
+     Ask for it FIRST in a choice list.  Its pattern is the bare coercion of
+     the table's read, which every other index's read rule contains as a
+     subterm, so it must run last -- and the transfs of the choices are
+     concatenated in list order while the last to be listed is the first to
+     run.  Listed after a trigram index it takes the read that index's lookup
+     was going to match, and the query scans where it could have probed. *)
   | TableRep (ctag : collection_tag).
 
 Variant anno_command :=

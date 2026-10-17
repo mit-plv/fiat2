@@ -746,6 +746,101 @@ Section WithConcreteMaps.
 
   (* and the whole thing -- install, maintenance, and the guarded probe --
      is sound on the same premise as every other pipeline here *)
+  (* ====================================================================
+     The same program, with the table's set representation asked for too.
+
+     Nothing about the query changes: it is still a scan, because a pattern
+     of unknown length cannot be answered by trigrams.  What changes is what
+     it scans.  sguarded_splits above pays a coercion of the whole list on
+     every evaluation; here that coercion IS a member, so the fallback reads
+     it, and the list the coercion was reading is then dead.
+     ==================================================================== *)
+  Definition vanno (p : expr) (ds : list decl) : canno_command :=
+    CAC (("users", (prow_ty, ds)) :: cenv_rm "users" []) O
+      pbasics [TableRep LikeSet; TrigramIdx "name" "id"] [] (selaborated p ds).
+
+  Definition voptimized (p : expr) (ds : list decl) : command :=
+    apply_optimize_anno_constrained (width:=width) (vanno p ds) sGstore0 sGenv0.
+
+  Compute (voptimized (EVar "p") [DUnique "id"]).
+
+  (* the probe, through this record's tags: the set is "0", so the trigram
+     dictionary is "1" and the keys it points through are "2" *)
+  Definition vprobe (g p : expr) : expr :=
+    EFlatmap LikeSet
+      (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1") g)
+         (EAtom (AEmptySet None)) "b" (EVar "b"))
+      "k"
+      (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "2")
+                    (EVar "k"))
+         (EAtom (AEmptySet None)) "y"
+         (EIf (EBinop OStrContains (EAccess (EVar "y") "name") p)
+            (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
+            (EAtom (AEmptySet None)))).
+
+  (* the fallback: the same scan as sscan, over the SET member instead of a
+     coercion of the list *)
+  Definition vscan (p : expr) : expr :=
+    flatmap_filter_set (EAccess (EAccess (ELoc "users") "aux_tag") "0") "r"
+      (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
+      (Some prow_ty) (Some prow_ty).
+
+  (* Both branches of the split read index members, and the table is only its
+     indexes.  Compare sguarded_splits, where the fallback reads ESetOf of the
+     list and the list therefore stays. *)
+  Lemma vquery_reads_only_members : exists i0 i1 i2 grd,
+      voptimized (EVar "p") [DUnique "id"]
+      = CLetMut
+          (ERecord [("aux_tag", ERecord [("0", i0); ("1", i1); ("2", i2)])])
+          "users"
+          (CSeq grd
+             (CAssign "out"
+                (EIf (EBinop OLess (EAtom (AInt 2))
+                        (EUnop OLengthString (EVar "p")))
+                   (vprobe (ETernop OSubstring (EVar "p")
+                              (EAtom (AInt 0)) (EAtom (AInt 3)))
+                      (EVar "p"))
+                   (vscan (EVar "p"))))).
+  Proof. do 4 eexists; reflexivity. Qed.
+
+  (* And the member costs one insert to maintain.  No rule of its own was
+     written for this: the installation stored ESetOf of the extended table,
+     and push_down_collection turned that into an insert over ESetOf of the
+     old one, which the use rule then read off the record. *)
+  Lemma vset_member_is_incremental : exists i1 i2 w1 w2 grd out_e,
+      voptimized (EVar "p") [DUnique "id"]
+      = CLetMut
+          (ERecord [("aux_tag",
+                      ERecord [("0", ESetOf (EAtom (ANil (Some prow_ty))));
+                               ("1", i1); ("2", i2)])])
+          "users"
+          (CSeq
+             (CIf grd
+                (CAssign "users"
+                   (ERecord [("aux_tag",
+                               ERecord
+                                 [("0", EBinop OSetInsert
+                                          (EAccess (EAccess (ELoc "users") "aux_tag") "0")
+                                          (EVar "u"));
+                                  ("1", w1); ("2", w2)])]))
+                CSkip)
+             (CAssign "out" out_e)).
+  Proof. do 6 eexists; reflexivity. Qed.
+
+  Theorem voptimized_sound :
+    well_typed sGstore0 sGenv0 (selaborated (EVar "p") [DUnique "id"]) ->
+    well_typed sGstore0 sGenv0 (voptimized (EVar "p") [DUnique "id"]) /\
+      forall (store env : clocals),
+        locals_wf sGstore0 store -> locals_wf sGenv0 env ->
+        interp_command store env (voptimized (EVar "p") [DUnique "id"])
+        = interp_command store env (selaborated (EVar "p") [DUnique "id"]).
+  Proof.
+    intros H_wt. unfold voptimized, vanno, selaborated, sprog in *.
+    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+      [ apply sGstore0_wf | apply sGenv0_wf | apply prow_ty_wf
+      | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
+  Qed.
+
   Theorem soptimized_sound :
     well_typed sGstore0 sGenv0 (selaborated (EVar "p") [DUnique "id"]) ->
     well_typed sGstore0 sGenv0 (soptimized (EVar "p") [DUnique "id"]) /\
