@@ -254,14 +254,14 @@ Section WithIndexUse.
       (TrigramIndexImpl.tri_row_body attr key tup acc pos sacc bkt).
 
     Definition to_idx_at (d : expr) : expr :=
-      EFold d (EAtom (AEmptyDict None)) tup acc tri_row_body'.
+      EFold d (EAtom (AEmptyDict Unranged None)) tup acc tri_row_body'.
 
     (* to_idx_at spelled out, so that the rule can match it.  Every binder
        and attribute occurrence is a pattern variable, and the guard checks
        that they are the ones this index uses. *)
     Notation etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
       pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1 d :=
-      (EFold d (EAtom (AEmptyDict None)) tup0 acc0
+      (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
          (EFold (EBinop ORange (EAtom (AInt 0))
                    (EBinop OMinus
                       (EUnop OLengthString (EAccess (EVar tup1) attr0))
@@ -1195,6 +1195,11 @@ Section WithIndexUse.
         (* the accumulator's type, chased back to the index's own: the
            table's row type fixes the key's type, and the body's OInsert
            fixes the dictionary's *)
+        (* the empty-dictionary literal carries the kind, so inverting the
+           atom typings is what resolves the rebuilt dictionary's kind *)
+        repeat lazymatch goal with
+                 H: type_of_atom _ _ |- _ => inversion H; subst; clear H
+               end.
         rewrite E_tbl in H5; injection H5 as H5; subst tl5.
         rewrite E_id in H45; injection H45 as H45; subst t1.
         injection H0 as H0; subst tl0.
@@ -1295,6 +1300,12 @@ Section WithIndexUse.
         repeat match goal with
                | H : access_record _ key = Success ?t0 |- _ =>
                    is_var t0; rewrite E_key in H; injection H as H; subst t0
+               end.
+        (* the empty-dictionary literal names the kind, so inverting its
+           typing is what collapses the source's kind onto the index's *)
+        repeat match goal with
+               | H : type_of_atom (AEmptyDict _ _) _ |- _ =>
+                   inversion H; subst; clear H
                end.
         (* and now the emitted form, from the index's own typing lemmas *)
         eapply TyELet.

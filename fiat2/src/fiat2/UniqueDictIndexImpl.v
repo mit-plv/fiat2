@@ -57,7 +57,7 @@ Section WithHole.
     Context (H_ne : tup <> acc).
 
     Definition to_idx : expr :=
-      EFold (EVar hole) (EAtom (AEmptyDict None)) tup acc
+      EFold (EVar hole) (EAtom (AEmptyDict Unranged None)) tup acc
         (ETernop OInsert (EVar acc) (EAccess (EVar tup) attr) (EVar tup)).
 
     Definition is_tbl_ty (t : type) : bool :=
@@ -68,7 +68,9 @@ Section WithHole.
 
     Definition idx_ty (t : type) : type :=
       match t with
-      | TList (TRecord rt) => TDict (get_attr_type rt attr) (TRecord rt)
+      (* A primary-key dictionary answers point lookups only -- there is no
+         range rule anywhere for it -- so it demands no ordered structure. *)
+      | TList (TRecord rt) => TDict Unranged (get_attr_type rt attr) (TRecord rt)
       | _ => TUnit
       end.
 
@@ -380,7 +382,7 @@ Section WithHole.
 
       Lemma unique_guard_ty : forall rt kt idx_e y e (Gstore Genv : tenv),
           access_record rt attr = Success kt ->
-          type_of Gstore Genv idx_e (TDict kt (TRecord rt)) ->
+          type_of Gstore Genv idx_e (TDict Unranged kt (TRecord rt)) ->
           type_of Gstore Genv e (TRecord rt) ->
           type_of Gstore Genv (unique_guard idx_e y e) TBool.
       Proof.

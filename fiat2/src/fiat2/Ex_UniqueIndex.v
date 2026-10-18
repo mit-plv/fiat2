@@ -63,7 +63,7 @@ Section WithConcreteMaps.
   Proof. reflexivity. Qed.
 
   Definition demo_Gstore : ctenv :=
-    map.put (map.put map.empty "users" (TList row_ty)) "idx" (TDict TInt row_ty).
+    map.put (map.put map.empty "users" (TList row_ty)) "idx" (TDict Unranged TInt row_ty).
 
   Definition demo_Genv : ctenv := map.put map.empty "u" row_ty.
 
@@ -126,10 +126,10 @@ Section WithConcreteMaps.
 
   (* The index is well typed because to_idx is, which is the index
      interface's own obligation rather than anything about this table. *)
-  Lemma demo_idx_ty : type_of_value demo_idx (TDict TInt row_ty).
+  Lemma demo_idx_ty : type_of_value demo_idx (TDict Unranged TInt row_ty).
   Proof.
     unfold demo_idx.
-    replace (TDict TInt row_ty) with (idx_ty "id" (TList row_ty)) by reflexivity.
+    replace (TDict Unranged TInt row_ty) with (idx_ty "id" (TList row_ty)) by reflexivity.
     eapply type_sound.
     1: apply (to_idx_ty uhole "id" utup uacc utup_neq_uacc);
        [ constructor; apply row_ty_wf | reflexivity ].

@@ -12,8 +12,8 @@ Ltac invert_type_wf :=
   | H: type_wf (TBag ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TSet ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TOption ?t) |- _ => inversion H; clear H; subst
-  | H: type_wf (TDict ?t _) |- _ => inversion H; clear H; subst
-  | H: type_wf (TDict _ ?t) |- _ => inversion H; clear H; subst
+  | H: type_wf (TDict _ ?t _) |- _ => inversion H; clear H; subst
+  | H: type_wf (TDict _ _ ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TRecord ?tl) |- _ => inversion H; clear H; subst
   end.
 
@@ -37,12 +37,12 @@ Proof.
   intros. invert_type_wf; auto.
 Qed.
 
-Lemma invert_TDict_wf_l: forall kt vt, type_wf (TDict kt vt) -> type_wf kt.
+Lemma invert_TDict_wf_l: forall dk kt vt, type_wf (TDict dk kt vt) -> type_wf kt.
 Proof.
   intros. invert_type_wf; auto.
 Qed.
 
-Lemma invert_TDict_wf_r: forall kt vt, type_wf (TDict kt vt) -> type_wf vt.
+Lemma invert_TDict_wf_r: forall dk kt vt, type_wf (TDict dk kt vt) -> type_wf vt.
 Proof.
   intros. invert_type_wf; auto.
 Qed.

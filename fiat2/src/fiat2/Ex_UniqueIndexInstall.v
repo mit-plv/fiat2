@@ -118,7 +118,7 @@ Section WithConcreteMaps.
     unfold Gstore1, store0.
     apply locals_wf_step; [ apply locals_wf_empty | ].
     replace (aux_ty (idx := uidx) uid uaux (TList row_ty))
-      with (TRecord [(uaux, TDict TInt row_ty); (uid, TList row_ty)])
+      with (TRecord [(uaux, TDict Unranged TInt row_ty); (uid, TList row_ty)])
       by reflexivity.
     econstructor.
     1: unfold uid, uaux; repeat constructor; cbn; intuition congruence.

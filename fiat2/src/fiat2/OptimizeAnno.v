@@ -31,7 +31,16 @@ Variant index_choice :=
   | SumAgg (attr : string)
   | MinAgg (attr : string)
   | SetAgg (attr : string)
+  (* An attribute-to-rows dictionary that answers point lookups.  Its type
+     is Unranged, so a backend owes it no ordering and may use a hash table.
+     The range rule is handed out but cannot fire: ODictRange is the one
+     operator whose typing pins the kind. *)
   | DictIdx (attr : string)
+  (* The same dictionary, ordered.  Its type is Ranged, which is what lets
+     the range rule fire -- and what obliges a backend to provide a structure
+     that can answer a key range.  Ask for it only where a range query is
+     actually rewritten; of the examples here only Ex_Range needs it. *)
+  | RangedDictIdx (attr : string)
   (* A key-to-row dictionary, correct only where the key is declared.  It is
      an ordinary choice: the index itself is sound on any table, and its USE
      rule is the identity where the declarations are silent.  So a list of
@@ -138,18 +147,22 @@ Section WithConcreteMaps.
     Definition filter_to_min_guard_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_min_guard_head min_agg_attr "m").
 
     Context (dict_idx_attr : string).
+    (* Which structure this dictionary index asks a backend for.  The lookup,
+       use and maintenance rules below are written once and serve both kinds;
+       only the range rule needs Ranged, and mk_idx hands it out accordingly. *)
+    Context (dict_idx_dk : dict_kind).
 
-    Definition dict_idx_wf := (DictIndexImpl.idx_wf (width:=width) "hole" dict_idx_attr "tup" "acc" "x").
-    Instance cdict_idx : IndexInterface.index := (dict_idx "hole" dict_idx_attr "tup" "acc" "x").
+    Definition dict_idx_wf := (DictIndexImpl.idx_wf (width:=width) "hole" dict_idx_attr dict_idx_dk "tup" "acc" "x").
+    Instance cdict_idx : IndexInterface.index := (dict_idx "hole" dict_idx_attr dict_idx_dk "tup" "acc" "x").
     Instance cdict_idx_ok : IndexInterface.ok cdict_idx dict_idx_wf.
     apply dict_idx_ok. auto with transf_hints.
     Qed.
 
     Definition dict_lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
-    Definition dict_range_transf := fun tbl => fold_command_with_globals [tbl] (range_filter_to_dict_range_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
-    Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr "tup" "acc" "x" "y").
-    Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr "tup" "acc" "x").
-    Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr "id_tag" "aux_tag" tag tbl).
+    Definition dict_range_transf := fun tbl => fold_command_with_globals [tbl] (range_filter_to_dict_range_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag "b" tbl).
+    Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr dict_idx_dk "tup" "acc" "x" "y").
+    Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr dict_idx_dk "tup" "acc" "x").
+    Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag tbl).
 
     Context (set_agg_attr : string).
 
@@ -294,17 +307,30 @@ Section WithConcreteMaps.
            fun tbl => repeat_transf (Basics.compose (filter_to_set_diff_transf attr tbl)
                                        (cons_to_set_insert_transf attr tbl)) reps],
           S cur_tag)
+    (* The two dictionary hints below hand out the SAME rules and differ only
+       in the kind they build the member at.  That is the point: every rule
+       but the range one is kind-generic, so the range rule is in both lists
+       and simply cannot fire on the Unranged member. *)
     | DictIdx attr =>
         let dict_idx_tag := String.of_nat cur_tag in
-        ([(dict_idx_tag, cdict_idx attr, dict_idx_wf attr)],
+        ([(dict_idx_tag, cdict_idx attr Unranged, dict_idx_wf attr Unranged)],
           [dict_lookup_transf dict_idx_tag attr;
-           dict_range_transf dict_idx_tag attr;
-           use_dict_idx_transf dict_idx_tag attr;
+           dict_range_transf dict_idx_tag attr Unranged;
+           use_dict_idx_transf dict_idx_tag attr Unranged;
            (* inserts and deletes are maintained in the same loop, so that
               an insert into a filtered table and a filter of an extended table
               are both handled *)
-           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr tbl)
-                                       (cons_to_insert_transf attr tbl)) reps],
+           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr Unranged tbl)
+                                       (cons_to_insert_transf attr Unranged tbl)) reps],
+          S cur_tag)
+    | RangedDictIdx attr =>
+        let dict_idx_tag := String.of_nat cur_tag in
+        ([(dict_idx_tag, cdict_idx attr Ranged, dict_idx_wf attr Ranged)],
+          [dict_lookup_transf dict_idx_tag attr;
+           dict_range_transf dict_idx_tag attr Ranged;
+           use_dict_idx_transf dict_idx_tag attr Ranged;
+           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr Ranged tbl)
+                                       (cons_to_insert_transf attr Ranged tbl)) reps],
           S cur_tag)
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
@@ -803,7 +829,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a ak | ct ];
+    destruct ic as [ a | a | a | a | a | a | a ak | ct ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -842,9 +868,13 @@ end.
             eapply filter_neq_to_set_diff_head_sound; auto using ctenv_ok, clocals_ok. }
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_set_insert_head_sound; auto using ctenv_ok, clocals_ok. } }
+    (* The two dictionary hints hand out the same rules, so one script serves
+       both goals and is written twice, once per kind.  Neither copy needs a
+       side condition about the range rule: it tests the kind itself and is
+       the identity when the kind does not match. *)
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
-        1:{ eapply eq_filter_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
+        1:{ eapply eq_filter_to_lookup_head_sound with (dk := Unranged); auto using ctenv_ok, clocals_ok.
             1:{ rewrite is_NoDup_to_transparent.
                 instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
                 cbn; intuition discriminate. }
@@ -854,7 +884,45 @@ end.
             | prove_In_map_fst_sort_map ].
             1: prove_is_tbl_ty.
             1: prove_idx_wf. }
-        1:{ eapply range_filter_to_dict_range_head_sound; auto using ctenv_ok, clocals_ok.
+        1:{ eapply range_filter_to_dict_range_head_sound with (dk := Unranged); auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        1:{ eapply use_idx_head_sound; eauto with transf_hints.
+            1:{ rewrite is_NoDup_to_transparent.
+                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+                eauto with transf_hints. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply filter_neq_to_delete_head_sound;
+              eauto with transf_hints. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply cons_to_insert_head_sound;
+              eauto with transf_hints. } }
+    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+        1:{ eapply eq_filter_to_lookup_head_sound with (dk := Ranged); auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        1:{ eapply range_filter_to_dict_range_head_sound with (dk := Ranged); auto using ctenv_ok, clocals_ok.
             1:{ rewrite is_NoDup_to_transparent.
                 instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
                 cbn; intuition discriminate. }

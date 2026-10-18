@@ -141,13 +141,13 @@ Section WithIndexUse.
     (* to_idx with a table EXPRESSION in place of the hole, which is the
        shape the installation leaves behind. *)
     Definition uto_idx_at (d : expr) : expr :=
-      EFold d (EAtom (AEmptyDict None)) tup acc uidx_body'.
+      EFold d (EAtom (AEmptyDict Unranged None)) tup acc uidx_body'.
 
     (* uto_idx_at spelled out, so that a rule can match it.  Every binder and
        attribute occurrence is a pattern variable; the guard checks that they
        are the ones this index uses. *)
     Notation euidx tup0 tup1 tup2 acc0 acc1 attr0 d :=
-      (EFold d (EAtom (AEmptyDict None)) tup0 acc0
+      (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
          (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr0) (EVar tup2))).
 
     Lemma interp_ELet_step : forall (store env : locals) e1 x e2,
@@ -679,8 +679,13 @@ Section WithIndexUse.
         (* the type the source fold produces is the dictionary's own: the
            table's row type fixes the dictionary's value type, and the
            body's OInsert takes its key type from the row's attribute *)
+        (* the empty-dictionary literal names the kind, so inverting its
+           typing is what fixes the rebuilt dictionary's kind *)
+        repeat lazymatch goal with
+                 H: type_of_atom _ _ |- _ => inversion H; subst; clear H
+               end.
         lazymatch goal with
-        | |- type_of _ _ _ (TDict ?k ?v) =>
+        | |- type_of _ _ _ (TDict _ ?k ?v) =>
             assert (E_vt : v = TRecord rt) by congruence;
             assert (E_kt : k = kt) by congruence;
             subst k v

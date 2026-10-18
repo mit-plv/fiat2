@@ -85,7 +85,7 @@ Section WithConcreteMaps.
      OBagInsert's into it; this one inserts the row itself, which is only
      faithful to the table because the key is declared. *)
   Definition punique_idx_of (tbl : expr) : expr :=
-    EFold tbl (EAtom (AEmptyDict None)) "tup" "acc"
+    EFold tbl (EAtom (AEmptyDict Unranged None)) "tup" "acc"
       (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "id") (EVar "tup")).
 
   (* The index RECORD the installation builds: one member, under a tag of its
@@ -517,7 +517,7 @@ Section WithConcreteMaps.
     ETernop OSubstring (EAccess (EVar "tup") "name") p (EAtom (AInt 3)).
 
   Definition ptrigram_of (tbl : expr) : expr :=
-    EFold tbl (EAtom (AEmptyDict None)) "tup" "acc"
+    EFold tbl (EAtom (AEmptyDict Unranged None)) "tup" "acc"
       (EFold (EBinop ORange (EAtom (AInt 0))
                 (EBinop OMinus
                    (EUnop OLengthString (EAccess (EVar "tup") "name"))

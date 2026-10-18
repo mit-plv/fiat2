@@ -98,9 +98,9 @@ Inductive type_wf : type -> Prop :=
                 StronglySorted record_entry_leb l ->
                 Forall type_wf (List.map snd l) ->
                 type_wf (TRecord l)
-| WFTDict kt vt : type_wf kt ->
-                  type_wf vt ->
-                  type_wf (TDict kt vt)
+| WFTDict dk kt vt : type_wf kt ->
+                     type_wf vt ->
+                     type_wf (TDict dk kt vt)
 | WFTBag t : type_wf t ->
              type_wf (TBag t)
 | WFTSet t : type_wf t ->
@@ -117,7 +117,7 @@ Fixpoint type_wf_comp (t : type) : bool :=
                        | nil => true
                        | (_, t) :: tl => (type_wf_comp t && forall_snd tl)%bool
                        end) tl
-  | TDict kt vt => type_wf_comp kt && type_wf_comp vt
+  | TDict _ kt vt => type_wf_comp kt && type_wf_comp vt
   end.
 
 Lemma type_wf_comp_sound : forall t, type_wf_comp t = true -> type_wf t.
@@ -145,10 +145,10 @@ Inductive type_of_atom : atom -> type -> Prop :=
                type_of_atom (ANone None) (TOption t)
 | TyANone t : type_wf t ->
               type_of_atom (ANone (Some t)) (TOption t)
-| TyAEmptyDict' kt vt : type_wf kt -> type_wf vt ->
-                    type_of_atom (AEmptyDict None) (TDict kt vt)
-| TyAEmptyDict kt vt : type_wf kt -> type_wf vt ->
-                       type_of_atom (AEmptyDict (Some (kt, vt))) (TDict kt vt)
+| TyAEmptyDict' dk kt vt : type_wf kt -> type_wf vt ->
+                    type_of_atom (AEmptyDict dk None) (TDict dk kt vt)
+| TyAEmptyDict dk kt vt : type_wf kt -> type_wf vt ->
+                       type_of_atom (AEmptyDict dk (Some (kt, vt))) (TDict dk kt vt)
 | TyAEmptyBag' t : type_wf t ->
                    type_of_atom (AEmptyBag None) (TBag t)
 | TyAEmptyBag t : type_wf t ->
@@ -167,7 +167,7 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyOLengthString : type_of_unop OLengthString TString TInt
 | TyOIntToString : type_of_unop OIntToString TInt TString
 | TyOSome t : type_of_unop OSome t (TOption t)
-| TyODictValues kt vt : type_of_unop ODictValues (TDict kt vt) (TBag vt).
+| TyODictValues dk kt vt : type_of_unop ODictValues (TDict dk kt vt) (TBag vt).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOWPlus : type_of_binop OWPlus TWord TWord TWord
@@ -195,8 +195,8 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOWRange : type_of_binop OWRange TWord TWord (TList TWord)
 | TyOBagInsert t : type_of_binop OBagInsert (TBag t) t (TBag t)
 | TyOSetInsert t : type_of_binop OSetInsert (TSet t) t (TSet t)
-| TyOLookup kt vt : type_of_binop OLookup (TDict kt vt) kt (TOption vt)
-| TyODelete kt vt : type_of_binop ODelete (TDict kt vt) kt (TDict kt vt)
+| TyOLookup dk kt vt : type_of_binop OLookup (TDict dk kt vt) kt (TOption vt)
+| TyODelete dk kt vt : type_of_binop ODelete (TDict dk kt vt) kt (TDict dk kt vt)
 | TyOSetUnion t : type_of_binop OSetUnion (TSet t) (TSet t) (TSet t)
 | TyOSetIntersect t : type_of_binop OSetIntersect (TSet t) (TSet t) (TSet t)
 | TyOSetDiff t : type_of_binop OSetDiff (TSet t) (TSet t) (TSet t)
@@ -204,9 +204,12 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOStrContains : type_of_binop OStrContains TString TString TBool.
 
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
-| TyOInsert kt vt : type_of_ternop OInsert (TDict kt vt) kt vt (TDict kt vt)
+| TyOInsert dk kt vt : type_of_ternop OInsert (TDict dk kt vt) kt vt (TDict dk kt vt)
 | TyOSubstring : type_of_ternop OSubstring TString TInt TInt TString
-| TyODictRange kt vt : type_of_ternop ODictRange (TDict kt vt) kt kt (TDict kt vt).
+(* The only operator that reads the key ORDER rather than key equality, and so
+   the only one a hash table could not answer in the cost its type implies.
+   Pinning it to Ranged is what the kind is for. *)
+| TyODictRange kt vt : type_of_ternop ODictRange (TDict Ranged kt vt) kt kt (TDict Ranged kt vt).
 
 Inductive type_of_aggr : aggr -> type -> type -> Prop :=
 | TyAGSum : type_of_aggr AGSum TInt TInt
@@ -439,7 +442,7 @@ Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   | TList t1, TList t1' => type_eqb t1 t1'
   | TRecord l, TRecord l' => list_beq (fun p p' => andb (String.eqb (fst p) (fst p'))
                                                        (type_eqb (snd p) (snd p'))) l l'
-  | TDict kt vt, TDict kt' vt' => andb (type_eqb kt kt') (type_eqb vt vt')
+  | TDict dk kt vt, TDict dk' kt' vt' => andb (dict_kind_beq dk dk') (andb (type_eqb kt kt') (type_eqb vt vt'))
   | TBag t, TBag t' => type_eqb t t'
   | TSet t, TSet t' => type_eqb t t'
   | _, _ => false
@@ -450,7 +453,7 @@ Proof.
   induction t using type_IH; auto; cbn.
   1:{ induction H; try constructor.
       cbn; rewrite eqb_refl. rewrite IHForall, H; auto. }
-  1:{ rewrite IHt1, IHt2; auto. }
+  1:{ rewrite dict_kind_beq_refl, IHt1, IHt2; auto. }
 Qed.
 
 Lemma type_eqb_eq : forall t t', type_eqb t t' = true <-> t = t'.
@@ -467,7 +470,9 @@ Proof.
         inversion H; subst. apply (IHl H4) in H0. injection H0; intros; subst.
         destruct a, p; inversion H; simpl in *; subst. apply andb_prop in E as [EL ER].
         rewrite eqb_eq in EL. apply H3 in ER. congruence.
-      - apply andb_prop in H as [HL HR]. apply IHt1 in HL; apply IHt2 in HR. congruence. }
+      - apply andb_prop in H as [HK H]. apply andb_prop in H as [HL HR].
+        apply dict_kind_beq_eq in HK.
+        apply IHt1 in HL; apply IHt2 in HR. congruence. }
   1: intro; subst; apply type_eqb_refl.
 Qed.
 
@@ -494,8 +499,8 @@ Definition analyze_atom (expected : type) (a : atom) : result atom :=
                         | _ => error:(a "is a list but expected" expected)
                         end
               end
-  | AEmptyDict t => match t with
-                    | Some (kt, vt) => compare_types expected (TDict kt vt) a
+  | AEmptyDict dk t => match t with
+                    | Some (kt, vt) => compare_types expected (TDict dk kt vt) a
                     | _ => error:(a "is a dictionary but expected" expected)
                     end
   | AEmptyBag t => match t with
@@ -534,9 +539,9 @@ Definition synthesize_atom (a : atom) : result (type * atom) :=
                           else error:("Malformed type" t)
               | None => error:("Insufficient type information for" a)
               end
-  | AEmptyDict t => match t with
+  | AEmptyDict dk t => match t with
                     | Some (kt, vt) => if (type_wf_comp kt && type_wf_comp vt)%bool
-                                       then Success (TDict kt vt, a)
+                                       then Success (TDict dk kt vt, a)
                                        else error:("Malformed type" kt "or" vt)
                     | None => error:("Insufficient type information for" a)
                     end
@@ -646,7 +651,7 @@ Section WithMap.
                                end
                     | ODictValues => '(t, e') <- synthesize_expr Gstore Genv e1 ;;
                                      match t with
-                                     | TDict _ vt => if type_eqb expected (TBag vt)
+                                     | TDict _ _ vt => if type_eqb expected (TBag vt)
                                                      then Success (EUnop o e')
                                                      else error:(e "has type" (TBag vt) "but expected" expected)
                                      | _ => error:(e1 "has type" t "but expected a dictionary")
@@ -695,14 +700,14 @@ Section WithMap.
                             end
                         | OLookup => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                      match t1 with
-                                     | TDict kt vt => if type_eqb expected (TOption vt)
+                                     | TDict _ kt vt => if type_eqb expected (TOption vt)
                                                       then k' <- analyze_expr Gstore Genv kt e2 ;;
                                                            Success (EBinop OLookup d' k')
                                                       else error:(e "has type" (TOption vt) "but expected" expected)
                                      | _ => error:(e1 "has type" t1 "but expected a dictionary")
                                      end
                         | ODelete => match expected with
-                                     | TDict kt vt => d' <- analyze_expr Gstore Genv (TDict kt vt) e1 ;;
+                                     | TDict dk kt vt => d' <- analyze_expr Gstore Genv (TDict dk kt vt) e1 ;;
                                                       k' <- analyze_expr Gstore Genv kt e2 ;;
                                                       Success (EBinop ODelete d' k')
                                      | _ => error:(e "is a dictionary but expected" expected)
@@ -732,8 +737,8 @@ Section WithMap.
     | ETernop o e1 e2 e3 => match o with
                             | OInsert =>
                                 match expected with
-                                | TDict kt vt =>
-                                    d' <- analyze_expr Gstore Genv (TDict kt vt) e1 ;;
+                                | TDict dk kt vt =>
+                                    d' <- analyze_expr Gstore Genv (TDict dk kt vt) e1 ;;
                                     k' <- analyze_expr Gstore Genv kt e2 ;;
                                     v' <- analyze_expr Gstore Genv vt e3 ;;
                                     Success (ETernop OInsert d' k' v')
@@ -750,12 +755,12 @@ Section WithMap.
                                 end
                             | ODictRange =>
                                 match expected with
-                                | TDict kt vt =>
-                                    d' <- analyze_expr Gstore Genv (TDict kt vt) e1 ;;
+                                | TDict Ranged kt vt =>
+                                    d' <- analyze_expr Gstore Genv (TDict Ranged kt vt) e1 ;;
                                     lo' <- analyze_expr Gstore Genv kt e2 ;;
                                     hi' <- analyze_expr Gstore Genv kt e3 ;;
                                     Success (ETernop ODictRange d' lo' hi')
-                                | _ => error:(e "is a dictionary but expected" expected)
+                                | _ => error:(e "is a ranged dictionary but expected" expected)
                                 end
                             end
     | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;
@@ -908,7 +913,7 @@ Section WithMap.
                         | OSome => '(t, e') <- synthesize_expr Gstore Genv e ;; Success (TOption t, EUnop o e')
                         | ODictValues => '(t, e') <- synthesize_expr Gstore Genv e ;;
                                          match t with
-                                         | TDict _ vt => Success (TBag vt, EUnop o e')
+                                         | TDict _ _ vt => Success (TBag vt, EUnop o e')
                                          | _ => error:(e "has type" t "but expected a dictionary")
                                          end
                         | o => let '(t1, t2) := unop_types o in
@@ -961,13 +966,13 @@ Section WithMap.
                                  end
                              | OLookup => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                           match t1 with
-                                          | TDict kt vt => k' <- analyze_expr Gstore Genv kt e2 ;;
+                                          | TDict _ kt vt => k' <- analyze_expr Gstore Genv kt e2 ;;
                                                            Success (TOption vt, EBinop OLookup d' k')
                                           | _ => error:(e1 "has type" t1 "but expected a dictionary")
                                           end
                              | ODelete => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                           match t1 with
-                                          | TDict kt _ => k' <- analyze_expr Gstore Genv kt e2 ;;
+                                          | TDict _ kt _ => k' <- analyze_expr Gstore Genv kt e2 ;;
                                                           Success (t1, EBinop ODelete d' k')
                                           | t => error:(e "has type" t "but expected a dictionary")
                                           end
@@ -991,7 +996,7 @@ Section WithMap.
          | ETernop o e1 e2 e3 => match o with
                                  | OInsert => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                               match t1 with
-                                              | TDict kt vt => k' <- analyze_expr Gstore Genv kt e2 ;;
+                                              | TDict _ kt vt => k' <- analyze_expr Gstore Genv kt e2 ;;
                                                                v' <- analyze_expr Gstore Genv vt e3 ;;
                                                                Success (t1, ETernop OInsert d' k' v')
                                               | t => error:(e "has type" t "but expected a dictionary")
@@ -1002,10 +1007,10 @@ Section WithMap.
                                                  Success (TString, ETernop OSubstring s' i' n')
                                  | ODictRange => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                                  match t1 with
-                                                 | TDict kt vt => lo' <- analyze_expr Gstore Genv kt e2 ;;
+                                                 | TDict Ranged kt vt => lo' <- analyze_expr Gstore Genv kt e2 ;;
                                                                   hi' <- analyze_expr Gstore Genv kt e3 ;;
                                                                   Success (t1, ETernop ODictRange d' lo' hi')
-                                                 | t => error:(e "has type" t "but expected a dictionary")
+                                                 | t => error:(e "has type" t "but expected a ranged dictionary")
                                                  end
                                  end
          | EIf e1 e2 e3 => e1' <- analyze_expr Gstore Genv TBool e1 ;;

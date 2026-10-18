@@ -17,6 +17,11 @@ Ltac access_record_Success__is_tbl_ty :=
 Section WithHole.
   Context (hole : string).
   Context (attr : string).
+  (* Which structure the index demands of a backend.  Only the range rule
+     below cares: it is sound at Ranged and nowhere else, and says so with a
+     dk = Ranged premise.  Everything else here -- the point lookup, the
+     insert, the keyed delete -- is written once and serves both kinds. *)
+  Context (dk : dict_kind).
 
   Section WithVars.
     Context (tup acc x : string).
@@ -24,7 +29,7 @@ Section WithHole.
 
     Definition to_idx : expr :=
       let k := EAccess (EVar tup) attr in
-      EFold (EVar hole) (EAtom (AEmptyDict None)) tup acc
+      EFold (EVar hole) (EAtom (AEmptyDict dk None)) tup acc
         (ETernop OInsert (EVar acc) k
            (EBinop OBagInsert
               (EOptMatch (EBinop OLookup (EVar acc) k)
@@ -40,7 +45,7 @@ Section WithHole.
 
     Definition idx_ty (t : type) : type :=
       match t with
-      | TList (TRecord rt) => TDict (get_attr_type rt attr) (TBag (TRecord rt))
+      | TList (TRecord rt) => TDict dk (get_attr_type rt attr) (TBag (TRecord rt))
       | _ => TUnit
       end.
 
@@ -122,7 +127,7 @@ Section WithHole.
         invert_type_of_value_clear; simpl.
         unfold get_local; rewrite_map_get_put_goal.
         erewrite In_fold_right_ext with
-          (P := fun a => type_of_value a (TDict (get_attr_type l attr) (TBag (TRecord l))))
+          (P := fun a => type_of_value a (TDict dk (get_attr_type l attr) (TBag (TRecord l))))
           (g := fun b a =>
                   match a with
                   | VDict d =>
@@ -151,7 +156,9 @@ Section WithHole.
                         apply In_fst in H; destruct H end.
                     intuition idtac; destruct x0. eauto.
                     cbn in *; subst.
-                    eapply dict_lookup_sound.
+                    (* the kind shows up only in the premise, so name it:
+                       the dictionary here is this index's own *)
+                    eapply dict_lookup_sound with (dk := dk).
                     4:{ eapply record_proj_sound; eauto.
                         1: lazymatch goal with
                              H: context[Forall2] |- _ =>
@@ -464,13 +471,27 @@ Section WithHole.
         intros; unfold idx_wf; auto.
       Qed.
 
-      Notation eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 d :=
-        (EFold d (EAtom (AEmptyDict None)) tup0 acc0
+      (* The kind is a pattern variable, not this section's dk: a pattern may
+         only mention constructors.  Every rule that matches a rebuild of the
+         index therefore has to CHECK the kind it finds against its own, or it
+         would rewrite a dictionary of one kind into a read of a member of the
+         other. *)
+      Notation eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 d :=
+        (EFold d (EAtom (AEmptyDict dk0 None)) tup0 acc0
            (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr0)
               (EBinop OBagInsert
                  (EOptMatch (EBinop OLookup (EVar acc2) (EAccess (EVar tup2) attr1))
                     (EAtom (AEmptyBag None)) x0 (EVar x1))
                  (EVar tup3)))).
+
+      (* Turn the rules' kind test into an equation, and orient it so the
+         PATTERN's kind disappears.  Rewriting the other way would eliminate
+         the section variable dk and with it every definition mentioning it. *)
+      Ltac use_dict_kind_beq :=
+        repeat lazymatch goal with
+            H: dict_kind_beq dk ?d = true |- _ =>
+              apply dict_kind_beq_eq in H; rewrite <- H in *; clear H
+          end.
 
       Ltac use_to_idx_ty :=
         eapply type_of_strengthen;
@@ -492,7 +513,7 @@ Section WithHole.
           type_of Gstore Genv e t ->
           incl (get_free_vars Genv) free_vars ->
           sem_eq (word:=word) Gstore Genv (idx_ty t)
-            (EFold e (EAtom (AEmptyDict None)) tup0 acc0
+            (EFold e (EAtom (AEmptyDict dk None)) tup0 acc0
            (ETernop OInsert (EVar acc0) (EAccess (EVar tup0) attr)
               (EBinop OBagInsert
                  (EOptMatch (EBinop OLookup (EVar acc0) (EAccess (EVar tup0) attr))
@@ -682,7 +703,7 @@ Section WithHole.
             repeat (do_injection; try clear_refl).
             assert (type_of_value (VOption (dict_lookup (interp_expr store env e2_1_2) l2)) (TOption (TBag (TRecord l1)))).
             1:{ apply_type_sound e2_1_2.
-                eapply dict_lookup_sound; [ | | | eauto ];
+                eapply dict_lookup_sound with (dk := dk); [ | | | eauto ];
                   eauto with fiat2_hints.
                 1: constructor; eauto with fiat2_hints.
                 1:{ constructor; auto. rewrite_l_to_r; do_injection.
@@ -729,7 +750,6 @@ Section WithHole.
         Section range_filter_to_dict_range.
           Context (rv : string).
           Context (tbl : string).
-
           Definition range_filter_to_dict_range_head (e : expr) :=
             (* [row <- tbl[id_tag], check(!(row.attr < lo) && row.attr < hi), ret row] (as a bag) -->
                the concatenated buckets of range(idx, lo, hi) *)
@@ -738,7 +758,13 @@ Section WithHole.
                 (EBagOf (EAccess (ELoc tbl0) id_tag0))
                 x0 (EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) attr0) lo))
                                 (EBinop OLess (EAccess (EVar x2) attr1) hi)) x3 _ _ =>
-                if (all_eqb [(tbl, [tbl0]); (attr, [attr0; attr1]); (x0, [x1; x2; x3]); (id_tag, [id_tag0])] &&
+                (* The kind is one of the rule's own guards.  ODictRange is the
+                   only operator whose typing pins the kind, so this is where
+                   the capability the kind records bites: on an Unranged index
+                   the rule is the identity and the range query is left as the
+                   scan it was. *)
+                if (is_ranged dk &&
+                      all_eqb [(tbl, [tbl0]); (attr, [attr0; attr1]); (x0, [x1; x2; x3]); (id_tag, [id_tag0])] &&
                       negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi))%bool
                 then EFlatmap LikeBag
                        (EUnop ODictValues
@@ -781,6 +807,10 @@ Section WithHole.
             repeat (clear_refl; repeat do_injection2).
             repeat (rewrite_l_to_r; do_injection2).
             unfold idx_ty, get_attr_type in *.
+            lazymatch goal with
+              H: is_ranged dk = true |- _ =>
+                apply is_ranged_true in H; rewrite H in *
+            end.
             lazymatch goal with H: access_record _ attr = Success TInt |- _ => rewrite H in * end.
             econstructor.
             (* the index's range, as a bag of buckets *)
@@ -880,12 +910,13 @@ Section WithHole.
           Context (y : string).
           Definition cons_to_insert_head (e : expr) :=
             match e with
-            | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EBinop OCons e1 e2) =>
-                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1]); (x0, [x1])] &&
+            | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EBinop OCons e1 e2) =>
+                if (dict_kind_beq dk dk0 &&
+                      all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1]); (x0, [x1])] &&
                       all_neqb [acc0; tup0; x0] &&
                       negb (free_immut_in y e1))%bool
                 then
-                  ELet (eto_idx tup tup tup tup acc acc acc x x attr attr e2) y
+                  ELet (eto_idx dk tup tup tup tup acc acc acc x x attr attr e2) y
                        (ETernop OInsert (EVar y)
                           (EAccess e1 attr)
                           (EBinop OBagInsert
@@ -903,6 +934,7 @@ Section WithHole.
             unfold preserve_ty; intros. repeat destruct_subexpr.
             cbn. repeat (case_match; auto).
             rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            use_dict_kind_beq.
             rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
             repeat rewrite_map_get_put_hyp.
             repeat (try clear_refl; repeat do_injection).
@@ -944,6 +976,7 @@ Section WithHole.
             cbn [cons_to_insert_head]. repeat (case_match; auto; []).
             cbn in * |-.
             rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
             rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
             repeat rewrite_map_get_put_hyp.
             repeat (try clear_refl; repeat do_injection).
@@ -994,7 +1027,7 @@ Section WithHole.
             rewrite_expr_value. f_equal.
             lazymatch goal with
               |- context[dict_lookup ?k ?d] =>
-                enough (type_of_value (VDict d) (TDict (get_attr_type tl attr) (TBag (TRecord tl))))
+                enough (type_of_value (VDict d) (TDict dk (get_attr_type tl attr) (TBag (TRecord tl))))
             end.
             2:{ apply fold_right_invariant.
                 1: constructor; auto using NoDup_nil, SSorted_nil.
@@ -1018,7 +1051,7 @@ Section WithHole.
                        end; subst; auto. }
                 1:{ lazymatch goal with
                     |- context[dict_lookup ?k0 ?d] =>
-                      enough (H_dict2: type_of_value (VDict d) (TDict (get_attr_type tl attr) (TBag (TRecord tl)))); [ | constructor; auto ];
+                      enough (H_dict2: type_of_value (VDict d) (TDict dk (get_attr_type tl attr) (TBag (TRecord tl)))); [ | constructor; auto ];
                       eapply dict_lookup_sound with (k:=k0) in H_dict2
                   end.
                     2: apply get_attr_type_ty_wf; eauto with fiat2_hints.
@@ -1077,12 +1110,13 @@ Section WithHole.
             (* the index rebuilt from [y <- e', check(!(y.attr == k)), ret y] -->
                delete k from the index rebuilt from e' *)
             match e with
-            | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+            | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
                 (flatmap_filter_list e' y (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr2) k)) y1 _ _) =>
-                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1; attr2]); (x0, [x1]); (y, [y0; y1])] &&
+                if (dict_kind_beq dk dk0 &&
+                      all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1; attr2]); (x0, [x1]); (y, [y0; y1])] &&
                       all_neqb [acc0; tup0; x0] &&
                       negb (free_immut_in y k))%bool
-                then EBinop ODelete (eto_idx tup tup tup tup acc acc acc x x attr attr e') k
+                then EBinop ODelete (eto_idx dk tup tup tup tup acc acc acc x x attr attr e') k
                 else e
             | _ => e
             end.
@@ -1092,6 +1126,7 @@ Section WithHole.
             unfold preserve_ty; intros. repeat destruct_subexpr.
             cbn. repeat (case_match; auto).
             rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            use_dict_kind_beq.
             rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
             repeat rewrite_map_get_put_hyp.
             repeat (try clear_refl; repeat do_injection).
@@ -1110,6 +1145,7 @@ Section WithHole.
             cbn [filter_neq_to_delete_head]. repeat (case_match; auto; []).
             cbn in * |-.
             rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
             rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
             repeat rewrite_map_get_put_hyp.
             repeat (try clear_refl; repeat do_injection).
@@ -1180,8 +1216,9 @@ Section WithHole.
           Context (tbl : string).
           Definition use_idx_head (e : expr) :=
             match e with
-            | eto_idx tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EAccess (ELoc tbl0) id_tag0) =>
-                if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1]); (x0, [x1]); (tbl, [tbl0]); (id_tag, [id_tag0])] &&
+            | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 (EAccess (ELoc tbl0) id_tag0) =>
+                if (dict_kind_beq dk dk0 &&
+                      all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]); (attr, [attr0; attr1]); (x0, [x1]); (tbl, [tbl0]); (id_tag, [id_tag0])] &&
                       all_neqb [acc0; tup0; x0])%bool
                 then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
                 else e
@@ -1202,6 +1239,7 @@ Section WithHole.
             repeat destruct_subexpr. simpl.
             repeat (case_match; auto; []). repeat rewrite Bool.andb_true_r in *.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
             rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
             repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
             repeat (clear_refl; repeat do_injection2).
@@ -1212,7 +1250,8 @@ Section WithHole.
                    end.
             repeat (econstructor; eauto).
             lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
-            f_equal; unfold idx_ty; f_equal.
+            (* the kind matches on both sides; only the key type needs work *)
+            f_equal; unfold idx_ty; f_equal; try reflexivity.
             unfold get_attr_type.
             lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
             reflexivity.
@@ -1239,6 +1278,7 @@ Section WithHole.
             repeat destruct_subexpr.
             cbn [use_idx_head]; repeat (case_match; auto; []). cbn [all_eqb all_eqb' all_neqb all_neqb'] in * |-.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
             rewrite Bool.negb_true_iff, eqb_eq, eqb_neq in *; subst.
             repeat clear_refl.
             let pat := open_constr:(EFold _ _ _ _ _) in
@@ -1356,7 +1396,8 @@ Section WithHole.
   End WithVars.
 End WithHole.
 
-Lemma use_idx_head_sound2 : forall hole attr tup acc x : string,
+Lemma use_idx_head_sound2 : forall (hole attr : string) (dk : dict_kind),
+       forall tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
        forall (width : Z) (word : Interface.word width),
@@ -1365,15 +1406,16 @@ Lemma use_idx_head_sound2 : forall hole attr tup acc x : string,
        map.ok locals ->
        forall (id_tag aux_tag idx_tag : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
          (forall v : (value (word:=word)),
-             aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) -> aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
+             aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) -> aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr dk) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
        is_NoDup_opaque [tup; acc; x] ->
-       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (use_idx_head attr id_tag aux_tag idx_tag).
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (use_idx_head attr dk id_tag aux_tag idx_tag).
 Proof.
   intros; eapply use_idx_head_sound; eauto.
 Qed.
 
-Lemma eq_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
+Lemma eq_filter_to_lookup_head_sound2 : forall (hole attr : string) (dk : dict_kind),
+       forall tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
        forall (width : Z) (word : Interface.word width),
@@ -1381,16 +1423,17 @@ Lemma eq_filter_to_lookup_head_sound2 : forall hole attr tup acc x : string,
        forall locals : map.map string (value (word:=word)),
        map.ok locals ->
        forall (id_tag aux_tag idx_tag b : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
-       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
+       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr dk) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
-       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
+       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
 Proof.
   intros; eapply eq_filter_to_lookup_head_sound; eauto.
 Qed.
 
-Lemma range_filter_to_dict_range_head_sound2 : forall hole attr tup acc x : string,
+Lemma range_filter_to_dict_range_head_sound2 : forall (hole attr : string) (dk : dict_kind),
+       forall tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
        forall (width : Z) (word : Interface.word width),
@@ -1398,11 +1441,11 @@ Lemma range_filter_to_dict_range_head_sound2 : forall hole attr tup acc x : stri
        forall locals : map.map string (value (word:=word)),
        map.ok locals ->
        forall (id_tag aux_tag idx_tag rv : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
-       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr) aux_ty ->
+       aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr dk) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
-       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr tup acc x) v) ->
+       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
-       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head attr id_tag aux_tag idx_tag rv).
+       expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head attr dk id_tag aux_tag idx_tag rv).
 Proof.
   intros; eapply range_filter_to_dict_range_head_sound; eauto.
 Qed.

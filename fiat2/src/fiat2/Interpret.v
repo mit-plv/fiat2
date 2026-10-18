@@ -18,7 +18,7 @@ Section WithWord.
     | AString s => VString s
     | ANone _ => VOption None
     | ANil _ => VList nil
-    | AEmptyDict _ => VDict nil
+    | AEmptyDict _ _ => VDict nil
     | AEmptyBag _ => VBag nil
     | AEmptySet _ => VSet nil
     | AUnit => VUnit

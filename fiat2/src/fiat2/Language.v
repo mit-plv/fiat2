@@ -1,5 +1,13 @@
 From Stdlib Require Import String ZArith List.
 
+(* Which questions a dictionary answers, and so which structure may represent
+   it.  Both kinds hold the same values -- every well-typed dictionary is
+   key-sorted and duplicate-free either way -- so this is not a relaxation of
+   what is observable.  It records a capability: only a Ranged dictionary may
+   be given to ODictRange, so a backend owes an ordered structure for those
+   and may use a hash table for the rest. *)
+Inductive dict_kind : Type := Ranged | Unranged.
+
 (* Fiat2 types *)
 Inductive type : Type :=
 | TWord
@@ -10,7 +18,7 @@ Inductive type : Type :=
 | TOption (t : type)
 | TList (t : type)
 | TRecord (l : list (string * type))
-| TDict (kt vt : type)
+| TDict (dk : dict_kind) (kt vt : type)
 | TBag (t : type)
 | TSet (t : type).
 
@@ -19,7 +27,7 @@ Section TypeIH.
     Hypothesis (f_word : P TWord) (f_int : P TInt) (f_bool : P TBool) (f_string : P TString) (f_unit : P TUnit)
       (f_option : forall t : type, P t -> P (TOption t)) (f_list : forall t : type, P t -> P (TList t))
       (f_record : forall l : list (string * type), Forall (fun p => P (snd p)) l -> P (TRecord l))
-      (f_dict : forall tk tv : type, P tk -> P tv -> P (TDict tk tv))
+      (f_dict : forall (dk : dict_kind) (tk tv : type), P tk -> P tv -> P (TDict dk tk tv))
       (f_bag : forall t : type, P t -> P (TBag t))
       (f_set : forall t : type, P t -> P (TSet t)).
     Section __.
@@ -40,13 +48,30 @@ Section TypeIH.
       | TOption t => f_option t (type_IH t)
       | TList t => f_list t (type_IH t)
       | TRecord l => f_record l (record_type_IH type_IH l)
-      | TDict tk tv => f_dict tk tv (type_IH tk) (type_IH tv)
+      | TDict dk tk tv => f_dict dk tk tv (type_IH tk) (type_IH tv)
       | TBag t => f_bag t (type_IH t)
       | TSet t => f_set t (type_IH t)
        end.
 End TypeIH.
 
+Scheme Boolean Equality for dict_kind. (* creates dict_kind_beq *)
 Scheme Boolean Equality for type. (* creates type_beq *)
+
+Lemma dict_kind_beq_refl : forall dk, dict_kind_beq dk dk = true.
+Proof. destruct dk; reflexivity. Qed.
+
+Lemma dict_kind_beq_eq : forall dk dk', dict_kind_beq dk dk' = true <-> dk = dk'.
+Proof. destruct dk, dk'; cbn; intuition congruence. Qed.
+
+(* A rule that needs a ranged dictionary states it with this rather than with
+   an equation.  A hypothesis dk = Ranged is eliminated by any stray subst,
+   which takes the section variable dk with it and leaves every definition
+   mentioning dk unusable; a boolean test survives. *)
+Definition is_ranged (dk : dict_kind) : bool :=
+  match dk with Ranged => true | Unranged => false end.
+
+Lemma is_ranged_true : forall dk, is_ranged dk = true -> dk = Ranged.
+Proof. destruct dk; cbn; congruence. Qed.
 
 Declare Scope fiat2_scope. Local Open Scope fiat2_scope.
 Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
@@ -61,7 +86,10 @@ Inductive atom : Type :=
 | AString (s : string)
 | ANil (t : option type)
 | ANone (t : option type)
-| AEmptyDict (t : option (type * type))
+(* The kind is given, not annotated: nothing else in a dictionary-building
+   fold determines it, since every other dictionary operator is kind-generic.
+   The key and value types stay optional, as for the other empty literals. *)
+| AEmptyDict (dk : dict_kind) (t : option (type * type))
 | AEmptyBag (t : option type)
 | AEmptySet (t : option type)
 | AUnit.

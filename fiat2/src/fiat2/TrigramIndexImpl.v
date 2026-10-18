@@ -92,7 +92,7 @@ Section WithHole.
         tri_insert_body.
 
     Definition to_idx : expr :=
-      EFold (EVar hole) (EAtom (AEmptyDict None)) tup acc tri_row_body.
+      EFold (EVar hole) (EAtom (AEmptyDict Unranged None)) tup acc tri_row_body.
 
     (* ------------------------------------------------------------------
        And the other direction, for maintaining the index when a row goes:
@@ -142,7 +142,9 @@ Section WithHole.
 
     Definition idx_ty (t : type) : type :=
       match t with
-      | TList (TRecord rt) => TDict TString (TSet (get_attr_type rt key))
+      (* Both trigram lookup tiers are point probes, so this one is
+         Unranged too. *)
+      | TList (TRecord rt) => TDict Unranged TString (TSet (get_attr_type rt key))
       | _ => TUnit
       end.
 
@@ -240,8 +242,8 @@ Section WithHole.
           access_record rt attr = Success TString ->
           access_record rt key = Success kt ->
           map.get Genv tup = Some (TRecord rt) ->
-          map.get Genv acc = Some (TDict TString (TSet kt)) ->
-          type_of Gstore Genv tri_row_body (TDict TString (TSet kt)).
+          map.get Genv acc = Some (TDict Unranged TString (TSet kt)) ->
+          type_of Gstore Genv tri_row_body (TDict Unranged TString (TSet kt)).
       Proof.
         unfold tri_row_body, tri_insert_body, row_text, row_pk,
           trigram_positions, trigram_at.
@@ -279,8 +281,8 @@ Section WithHole.
           access_record rt attr = Success TString ->
           access_record rt key = Success kt ->
           map.get Genv tup = Some (TRecord rt) ->
-          map.get Genv acc = Some (TDict TString (TSet kt)) ->
-          type_of Gstore Genv tri_row_delete_body (TDict TString (TSet kt)).
+          map.get Genv acc = Some (TDict Unranged TString (TSet kt)) ->
+          type_of Gstore Genv tri_row_delete_body (TDict Unranged TString (TSet kt)).
       Proof.
         unfold tri_row_delete_body, tri_delete_body, tri_without_pk,
           row_text, row_pk, trigram_positions, trigram_at.

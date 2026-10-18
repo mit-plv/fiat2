@@ -52,8 +52,8 @@ Section WithWord.
       | H: type_wf (TBag ?t) |- type_wf ?t => inversion H; clear H; subst
       | H: type_wf (TSet ?t) |- type_wf ?t => inversion H; clear H; subst
       | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ ?t _) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ _ ?t) |- type_wf ?t => inversion H; clear H; subst
       | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
       end.
 
@@ -116,9 +116,12 @@ Section WithWord.
     | TyVRecord l tl : NoDup (List.map fst tl) -> StronglySorted record_entry_leb tl ->
                        Forall2 (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) l tl ->
                        type_of_value (VRecord l) (TRecord tl)
-    | TyVDict l tk tv : Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l ->
+    (* The kind is carried, not constrained: both kinds hold exactly the
+       key-sorted duplicate-free dictionaries.  It says which structure may
+       represent the value, not which values there are. *)
+    | TyVDict l dk tk tv : Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l ->
                         NoDup (List.map fst l) -> StronglySorted dict_entry_leb l ->
-                        type_of_value (VDict l) (TDict tk tv)
+                        type_of_value (VDict l) (TDict dk tk tv)
     | TyVBag l t : NoDup (List.map fst l) -> StronglySorted bag_entry_leb l ->
                    Forall (fun p => Nat.lt 0 (snd p)) l ->
                    Forall (fun p => type_of_value (fst p) t) l ->
@@ -394,10 +397,10 @@ Section WithWord.
     | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
         let H' := fresh "H'" in
         apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict ?t _) |- type_wf ?t =>
+    | H:  type_of _ _ _ (TDict _ ?t _) |- type_wf ?t =>
         let H' := fresh "H'" in
         apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict _ ?t) |- type_wf ?t =>
+    | H:  type_of _ _ _ (TDict _ _ ?t) |- type_wf ?t =>
         let H' := fresh "H'" in
         apply type_of__type_wf in H as H'
     | H:  type_of _ _ _ (TRecord ?tl) |- context[?tl] =>
@@ -749,10 +752,10 @@ Section WithWord.
       - inversion H; intuition idtac.
     Qed.
 
-    Lemma TyVDict_def : forall l kt vt, type_wf kt -> type_wf vt ->
+    Lemma TyVDict_def : forall l dk kt vt, type_wf kt -> type_wf vt ->
                                         NoDup (map fst l) ->
                                         StronglySorted (fun p p' : value * value => dict_entry_leb p p') l ->
-                                        Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) l <-> type_of_value (VDict l) (TDict kt vt).
+                                        Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) l <-> type_of_value (VDict l) (TDict dk kt vt).
     Proof.
       split; intros.
       - constructor; auto.
@@ -819,18 +822,18 @@ Section WithWord.
     Ltac invert_In :=
       lazymatch goal with H: In _ (_ :: _) |- _ => inversion H end.
 
-    Lemma dict_insert_sound : forall l kt vt k v,
+    Lemma dict_insert_sound : forall l dk kt vt k v,
         type_wf kt -> type_wf vt ->
-        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value (VDict l) (TDict dk kt vt) ->
         type_of_value k kt ->
         type_of_value v vt ->
-        type_of_value (VDict (dict_insert k v l)) (TDict kt vt).
+        type_of_value (VDict (dict_insert k v l)) (TDict dk kt vt).
     Proof.
       intros. induction l; constructor; simpl; auto.
       1-2: constructor; intuition auto.
       1: apply NoDup_nil. 1: apply SSorted_nil.
       1-3: destruct a as [k' v']; inversion H1; subst;
-      assert (Hl: type_of_value (VDict l) (TDict kt vt));
+      assert (Hl: type_of_value (VDict l) (TDict dk kt vt));
       [ lazymatch goal with
          | H1: Forall _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
              inversion H1; inversion H2; inversion H3
@@ -845,8 +848,15 @@ Section WithWord.
         + constructor; auto. intro contra. invert_SSorted.
           inversion contra.
           * symmetry in H4. apply eq_value_compare_Eq in H4. congruence.
-          * rewrite Forall_forall in H10. apply In_fst in H4 as [[k'' v''] [HL HR]].
-            apply H10 in HL. unfold dict_entry_leb in HL; simpl in *; subst.
+          (* the sortedness of the tail, found by shape: inverting a
+             type_of_value renumbers the context whenever TDict's indices change *)
+          * lazymatch goal with
+              H: Forall _ l |- _ =>
+                rewrite Forall_forall in H;
+                apply In_fst in H4 as [[k'' v''] [HL HR]];
+                apply H in HL
+            end.
+            unfold dict_entry_leb in HL; simpl in *; subst.
             unfold value_leb in HL. unfold leb_from_compare in HL. rewrite value_compare_antisym in E.
             simpl in E. destruct_value_compare; discriminate.
         + inversion Hl; subst.
@@ -888,15 +898,15 @@ Section WithWord.
       intuition auto with *.
     Qed.
 
-    Lemma dict_delete_sound : forall l kt vt k,
+    Lemma dict_delete_sound : forall l dk kt vt k,
         type_wf kt -> type_wf vt ->
-        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value (VDict l) (TDict dk kt vt) ->
         type_of_value k kt ->
-        type_of_value (VDict (dict_delete k l)) (TDict kt vt).
+        type_of_value (VDict (dict_delete k l)) (TDict dk kt vt).
     Proof.
       intros; induction l; constructor; simpl; auto using NoDup_nil, SSorted_nil.
       all: destruct a as [k' v']; inversion H1; subst;
-        assert (Hl: type_of_value (VDict l) (TDict kt vt));
+        assert (Hl: type_of_value (VDict l) (TDict dk kt vt));
         [ lazymatch goal with
           | H1: Forall _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
               inversion H1; inversion H2; inversion H3
@@ -917,9 +927,9 @@ Section WithWord.
           apply dict_delete_incl in H3; auto.
     Qed.
 
-    Lemma dict_lookup_sound : forall l kt vt k,
+    Lemma dict_lookup_sound : forall l dk kt vt k,
         type_wf kt -> type_wf vt ->
-        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value (VDict l) (TDict dk kt vt) ->
         type_of_value k kt ->
         type_of_value (VOption (dict_lookup k l)) (TOption vt).
     Proof.
@@ -1391,9 +1401,9 @@ Section WithWord.
   Qed.
 
   (* Restricting a well-typed dictionary to a range of keys keeps it well-typed *)
-  Lemma dict_range_sound : forall (d : list (value * value)) kt vt lo hi,
-      type_of_value (VDict d) (TDict kt vt) ->
-      type_of_value (VDict (dict_range lo hi d)) (TDict kt vt).
+  Lemma dict_range_sound : forall (d : list (value * value)) dk kt vt lo hi,
+      type_of_value (VDict d) (TDict dk kt vt) ->
+      type_of_value (VDict (dict_range lo hi d)) (TDict dk kt vt).
   Proof.
     unfold dict_range; intros * H. inversion H; subst. constructor.
     - rewrite Forall_forall in *; intros ? H_in.
@@ -1421,7 +1431,7 @@ Section WithWord.
         inversion H; apply_type_sound_IH; try discriminate;
           try solve [ repeat constructor; auto ].
         (* ODictValues: the values of a well-typed dictionary form a well-typed bag *)
-        lazymatch goal with H: TDict _ _ = TDict _ _ |- _ => inversion H; subst end.
+        lazymatch goal with H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst end.
         apply list_to_bag_sound.
         rewrite Forall_forall; intros v H_in.
         apply in_map_iff in H_in; destruct H_in as [p [H_eq H_p]]; subst.
@@ -1430,9 +1440,14 @@ Section WithWord.
         end; intuition auto.
       - (* TyEBinop *)
         inversion H; subst.
-        26:{ (* OLookup *)
+        26:{ (* OLookup.  The kind occurs only in the premise, never in the
+               conclusion -- a lookup is answerable either way -- so it has to
+               be named here or it is left as an unresolved evar.  Unranged is
+               an arbitrary instance of a universally quantified variable:
+               TyVDict's premises say nothing about the kind, so the premise
+               is provable at whichever one we pick. *)
           cbn. revert IHtype_of2. apply_type_sound_IH. intros.
-          eapply dict_lookup_sound;[ | | | apply IHtype_of2 ]; auto;
+          eapply dict_lookup_sound with (dk := Unranged);[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.
           constructor; auto. }
         26:{ (* ODelete *)
