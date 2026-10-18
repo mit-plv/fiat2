@@ -275,6 +275,30 @@ Section WithConcreteMaps.
 
   End CommonPipelineParts.
 
+  (* What both dictionary hints build.  They hand out the SAME rules and
+     differ only in the kind the member is built at: every rule but the range
+     one is kind-generic, and the range rule is in both lists because it
+     tests the kind itself and cannot fire on an Unranged member.  Factored
+     out so that one soundness lemma, mk_dict_idx_transfs_sound, serves both
+     hints. *)
+  Definition mk_dict_idx (dk : dict_kind) (attr : string) (cur_tag : nat) (reps : nat) :
+    list (string * IndexInterface.index * (value -> value -> Prop)) * list (string -> command -> command) * nat :=
+    ([(String.of_nat cur_tag, cdict_idx attr dk, dict_idx_wf attr dk)],
+      [dict_lookup_transf (String.of_nat cur_tag) attr;
+       dict_range_transf (String.of_nat cur_tag) attr dk;
+       use_dict_idx_transf (String.of_nat cur_tag) attr dk;
+       (* inserts and deletes are maintained in the same loop, so that an
+          insert into a filtered table and a filter of an extended table are
+          both handled *)
+       fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr dk tbl)
+                                   (cons_to_insert_transf attr dk tbl)) reps],
+      S cur_tag).
+
+  (* so that the bare cbn in mk_idx_ok and mk_idx_sound_strengthen reduces a
+     dictionary hint's branch to its pair, as it did when the branches were
+     written out *)
+  Arguments mk_dict_idx _ _ _ _ /.
+
   (* ds is the installed table's declarations.  Only the use rules look at
      them; the index list does not, because every index here is installed
      unconditionally. *)
@@ -307,31 +331,8 @@ Section WithConcreteMaps.
            fun tbl => repeat_transf (Basics.compose (filter_to_set_diff_transf attr tbl)
                                        (cons_to_set_insert_transf attr tbl)) reps],
           S cur_tag)
-    (* The two dictionary hints below hand out the SAME rules and differ only
-       in the kind they build the member at.  That is the point: every rule
-       but the range one is kind-generic, so the range rule is in both lists
-       and simply cannot fire on the Unranged member. *)
-    | DictIdx attr =>
-        let dict_idx_tag := String.of_nat cur_tag in
-        ([(dict_idx_tag, cdict_idx attr Unranged, dict_idx_wf attr Unranged)],
-          [dict_lookup_transf dict_idx_tag attr;
-           dict_range_transf dict_idx_tag attr Unranged;
-           use_dict_idx_transf dict_idx_tag attr Unranged;
-           (* inserts and deletes are maintained in the same loop, so that
-              an insert into a filtered table and a filter of an extended table
-              are both handled *)
-           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr Unranged tbl)
-                                       (cons_to_insert_transf attr Unranged tbl)) reps],
-          S cur_tag)
-    | RangedDictIdx attr =>
-        let dict_idx_tag := String.of_nat cur_tag in
-        ([(dict_idx_tag, cdict_idx attr Ranged, dict_idx_wf attr Ranged)],
-          [dict_lookup_transf dict_idx_tag attr;
-           dict_range_transf dict_idx_tag attr Ranged;
-           use_dict_idx_transf dict_idx_tag attr Ranged;
-           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr Ranged tbl)
-                                       (cons_to_insert_transf attr Ranged tbl)) reps],
-          S cur_tag)
+    | DictIdx attr => mk_dict_idx Unranged attr cur_tag reps
+    | RangedDictIdx attr => mk_dict_idx Ranged attr cur_tag reps
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
         ([(u_tag, cunique_idx attr, unique_idx_wf attr)],
@@ -437,7 +438,8 @@ end.
         NoDup (map fst (map fst idxs)) /\
         Forall (fun '(_, idx, _) => hole = "hole") idxs.
   Proof.
-    destruct ic; unfold mk_idx; intros; invert_pair; intuition idtac.
+    (* unfold, not cbn, so the Arguments marker on mk_dict_idx does not apply *)
+    destruct ic; unfold mk_idx, mk_dict_idx; intros; invert_pair; intuition idtac.
     all: try lia.
     (* one member per choice, except the trigram choice, which installs the
        primary-key member it leans on too -- so the lists are taken apart by
@@ -810,6 +812,65 @@ end.
      correctness rests on a declared constraint is installed under the stronger
      invariant "the record is well formed AND the declarations hold", and the
      ordinary indexes' rewrites have to be usable there too. *)
+  (* What both dictionary hints need proved.  The two hints hand out the same
+     rules, so this is stated once, for an arbitrary kind: every rule but the
+     range one is kind-generic, and the range rule tests the kind itself and
+     is the identity when it does not match, so nothing here is conditional
+     on the kind. *)
+  Lemma mk_dict_idx_transfs_sound :
+    forall dk attr cur_tag reps idxs transfs next_tag f,
+      (idxs, transfs, next_tag) = mk_dict_idx dk attr cur_tag reps ->
+      In f transfs ->
+      forall l (Q : value -> Prop),
+        incl idxs l ->
+        NoDup (map fst (map fst l)) ->
+        (forall v, Q v -> @aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v) ->
+        @aug_transf_sound width word ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
+          (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") Q f.
+  Proof.
+    intros dk attr cur_tag reps idxs transfs next_tag f H_mk H_in l Q H_incl H_nd H_Q.
+    revert H_mk H_in H_incl H_nd.
+    cbn; intros; invert_pair; repeat apply_incl_cons_inv.
+    repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+    all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+    1:{ eapply eq_filter_to_lookup_head_sound with (dk := dk); auto using ctenv_ok, clocals_ok.
+        1:{ rewrite is_NoDup_to_transparent.
+            instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+            cbn; intuition discriminate. }
+        1: prove_aux_ty_for_idx;
+        [ prove_access_record_idx_ty
+        | prove_NoDup_map_fst_sort_map
+        | prove_In_map_fst_sort_map ].
+        1: prove_is_tbl_ty.
+        1: prove_idx_wf. }
+    1:{ eapply range_filter_to_dict_range_head_sound with (dk := dk); auto using ctenv_ok, clocals_ok.
+        1:{ rewrite is_NoDup_to_transparent.
+            instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+            cbn; intuition discriminate. }
+        1: prove_aux_ty_for_idx;
+        [ prove_access_record_idx_ty
+        | prove_NoDup_map_fst_sort_map
+        | prove_In_map_fst_sort_map ].
+        1: prove_is_tbl_ty.
+        1: prove_idx_wf. }
+    1:{ eapply use_idx_head_sound; eauto with transf_hints.
+        1:{ rewrite is_NoDup_to_transparent.
+            instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+            eauto with transf_hints. }
+        1: prove_aux_ty_for_idx;
+        [ prove_access_record_idx_ty
+        | prove_NoDup_map_fst_sort_map
+        | prove_In_map_fst_sort_map ].
+        1: prove_is_tbl_ty.
+        1: prove_idx_wf. }
+    1:{ apply expr_transf_sound__expr_aug_transf_sound.
+        eapply filter_neq_to_delete_head_sound;
+          eauto with transf_hints. }
+    1:{ apply expr_transf_sound__expr_aug_transf_sound.
+        eapply cons_to_insert_head_sound;
+          eauto with transf_hints. }
+  Qed.
+
   Lemma mk_idx_sound_strengthen : forall ic ds row_ty init_tag reps idxs transfs next_tag f,
       (idxs, transfs, next_tag) = mk_idx ds init_tag reps ic ->
       In f transfs ->
@@ -868,86 +929,15 @@ end.
             eapply filter_neq_to_set_diff_head_sound; auto using ctenv_ok, clocals_ok. }
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply cons_to_set_insert_head_sound; auto using ctenv_ok, clocals_ok. } }
-    (* The two dictionary hints hand out the same rules, so one script serves
-       both goals and is written twice, once per kind.  Neither copy needs a
-       side condition about the range rule: it tests the kind itself and is
-       the identity when the kind does not match. *)
-    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
-        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
-        1:{ eapply eq_filter_to_lookup_head_sound with (dk := Unranged); auto using ctenv_ok, clocals_ok.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
-                cbn; intuition discriminate. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ eapply range_filter_to_dict_range_head_sound with (dk := Unranged); auto using ctenv_ok, clocals_ok.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
-                cbn; intuition discriminate. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ eapply use_idx_head_sound; eauto with transf_hints.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
-                eauto with transf_hints. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply filter_neq_to_delete_head_sound;
-              eauto with transf_hints. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply cons_to_insert_head_sound;
-              eauto with transf_hints. } }
-    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
-        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
-        1:{ eapply eq_filter_to_lookup_head_sound with (dk := Ranged); auto using ctenv_ok, clocals_ok.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
-                cbn; intuition discriminate. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ eapply range_filter_to_dict_range_head_sound with (dk := Ranged); auto using ctenv_ok, clocals_ok.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
-                cbn; intuition discriminate. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ eapply use_idx_head_sound; eauto with transf_hints.
-            1:{ rewrite is_NoDup_to_transparent.
-                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
-                eauto with transf_hints. }
-            1: prove_aux_ty_for_idx;
-            [ prove_access_record_idx_ty
-            | prove_NoDup_map_fst_sort_map
-            | prove_In_map_fst_sort_map ].
-            1: prove_is_tbl_ty.
-            1: prove_idx_wf. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply filter_neq_to_delete_head_sound;
-              eauto with transf_hints. }
-        1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply cons_to_insert_head_sound;
-              eauto with transf_hints. } }
+    (* both dictionary hints, from the one lemma above *)
+    1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
+          (cur_tag := init_tag) (reps := reps);
+        [ reflexivity | cbn; eassumption
+        | apply incl_cons; assumption | assumption | exact H_Q ]. }
+    1:{ eapply mk_dict_idx_transfs_sound with (dk := Ranged) (attr := a)
+          (cur_tag := init_tag) (reps := reps);
+        [ reflexivity | cbn; eassumption
+        | apply incl_cons; assumption | assumption | exact H_Q ]. }
     (* the declared member: the lookup is gated on the declarations, the
        three maintenance rules are not -- the use rule needs the member's own
        weak relation, and the insert and the delete need nothing *)
