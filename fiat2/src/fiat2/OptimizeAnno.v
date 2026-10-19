@@ -1,7 +1,8 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
-  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.EraseField fiat2.RepIdx.
+  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.EraseField fiat2.RepIdx
+  fiat2.FlagFilter.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -25,7 +26,10 @@ Variant basic_transf :=
   | SwapBagFlatmaps
   (* an emptiness test of a key-equality filter is a membership test in the
      set of the keys; see ExistsTransf *)
-  | FilterEmptyToSetMem.
+  | FilterEmptyToSetMem
+  (* a filter on a boolean field is an equality filter against the flag, which
+     is the shape the index rules read; see FlagFilter *)
+  | FlagFilterToEq.
 
 Variant index_choice :=
   | SumAgg (attr : string)
@@ -85,6 +89,9 @@ Definition swap_flatmap_likebag_transf := fold_command id swap_flatmap_likebag_h
 Definition filter_eq_empty_to_set_mem_transf :=
   fold_command id filter_eq_empty_to_set_mem_head.
 
+Definition flag_filter_to_eq_transf :=
+  fold_command id flag_filter_to_eq_head.
+
 Definition mk_basic_transf (f : basic_transf) : command -> command :=
   match f with
   | SwapIfNil => swap_if_nil_transf
@@ -101,6 +108,7 @@ Definition mk_basic_transf (f : basic_transf) : command -> command :=
   | FlatmapIf => flatmap_if_transf
   | SwapBagFlatmaps => swap_flatmap_likebag_transf
   | FilterEmptyToSetMem => filter_eq_empty_to_set_mem_transf
+  | FlagFilterToEq => flag_filter_to_eq_transf
   end.
 
 Definition compose_basic_transfs : list (command -> command) -> command -> command :=
@@ -609,7 +617,7 @@ end.
         annotate_collection_transf, push_down_collection_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
         flatmap_if_transf, swap_flatmap_likebag_transf,
-        filter_eq_empty_to_set_mem_transf;
+        filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf;
       eapply expr_transf_sound__preserve_parameterized_wf;
       eauto with transf_hints.
   Qed.
@@ -1289,7 +1297,7 @@ end.
         annotate_collection_transf, push_down_collection_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
         flatmap_if_transf, swap_flatmap_likebag_transf,
-        filter_eq_empty_to_set_mem_transf;
+        filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf;
       eapply (expr_transf_sound__preserve_cenv_respected (tenv := ctenv) (locals := clocals));
       eauto with transf_hints.
   Qed.
@@ -1398,7 +1406,7 @@ end.
         if_nil_into_flatmap_transf, swap_conjuncts_transf, split_if_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
         flatmap_if_transf, annotate_collection_transf, push_down_collection_transf,
-        swap_flatmap_likebag_transf, filter_eq_empty_to_set_mem_transf;
+        swap_flatmap_likebag_transf, filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf;
       cbn [fold_command]; unfold id;
       eexists; split; try reflexivity;
       intros t H_t; eapply fold_expr_preserve_ty;
