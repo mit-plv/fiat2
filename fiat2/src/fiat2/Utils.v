@@ -968,6 +968,164 @@ Section WithWord.
         * cbn [dict_delete]. destruct (value_eqb k k0) eqn:E_eq; auto.
           cbn [dict_insert]. rewrite E_lt, E_eq', IH; auto.
   Qed.
+
+  (* Canonical dictionaries.  These four are about dict_wf (Value.v),
+     dict_insert and dict_delete and nothing else, so they sit with the
+     other dict facts above rather than in the index that first needed
+     them.  Extensionality is the handle on any rule that has to prove an
+     EQUALITY of dictionaries, which every keyed delete does. *)
+  (* ------------------------------------------------------------------
+     Canonical dictionaries.
+
+     A dict value's entries are strictly increasing in their keys
+     (Value.dict_wf), so a dictionary is determined by what it looks up.
+     The delete rule has to prove an EQUALITY of dictionaries -- the
+     index of a table with a row removed is the stored index with that
+     row's keys taken out -- and extensionality is the only handle on
+     that.  (The insert rule needed none of this: there both sides are
+     built by the same insertion.)
+     ------------------------------------------------------------------ *)
+  Lemma dict_wf_lookup_None : forall (d : list (value * value)) (k : value),
+      (forall k' v', In (k', v') d -> value_ltb k k' = true) ->
+      dict_lookup k d = None.
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_lookup]; [ reflexivity | ].
+    intros k H_lt.
+    destruct (value_eqb k k0) eqn:E.
+    1:{ apply value_eqb_eq in E; subst k0.
+        specialize (H_lt k v0 (or_introl eq_refl)).
+        unfold value_ltb in H_lt; rewrite value_compare_refl in H_lt.
+        discriminate. }
+    apply IH; intros k' v' H_in; apply (H_lt k' v'); right; exact H_in.
+  Qed.
+
+  Lemma dict_insert_preserve_dict_wf : forall (d : list (value * value)) (k v : value),
+      dict_wf d -> dict_wf (dict_insert k v d).
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_insert dict_wf]; intros k v H_wf.
+    1: split; [ intros ? ? [] | exact I ].
+    destruct H_wf as [ H_hd H_wf ].
+    destruct (value_ltb k k0) eqn:E_lt.
+    1:{ (* k goes in front *)
+        cbn [dict_wf]; split; [ | split; [ exact H_hd | exact H_wf ] ].
+        intros k' v' [ E | H_in ].
+        1: injection E as E _; subst k'; exact E_lt.
+        1:{ apply H_hd in H_in.
+            unfold value_ltb in *.
+            destruct (value_compare k k') eqn:E_kk'; try reflexivity.
+            (* k' <= k < k0 <= k' is impossible *)
+            all: destruct (value_compare k k0) eqn:E_kk0; try discriminate.
+            all: destruct (value_compare k0 k') eqn:E_k0k'; try discriminate.
+            1:{ apply value_compare_Eq_eq in E_kk'; subst k'.
+                pose proof (value_compare_trans _ _ _ E_kk0 E_k0k') as E_t.
+                rewrite value_compare_refl in E_t; discriminate. }
+            1:{ pose proof (value_compare_trans _ _ _ E_kk0 E_k0k') as E_t.
+                rewrite E_kk' in E_t; discriminate. } } }
+    destruct (value_eqb k k0) eqn:E_eq.
+    1:{ (* k replaces the head *)
+        apply value_eqb_eq in E_eq; subst k0.
+        cbn [dict_wf]; split; [ exact H_hd | exact H_wf ]. }
+    1:{ (* k goes further in *)
+        cbn [dict_wf]; split; [ | apply IH; exact H_wf ].
+        intros k' v' H_in.
+        (* the new entry's key is one that was already in, or k itself,
+           and k0 < k because it is neither less nor equal *)
+        apply dict_insert_incl in H_in; cbn [In] in H_in;
+          destruct H_in as [ E | H_in ].
+        1:{ injection E as E _; subst k'.
+            unfold value_ltb, value_eqb in *.
+            destruct (value_compare k0 k) eqn:E_k0k; try reflexivity.
+            1:{ apply value_compare_Eq_eq in E_k0k; subst.
+                rewrite value_compare_refl in E_eq; discriminate. }
+            1:{ rewrite (value_compare_antisym k k0), E_k0k in E_lt.
+                cbn in E_lt; discriminate. } }
+        1: apply H_hd in H_in; exact H_in. }
+  Qed.
+
+  Lemma dict_delete_preserve_dict_wf : forall (d : list (value * value)) (k : value),
+      dict_wf d -> dict_wf (dict_delete k d).
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_delete dict_wf]; intros k H_wf;
+      [ exact I | ].
+    destruct H_wf as [ H_hd H_wf ].
+    destruct (value_eqb k k0); [ exact H_wf | ].
+    cbn [dict_wf]; split; [ | apply IH; exact H_wf ].
+    intros k' v' H_in; apply (H_hd k' v').
+    apply dict_delete_incl in H_in; exact H_in.
+  Qed.
+
+  Lemma dict_wf_lookup_ext : forall (d1 d2 : list (value * value)),
+      dict_wf d1 -> dict_wf d2 ->
+      (forall k : value, dict_lookup k d1 = dict_lookup k d2) -> d1 = d2.
+  Proof.
+    induction d1 as [ | [ k1 v1 ] d1 IH ];
+      intros d2 H_wf1 H_wf2 H_lk.
+    1:{ destruct d2 as [ | [ k2 v2 ] d2 ]; [ reflexivity | ].
+        specialize (H_lk k2); cbn [dict_lookup] in H_lk.
+        rewrite value_eqb_refl in H_lk; discriminate. }
+    destruct d2 as [ | [ k2 v2 ] d2 ].
+    1:{ specialize (H_lk k1); cbn [dict_lookup] in H_lk.
+        rewrite value_eqb_refl in H_lk; discriminate. }
+    destruct H_wf1 as [ H_hd1 H_wf1 ]; destruct H_wf2 as [ H_hd2 H_wf2 ].
+    (* the two heads hold the smallest key of each, so they agree *)
+    assert (E_k : k1 = k2).
+    1:{ destruct (value_eqb k1 k2) eqn:E; [ apply value_eqb_eq; exact E | ].
+        (* otherwise one head's key is absent from the other dictionary *)
+        exfalso.
+        destruct (value_compare k1 k2) eqn:E_c.
+        1: apply value_compare_Eq_eq in E_c; unfold value_eqb in E;
+           rewrite E_c, value_compare_refl in E; discriminate.
+        (* k1 < k2: then k1 is below every key of d2, so d2 does not
+           hold it, while d1's head does *)
+        1:{ specialize (H_lk k1); cbn [dict_lookup] in H_lk.
+            rewrite value_eqb_refl, E in H_lk.
+            rewrite dict_wf_lookup_None in H_lk; [ discriminate | ].
+            intros k' v' H_in; apply H_hd2 in H_in.
+            unfold value_ltb in H_in |- *.
+            destruct (value_compare k2 k') eqn:E_2k'; try discriminate.
+            rewrite (value_compare_trans k1 k2 k' E_c E_2k'); reflexivity. }
+        (* and k2 < k1 symmetrically *)
+        1:{ assert (E_21 : value_compare k2 k1 = Lt).
+            1:{ rewrite (value_compare_antisym k1 k2) in E_c.
+                destruct (value_compare k2 k1); cbn in E_c; congruence. }
+            specialize (H_lk k2); cbn [dict_lookup] in H_lk.
+            rewrite value_eqb_refl in H_lk.
+            rewrite (value_eqb_sym k2 k1), E in H_lk.
+            rewrite dict_wf_lookup_None in H_lk; [ discriminate | ].
+            intros k' v' H_in; apply H_hd1 in H_in.
+            unfold value_ltb in H_in |- *.
+            destruct (value_compare k1 k') eqn:E_1k'; try discriminate.
+            rewrite (value_compare_trans k2 k1 k' E_21 E_1k'); reflexivity. } }
+    subst k2.
+    (* then the values at that key, and then the tails *)
+    assert (E_v : v1 = v2).
+    1:{ specialize (H_lk k1); cbn [dict_lookup] in H_lk.
+        rewrite value_eqb_refl in H_lk; injection H_lk as H_lk; exact H_lk. }
+    subst v2. f_equal.
+    apply IH; [ exact H_wf1 | exact H_wf2 | ].
+    intros k.
+    destruct (value_eqb k k1) eqn:E.
+    1:{ (* the head's key is in neither tail *)
+        apply value_eqb_eq in E; subst k.
+        rewrite (dict_wf_lookup_None d1), (dict_wf_lookup_None d2);
+          [ reflexivity | | ]; assumption. }
+    1:{ specialize (H_lk k); cbn [dict_lookup] in H_lk.
+        rewrite E in H_lk; exact H_lk. }
+  Qed.
+
+  Lemma dict_lookup_delete_same : forall (d : list (value * value)) (k : value),
+      dict_wf d -> dict_lookup k (dict_delete k d) = None.
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_delete dict_wf];
+      intros k H_wf; [ reflexivity | ].
+    destruct H_wf as [ H_hd H_wf ].
+    destruct (value_eqb k k0) eqn:E.
+    1:{ (* the entry goes, and the rest holds strictly larger keys *)
+        apply value_eqb_eq in E; subst k0.
+        apply dict_wf_lookup_None; exact H_hd. }
+    1:{ cbn [dict_lookup]; rewrite E. apply IH; exact H_wf. }
+  Qed.
+
 End WithWord.
 
 
