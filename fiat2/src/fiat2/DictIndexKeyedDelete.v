@@ -23,8 +23,8 @@
    ==================================================================== *)
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.CollectionTransf fiat2.FlatmapTransf fiat2.EraseField
-  fiat2.Constraint fiat2.DictIndexImpl.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+  fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms.
+Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
@@ -81,6 +81,30 @@ Section WithWord.
     apply Permutation_list_to_bag_eq, Permutation_filter.
     apply Permutation_sym, list_to_bag_to_list_Permutation.
   Qed.
+
+  (* Two readings of a well-typed value, used to get at the table's rows and
+     the index record's members.  Both are generic; they are restated here
+     rather than imported because the copies in TrigramIndexUse sit inside
+     that file's own section. *)
+  Lemma type_of_value_field : forall (rv : list (string * value)) tl x (v : value) t,
+      type_of_value (VRecord rv) (TRecord tl) ->
+      access_record rv x = Success v ->
+      access_record tl x = Success t ->
+      type_of_value v t.
+  Proof.
+    intros * H_ty H_v H_t.
+    invert_type_of_value_clear.
+    lazymatch goal with H : Forall2 _ rv _ |- _ =>
+      eapply Forall2_access_record; [ exact H | exact H_v | exact H_t ] end.
+  Qed.
+
+  Lemma type_of_value_TList_inv : forall (v : value) t,
+      type_of_value v (TList t) ->
+      exists l, v = VList l /\ Forall (fun r => type_of_value r t) l.
+  Proof.
+    intros v t H. inversion H; subst.
+    eexists; split; [ reflexivity | assumption ].
+  Qed.
 End WithWord.
 
 Section WithAttrs.
@@ -136,6 +160,28 @@ Section WithAttrs.
     unfold idx_of in *; cbn [gallina_to_idx fold_right] in *.
     destruct r; try exact I.
     apply dict_insert_preserve_dict_wf; exact IH.
+  Qed.
+
+  (* Whatever bucket the index holds is a bag of the table's rows: it is the
+     rows filed at that key, and they are rows of the table.  This is what
+     makes a bucket filterable, and it is all the delete body needs to know
+     about the dictionary it is rewriting. *)
+  Lemma idx_of_bucket_typed : forall l t av bv,
+      Forall (fun r => exists rc, r = VRecord rc) l ->
+      Forall (fun r => type_of_value r t) l ->
+      dict_lookup av (idx_of l) = Some bv ->
+      type_of_value bv (TBag t).
+  Proof.
+    intros l t av bv H_rec H_ty H_lk.
+    rewrite (idx_of_lookup l av H_rec) in H_lk.
+    destruct (rows_at av l) as [ | r0 rows ] eqn:E_rows; [ discriminate | ].
+    injection H_lk as H_lk; subst bv.
+    (* the match reduced list_to_bag's fold one step; put it back *)
+    change (bag_insert r0 (list_to_bag rows)) with (list_to_bag (r0 :: rows)).
+    apply list_to_bag_sound.
+    rewrite <- E_rows; unfold rows_at.
+    rewrite Forall_forall in *; intros r H_in.
+    apply filter_In in H_in as [ H_in _ ]; auto.
   Qed.
 
   (* the rows that survive a delete of the row at kv *)
@@ -290,6 +336,10 @@ Section WithIndexUse.
      the bucket it sits in, and a row of that bucket *)
   Context (tup bkt rvar : string).
   Context (H_rvar_tup : tup <> rvar).
+  (* the accumulator the rebuild folds into: the index of the rows seen so
+     far, which the delete rewrites in place instead of rebuilding *)
+  Context (acc : string).
+  Context (H_tup_bkt : tup <> bkt) (H_acc_bkt : acc <> bkt).
 
   Section WithMap.
     Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
@@ -341,6 +391,92 @@ Section WithIndexUse.
       unfold bucket_without; f_equal.
       inversion H_ty; subst.
       apply list_to_bag_filter_bag_to_list; assumption.
+    Qed.
+
+    (* Reading one attribute off a row bound to a binder.  row_key is the
+       same match, so this is the bridge between the expression's EAccess
+       and the Gallina key the equations above are stated with. *)
+    Lemma interp_row_attr : forall (store env : locals) (x a : string) rv,
+        map.get env x = Some rv ->
+        interp_expr store env (EAccess (EVar x) a) = row_key a rv.
+    Proof.
+      intros store env x a rv E_x.
+      rewrite interp_EAccess, interp_EVar; unfold get_local; rewrite E_x.
+      unfold row_key; destruct rv; reflexivity.
+    Qed.
+
+    (* ------------------------------------------------------------------
+       The whole per-row update: find the bucket the leaving row's own
+       attribute names, take the row out of it, and put the shortened
+       bucket back -- or delete the entry if the row was the last one in
+       it, since the index of a table never holds an empty bucket.
+
+       without_row is spelled twice rather than bound to a name, following
+       TrigramIndexImpl.tri_without_pk: a let would cost every rule that
+       matches this body one more binder to be told about, and a bucket is
+       small enough to filter twice.
+       ------------------------------------------------------------------ *)
+    Notation bucket_key := (EAccess (EVar tup) attr).
+
+    Notation dict_row_delete_body :=
+      (EOptMatch (EBinop OLookup (EVar acc) bucket_key)
+         (EVar acc)
+         bkt
+         (EIf (EBinop OEq without_row (EAtom (AEmptyBag None)))
+            (EBinop ODelete (EVar acc) bucket_key)
+            (ETernop OInsert (EVar acc) bucket_key without_row))).
+
+    (* What that body computes.  The one premise is that the bucket the
+       leaving row's attribute names, if there is one, is a bag of rows --
+       which is what makes it filterable, and what idx_of_bucket_typed says
+       of an index built from a table. *)
+    Lemma interp_dict_row_delete : forall (store env : locals) d rv t,
+        map.get env acc = Some (VDict d) ->
+        map.get env tup = Some rv ->
+        (forall bv, dict_lookup (row_key attr rv) d = Some bv ->
+                    type_of_value bv (TBag t)) ->
+        interp_expr store env dict_row_delete_body
+        = VDict (unindex attr key (row_key key rv) rv d).
+    Proof.
+      intros store env d rv t E_acc E_tup H_bags.
+      rewrite interp_EOptMatch, interp_EBinop, interp_EVar.
+      unfold get_local; rewrite E_acc.
+      rewrite (interp_row_attr store env tup attr rv E_tup).
+      cbn [interp_binop].
+      unfold unindex.
+      destruct (dict_lookup (row_key attr rv) d) as [ bv | ] eqn:E_lk.
+      (* the none branch is the accumulator itself, already read above *)
+      2: reflexivity.
+      (* the bucket is a bag, by the premise -- which the destruct above
+         has already specialised to this lookup *)
+      assert (H_bv : type_of_value bv (TBag t)) by (apply H_bags; reflexivity).
+      assert (H_bag : exists b, bv = VBag b) by (inversion H_bv; eauto).
+      destruct H_bag as [ b E_bv ]; subst bv.
+      (* the shortened bucket, the same on both branches of the test *)
+      assert (E_wo : interp_expr store (map.put env bkt (VBag b)) without_row
+                     = VBag (bucket_without key (row_key key rv) b)).
+      1:{ apply (interp_without_row _ _ b t);
+          [ apply map.get_put_same
+          | rewrite map.get_put_diff by exact H_tup_bkt; exact E_tup
+          | exact H_bv ]. }
+      rewrite interp_EIf, interp_EBinop, E_wo, interp_EAtom.
+      cbn [interp_atom interp_binop].
+      destruct (bucket_without key (row_key key rv) b) as [ | e b' ] eqn:E_bw.
+      - (* the row was the last one in its bucket, so the entry goes *)
+        rewrite value_eqb_refl.
+        rewrite interp_EBinop, interp_EVar; unfold get_local.
+        rewrite map.get_put_diff by exact H_acc_bkt; rewrite E_acc.
+        rewrite (interp_row_attr _ _ tup attr rv)
+          by (rewrite map.get_put_diff by exact H_tup_bkt; exact E_tup).
+        reflexivity.
+      - (* and otherwise the shortened bucket goes back in its place *)
+        destruct (value_eqb (VBag (e :: b')) (VBag nil)) eqn:E_eq.
+        1:{ exfalso; apply value_eqb_eq in E_eq; discriminate. }
+        rewrite interp_ETernop, interp_EVar, E_wo; unfold get_local.
+        rewrite map.get_put_diff by exact H_acc_bkt; rewrite E_acc.
+        rewrite (interp_row_attr _ _ tup attr rv)
+          by (rewrite map.get_put_diff by exact H_tup_bkt; exact E_tup).
+        reflexivity.
     Qed.
   End WithMap.
 End WithIndexUse.
