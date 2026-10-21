@@ -519,6 +519,13 @@ Section WithRule.
        matches this body one more binder to be told about, and a bucket is
        small enough to filter twice.
        ------------------------------------------------------------------ *)
+    (* ELet's step rule.  The trigram file has its own copy; this is the
+       same one-liner, kept here so this file does not depend on it. *)
+    Lemma interp_ELet_step : forall (store env : locals) e1 y e2,
+        interp_expr store env (ELet e1 y e2)
+        = interp_expr store (map.put env y (interp_expr store env e1)) e2.
+    Proof. reflexivity. Qed.
+
     Notation bucket_key := (EAccess (EVar tup) attr).
 
     Notation dict_row_delete_body :=
@@ -1004,6 +1011,119 @@ Section WithRule.
             1:{ rewrite map.get_put_diff by (apply not_eq_sym; exact tup_neq_acc).
                 apply map.get_put_same. }
             1: exact H_rtwf. }
+      Qed.
+
+      (* =================================================================
+         The rule computes what the source computes.
+
+         The source rebuilds the whole index from the filtered table.  The
+         emitted form rebuilds it from the whole table and then takes one
+         row out of the single bucket that row's attribute names.  The two
+         agree because at most one row carries the deleted key, which is
+         exactly what the primary-key member's NoDup pays for: on the hit
+         branch through idx_of_filter_neq_key, on the miss branch through
+         idx_of_filter_neq_absent.
+         ================================================================= *)
+      Lemma filter_neq_to_keyed_delete_head_preserve_sem :
+        forall tl rt (Gstore : tenv) (store : locals),
+          type_wf (TList (TRecord rt)) ->
+          DictIndexImpl.is_tbl_ty attr (TList (TRecord rt)) = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          match map.get store tbl with
+          | Some v =>
+              type_of_value v (TRecord tl) /\ idx_aux_wf_at v /\ unique_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store filter_neq_to_keyed_delete_head.
+      Proof.
+        unfold preserve_sem; intros * H_twf H_is E_tbl E_id H_store.
+        intros e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+        destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+        destruct H_store as [ H_vty [ H_idx H_pk ] ].
+        destruct (invariants__idx_data tl rt v H_twf H_is E_id H_vty H_idx H_pk)
+          as [ rv [ rv_aux [ rows [ E_vrec [ E_rows [ E_aux
+             [ E_idx [ E_pkf [ H_rows H_nd ] ] ] ] ] ] ] ] ].
+        subst v.
+        (* the rows are records, which both to_idx and the bucket lemmas need *)
+        pose proof (typed_rows_are_records rows rt H_rows) as H_rec.
+        repeat destruct_subexpr.
+        cbn [filter_neq_to_keyed_delete_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+        use_dk_beq.
+        rewrite eqb_eq in *; subst.
+        (* the deleted key's expression, which destruct_subexpr named for us *)
+        lazymatch goal with pe : expr |- _ => rename pe into kexp end.
+        (* the table read, which both sides start from *)
+        assert (E_tr : interp_expr store env (EAccess (ELoc tbl) id_tag)
+                       = VList rows).
+        1:{ rewrite interp_EAccess, interp_ELoc.
+            unfold get_local; rewrite E_v; cbv beta iota. exact E_rows. }
+        (* The source, settled first and separately: destruct_subexpr has
+           spelled its fold out, so only conversion relates it to to_idx_at
+           and rewrite's syntactic match would not see it. *)
+        lazymatch goal with
+        | |- _ = interp_expr store env ?src =>
+            assert (E_src : interp_expr store env src
+                            = VDict (idx_of attr
+                                       (filter (keeps key
+                                                  (interp_expr store env kexp))
+                                          rows)))
+        end.
+        1:{ apply (interp_to_idx_at store env _ _
+                     (Forall_rec_filter _ rows H_rec)).
+            rewrite interp_flatmap_filter_list, E_tr.
+            rewrite FlatmapForms.filter_pred_neq by assumption.
+            reflexivity. }
+        rewrite E_src.
+        (* and the emitted form: rebuild from the whole table, then probe
+           the primary-key member for the row that is leaving *)
+        rewrite interp_ELet_step.
+        rewrite (interp_to_idx_at store env _ rows H_rec E_tr).
+        rewrite interp_EOptMatch, interp_EBinop.
+        rewrite (interp_tbl_field store _ rv rv_aux pk_tag _ E_v E_aux E_pkf).
+        rewrite <- (not_free_immut_put_sem kexp acc store env) by assumption.
+        cbn [interp_binop].
+        destruct (dict_lookup (interp_expr store env kexp)
+                    (UniqueDictIndexImpl.idx_entries key rows)) as [ r | ] eqn:E_lk.
+        1:{ (* the one row the key names, which the member resolves in O(1) *)
+            apply (UniqueDictIndexImpl.idx_lookup_Some_inv key (word_ok := word_ok))
+              in E_lk as [ H_in E_k ].
+            (* what the per-row body computes, its binders read by shape *)
+            assert (E_acc' : map.get
+                               (map.put (map.put env acc
+                                           (VDict (idx_of attr rows))) tup r)
+                               acc = Some (VDict (idx_of attr rows))).
+            1:{ (* map.get_put_diff wants looked-up-key <> put-key *)
+                rewrite map.get_put_diff by (apply not_eq_sym; exact tup_neq_acc).
+                apply map.get_put_same. }
+            assert (E_tup' : map.get
+                               (map.put (map.put env acc
+                                           (VDict (idx_of attr rows))) tup r)
+                               tup = Some r) by apply map.get_put_same.
+            (* the index holds nothing but bags, which is the body's one
+               premise and what idx_of_bucket_typed supplies *)
+            assert (H_bags : forall bv,
+                       dict_lookup (row_key attr r) (idx_of attr rows) = Some bv ->
+                       type_of_value bv (TBag (TRecord rt))).
+            1:{ intros bv H_bv.
+                exact (idx_of_bucket_typed attr rows (TRecord rt) _ bv
+                         H_rec H_rows H_bv). }
+            rewrite (interp_dict_row_delete store _ (idx_of attr rows) r
+                       (TRecord rt) E_acc' E_tup' H_bags).
+            (* taking the row out of the recomputation is taking its key
+               out of the index that was already there *)
+            rewrite E_k. f_equal. symmetry.
+            exact (idx_of_filter_neq_key attr key rows r _ H_rec H_nd H_in E_k). }
+        1:{ (* no row carries the key, so the filter removes nothing *)
+            rewrite interp_EVar; unfold get_local; rewrite map.get_put_same.
+            f_equal. symmetry.
+            apply (idx_of_filter_neq_absent attr key rows).
+            intros r H_in E_k.
+            pose proof (UniqueDictIndexImpl.idx_lookup_Some key
+                          (word_ok := word_ok) rows r H_nd H_in) as E_s.
+            rewrite E_k, E_lk in E_s; discriminate. }
       Qed.
     End WithTable.
   End WithMap.
