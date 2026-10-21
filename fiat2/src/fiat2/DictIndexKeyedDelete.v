@@ -350,26 +350,97 @@ Section WithAttrs.
 
 End WithAttrs.
 
+
+
 (* ====================================================================
-   The expression side: what the bucket rewrite computes.
+   The rule: a keyed delete, read off two members of one index record.
+
+   The shape is TrigramIndexUse.filter_neq_to_tri_delete_head's, with the
+   trigrams of a row's text replaced by one attribute of the row.  The
+   dictionary member buckets on attr; the delete names key; so the row that
+   is leaving is not in the expression at all, only its key is, and the rule
+   reads the row out of the primary-key member.  That is also why it is
+   sound only where the key is declared unique: with two rows at one key,
+   taking one row's contributions out would lose the other's.
    ==================================================================== *)
-Section WithIndexUse.
-  (* the dictionary index's own binders, and the attribute it buckets on *)
-  Context (attr key : string).
-  (* the binders the rewritten delete introduces: the row that is leaving,
-     the bucket it sits in, and a row of that bucket *)
-  Context (tup bkt rvar : string).
-  Context (H_rvar_tup : tup <> rvar).
-  (* the accumulator the rebuild folds into: the index of the rows seen so
-     far, which the delete rewrites in place instead of rebuilding *)
-  Context (acc : string).
-  Context (H_tup_bkt : tup <> bkt) (H_acc_bkt : acc <> bkt).
+Section WithRule.
+  (* the dictionary index's own binders and the attribute it buckets on *)
+  Context (hole attr : string).
+  Context (dk : dict_kind).
+  Context (tup acc x : string).
+  Context (H_NoDup : is_NoDup_opaque [tup; acc; x]).
+  (* The primary-key index's binders, and the attribute the delete names.
+     Only this index can turn a key back into the row that carries it, and
+     the two indexes have to agree on which attribute that is. *)
+  Context (key utup uacc : string).
+  Context (H_utup_uacc : utup <> uacc).
+  (* the two fields the installation pairs *)
+  Context (id_tag aux_tag : string).
+  (* the tags the two dictionaries sit under inside one index record *)
+  Context (idx_tag pk_tag : string).
+  (* the binders the rewritten delete introduces: a bucket, and a row of it *)
+  Context (bkt rvar : string).
+  Context (H_tup_rvar : tup <> rvar) (H_tup_bkt : tup <> bkt) (H_acc_bkt : acc <> bkt).
+
+  Notation didx := (dict_idx hole attr dk tup acc x).
+  Notation uidx := (unique_dict_idx hole key utup uacc).
+
+  (* The index states its binders' distinctness as one opaque is_NoDup,
+     which is awkward in a side condition; it is taken apart once here. *)
+  Lemma tup_neq_acc : tup <> acc.
+  Proof. use_is_NoDup. Qed.
+
+  (* The table shape the dictionary index demands, as an inversion. *)
+  Lemma dict_is_tbl_ty_inv : forall t,
+      @IndexInterface.is_tbl_ty didx t = true ->
+      exists rt at_ty, t = TList (TRecord rt)
+                       /\ access_record rt attr = Success at_ty.
+  Proof.
+    cbn [IndexInterface.is_tbl_ty dict_idx]; unfold DictIndexImpl.is_tbl_ty.
+    intros t H.
+    destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+    destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+    rewrite inb_true_iff in H; apply In_access_record in H as [ at_ty E_attr ].
+    exists rt, at_ty; split; [ reflexivity | exact E_attr ].
+  Qed.
+
+  (* The same for the primary-key member.  The dictionary index's own
+     is_tbl_ty says nothing about key -- it buckets on attr -- so a rule
+     that reads the key off a row has to be told separately that the row
+     carries one, and the natural way to say it is that the primary-key
+     member is installable on the same table. *)
+  Lemma unique_is_tbl_ty_inv : forall t,
+      @IndexInterface.is_tbl_ty uidx t = true ->
+      exists rt kt, t = TList (TRecord rt)
+                    /\ access_record rt key = Success kt.
+  Proof.
+    cbn [IndexInterface.is_tbl_ty unique_dict_idx];
+      unfold UniqueDictIndexImpl.is_tbl_ty.
+    intros t H.
+    destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
+    destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+    rewrite inb_true_iff in H; apply In_access_record in H as [ kt E_key ].
+    exists rt, kt; split; [ reflexivity | exact E_key ].
+  Qed.
+
+  (* The rules' kind test, as an equation oriented so that the PATTERN's
+     kind disappears: rewriting the other way would eliminate the section
+     variable dk and with it every definition mentioning it. *)
+  Ltac use_dk_beq :=
+    repeat lazymatch goal with
+        H: dict_kind_beq dk ?d = true |- _ =>
+          apply dict_kind_beq_eq in H; rewrite <- H in *; clear H
+      end.
 
   Section WithMap.
+    Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
     Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (word:=word)).
+    Notation value := (value (width:=width)).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
+    (* ----------------------------------------------------------------
+       The expression side: what the bucket rewrite computes.
+       ---------------------------------------------------------------- *)
     (* the bucket with the leaving row taken out.  A filter, not a removal
        operator: a bucket is a bag, and filtering one is filtering its
        entry list (list_to_bag_filter_bag_to_list). *)
@@ -406,7 +477,7 @@ Section WithIndexUse.
       erewrite flat_map_pointwise with
         (g := fun v => if keeps key (row_key key rv) v then cons v nil else nil).
       2:{ intro v; cbn [interp_expr interp_unop interp_binop]; unfold get_local.
-          rewrite map.get_put_same, map.get_put_diff by exact H_rvar_tup.
+          rewrite map.get_put_same, map.get_put_diff by exact H_tup_rvar.
           rewrite E_tup; unfold keeps, row_key.
           destruct (value_eqb match v with VRecord rc => record_proj key rc | _ => VUnit end
                       match rv with VRecord rc => record_proj key rc | _ => VUnit end);
@@ -428,12 +499,12 @@ Section WithIndexUse.
     (* Reading one attribute off a row bound to a binder.  row_key is the
        same match, so this is the bridge between the expression's EAccess
        and the Gallina key the equations above are stated with. *)
-    Lemma interp_row_attr : forall (store env : locals) (x a : string) rv,
-        map.get env x = Some rv ->
-        interp_expr store env (EAccess (EVar x) a) = row_key a rv.
+    Lemma interp_row_attr : forall (store env : locals) (y a : string) rv,
+        map.get env y = Some rv ->
+        interp_expr store env (EAccess (EVar y) a) = row_key a rv.
     Proof.
-      intros store env x a rv E_x.
-      rewrite interp_EAccess, interp_EVar; unfold get_local; rewrite E_x.
+      intros store env y a rv E_y.
+      rewrite interp_EAccess, interp_EVar; unfold get_local; rewrite E_y.
       unfold row_key; destruct rv; reflexivity.
     Qed.
 
@@ -510,53 +581,71 @@ Section WithIndexUse.
           by (rewrite map.get_put_diff by exact H_tup_bkt; exact E_tup).
         reflexivity.
     Qed.
-  End WithMap.
-End WithIndexUse.
 
+    (* ----------------------------------------------------------------
+       The emitted forms, typed.  Each body is given its own lemma rather
+       than rebuilt inside every rule: the derivations are deterministic,
+       and writing them down is what records which types the index fixes.
+       ---------------------------------------------------------------- *)
+    Lemma without_row_ty : forall rt kt (Gstore Genv : tenv),
+        access_record rt key = Success kt ->
+        map.get Genv bkt = Some (TBag (TRecord rt)) ->
+        map.get Genv tup = Some (TRecord rt) ->
+        type_wf (TRecord rt) ->
+        type_of Gstore Genv without_row (TBag (TRecord rt)).
+    Proof.
+      intros rt kt Gstore Genv E_key E_bkt E_tup H_rtwf.
+      eapply TyEFlatmap_Bag; [ apply TyEVar; exact E_bkt | ].
+      apply TyEIf.
+      1:{ eapply TyEUnop; [ apply TyONot | ].
+          eapply TyEBinop; [ apply TyOEq | | ].
+          1:{ eapply TyEAccess;
+              [ apply TyEVar; apply map.get_put_same | exact E_key ]. }
+          1:{ eapply TyEAccess; [ apply TyEVar | exact E_key ].
+              rewrite map.get_put_diff by exact H_tup_rvar; exact E_tup. } }
+      1:{ eapply TyEBinop; [ apply TyOBagInsert | | ].
+          1: apply TyEAtom; apply TyAEmptyBag'; exact H_rtwf.
+          1: apply TyEVar; apply map.get_put_same. }
+      1: apply TyEAtom; apply TyAEmptyBag'; exact H_rtwf.
+    Qed.
 
-(* ====================================================================
-   The rule: a keyed delete, read off two members of one index record.
-
-   The shape is TrigramIndexUse.filter_neq_to_tri_delete_head's, with the
-   trigrams of a row's text replaced by one attribute of the row.  The
-   dictionary member buckets on attr; the delete names key; so the row that
-   is leaving is not in the expression at all, only its key is, and the rule
-   reads the row out of the primary-key member.  That is also why it is
-   sound only where the key is declared unique: with two rows at one key,
-   taking one row's contributions out would lose the other's.
-   ==================================================================== *)
-Section WithRule.
-  (* the dictionary index's own binders and the attribute it buckets on *)
-  Context (hole attr : string).
-  Context (dk : dict_kind).
-  Context (tup acc x : string).
-  Context (H_NoDup : is_NoDup_opaque [tup; acc; x]).
-  (* The primary-key index's binders, and the attribute the delete names.
-     Only this index can turn a key back into the row that carries it, and
-     the two indexes have to agree on which attribute that is. *)
-  Context (key utup uacc : string).
-  Context (H_utup_uacc : utup <> uacc).
-  (* the two fields the installation pairs *)
-  Context (id_tag aux_tag : string).
-  (* the tags the two dictionaries sit under inside one index record *)
-  Context (idx_tag pk_tag : string).
-  (* the binders the rewritten delete introduces: a bucket, and a row of it *)
-  Context (bkt rvar : string).
-  Context (H_tup_rvar : tup <> rvar) (H_tup_bkt : tup <> bkt) (H_acc_bkt : acc <> bkt).
-
-  Notation didx := (dict_idx hole attr dk tup acc x).
-  Notation uidx := (unique_dict_idx hole key utup uacc).
-
-  (* The index states its binders' distinctness as one opaque is_NoDup,
-     which is awkward in a side condition; it is taken apart once here. *)
-  Lemma tup_neq_acc : tup <> acc.
-  Proof. use_is_NoDup. Qed.
-
-  Section WithMap.
-    Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
-    Context {locals : map.map string value} {locals_ok : map.ok locals}.
+    Lemma dict_row_delete_body_ty : forall rt at_ty kt (Gstore Genv : tenv),
+        access_record rt attr = Success at_ty ->
+        access_record rt key = Success kt ->
+        map.get Genv tup = Some (TRecord rt) ->
+        map.get Genv acc = Some (TDict dk at_ty (TBag (TRecord rt))) ->
+        type_wf (TRecord rt) ->
+        type_of Gstore Genv dict_row_delete_body
+          (TDict dk at_ty (TBag (TRecord rt))).
+    Proof.
+      intros rt at_ty kt Gstore Genv E_attr E_key E_tup E_acc H_rtwf.
+      (* the two reads that pass under the bucket's binder *)
+      assert (E_tup' : map.get (map.put Genv bkt (TBag (TRecord rt))) tup
+                       = Some (TRecord rt))
+        by (rewrite map.get_put_diff by exact H_tup_bkt; exact E_tup).
+      assert (E_acc' : map.get (map.put Genv bkt (TBag (TRecord rt))) acc
+                       = Some (TDict dk at_ty (TBag (TRecord rt))))
+        by (rewrite map.get_put_diff by exact H_acc_bkt; exact E_acc).
+      assert (H_wo : type_of Gstore (map.put Genv bkt (TBag (TRecord rt)))
+                       without_row (TBag (TRecord rt)))
+        by (eapply without_row_ty;
+            [ exact E_key | apply map.get_put_same | exact E_tup' | exact H_rtwf ]).
+      eapply TyEOptMatch.
+      1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+          1: apply TyEVar; exact E_acc.
+          1: eapply TyEAccess; [ apply TyEVar; exact E_tup | exact E_attr ]. }
+      1: apply TyEVar; exact E_acc.
+      apply TyEIf.
+      1:{ eapply TyEBinop; [ apply TyOEq | exact H_wo | ].
+          apply TyEAtom; apply TyAEmptyBag'; exact H_rtwf. }
+      1:{ eapply TyEBinop; [ apply TyODelete | | ].
+          1: apply TyEVar; exact E_acc'.
+          1: eapply TyEAccess; [ apply TyEVar; exact E_tup' | exact E_attr ]. }
+      1:{ eapply TyETernop; [ apply TyOInsert | | | ].
+          1: apply TyEVar; exact E_acc'.
+          1: eapply TyEAccess; [ apply TyEVar; exact E_tup' | exact E_attr ].
+          1: exact H_wo. }
+    Qed.
 
     (* The two invariants the rule reads off the store, each at its own tag.
        The dictionary member asks only for its own idx_wf, which the install
@@ -653,6 +742,50 @@ Section WithRule.
     Definition to_idx_at (d : expr) : expr :=
       EFold d (EAtom (AEmptyDict dk None)) tup acc dict_row_insert_body.
 
+    Lemma dict_row_insert_body_ty : forall rt at_ty (Gstore Genv : tenv),
+        access_record rt attr = Success at_ty ->
+        map.get Genv tup = Some (TRecord rt) ->
+        map.get Genv acc = Some (TDict dk at_ty (TBag (TRecord rt))) ->
+        type_wf (TRecord rt) ->
+        type_of Gstore Genv dict_row_insert_body
+          (TDict dk at_ty (TBag (TRecord rt))).
+    Proof.
+      intros rt at_ty Gstore Genv E_attr E_tup E_acc H_rtwf.
+      eapply TyETernop; [ apply TyOInsert | | | ].
+      1: apply TyEVar; exact E_acc.
+      1: eapply TyEAccess; [ apply TyEVar; exact E_tup | exact E_attr ].
+      eapply TyEBinop; [ apply TyOBagInsert | | ].
+      2: apply TyEVar; exact E_tup.
+      eapply TyEOptMatch.
+      1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+          1: apply TyEVar; exact E_acc.
+          1: eapply TyEAccess; [ apply TyEVar; exact E_tup | exact E_attr ]. }
+      1: apply TyEAtom; apply TyAEmptyBag'; exact H_rtwf.
+      1: apply TyEVar; apply map.get_put_same.
+    Qed.
+
+    Lemma to_idx_at_ty : forall rt at_ty (Gstore Genv : tenv) (d : expr),
+        access_record rt attr = Success at_ty ->
+        type_wf (TRecord rt) ->
+        type_of Gstore Genv d (TList (TRecord rt)) ->
+        type_of Gstore Genv (to_idx_at d) (TDict dk at_ty (TBag (TRecord rt))).
+    Proof.
+      intros rt at_ty Gstore Genv d E_attr H_rtwf H_d.
+      assert (H_atwf : type_wf at_ty).
+      1:{ replace at_ty with (get_attr_type rt attr)
+            by (unfold get_attr_type; rewrite E_attr; reflexivity).
+          apply get_attr_type_ty_wf; exact H_rtwf. }
+      unfold to_idx_at. eapply TyEFold.
+      1: exact H_d.
+      1: apply TyEAtom; apply TyAEmptyDict';
+         [ exact H_atwf | constructor; exact H_rtwf ].
+      eapply dict_row_insert_body_ty.
+      1: exact E_attr.
+      1:{ rewrite map.get_put_diff by exact tup_neq_acc; apply map.get_put_same. }
+      1: apply map.get_put_same.
+      1: exact H_rtwf.
+    Qed.
+
     Lemma interp_to_idx_fold : forall (store env : locals) (l : list value),
         Forall (fun r => exists rc, r = VRecord rc) l ->
         fold_right
@@ -702,5 +835,176 @@ Section WithRule.
       rewrite interp_EFold, E_d, interp_EAtom; cbn [interp_atom].
       apply interp_to_idx_fold; exact H_rec.
     Qed.
+
+    Section WithTable.
+      (* the store location the index record sits at *)
+      Context (tbl : string).
+
+      Notation pk_e := (EAccess (EAccess (ELoc tbl) aux_tag) pk_tag).
+
+      (* Reading one of the index record's fields out of the store. *)
+      Lemma interp_tbl_field : forall (store env : locals) rv rv_aux t2 (w : value),
+          map.get store tbl = Some (VRecord rv) ->
+          record_proj aux_tag rv = VRecord rv_aux ->
+          record_proj t2 rv_aux = w ->
+          interp_expr store env (EAccess (EAccess (ELoc tbl) aux_tag) t2) = w.
+      Proof.
+        intros * E_v E_aux E_f.
+        rewrite interp_EAccess, interp_EAccess, interp_ELoc.
+        unfold get_local; rewrite E_v; cbv beta iota.
+        rewrite E_aux; cbv beta iota.
+        rewrite E_f; reflexivity.
+      Qed.
+
+      (* ------------------------------------------------------------------
+         Maintaining the index when a row goes.
+
+         A filter-shaped delete: keep the rows whose key is not k.  The row
+         that leaves is not in the expression at all -- only its key is --
+         so the rule reads it out of the PRIMARY-KEY member, and then takes
+         it out of the one bucket its own attribute names.
+
+         The side condition key <> attr is not needed for soundness: when
+         the two coincide this rule is still correct, but the whole bucket
+         leaves and DictIndexImpl.filter_neq_to_delete_head does it with one
+         ODelete and no probe.  The guard keeps the two rules from racing.
+         ------------------------------------------------------------------ *)
+
+      (* to_idx_at spelled out, so that the rule can match it.  Every
+         binder, attribute and kind occurrence is a pattern variable, and
+         the guard checks that they are the ones this index uses. *)
+      Notation edict_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1 d :=
+        (EFold d (EAtom (AEmptyDict dk0 None)) tup0 acc0
+           (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr0)
+              (EBinop OBagInsert
+                 (EOptMatch (EBinop OLookup (EVar acc2) (EAccess (EVar tup2) attr1))
+                    (EAtom (AEmptyBag None)) x0 (EVar x1))
+                 (EVar tup3)))).
+
+      Definition filter_neq_to_keyed_delete_head (e : expr) : expr :=
+        match e with
+        | edict_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+            (flatmap_filter_list (EAccess (ELoc tbl0) id_tag0) y0
+               (EUnop ONot (EBinop OEq (EAccess (EVar y1) key0) kexp)) y2 _ _) =>
+            if (dict_kind_beq dk dk0
+                && all_eqb [(tup, [tup0; tup1; tup2; tup3]);
+                            (acc, [acc0; acc1; acc2]); (x, [x0; x1]);
+                            (attr, [attr0; attr1]); (key, [key0]);
+                            (tbl, [tbl0]); (id_tag, [id_tag0]); (y0, [y1; y2])]
+                && negb (String.eqb key attr)
+                && negb (free_immut_in y0 kexp)
+                && negb (free_immut_in acc kexp))%bool
+            then ELet (to_idx_at (EAccess (ELoc tbl) id_tag)) acc
+                   (EOptMatch (EBinop OLookup pk_e kexp) (EVar acc) tup
+                      dict_row_delete_body)
+            else e
+        | _ => e
+        end.
+
+      Lemma filter_neq_to_keyed_delete_head_preserve_ty :
+        forall tl ctl t (Gstore : tenv),
+          type_wf t ->
+          @IndexInterface.is_tbl_ty didx t = true ->
+          @IndexInterface.is_tbl_ty uidx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl pk_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore filter_neq_to_keyed_delete_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_twf H_isd H_isu E_tbl E_id E_aux E_pk.
+        (* the table type's shape, from the two members' is_tbl_ty *)
+        apply dict_is_tbl_ty_inv in H_isd as [ rt [ at_ty [ E_t E_attr ] ] ].
+        subst t.
+        apply unique_is_tbl_ty_inv in H_isu as [ rt' [ kt [ E_t' E_key ] ] ].
+        injection E_t' as E_t'; subst rt'.
+        cbn [IndexInterface.idx_ty unique_dict_idx UniqueDictIndexImpl.idx_ty]
+          in E_pk.
+        (* the primary-key member's key type, spelled the way the source
+           spells it: the source accesses the field, the index's idx_ty
+           names it through get_attr_type *)
+        assert (E_kt : get_attr_type rt key = kt)
+          by (unfold get_attr_type; rewrite E_key; reflexivity).
+        rewrite E_kt in E_pk. clear E_kt.
+        assert (H_rtwf : type_wf (TRecord rt)) by (inversion H_twf; assumption).
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr.
+        cbn [filter_neq_to_keyed_delete_head]. repeat (case_match; auto; []).
+        cbn in * |-.
+        rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+        use_dk_beq.
+        rewrite eqb_eq in *; subst.
+        (* the source's typing, taken apart for the types it fixes: the
+           dictionary's, the row's, and the deleted key's.  Nothing of the
+           source's own derivation is reused -- the emitted form is built
+           from the typing lemmas above -- so this may consume everything. *)
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+        (* rewrite_map_get_put_hyp discharges map.get_put_diff's side
+           condition with (simpl in *; intuition auto), which reads the
+           CONTEXT only.  This section's variables are kept apart by
+           is_NoDup_opaque, which is opaque by construction, so the side
+           condition would survive as a goal whose context still holds
+           rewritable hypotheses -- and the repeat would then spawn side
+           goals without end.  Putting the disequalities in the context
+           first is what makes the tactic terminate.  map.get_put_diff
+           wants put-key <> looked-up-key, so both orientations go in. *)
+        assert (H_tup_acc : tup <> acc) by use_is_NoDup.
+        assert (H_acc_tup : acc <> tup) by (apply not_eq_sym; use_is_NoDup).
+        assert (H_tup_x : tup <> x) by use_is_NoDup.
+        assert (H_x_tup : x <> tup) by (apply not_eq_sym; use_is_NoDup).
+        assert (H_acc_x : acc <> x) by use_is_NoDup.
+        assert (H_x_acc : x <> acc) by (apply not_eq_sym; use_is_NoDup).
+        repeat rewrite_map_get_put_hyp.
+        repeat (try clear_refl; repeat do_injection).
+        (* the table read fixes the row type, which fixes the attribute's
+           and the key's.  match, not lazymatch: the first hypothesis of
+           each shape is the one this lemma was given, and rewriting it with
+           itself fails, so the search has to go on to the inverted copy. *)
+        match goal with
+        | H : map.get Gstore tbl = Some (TRecord _) |- _ =>
+            rewrite E_tbl in H; injection H as H; subst
+        end.
+        match goal with
+        | H : access_record _ id_tag = Success (TList _) |- _ =>
+            rewrite E_id in H; injection H as H; subst
+        end.
+        repeat match goal with
+               | H : Some _ = Some _ |- _ => injection H as H; subst
+               end.
+        repeat match goal with
+               | H : access_record _ attr = Success ?t0 |- _ =>
+                   is_var t0; rewrite E_attr in H; injection H as H; subst t0
+               | H : access_record _ key = Success ?t0 |- _ =>
+                   is_var t0; rewrite E_key in H; injection H as H; subst t0
+               end.
+        (* the empty-dictionary literal names the kind, so inverting its
+           typing is what collapses the source's kind onto the index's *)
+        repeat match goal with
+               | H : type_of_atom (AEmptyDict _ _) _ |- _ =>
+                   inversion H; subst; clear H
+               end.
+        (* and now the emitted form, from the typing lemmas above *)
+        eapply TyELet.
+        1:{ eapply to_idx_at_ty; [ exact E_attr | exact H_rtwf | ].
+            eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_id ]. }
+        eapply TyEOptMatch.
+        1:{ (* the deleted row, from the primary-key member *)
+            eapply TyEBinop; [ apply TyOLookup | | ].
+            1:{ eapply TyEAccess;
+                [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
+                | exact E_pk ]. }
+            1:{ apply not_free_immut_put_ty2; [ assumption | ].
+                eapply not_free_immut_put_ty; [ eassumption | eassumption ]. } }
+        1:{ apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        1:{ eapply dict_row_delete_body_ty.
+            1: exact E_attr.
+            1: exact E_key.
+            1: apply map.get_put_same.
+            1:{ rewrite map.get_put_diff by (apply not_eq_sym; exact tup_neq_acc).
+                apply map.get_put_same. }
+            1: exact H_rtwf. }
+      Qed.
+    End WithTable.
   End WithMap.
 End WithRule.
