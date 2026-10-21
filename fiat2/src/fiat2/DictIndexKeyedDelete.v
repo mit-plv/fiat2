@@ -269,4 +269,83 @@ Section WithAttrs.
         rewrite (idx_of_lookup l av H_rec); reflexivity.
   Qed.
 
+
+  (* And if no row carries the key, the delete removes nothing.  The rule
+     needs this for the branch where the primary-key member has no entry at
+     the deleted key -- a delete of something that is not there. *)
+  Lemma idx_of_filter_neq_absent : forall l kv,
+      (forall r, In r l -> proj_at key r <> kv) ->
+      idx_of (filter (keeps kv) l) = idx_of l.
+  Proof.
+    intros l kv H; f_equal.
+    apply filter_all_true; intros r H_in; unfold keeps.
+    destruct (value_eqb (proj_at key r) kv) eqn:E; [ exfalso | reflexivity ].
+    apply (H r H_in), value_eqb_eq, E.
+  Qed.
+
 End WithAttrs.
+
+(* ====================================================================
+   The expression side: what the bucket rewrite computes.
+   ==================================================================== *)
+Section WithIndexUse.
+  (* the dictionary index's own binders, and the attribute it buckets on *)
+  Context (attr key : string).
+  (* the binders the rewritten delete introduces: the row that is leaving,
+     the bucket it sits in, and a row of that bucket *)
+  Context (tup bkt rvar : string).
+  Context (H_rvar_tup : tup <> rvar).
+
+  Section WithMap.
+    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+    Notation value := (value (word:=word)).
+    Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+    (* the bucket with the leaving row taken out.  A filter, not a removal
+       operator: a bucket is a bag, and filtering one is filtering its
+       entry list (list_to_bag_filter_bag_to_list). *)
+    Notation without_row :=
+      (EFlatmap LikeBag (EVar bkt) rvar
+         (EIf (EUnop ONot (EBinop OEq (EAccess (EVar rvar) key)
+                             (EAccess (EVar tup) key)))
+            (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar rvar))
+            (EAtom (AEmptyBag None)))).
+
+    Lemma flat_map_pointwise : forall (f g : value -> list value) (l : list value),
+        (forall v, f v = g v) -> flat_map f l = flat_map g l.
+    Proof.
+      intros f g l H; induction l as [ | v l IH ]; cbn [flat_map];
+        [ reflexivity | rewrite H, IH; reflexivity ].
+    Qed.
+
+    Lemma flat_map_if_singleton : forall (p : value -> bool) (l : list value),
+        flat_map (fun v => if p v then cons v nil else nil) l = filter p l.
+    Proof.
+      induction l as [ | v l IH ]; cbn [flat_map filter]; [ reflexivity | ].
+      destruct (p v); cbn [app]; rewrite IH; reflexivity.
+    Qed.
+
+    Lemma interp_without_row : forall (store env : locals) b t rv,
+        map.get env bkt = Some (VBag b) ->
+        map.get env tup = Some rv ->
+        type_of_value (VBag b) (TBag t) ->
+        interp_expr store env without_row
+        = VBag (bucket_without key (proj_at key rv) b).
+    Proof.
+      intros store env b t rv E_bkt E_tup H_ty.
+      cbn [interp_expr]; unfold get_local; rewrite E_bkt.
+      erewrite flat_map_pointwise with
+        (g := fun v => if keeps key (proj_at key rv) v then cons v nil else nil).
+      2:{ intro v; cbn [interp_expr interp_unop interp_binop]; unfold get_local.
+          rewrite map.get_put_same, map.get_put_diff by exact H_rvar_tup.
+          rewrite E_tup; unfold keeps, proj_at.
+          destruct (value_eqb match v with VRecord rc => record_proj key rc | _ => VUnit end
+                      match rv with VRecord rc => record_proj key rc | _ => VUnit end);
+            reflexivity. }
+      rewrite flat_map_if_singleton.
+      unfold bucket_without; f_equal.
+      inversion H_ty; subst.
+      apply list_to_bag_filter_bag_to_list; assumption.
+    Qed.
+  End WithMap.
+End WithIndexUse.
