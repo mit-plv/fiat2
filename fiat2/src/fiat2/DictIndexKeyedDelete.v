@@ -1126,5 +1126,80 @@ Section WithRule.
             rewrite E_k, E_lk in E_s; discriminate. }
       Qed.
     End WithTable.
+
+    (* =================================================================
+       What a pipeline has to supply for the rule to fire.
+
+       Two members, so two aux_ty_for_idx clauses -- and, unlike the
+       trigram's bridges, two is_tbl_ty implications.  The dictionary
+       index buckets on attr and its is_tbl_ty says nothing about key,
+       while this rule reads the key off a row, so the primary-key
+       member has to be installable on the same table.
+
+       The dictionary member needs only the relation any index
+       establishes from typing.  The primary-key member needs its STRONG
+       one, which no index establishes and which a declaration pays for.
+       ================================================================= *)
+    Definition dict_keyed_delete_bridges (is_tbl_ty' : type -> bool)
+      (aux_ty : type -> type) (aux_wf : value -> Prop) : Prop :=
+      aux_ty_for_idx id_tag aux_tag idx_tag (@IndexInterface.idx_ty didx) aux_ty
+      /\ aux_ty_for_idx id_tag aux_tag pk_tag (@IndexInterface.idx_ty uidx) aux_ty
+      /\ (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty didx t = true)
+      /\ (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty uidx t = true)
+      /\ (forall (t : type) (v : value),
+             type_wf t -> is_tbl_ty' t = true ->
+             type_of_value v (aux_ty t) -> aux_wf v -> idx_aux_wf_at v)
+      /\ (forall (t : type) (v : value),
+             type_wf t -> is_tbl_ty' t = true ->
+             type_of_value v (aux_ty t) -> aux_wf v -> unique_aux_wf_at v).
+
+    Lemma filter_neq_to_keyed_delete_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        dict_keyed_delete_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
+          filter_neq_to_keyed_delete_head.
+    Proof.
+      unfold dict_keyed_delete_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty1 [ H_aty2 [ H_isd [ H_isu [ H_wf1 H_wf2 ] ] ] ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with
+        H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl
+      end.
+      (* the table type's shape, from the dictionary member *)
+      pose proof (H_isd _ H_is') as H_is_d.
+      pose proof (H_isu _ H_is') as H_is_u.
+      apply dict_is_tbl_ty_inv in H_is_d as [ rt [ at_ty [ E_t E_attr ] ] ].
+      specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply filter_neq_to_keyed_delete_head_preserve_ty; try eassumption.
+          all: try (apply H_isd; exact H_is').
+          all: try (apply H_isu; exact H_is'). }
+      1:{ subst tbl_ty.
+          eapply filter_neq_to_keyed_delete_head_preserve_sem; try eassumption.
+          1:{ (* the member's is_tbl_ty, in the spelling preserve_sem wants *)
+              pose proof (H_isd _ H_is') as H_d.
+              cbn [IndexInterface.is_tbl_ty dict_idx] in H_d; exact H_d. }
+          (* and the store's side: the table's value is well typed and
+             both members' relations hold of it *)
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | split ].
+          1:{ eapply H_wf1; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. }
+          1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. } }
+    Qed.
   End WithMap.
 End WithRule.
