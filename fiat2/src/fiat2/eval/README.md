@@ -36,7 +36,7 @@ an `exists` against the whole term, which does not terminate in reasonable time.
 |---|---|---|
 | `Keycloak_CachedRealm.v` | `CachedRealm.java:301` | two unique-key maps over one list; the list is read, so the list survives |
 | `Kafka_Cluster.v` | `Cluster.java:114` | two bucketed maps over one collection; nothing reads the list, so the list is erased |
-| `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete |
+| `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete; nothing reads the list, so the list is erased |
 
 The first two are a pair, and should be read as one. They put the same erasure rule in
 front of two code bases and get opposite answers -- keep the list, drop the list -- and
@@ -44,8 +44,20 @@ each answer is the storage the original's author chose by hand. Keycloak keeps
 `requiredActionProviderList` beside both maps; `Cluster` has a field for every map it
 derives and no field for `partitions`.
 
-The third is the only one whose writes are its own, and the only one that fails to
-reach the original: its keyed delete maintains the declared member in O(1) and rebuilds
-the other. The comment on `delete_rebuilds_the_floor_index` says exactly which rule is
-missing and where the precedent for it already is. A gap stated in a lemma is worth
-more than a gap not reached.
+The third is the only one whose writes are its own, and it now reaches the original on
+both of them: `delete_is_incremental` pins a delete that probes the primary member for
+the leaving row and rewrites only the one bucket that row's attribute names, which is
+`_unindex_entry` line for line. It needs `KeyedDictIdx`, and it is gated on the key
+being declared.
+
+Reading the three together: the first two show the erasure rule giving opposite answers
+on read-only code, and the third shows that for code that writes, the erasure answer
+depends on how well the writes are maintained. Before the keyed delete existed this
+file kept its list -- not because a query read it, but because the rebuild did. The
+delete becoming incremental is what erased it, with no change to the erasure rule.
+That is the same decision procedure answering a third time, and it is the most useful
+thing in the three files.
+
+Still not reached: `_labels_index` and `_aliases_index`, which key on each element of a
+per-row collection rather than on one attribute. That gap is stated here rather than
+hidden, and `HA_AreaRegistry.v`'s header says which two fields it drops and why.
