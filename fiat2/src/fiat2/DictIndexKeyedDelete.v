@@ -23,7 +23,9 @@
    ==================================================================== *)
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.CollectionTransf fiat2.FlatmapTransf fiat2.EraseField
-  fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms.
+  fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms
+  fiat2.IndexInterface fiat2.UniqueDictIndexImpl fiat2.TransfSound fiat2.TransfUtils
+  fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -105,6 +107,15 @@ Section WithWord.
     intros v t H. inversion H; subst.
     eexists; split; [ reflexivity | assumption ].
   Qed.
+
+  (* The row shape the index's equations are stated with, from the row type. *)
+  Lemma typed_rows_are_records : forall (l : list value) rt,
+      Forall (fun r => type_of_value r (TRecord rt)) l ->
+      Forall (fun r => exists rc, r = VRecord rc) l.
+  Proof.
+    intros l rt H; rewrite Forall_forall in *; intros r H_in.
+    specialize (H r H_in); inversion H; subst; eauto.
+  Qed.
 End WithWord.
 
 Section WithAttrs.
@@ -129,6 +140,19 @@ Section WithAttrs.
   Lemma gallina_to_idx_VDict : forall l,
       gallina_to_idx attr (VList l) = VDict (idx_of l).
   Proof. intro l; unfold idx_of; cbn [gallina_to_idx]; reflexivity. Qed.
+
+  (* One step of the index's own fold: a row joins the bucket its attribute
+     names.  Named so that the expression side can be matched against it
+     without unfolding gallina_to_idx twice over. *)
+  Lemma idx_of_cons : forall rc l,
+      idx_of (VRecord rc :: l)
+      = dict_insert (record_proj attr rc)
+          (VBag (bag_insert (VRecord rc)
+                   match dict_lookup (record_proj attr rc) (idx_of l) with
+                   | Some (VBag b) => b
+                   | _ => nil
+                   end)) (idx_of l).
+  Proof. intros rc l; unfold idx_of; cbn [gallina_to_idx fold_right]; reflexivity. Qed.
 
   (* What the index holds at a key: the bag of the rows filed there, and no
      entry at all when none are.  The index never stores an empty bucket --
@@ -393,6 +417,14 @@ Section WithIndexUse.
       apply list_to_bag_filter_bag_to_list; assumption.
     Qed.
 
+    (* Reading a binder whose value is known. *)
+    Lemma interp_EVar_get : forall (store env : locals) y (v : value),
+        map.get env y = Some v -> interp_expr store env (EVar y) = v.
+    Proof.
+      intros store env y v E; rewrite interp_EVar; unfold get_local.
+      rewrite E; reflexivity.
+    Qed.
+
     (* Reading one attribute off a row bound to a binder.  row_key is the
        same match, so this is the bridge between the expression's EAccess
        and the Gallina key the equations above are stated with. *)
@@ -480,3 +512,195 @@ Section WithIndexUse.
     Qed.
   End WithMap.
 End WithIndexUse.
+
+
+(* ====================================================================
+   The rule: a keyed delete, read off two members of one index record.
+
+   The shape is TrigramIndexUse.filter_neq_to_tri_delete_head's, with the
+   trigrams of a row's text replaced by one attribute of the row.  The
+   dictionary member buckets on attr; the delete names key; so the row that
+   is leaving is not in the expression at all, only its key is, and the rule
+   reads the row out of the primary-key member.  That is also why it is
+   sound only where the key is declared unique: with two rows at one key,
+   taking one row's contributions out would lose the other's.
+   ==================================================================== *)
+Section WithRule.
+  (* the dictionary index's own binders and the attribute it buckets on *)
+  Context (hole attr : string).
+  Context (dk : dict_kind).
+  Context (tup acc x : string).
+  Context (H_NoDup : is_NoDup_opaque [tup; acc; x]).
+  (* The primary-key index's binders, and the attribute the delete names.
+     Only this index can turn a key back into the row that carries it, and
+     the two indexes have to agree on which attribute that is. *)
+  Context (key utup uacc : string).
+  Context (H_utup_uacc : utup <> uacc).
+  (* the two fields the installation pairs *)
+  Context (id_tag aux_tag : string).
+  (* the tags the two dictionaries sit under inside one index record *)
+  Context (idx_tag pk_tag : string).
+  (* the binders the rewritten delete introduces: a bucket, and a row of it *)
+  Context (bkt rvar : string).
+  Context (H_tup_rvar : tup <> rvar) (H_tup_bkt : tup <> bkt) (H_acc_bkt : acc <> bkt).
+
+  Notation didx := (dict_idx hole attr dk tup acc x).
+  Notation uidx := (unique_dict_idx hole key utup uacc).
+
+  (* The index states its binders' distinctness as one opaque is_NoDup,
+     which is awkward in a side condition; it is taken apart once here. *)
+  Lemma tup_neq_acc : tup <> acc.
+  Proof. use_is_NoDup. Qed.
+
+  Section WithMap.
+    Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
+    Notation value := (value (width:=width)).
+    Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+    (* The two invariants the rule reads off the store, each at its own tag.
+       The dictionary member asks only for its own idx_wf, which the install
+       manufactures from typing; the primary-key member asks for the STRONG
+       relation, which no index establishes and which the declaration pays
+       for. *)
+    Notation idx_aux_wf_at :=
+      (aux_wf_for_idx id_tag aux_tag idx_tag
+         (DictIndexImpl.idx_wf hole attr dk tup acc x (locals := locals))).
+    Notation unique_aux_wf_at :=
+      (aux_wf_for_idx id_tag aux_tag pk_tag
+         (UniqueDictIndexImpl.idx_wf_unique hole key utup uacc (locals := locals))).
+
+    (* ------------------------------------------------------------------
+       Everything the rule needs about the store, read off the two
+       invariants and the store's type at once: the table's rows with their
+       type, both members as Gallina mirrors of those rows, and the
+       distinctness of the keys -- the one part no index establishes from
+       typing, and what the declaration is spent on.
+       ------------------------------------------------------------------ *)
+    Lemma invariants__idx_data :
+      forall tl rt (v : value),
+        type_wf (TList (TRecord rt)) ->
+        DictIndexImpl.is_tbl_ty attr (TList (TRecord rt)) = true ->
+        access_record tl id_tag = Success (TList (TRecord rt)) ->
+        type_of_value v (TRecord tl) ->
+        idx_aux_wf_at v ->
+        unique_aux_wf_at v ->
+        exists rv rv_aux rows,
+          v = VRecord rv
+          /\ record_proj id_tag rv = VList rows
+          /\ record_proj aux_tag rv = VRecord rv_aux
+          /\ record_proj idx_tag rv_aux = VDict (idx_of attr rows)
+          /\ record_proj pk_tag rv_aux
+             = VDict (UniqueDictIndexImpl.idx_entries key rows)
+          /\ Forall (fun r => type_of_value r (TRecord rt)) rows
+          /\ NoDup (List.map (row_key key) rows).
+    Proof.
+      unfold aux_wf_for_idx, UniqueDictIndexImpl.idx_wf_unique,
+        UniqueDictIndexImpl.idx_wf, UniqueDictIndexImpl.keys_distinct,
+        DictIndexImpl.idx_wf.
+      intros tl rt v H_twf H_is E_id.
+      (* v is destructed before the invariants are introduced, so that their
+         names survive; each later destruct is pushed into them by hand,
+         since destruct rewrites the goal but not hypotheses *)
+      destruct v as [ | | | | | | rv | | | | ];
+        intros H_vty H_idx H_pk;
+        cbv beta iota in H_idx, H_pk; try contradiction.
+      destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
+        cbv beta iota in H_idx, H_pk; try contradiction.
+      destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
+        cbv beta iota in H_idx, H_pk; try contradiction.
+      destruct v_aux as [ | | | | | | rv_aux | | | | ];
+        cbv beta iota in H_idx, H_pk; try contradiction.
+      destruct (access_record rv_aux idx_tag) as [ v_idx | ] eqn:E_vidx;
+        cbv beta iota in H_idx; try contradiction.
+      destruct (access_record rv_aux pk_tag) as [ v_pk | ] eqn:E_vpk;
+        cbv beta iota in H_pk; try contradiction.
+      destruct H_pk as [ E_pk H_kd ].
+      (* the table's own rows, and their typing *)
+      assert (H_idty : type_of_value v_id (TList (TRecord rt)))
+        by (eapply type_of_value_field; [ exact H_vty | exact E_vid | exact E_id ]).
+      apply type_of_value_TList_inv in H_idty as [ rows [ E_rows H_rows ] ].
+      subst v_id.
+      cbn [UniqueDictIndexImpl.keys_distinct] in H_kd.
+      (* and both dictionaries are their own mirrors *)
+      rewrite (DictIndexImpl.fiat2_gallina_to_idx hole attr dk tup acc x H_NoDup
+                 (locals_ok := locals_ok) (VList rows) (TList (TRecord rt))
+                 H_twf H_is (TyVList _ _ H_rows)) in H_idx.
+      rewrite gallina_to_idx_VDict in H_idx.
+      rewrite (UniqueDictIndexImpl.fiat2_gallina_to_idx hole key utup uacc
+                 H_utup_uacc (locals_ok := locals_ok) rows) in E_pk.
+      exists rv, rv_aux, rows.
+      repeat split; try assumption;
+        try (apply access_record__record_proj; assumption).
+      1:{ apply access_record__record_proj. rewrite E_vidx, H_idx. reflexivity. }
+      1:{ apply access_record__record_proj. rewrite E_vpk, E_pk. reflexivity. }
+    Qed.
+
+    (* ------------------------------------------------------------------
+       The rebuild, as the rule has to match it, and what it computes.
+
+       to_idx_at is the index's own to_idx with the table read in place of
+       the hole, so nothing about bucketing has to be re-proved; the fold
+       lemma below just says the expression's fold is gallina_to_idx's.
+       ------------------------------------------------------------------ *)
+    Notation dict_row_insert_body :=
+      (ETernop OInsert (EVar acc) (EAccess (EVar tup) attr)
+         (EBinop OBagInsert
+            (EOptMatch (EBinop OLookup (EVar acc) (EAccess (EVar tup) attr))
+               (EAtom (AEmptyBag None)) x (EVar x))
+            (EVar tup))).
+
+    Definition to_idx_at (d : expr) : expr :=
+      EFold d (EAtom (AEmptyDict dk None)) tup acc dict_row_insert_body.
+
+    Lemma interp_to_idx_fold : forall (store env : locals) (l : list value),
+        Forall (fun r => exists rc, r = VRecord rc) l ->
+        fold_right
+          (fun r a => interp_expr store (map.put (map.put env tup r) acc a)
+                        dict_row_insert_body)
+          (VDict nil) l
+        = VDict (idx_of attr l).
+    Proof.
+      intros store env l H_rec.
+      induction H_rec as [ | r l [ rc E_r ] H_l IH ]; [ reflexivity | ].
+      subst r; cbn [fold_right]; rewrite IH, idx_of_cons.
+      (* the row, read through the accumulator's binder *)
+      assert (E_tup : map.get (map.put (map.put env tup (VRecord rc)) acc
+                                 (VDict (idx_of attr l))) tup
+                      = Some (VRecord rc)).
+      1:{ rewrite map.get_put_diff by exact tup_neq_acc. apply map.get_put_same. }
+      rewrite interp_ETernop, (interp_EVar_get _ _ acc (VDict (idx_of attr l)))
+        by apply map.get_put_same.
+      rewrite (interp_row_attr _ _ tup attr (VRecord rc) E_tup).
+      unfold row_key; cbn [record_proj].
+      rewrite interp_EBinop, interp_EOptMatch, interp_EBinop,
+        (interp_EVar_get _ _ acc (VDict (idx_of attr l))) by apply map.get_put_same.
+      rewrite (interp_row_attr _ _ tup attr (VRecord rc) E_tup).
+      unfold row_key; cbn [record_proj interp_binop].
+      (* the bucket the row joins: there, or absent, never anything else *)
+      rewrite (idx_of_lookup attr l _ H_l).
+      destruct (rows_at attr (record_proj attr rc) l) as [ | r0 rows ].
+      - rewrite interp_EAtom; cbn [interp_atom interp_binop].
+        rewrite (interp_EVar_get _ _ tup (VRecord rc) E_tup).
+        cbn [interp_ternop]; reflexivity.
+      - rewrite (interp_EVar_get _ _ x (VBag (list_to_bag (r0 :: rows))))
+          by apply map.get_put_same.
+        cbn [interp_binop].
+        (* the inserted row is read outside the bucket's binder *)
+        rewrite (interp_EVar_get _ _ tup (VRecord rc) E_tup).
+        cbn [interp_ternop]; reflexivity.
+    Qed.
+
+    Lemma interp_to_idx_at :
+      forall (store env : locals) (d : expr) (rows : list value),
+        Forall (fun r => exists rc, r = VRecord rc) rows ->
+        interp_expr store env d = VList rows ->
+        interp_expr store env (to_idx_at d) = VDict (idx_of attr rows).
+    Proof.
+      intros store env d rows H_rec E_d.
+      unfold to_idx_at.
+      rewrite interp_EFold, E_d, interp_EAtom; cbn [interp_atom].
+      apply interp_to_idx_fold; exact H_rec.
+    Qed.
+  End WithMap.
+End WithRule.
