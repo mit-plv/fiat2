@@ -1,7 +1,8 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
-  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.EraseField fiat2.RepIdx
+  fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
+  fiat2.EraseField fiat2.RepIdx
   fiat2.FlagFilter.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
@@ -58,6 +59,21 @@ Variant index_choice :=
      subsumes UniqueDictIdx on the same key and there is no reason to ask
      for both. *)
   | TrigramIdx (attr key : string)
+  (* A dictionary bucketed on attr, paired with the primary-key dictionary
+     on key.  The pairing is what buys an incremental delete BY KEY: the
+     dictionary's own delete rule requires the filtered attribute to be the
+     one it buckets on, so a delete naming a key rebuilds the member
+     instead.  This choice probes the primary-key member for the row that is
+     leaving and takes just that row out of the one bucket its attribute
+     names, which is what the hand-written originals do.
+
+     Correct only where the key is declared, so the delete is gated; every
+     other rule here is the one the two standalone choices install, so this
+     subsumes DictIdx attr and UniqueDictIdx key (keyed_dict_subsumes_dict,
+     keyed_dict_subsumes_unique_dict) and there is no reason to ask for
+     those as well.  Unranged: the pairing answers point lookups and a
+     keyed delete, neither of which needs an ordered structure. *)
+  | KeyedDictIdx (attr key : string)
   (* The table itself, as a bag or a set.  It answers no question of its own:
      it serves the coercion the collection push-down leaves on a read of the
      table, and once it does, nothing reads the list.
@@ -171,6 +187,21 @@ Section WithConcreteMaps.
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr dict_idx_dk "tup" "acc" "x" "y").
     Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr dict_idx_dk "tup" "acc" "x").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag tbl).
+
+    (* A filter-shaped delete naming a key this dictionary is NOT bucketed
+       on.  The row that leaves is read out of the primary-key member and
+       taken out of the one bucket its own attribute names, so the choice
+       that asks for this rule installs both members and tells this rule
+       both tags.
+
+       Gated on the declaration, like the trigram pair's delete and for the
+       same reason: without it another row could share the key, and its
+       contribution would be left behind in a bucket this rule never
+       visits.  The key is an explicit argument rather than a section
+       variable so that adding it does not renumber the definitions below. *)
+    Definition dict_keyed_delete_gated_transf (key pk_tag : string) (ds : list decl) :=
+      keyed_delete_gated dict_idx_attr dict_idx_dk "tup" "acc" "x" key
+        "id_tag" "aux_tag" pk_tag "bkt" "rvar" ds.
 
     Context (set_agg_attr : string).
 
@@ -379,6 +410,33 @@ Section WithConcreteMaps.
            cons_to_tri_insert_transf attr key;
            cons_to_unique_insert_transf' key],
           S (S cur_tag))
+    | KeyedDictIdx attr key =>
+        (* two members from one choice: the dictionary bucketed on attr, and
+           the primary-key dictionary the keyed delete probes.  Only the
+           primary-key lookup and the keyed delete are gated -- reading or
+           maintaining either member on its own attribute needs no
+           declaration. *)
+        let d_tag := String.of_nat cur_tag in
+        let u_tag := String.of_nat (S cur_tag) in
+        ([(d_tag, cdict_idx attr Unranged, dict_idx_wf attr Unranged);
+          (u_tag, cunique_idx key, unique_idx_wf key)],
+          [dict_lookup_transf d_tag attr;
+           dict_range_transf d_tag attr Unranged;
+           use_dict_idx_transf d_tag attr Unranged;
+           unique_lookup_gated_transf u_tag key ds;
+           unique_use_idx_transf' u_tag key;
+           (* last in the list is first to run: maintenance leaves the
+              index of the unchanged rows behind, and the use rules above
+              turn those recomputations into reads.  The dictionary's own
+              delete and this cross-member one cannot race:
+              filter_neq_to_delete_head requires the filtered attribute to
+              BE attr, and this rule requires it not to be. *)
+           dict_keyed_delete_gated_transf attr Unranged key u_tag ds;
+           filter_neq_to_unique_delete_transf' key;
+           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr Unranged tbl)
+                                       (cons_to_insert_transf attr Unranged tbl)) reps;
+           cons_to_unique_insert_transf' key],
+          S (S cur_tag))
     | TableRep ctag =>
         let r_tag := String.of_nat cur_tag in
         ([(r_tag, crep_idx ctag, rep_idx_wf ctag)],
@@ -401,6 +459,33 @@ end.
       let '(tri_idxs, tri_transfs, _) := mk_idx ds cur_tag reps (TrigramIdx a k) in
       let '(u_idxs, u_transfs, _) := mk_idx ds (S cur_tag) reps (UniqueDictIdx k) in
       incl u_idxs tri_idxs /\ incl u_transfs tri_transfs.
+  Proof.
+    intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
+  Qed.
+
+  (* KeyedDictIdx subsumes BOTH standalone choices on the attributes it
+     pairs.  Its first member IS the Unranged dictionary DictIdx builds and
+     its second IS the primary-key dictionary UniqueDictIdx builds -- same
+     index, same well-formedness -- and every rule either standalone choice
+     installs is installed here too, pointed at the matching member.  Asking
+     for either alongside this pair therefore only builds and maintains a
+     second copy of a dictionary the pair already has.
+
+     Each is stated at the tag the standalone choice would get if it landed
+     on the member being compared: the dictionary member takes this choice's
+     own tag, the primary-key member the next one. *)
+  Lemma keyed_dict_subsumes_dict : forall ds a k cur_tag reps,
+      let '(kd_idxs, kd_transfs, _) := mk_idx ds cur_tag reps (KeyedDictIdx a k) in
+      let '(d_idxs, d_transfs, _) := mk_idx ds cur_tag reps (DictIdx a) in
+      incl d_idxs kd_idxs /\ incl d_transfs kd_transfs.
+  Proof.
+    intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
+  Qed.
+
+  Lemma keyed_dict_subsumes_unique_dict : forall ds a k cur_tag reps,
+      let '(kd_idxs, kd_transfs, _) := mk_idx ds cur_tag reps (KeyedDictIdx a k) in
+      let '(u_idxs, u_transfs, _) := mk_idx ds (S cur_tag) reps (UniqueDictIdx k) in
+      incl u_idxs kd_idxs /\ incl u_transfs kd_transfs.
   Proof.
     intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
   Qed.
@@ -898,7 +983,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a | a ak | ct ];
+    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -1134,6 +1219,115 @@ end.
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
                       (word_ok := word_ok) (locals_ok := clocals_ok)). }
         }
+    (* the keyed-delete pair: two members.  The keyed delete reads BOTH of
+       them, so it is owed two layouts and the declaration; the primary-key
+       lookup is owed one layout with the declaration; every other rule is
+       one member's own business and comes from that member's own lemma --
+       which is what makes this choice subsume both standalone ones. *)
+    1:{ repeat destruct_In; try apply_in_nil.
+        (* the dictionary member's lookup, range and use rules, from the
+           shared dictionary lemma: exactly the rules DictIdx hands out *)
+        1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
+              (cur_tag := init_tag) (reps := reps);
+            [ reflexivity | cbn; auto using in_eq, in_cons
+            | apply incl_cons; assumption | assumption | exact H_Q ]. }
+        1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
+              (cur_tag := init_tag) (reps := reps);
+            [ reflexivity | cbn; auto using in_eq, in_cons
+            | apply incl_cons; assumption | assumption | exact H_Q ]. }
+        1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
+              (cur_tag := init_tag) (reps := reps);
+            [ reflexivity | cbn; auto using in_eq, in_cons
+            | apply incl_cons; assumption | assumption | exact H_Q ]. }
+        (* the primary-key member's lookup, at the second tag.  Same rule,
+           same gate and same bridge as the UniqueDictIdx choice's; only the
+           attribute and the tag differ. *)
+        1:{ unfold unique_lookup_gated_transf.
+            eapply (unique_lookup_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag)) "y"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        (* and its use rule, which needs only its own member's weak
+           relation *)
+        1:{ unfold unique_use_idx_transf'.
+            eapply (unique_use_idx_transf_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag))
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            unfold unique_idx_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
+        (* the keyed delete: both members, and the declaration.  Two
+           is_tbl_ty obligations rather than the trigram's one, because the
+           dictionary index's own is_tbl_ty says nothing about the key. *)
+        1:{ unfold dict_keyed_delete_gated_transf.
+            eapply (keyed_delete_gated_sound "hole" a Unranged "tup" "acc" "x"
+                      ltac:(auto with transf_hints)
+                      ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (String.of_nat (S init_tag)) "bkt" "rvar"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+            intros H_uq. unfold dict_keyed_delete_bridges.
+            split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
+            (* the two members' places in the record *)
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            (* and both members installable on the table *)
+            1: prove_is_tbl_ty.
+            1: prove_is_tbl_ty.
+            (* the dictionary member's own relation, from typing *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
+            (* and the primary-key member's strong one, which the
+               declaration pays for *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        (* the primary-key member's own delete, which needs nothing *)
+        1:{ unfold filter_neq_to_unique_delete_transf'.
+            eapply (filter_neq_to_unique_delete_transf_sound ak "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+        (* the dictionary member's insert-and-delete loop *)
+        1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
+              (cur_tag := init_tag) (reps := reps);
+            [ reflexivity | cbn; auto using in_eq, in_cons
+            | apply incl_cons; assumption | assumption | exact H_Q ]. }
+        (* and the primary-key member's insert *)
+        1:{ unfold cons_to_unique_insert_transf'.
+            eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+                      (word_ok := word_ok) (locals_ok := clocals_ok)). } }
     (* the table's own representation: one use rule, and the basic push-down
        for maintenance *)
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
