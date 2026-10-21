@@ -65,12 +65,15 @@ Import ListNotations.
      * Nothing is added.
 
    Expected
-     Both members installed; both reads probe; the insert maintains both
+     Both members installed; both reads probe; both writes maintain both
      members incrementally.  THE DELETE IS THE POINT: the primary member
-     loses one key in O(1), and the secondary member is REBUILT, because the
-     only delete-maintenance rule we have requires the filtered attribute to
-     be the index's own attribute.  See the comment on
-     delete_rebuilds_the_floor_index for what the missing rule is.
+     loses one key in O(1), and so does the secondary one -- the floor
+     index is no longer rebuilt.  It is maintained the way HA maintains it:
+     probe the primary member for the row the key names, then take that row
+     out of the one bucket its floor names.  See delete_is_incremental.
+
+     And because nothing reads the list any more, the list is gone: the
+     table IS its two indexes.  See delete_drops_the_list.
    ============================================================ *)
 
 Definition row_ty :=
@@ -141,7 +144,7 @@ Section WithConcreteMaps.
 
   Definition anno : canno_command :=
     CAC (("areas", (row_ty, decls)) :: cenv_rm "areas" []) O
-      basics [UniqueDictIdx "id"; DictIdx "floor"] [] (elaborated decls).
+      basics [KeyedDictIdx "floor" "id"] [] (elaborated decls).
 
   Definition optimized : command :=
     apply_optimize_anno_constrained (width:=width) anno init_Gstore init_Genv.
@@ -156,7 +159,6 @@ Section WithConcreteMaps.
      What the pipeline produced. *)
 
   Definition member (i : string) : expr := EAccess (EAccess (ELoc "areas") "aux_tag") i.
-  Definition the_list : expr := EAccess (ELoc "areas") "id_tag".
   Definition new_area : expr := EAccess (EVar "q") "new_area".
 
   Definition row_list_ty : type :=
@@ -190,11 +192,12 @@ Section WithConcreteMaps.
     EFold src (EAtom (AEmptyDict Unranged None)) "tup" "acc"
       (bucket_add (EVar "acc") (EAccess (EVar "tup") "floor") (EVar "tup")).
 
+  (* No id_tag: nothing reads the list, so the erasure rule drops it and
+     the table is its two indexes and nothing else. *)
   Definition install_expected : expr :=
     ERecord
-      [("id_tag", empty_rows);
-       ("aux_tag",
-         ERecord [("0", build_by_id); ("1", build_by_floor empty_rows)])].
+      [("aux_tag",
+         ERecord [("0", build_by_floor empty_rows); ("1", build_by_id)])].
 
   Definition install_of (c : command) : option expr :=
     match c with
@@ -224,7 +227,7 @@ Section WithConcreteMaps.
   (* async_get_area(area_id) (:241): the dict the UserDict already is. *)
   Lemma get_area_probes :
     read_by_id optimized
-    = Some (EACFold AGCount (unique_probe (member "0") (EAccess (EVar "q") "k"))).
+    = Some (EACFold AGCount (unique_probe (member "1") (EAccess (EVar "q") "k"))).
   Proof. vm_compute; reflexivity. Qed.
 
   (* get_areas_for_floor(floor) (:211): one probe into the secondary member,
@@ -233,7 +236,7 @@ Section WithConcreteMaps.
   Lemma areas_for_floor_probes :
     read_by_floor optimized
     = Some (EACFold AGCount
-              (bucket_probe (member "1") (EUnop OSome (EAccess (EVar "q") "fl")))).
+              (bucket_probe (member "0") (EUnop OSome (EAccess (EVar "q") "fl")))).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ---- the insert: _index_entry ---- *)
@@ -247,21 +250,20 @@ Section WithConcreteMaps.
   Definition insert_guard_expected : expr :=
     EBinop OAnd
       (ELet new_area "_pk_row"
-         (EBinop OEq (unique_probe (member "0") (EAccess (EVar "_pk_row") "id"))
+         (EBinop OEq (unique_probe (member "1") (EAccess (EVar "_pk_row") "id"))
             (EAtom (AEmptyBag None))))
       (EAtom (ABool true)).
 
   Definition insert_expected : expr :=
     ERecord
-      [("id_tag", EBinop OCons new_area the_list);
-       ("aux_tag",
+      [("aux_tag",
          ERecord
-           [("0", ELet (member "0") "acc"
+           [("0", ELet (member "0") "y"
+                    (bucket_add (EVar "y") (EAccess new_area "floor") new_area));
+            ("1", ELet (member "1") "acc"
                     (ELet new_area "tup"
                        (ETernop OInsert (EVar "acc")
-                          (EAccess (EVar "tup") "id") (EVar "tup"))));
-            ("1", ELet (member "1") "y"
-                    (bucket_add (EVar "y") (EAccess new_area "floor") new_area))])].
+                          (EAccess (EVar "tup") "id") (EVar "tup"))))])].
 
   (* Both members take one insertion, neither is rebuilt, and the uniqueness
      check is a probe.  This half matches _index_entry line for line. *)
@@ -269,7 +271,7 @@ Section WithConcreteMaps.
     insert_write optimized = Some (insert_guard_expected, insert_expected).
   Proof. vm_compute; reflexivity. Qed.
 
-  (* ---- the delete: _unindex_entry, and the gap ---- *)
+  (* ---- the delete: _unindex_entry ---- *)
 
   Definition delete_write (c : command) : option (expr * expr) :=
     match c with
@@ -277,46 +279,70 @@ Section WithConcreteMaps.
     | _ => None
     end.
 
-  Definition surviving_rows : expr :=
-    EFlatmap LikeList the_list "a"
-      (EIf (EUnop ONot (EBinop OEq (EAccess (EVar "a") "id") (EAccess (EVar "q") "k")))
-         (EBinop OCons (EVar "a") (EAtom (ANil None))) (EAtom (ANil None))).
+  (* The bucket with the leaving row taken out.  A bag has no removal
+     operator, so this is a filter: a flatmap keeping the rows whose key
+     differs.  The emptiness test beside it is a generic OEq against the
+     empty bag. *)
+  Definition bucket_without (bkt_e key_e : expr) : expr :=
+    flatmap_filter_bag bkt_e "rvar"
+      (EUnop ONot (EBinop OEq (EAccess (EVar "rvar") "id") key_e))
+      "rvar" None None.
 
   Definition delete_guard_expected : expr :=
     EBinop OAnd (EAtom (ABool true)) (EAtom (ABool true)).
 
   Definition delete_expected : expr :=
     ERecord
-      [("id_tag", surviving_rows);
-       ("aux_tag",
+      [("aux_tag",
          ERecord
-           [("0", EBinop ODelete (member "0") (EAccess (EVar "q") "k"));
-            ("1", build_by_floor surviving_rows)])].
+           [("0",
+             (* the floor index, maintained exactly as _unindex_entry does:
+                read the row out of the primary member, find the bucket its
+                floor names, and take the row out of that one bucket --
+                dropping the bucket if it was the last row in it *)
+             ELet (member "0") "acc"
+               (EOptMatch (EBinop OLookup (member "1") (EAccess (EVar "q") "k"))
+                  (EVar "acc") "tup"
+                  (EOptMatch
+                     (EBinop OLookup (EVar "acc") (EAccess (EVar "tup") "floor"))
+                     (EVar "acc") "bkt"
+                     (EIf
+                        (EBinop OEq
+                           (bucket_without (EVar "bkt") (EAccess (EVar "tup") "id"))
+                           (EAtom (AEmptyBag None)))
+                        (EBinop ODelete (EVar "acc") (EAccess (EVar "tup") "floor"))
+                        (ETernop OInsert (EVar "acc") (EAccess (EVar "tup") "floor")
+                           (bucket_without (EVar "bkt")
+                              (EAccess (EVar "tup") "id")))))));
+            ("1", EBinop ODelete (member "1") (EAccess (EVar "q") "k"))])].
 
-  (* The honest result, and the most useful thing in this file.
+  (* The point of the file.
 
-     Member 0 loses exactly the entry the filter named: one ODelete, O(1).
-     Member 1 is REBUILT by a fold over the surviving rows, O(n) -- and
-     because that fold reads the list, the list cannot be erased either.
+     Member 1, the primary dict, loses exactly the key named: one ODelete.
+     Member 0, the floor index, is NOT rebuilt.  It reads the leaving row
+     out of member 1, computes that row's floor, and rewrites the single
+     bucket that floor names -- deleting the bucket outright when the row
+     was its last.  No fold over the table appears anywhere in it.
 
-     The reason is exact.  filter_neq_to_delete_head (DictIndexImpl.v:1109)
-     requires the attribute the filter tests to be the index's OWN attribute;
-     here the filter tests "id" and the index is keyed on "floor", so the
-     rule does not apply and the index transf falls back to rebuilding.
+     This is _unindex_entry.  HA reads `entry = self.data[key]` and uses
+     that row's floor_id to find the bucket to remove the key from, which
+     is what the two nested OLookups here do.
 
-     HA does not rebuild.  _unindex_entry reads `entry = self.data[key]` --
-     the primary dict -- and uses that row's floor_id to find the bucket to
-     remove the key from.  So the missing rule is "delete by key k: probe the
-     declared member for the row at k, and take that row out of the bucket
-     its attribute names".
+     What it cost: the key has to be DECLARED.  The rule is gated on
+     DUnique "id" (keyed_delete_gated), because without uniqueness another
+     row could carry the same key and its contribution would be left behind
+     in a bucket this rewrite never visits.  The declaration is the whole
+     price, and it is one the source pays too -- AreaRegistryItems is a dict
+     keyed by id, so the uniqueness is a fact about the data structure HA
+     chose, not an assumption added here.
 
-     That rule already exists in one instance.  The trigram pair's delete
-     (Ex_UniqueIndexPipeline.dtri_delete_is_incremental) is precisely this
-     shape: it looks the row up in the unique-dict member and folds over the
-     key former applied to that row.  Specialising the key former from
-     trigram_positions(row_text(tup)) to EAccess (EVar tup) attr is a
-     simplification of machinery that is already built and proved. *)
-  Lemma delete_rebuilds_the_floor_index :
+     The guard being on "id" and the index being bucketed on "floor" is the
+     case the dictionary's own delete rule cannot serve:
+     filter_neq_to_delete_head (DictIndexImpl.v:1109) requires the filtered
+     attribute to BE the index's attribute.  The two rules are mutually
+     exclusive by construction, so both are installed and the applicable
+     one fires. *)
+  Lemma delete_is_incremental :
     delete_write optimized = Some (delete_guard_expected, delete_expected).
   Proof. vm_compute; reflexivity. Qed.
 
@@ -328,15 +354,22 @@ Section WithConcreteMaps.
     option_map fst (delete_write optimized) = Some delete_guard_expected.
   Proof. vm_compute; reflexivity. Qed.
 
-  (* And so the list stays.  Not because a query reads it -- both reads
-     probe -- but because the rebuild does.  The representation gap and the
-     maintenance gap are one gap. *)
-  Lemma rebuild_keeps_the_list :
-    installed_fields optimized = ["id_tag"; "aux_tag"].
+  (* And so the list goes.  Both reads probe, and now both writes maintain
+     the members in place, so after the rewrite nothing reads the list at
+     all and the erasure rule drops the field.  The table IS its indexes.
+
+     This is the third time the erasure rule decides this example: it kept
+     the list while the delete rebuilt, and drops it now that the delete
+     does not.  The representation gap and the maintenance gap really were
+     one gap -- closing the second closed the first, with no change to the
+     erasure rule itself. *)
+  Lemma delete_drops_the_list :
+    installed_fields optimized = ["aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------
-     Sound regardless: the rebuild is slow, not wrong. *)
+     Sound, and the soundness is the same theorem as before: the pipeline
+     proves it, the rewrite did not have to be trusted. *)
 
   Lemma row_ty_wf : type_wf row_ty.
   Proof.
