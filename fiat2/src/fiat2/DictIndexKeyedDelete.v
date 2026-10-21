@@ -24,7 +24,8 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.CollectionTransf fiat2.FlatmapTransf fiat2.EraseField
   fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms
-  fiat2.IndexInterface fiat2.UniqueDictIndexImpl fiat2.TransfSound fiat2.TransfUtils
+  fiat2.IndexInterface fiat2.UniqueDictIndexImpl fiat2.Surface fiat2.UniqueIndexGate
+  fiat2.TransfSound fiat2.TransfUtils
   fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
@@ -1200,6 +1201,48 @@ Section WithRule.
           1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
               lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
               assumption. } }
+    Qed.
+
+    Definition filter_neq_to_keyed_delete_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (filter_neq_to_keyed_delete_head tbl).
+
+    Lemma filter_neq_to_keyed_delete_transf_sound :
+      forall is_tbl_ty' aux_ty aux_wf,
+        dict_keyed_delete_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf
+          filter_neq_to_keyed_delete_transf.
+    Proof.
+      intros * H_br. unfold filter_neq_to_keyed_delete_transf.
+      apply fold_command_with_globals_sound.
+      apply filter_neq_to_keyed_delete_head_sound; exact H_br.
+    Qed.
+
+    (* ------------------------------------------------------------------
+       The rule as a pipeline uses it: the identity unless the table's
+       declarations name the key.
+
+       The gate is on the key, not on anything about the bucketing
+       attribute.  The dictionary index is sound to install and to read on
+       any table; what needs the declaration is knowing that the row this
+       rule takes out of one bucket is the ONLY row the filter removed.
+       Without it another row could share the key, and its contribution
+       would be left behind in a bucket this rule never visits.
+       ------------------------------------------------------------------ *)
+    Definition keyed_delete_gated (ds : list decl) : string -> command -> command :=
+      if declares_unique key ds
+      then filter_neq_to_keyed_delete_transf
+      else fun _ => id.
+
+    Lemma keyed_delete_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
+        (declares_unique key ds = true ->
+         dict_keyed_delete_bridges is_tbl_ty' aux_ty aux_wf) ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf (keyed_delete_gated ds).
+    Proof.
+      intros * H_br. unfold keyed_delete_gated.
+      destruct (declares_unique key ds) eqn:E_uq.
+      1: apply filter_neq_to_keyed_delete_transf_sound, H_br; reflexivity.
+      1: unfold aug_transf_sound, id; intros; repeat split; auto.
     Qed.
   End WithMap.
 End WithRule.
