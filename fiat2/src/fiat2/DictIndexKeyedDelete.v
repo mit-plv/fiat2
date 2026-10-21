@@ -22,7 +22,8 @@
    that filter computes at the value level.
    ==================================================================== *)
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.Utils fiat2.CollectionTransf fiat2.FlatmapTransf fiat2.EraseField fiat2.DictIndexImpl.
+  fiat2.Utils fiat2.CollectionTransf fiat2.FlatmapTransf fiat2.EraseField
+  fiat2.Constraint fiat2.DictIndexImpl.
 Require Import coqutil.Map.Interface coqutil.Word.Interface.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
@@ -91,15 +92,9 @@ Section WithAttrs.
      filter_neq_to_delete_head already applies and is better. *)
   Context (attr key : string).
 
-  Definition proj_at (a : string) (r : value) : value :=
-    match r with
-    | VRecord rc => record_proj a rc
-    | _ => VUnit
-    end.
-
   (* the rows the index files under av *)
   Definition rows_at (av : value) (l : list value) : list value :=
-    filter (fun r => value_eqb (proj_at attr r) av) l.
+    filter (fun r => value_eqb (row_key attr r) av) l.
 
   Definition idx_of (l : list value) : list (value * value) :=
     match gallina_to_idx attr (VList l) with
@@ -126,7 +121,7 @@ Section WithAttrs.
     intros l av H_rec.
     induction H_rec as [ | r l [ rc E_r ] H_l IH ]; [ reflexivity | ].
     subst r. unfold idx_of, rows_at in *; cbn [gallina_to_idx fold_right filter] in *.
-    unfold proj_at in *; cbn [record_proj] in *.
+    unfold row_key in *; cbn [record_proj] in *.
     destruct (value_eqb (record_proj attr rc) av) eqn:E_av.
     - apply value_eqb_eq in E_av; subst av.
       rewrite dict_lookup_insert_same, IH.
@@ -145,7 +140,7 @@ Section WithAttrs.
 
   (* the rows that survive a delete of the row at kv *)
   Definition keeps (kv r : value) : bool :=
-    negb (value_eqb (proj_at key r) kv).
+    negb (value_eqb (row_key key r) kv).
 
   (* one bucket, with that row taken out: a filter, since a bucket is a bag
      and the language has no bag removal *)
@@ -156,11 +151,11 @@ Section WithAttrs.
      attribute names.  The entry goes when it empties, because the index of
      a table never holds an empty bucket (idx_of_lookup). *)
   Definition unindex (kv r : value) (d : list (value * value)) :=
-    match dict_lookup (proj_at attr r) d with
+    match dict_lookup (row_key attr r) d with
     | Some (VBag b) =>
         match bucket_without kv b with
-        | nil => dict_delete (proj_at attr r) d
-        | b' => dict_insert (proj_at attr r) (VBag b') d
+        | nil => dict_delete (row_key attr r) d
+        | b' => dict_insert (row_key attr r) (VBag b') d
         end
     | _ => d
     end.
@@ -188,21 +183,21 @@ Section WithAttrs.
   Proof.
     intros av kv l; unfold rows_at; induction l as [ | r l IH ]; cbn [filter]; auto.
     destruct (keeps kv r) eqn:E_k;
-      destruct (value_eqb (proj_at attr r) av) eqn:E_a;
+      destruct (value_eqb (row_key attr r) av) eqn:E_a;
       cbn [filter]; rewrite ?E_k, ?E_a, IH; reflexivity.
   Qed.
 
   (* With the key declared unique, the row read out of the primary-key member
      is the only one the filter removes. *)
   Lemma keeps_other : forall l r kv r',
-      NoDup (map (proj_at key) l) ->
-      In r l -> proj_at key r = kv ->
+      NoDup (map (row_key key) l) ->
+      In r l -> row_key key r = kv ->
       In r' l -> r' <> r -> keeps kv r' = true.
   Proof.
     intros l r kv r' H_nd H_in E_kv H_in' H_ne.
-    unfold keeps; destruct (value_eqb (proj_at key r') kv) eqn:E; [ exfalso | reflexivity ].
+    unfold keeps; destruct (value_eqb (row_key key r') kv) eqn:E; [ exfalso | reflexivity ].
     apply value_eqb_eq in E.
-    apply H_ne, (NoDup_map_In_eq _ _ (proj_at key) l r r' H_nd H_in H_in').
+    apply H_ne, (NoDup_map_In_eq _ _ (row_key key) l r r' H_nd H_in H_in').
     rewrite E, E_kv; reflexivity.
   Qed.
 
@@ -213,36 +208,36 @@ Section WithAttrs.
      ================================================================== *)
   Theorem idx_of_filter_neq_key : forall l (r kv : value),
       Forall (fun v => exists rc, v = VRecord rc) l ->
-      NoDup (map (proj_at key) l) ->
-      In r l -> proj_at key r = kv ->
+      NoDup (map (row_key key) l) ->
+      In r l -> row_key key r = kv ->
       idx_of (filter (keeps kv) l) = unindex kv r (idx_of l).
   Proof.
     intros l r kv H_rec H_nd H_in E_kv.
     pose proof (Forall_rec_filter (keeps kv) l H_rec) as H_recf.
     (* r sits in the bucket its attribute names, so that bucket is there *)
-    assert (E_lk : dict_lookup (proj_at attr r) (idx_of l)
-                   = Some (VBag (list_to_bag (rows_at (proj_at attr r) l)))).
+    assert (E_lk : dict_lookup (row_key attr r) (idx_of l)
+                   = Some (VBag (list_to_bag (rows_at (row_key attr r) l)))).
     1:{ rewrite (idx_of_lookup l _ H_rec).
-        assert (H_rin : In r (rows_at (proj_at attr r) l)).
+        assert (H_rin : In r (rows_at (row_key attr r) l)).
         1:{ unfold rows_at; apply filter_In; split;
             [ exact H_in | apply value_eqb_refl ]. }
-        destruct (rows_at (proj_at attr r) l) as [ | r0 rows ];
+        destruct (rows_at (row_key attr r) l) as [ | r0 rows ];
           [ contradiction | reflexivity ]. }
     apply dict_wf_lookup_ext; [ apply idx_of_dict_wf | | ].
     1:{ unfold unindex; rewrite E_lk.
-        destruct (bucket_without kv (list_to_bag (rows_at (proj_at attr r) l)));
+        destruct (bucket_without kv (list_to_bag (rows_at (row_key attr r) l)));
           [ apply dict_delete_preserve_dict_wf | apply dict_insert_preserve_dict_wf ];
           apply idx_of_dict_wf. }
     intros av.
     rewrite (idx_of_lookup _ av H_recf), rows_at_filter.
     unfold unindex; rewrite E_lk.
-    replace (bucket_without kv (list_to_bag (rows_at (proj_at attr r) l)))
-      with (list_to_bag (filter (keeps kv) (rows_at (proj_at attr r) l)))
+    replace (bucket_without kv (list_to_bag (rows_at (row_key attr r) l)))
+      with (list_to_bag (filter (keeps kv) (rows_at (row_key attr r) l)))
       by (unfold bucket_without; apply list_to_bag_filter).
-    destruct (value_eqb av (proj_at attr r)) eqn:E_av.
+    destruct (value_eqb av (row_key attr r)) eqn:E_av.
     - (* the bucket the row leaves *)
       apply value_eqb_eq in E_av; subst av.
-      destruct (filter (keeps kv) (rows_at (proj_at attr r) l)) as [ | r0 rows ] eqn:E_f.
+      destruct (filter (keeps kv) (rows_at (row_key attr r) l)) as [ | r0 rows ] eqn:E_f.
       + cbn [list_to_bag fold_right].
         rewrite dict_lookup_delete_same; [ reflexivity | apply idx_of_dict_wf ].
       + destruct (list_to_bag (r0 :: rows)) as [ | e b ] eqn:E_b.
@@ -250,7 +245,7 @@ Section WithAttrs.
             eapply bag_insert_not_nil, E_b. }
         rewrite dict_lookup_insert_same; reflexivity.
     - (* every other bucket: untouched, and nothing in it leaves *)
-      assert (H_ne : av <> proj_at attr r) by (apply value_eqb_neq; exact E_av).
+      assert (H_ne : av <> row_key attr r) by (apply value_eqb_neq; exact E_av).
       assert (E_keep : filter (keeps kv) (rows_at av l) = rows_at av l).
       1:{ apply filter_all_true; intros r' H_r'.
           unfold rows_at in H_r'; apply filter_In in H_r' as [ H_r'l E_r'a ].
@@ -258,7 +253,7 @@ Section WithAttrs.
           intro E; subst r'; apply H_ne.
           symmetry; apply value_eqb_eq; exact E_r'a. }
       rewrite E_keep.
-      destruct (filter (keeps kv) (rows_at (proj_at attr r) l)) as [ | r0 rows ].
+      destruct (filter (keeps kv) (rows_at (row_key attr r) l)) as [ | r0 rows ].
       + cbn [list_to_bag fold_right].
         rewrite dict_lookup_delete_diff by exact H_ne.
         rewrite (idx_of_lookup l av H_rec); reflexivity.
@@ -274,12 +269,12 @@ Section WithAttrs.
      needs this for the branch where the primary-key member has no entry at
      the deleted key -- a delete of something that is not there. *)
   Lemma idx_of_filter_neq_absent : forall l kv,
-      (forall r, In r l -> proj_at key r <> kv) ->
+      (forall r, In r l -> row_key key r <> kv) ->
       idx_of (filter (keeps kv) l) = idx_of l.
   Proof.
     intros l kv H; f_equal.
     apply filter_all_true; intros r H_in; unfold keeps.
-    destruct (value_eqb (proj_at key r) kv) eqn:E; [ exfalso | reflexivity ].
+    destruct (value_eqb (row_key key r) kv) eqn:E; [ exfalso | reflexivity ].
     apply (H r H_in), value_eqb_eq, E.
   Qed.
 
@@ -330,15 +325,15 @@ Section WithIndexUse.
         map.get env tup = Some rv ->
         type_of_value (VBag b) (TBag t) ->
         interp_expr store env without_row
-        = VBag (bucket_without key (proj_at key rv) b).
+        = VBag (bucket_without key (row_key key rv) b).
     Proof.
       intros store env b t rv E_bkt E_tup H_ty.
       cbn [interp_expr]; unfold get_local; rewrite E_bkt.
       erewrite flat_map_pointwise with
-        (g := fun v => if keeps key (proj_at key rv) v then cons v nil else nil).
+        (g := fun v => if keeps key (row_key key rv) v then cons v nil else nil).
       2:{ intro v; cbn [interp_expr interp_unop interp_binop]; unfold get_local.
           rewrite map.get_put_same, map.get_put_diff by exact H_rvar_tup.
-          rewrite E_tup; unfold keeps, proj_at.
+          rewrite E_tup; unfold keeps, row_key.
           destruct (value_eqb match v with VRecord rc => record_proj key rc | _ => VUnit end
                       match rv with VRecord rc => record_proj key rc | _ => VUnit end);
             reflexivity. }
