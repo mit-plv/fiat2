@@ -37,6 +37,7 @@ an `exists` against the whole term, which does not terminate in reasonable time.
 | `Keycloak_CachedRealm.v` | `CachedRealm.java:301` | two unique-key maps over one list; the list is read, so the list survives |
 | `Kafka_Cluster.v` | `Cluster.java:114` | two bucketed maps over one collection; nothing reads the list, so the list is erased |
 | `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete; nothing reads the list, so the list is erased |
+| `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 
 The first two are a pair, and should be read as one. They put the same erasure rule in
 front of two code bases and get opposite answers -- keep the list, drop the list -- and
@@ -57,6 +58,19 @@ file kept its list -- not because a query read it, but because the rebuild did. 
 delete becoming incremental is what erased it, with no change to the erasure rule.
 That is the same decision procedure answering a third time, and it is the most useful
 thing in the three files.
+
+The fourth is the only one whose rewrite is licensed by the **collection
+interpretation** rather than by a declared constraint -- its `decls` is empty. The
+programmer wrote a `set`, not a list and not a map, because neither order nor
+multiplicity of the names is ever observed; the optimizer reaches the same structure
+from the queries alone, and erases the list because after the rewrite nothing reads it.
+Read it against `Keycloak_CachedRealm`: same erasure rule, same built-once shape,
+opposite answer about the list, and the reason is what the queries ask.
+
+So the four cover both directions in which one category's conclusion licenses another's
+rewrite: a declared uniqueness making a single-row lookup sound
+(`Keycloak_CachedRealm`, `HA_AreaRegistry`), and an inferred interpretation making a
+membership probe available (`HA_LookinFunctions`).
 
 Still not reached: `_labels_index` and `_aliases_index`, which key on each element of a
 per-row collection rather than on one attribute. That gap is stated here rather than
