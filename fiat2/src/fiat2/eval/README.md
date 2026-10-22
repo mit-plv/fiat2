@@ -34,7 +34,7 @@ an `exists` against the whole term, which does not terminate in reasonable time.
 
 | file | source | what it is for |
 |---|---|---|
-| `Keycloak_CachedRealm.v` | `CachedRealm.java:301` | two unique-key maps over one list; the list is read, so the list survives |
+| `Keycloak_CachedRealm.v` | `CachedRealm.java:301` | two unique-key maps over one list; the list is read, so the list survives -- and, in a second configuration, a maintained row count makes that last read a field read and the list is erased |
 | `Kafka_Cluster.v` | `Cluster.java:114` | two bucketed maps over one collection; nothing reads the list, so the list is erased |
 | `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete; nothing reads the list, so the list is erased |
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
@@ -113,8 +113,11 @@ that found it rather than described in prose:
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
 | range-shaped delete | `subMap(lo, hi).clear()` (two-sided only) | `expiry_rebuilds` |
 | `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
-| count aggregate | `InFlightRequests.inFlightRequestCount` | stated in `Kafka_NamedCache.v`'s header |
 | substring index | none found in seven corpora | -- |
+
+The count aggregate was on this list and is now built: `CountAgg`, pinned in
+`Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
+`counted_erases_the_list`.
 
 The first row is the one gap with no file of its own: `_labels_index` and
 `_aliases_index` key on each element of a per-row collection rather than on one

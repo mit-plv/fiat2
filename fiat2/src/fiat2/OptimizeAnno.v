@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
-  fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
+  fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.CountAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
   fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
   fiat2.EraseField fiat2.RepIdx
@@ -84,7 +84,12 @@ Variant index_choice :=
      concatenated in list order while the last to be listed is the first to
      run.  Listed after a trigram index it takes the read that index's lookup
      was going to match, and the query scans where it could have probed. *)
-  | TableRep (ctag : collection_tag).
+  | TableRep (ctag : collection_tag)
+  (* A maintained ROW COUNT.  No attribute: a count reads none.  Listed LAST
+     because mk_idx_sound_strengthen takes its goals apart in constructor
+     order, so a choice added in the middle would misalign every block after
+     it. *)
+  | CountAgg.
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -155,6 +160,18 @@ Section WithConcreteMaps.
     Definition sum_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (sum_to_agg_lookup_head sum_agg_attr "id_tag" "aux_tag" tag tbl).
     Definition cons_to_add_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_add_head).
     Definition filter_to_sub_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_sub_head sum_agg_attr).
+
+    (* the count takes no attribute, so none of its three rules is parameterized
+       by one -- the delete rule reads the deleted attribute off its pattern *)
+    Definition count_agg_wf := (CountAgg.idx_wf (locals:=clocals) "hole").
+    Instance ccount_agg : IndexInterface.index := (count_agg "hole").
+    Instance ccount_agg_ok : IndexInterface.ok ccount_agg count_agg_wf.
+    apply count_agg_ok.
+    Qed.
+
+    Definition count_agg_lookup_transf := fun tbl => fold_command_with_globals [tbl] (count_to_agg_lookup_head "id_tag" "aux_tag" tag tbl).
+    Definition cons_to_incr_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_incr_head).
+    Definition filter_to_count_sub_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_count_sub_head).
 
     Context (min_agg_attr : string).
 
@@ -437,6 +454,14 @@ Section WithConcreteMaps.
                                        (cons_to_insert_transf attr Unranged tbl)) reps;
            cons_to_unique_insert_transf' key],
           S (S cur_tag))
+    | CountAgg =>
+        let count_tag := String.of_nat cur_tag in
+        ([(count_tag, ccount_agg, count_agg_wf)],
+          [count_agg_lookup_transf count_tag;
+           (* an insert and a keyed delete in one pass, exactly as for the sum *)
+           fun tbl => repeat_transf (Basics.compose (filter_to_count_sub_transf tbl)
+                                       (cons_to_incr_transf tbl)) reps],
+          S cur_tag)
     | TableRep ctag =>
         let r_tag := String.of_nat cur_tag in
         ([(r_tag, crep_idx ctag, rep_idx_wf ctag)],
@@ -547,7 +572,7 @@ end.
          | |- NoDup (_ :: _) => constructor
          | |- NoDup nil => constructor
          end.
-    all: auto using csum_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
+    all: auto using csum_agg_ok, ccount_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
       cunique_idx_ok, ctrigram_idx_ok, crep_idx_ok.
     all: try (eexists; intuition eauto; lia).
     (* and that choice's two tags are distinct, by of_nat's injectivity *)
@@ -983,7 +1008,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct ];
+    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -1341,6 +1366,20 @@ end.
             1: prove_idx_wf. }
         all: apply expr_transf_sound__expr_aug_transf_sound.
         1: apply push_down_collection_sound. }
+    (* the maintained row count: a lookup rule, an insert that adds one, and a
+       keyed delete that subtracts the rows carrying the key *)
+    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+        1:{ eapply count_to_agg_lookup_head_sound; auto using ctenv_ok, clocals_ok.
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        all: apply expr_transf_sound__expr_aug_transf_sound.
+        1: eapply filter_neq_to_count_sub_head_sound; auto using ctenv_ok, clocals_ok.
+        1: eapply cons_to_incr_head_sound. }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)

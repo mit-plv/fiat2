@@ -59,6 +59,14 @@ Import ListNotations.
      list survives, because getRequiredActionProviderList() still reads it --
      matching Keycloak, which keeps requiredActionProviderList alongside both
      maps.
+
+     A second configuration adds the maintained row count, and with it the
+     list's one remaining reader becomes a field read, so the list is erased.
+     Both are pinned.  Which of the two to prefer is a question about the
+     program and not about soundness: Keycloak hands the list itself back to
+     its callers, and this translation narrows that read to its length (see
+     Faithfulness), so the erasure is honest here and would not be if the
+     caller really needed the rows.
    ============================================================ *)
 
 Definition row_ty :=
@@ -129,6 +137,17 @@ Section WithConcreteMaps.
 
   Definition optimized : command :=
     apply_optimize_anno_constrained (width:=width) anno init_Gstore init_Genv.
+
+  (* A second configuration, adding the maintained row count.  The only read
+     this example had left on the list is a whole-table count, so this is the
+     choice that decides whether the list survives.  CountAgg is listed last,
+     so it runs first; whether that matters is measured below, not assumed. *)
+  Definition anno_counted : canno_command :=
+    CAC (("actions", (row_ty, decls)) :: cenv_rm "actions" []) O
+      basics [UniqueDictIdx "id"; UniqueDictIdx "alias"; CountAgg] [] (elaborated decls).
+
+  Definition optimized_counted : command :=
+    apply_optimize_anno_constrained (width:=width) anno_counted init_Gstore init_Genv.
 
   Definition installed_fields (c : command) : list string :=
     match c with
@@ -227,6 +246,35 @@ Section WithConcreteMaps.
     = Some (EACFold AGCount (EBagOf (EAccess (ELoc "actions") "id_tag"))).
   Proof. vm_compute; reflexivity. Qed.
 
+  (* ---- and the same program with the count maintained ---- *)
+
+  (* getRequiredActionProviderList(): the one read still on the list becomes a
+     field read of member 2. *)
+  Lemma counted_list_read_is_a_field :
+    read_list optimized_counted
+    = Some (EAccess (EAccess (ELoc "actions") "aux_tag") "2").
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* And then nothing reads the list at all, so the erasure pass drops it.
+     Read against keeps_the_list above: the same program, one more choice, and
+     the opposite answer about the list -- because this example kept its list
+     for exactly one reason and the count is that reason. *)
+  Lemma counted_erases_the_list :
+    installed_fields optimized_counted = ["aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* And the two declared-key probes are untouched.  CountAgg is listed last,
+     so it runs FIRST, and the hazard of a rule eating another's read does not
+     materialise here: its pattern wants the table read directly under the
+     count, so the filter the dict rules are after blocks it. *)
+  Lemma counted_id_read_is_still_a_probe :
+    read_by_id optimized_counted = Some (count_probe "0").
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma counted_alias_read_is_still_a_probe :
+    read_by_alias optimized_counted = Some (count_probe "1").
+  Proof. vm_compute; reflexivity. Qed.
+
   (* ---- the write ---- *)
 
   (* the uniqueness check elaboration emits for one declared key *)
@@ -317,6 +365,19 @@ Section WithConcreteMaps.
     1: apply init_Gstore_wf.
     1: apply init_Genv_wf.
     reflexivity.
+  Qed.
+
+  Theorem optimized_counted_sound :
+    well_typed init_Gstore init_Genv optimized_counted /\
+      forall (store env : clocals),
+        locals_wf init_Gstore store -> locals_wf init_Genv env ->
+        interp_command store env optimized_counted
+        = interp_command store env (elaborated decls).
+  Proof.
+    unfold optimized_counted, anno_counted, elaborated, prog_s.
+    apply elab_apply_optimize_anno_constrained_sound;
+      [ apply init_Gstore_wf | apply init_Genv_wf | apply row_ty_wf
+      | apply incl_refl | apply decls_wf | apply elaborated_well_typed ].
   Qed.
 
   Theorem optimized_sound :
