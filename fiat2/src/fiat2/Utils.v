@@ -969,6 +969,96 @@ Section WithWord.
           cbn [dict_insert]. rewrite E_lt, E_eq', IH; auto.
   Qed.
 
+  (* ------------------------------------------------------------------
+     Restricting a dictionary by a test on the KEY.
+
+     A range query and a range-shaped delete both restrict a dictionary by a
+     key test, and the rule that maintains an index has to commute that
+     restriction with the insertion that builds the index.  Like the delete
+     facts above these are about dict_insert, dict_lookup and filter alone, so
+     they live here rather than beside any one index.
+
+     The test is an arbitrary "g : value -> bool", not a range: the two
+     operators differ only in which test they carry, and the proofs never look
+     inside one.
+     ------------------------------------------------------------------ *)
+
+  (* a key below every key present is inserted at the front *)
+  Lemma dict_insert_lt_all : forall (k v : value) d,
+      Forall (fun p => value_ltb k (fst p) = true) d ->
+      dict_insert k v d = (k, v) :: d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn; auto; intros H.
+    invert_Forall. cbn in *.
+    lazymatch goal with H: value_ltb k k0 = true |- _ => rewrite H end.
+    reflexivity.
+  Qed.
+
+  (* a lookup at a key the test keeps is unaffected by the restriction: the
+     entries it removes have other keys, so they were never going to match *)
+  Lemma dict_lookup_filter_true : forall (g : value -> bool) (k : value) d,
+      g k = true ->
+      dict_lookup k (filter (fun p => g (fst p)) d) = dict_lookup k d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn; auto; intros H_g.
+    destruct (value_eqb k k0) eqn:E.
+    - apply value_eqb_eq in E; subst.
+      rewrite H_g; cbn. rewrite value_eqb_refl; reflexivity.
+    - destruct (g k0); cbn; [ rewrite E | ]; apply IH; auto.
+  Qed.
+
+  (* an insertion at a key the test drops is invisible to the restriction *)
+  Lemma filter_dict_insert_false : forall (g : value -> bool) (k v : value) d,
+      g k = false ->
+      filter (fun p => g (fst p)) (dict_insert k v d)
+      = filter (fun p => g (fst p)) d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn [dict_insert]; intros H_g.
+    - cbn. rewrite H_g; reflexivity.
+    - destruct (value_ltb k k0) eqn:E_lt.
+      + cbn [filter fst]. rewrite H_g; reflexivity.
+      + destruct (value_eqb k k0) eqn:E_eq.
+        * apply value_eqb_eq in E_eq; subst.
+          cbn [filter fst]. rewrite H_g; reflexivity.
+        * cbn [filter fst]. destruct (g k0); [ f_equal | ]; apply IH; auto.
+  Qed.
+
+  (* and an insertion at a key the test keeps commutes with the restriction.
+     This one needs the dictionary to be sorted: when the inserted key is below
+     the head it must land at the front of the RESTRICTED tail too, and that is
+     only true because every key the tail keeps is at least the head's. *)
+  Lemma filter_dict_insert_true : forall (g : value -> bool) (k v : value) d,
+      g k = true -> StronglySorted dict_entry_leb d ->
+      filter (fun p => g (fst p)) (dict_insert k v d)
+      = dict_insert k v (filter (fun p => g (fst p)) d).
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn [dict_insert]; intros H_g H_sort.
+    - cbn. rewrite H_g; reflexivity.
+    - inversion H_sort; subst.
+      destruct (value_ltb k k0) eqn:E_lt.
+      + (* k is below the head, so it lands at the front of the RESTRICTED tail
+           too -- and that is where the sortedness is needed: every key the
+           tail keeps is at least the head's.  The Forall is established before
+           anything is reduced, so that the filter is still a filter. *)
+        assert (H_all : Forall (fun p => value_ltb k (fst p) = true)
+                          (filter (fun p => g (fst p)) ((k0, v0) :: d))).
+        1:{ rewrite Forall_forall; intros [k1 v1] H_in.
+            apply filter_In in H_in as [ H_in _ ].
+            destruct H_in as [ H_eq | H_in ].
+            - injection H_eq; intros; subst; cbn; assumption.
+            - apply_Forall_In. unfold dict_entry_leb in *; cbn in *.
+              eapply value_ltb_leb_trans; eauto. }
+        rewrite (dict_insert_lt_all _ _ _ H_all).
+        cbn [filter fst]. rewrite H_g. reflexivity.
+      + destruct (value_eqb k k0) eqn:E_eq.
+        * apply value_eqb_eq in E_eq; subst.
+          cbn [filter fst]. rewrite H_g.
+          cbn [dict_insert]. rewrite E_lt, value_eqb_refl; reflexivity.
+        * cbn [filter fst]. destruct (g k0) eqn:E_g0.
+          -- cbn [dict_insert]. rewrite E_lt, E_eq. f_equal. apply IH; auto.
+          -- apply IH; auto.
+  Qed.
+
   (* Canonical dictionaries.  These four are about dict_wf (Value.v),
      dict_insert and dict_delete and nothing else, so they sit with the
      other dict facts above rather than in the index that first needed

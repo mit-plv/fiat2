@@ -1413,6 +1413,21 @@ Section WithWord.
     - apply filter_preserve_SSorted; assumption.
   Qed.
 
+  (* Removing a range of keys from a well-typed dictionary keeps it well-typed.
+     The same proof: both operators are filters, and a filter of a key-sorted
+     duplicate-free list is one. *)
+  Lemma dict_range_delete_sound : forall (d : list (value * value)) dk kt vt lo hi,
+      type_of_value (VDict d) (TDict dk kt vt) ->
+      type_of_value (VDict (dict_range_delete lo hi d)) (TDict dk kt vt).
+  Proof.
+    unfold dict_range_delete; intros * H. inversion H; subst. constructor.
+    - rewrite Forall_forall in *; intros ? H_in.
+      apply filter_In in H_in as [ H_in _ ]. auto.
+    - rewrite map_fst_filter_fst with (P := fun k => negb (in_key_range lo hi k)).
+      apply NoDup_filter; assumption.
+    - apply filter_preserve_SSorted; assumption.
+  Qed.
+
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1502,6 +1517,9 @@ Section WithWord.
         + (* ODictRange *)
           cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
           apply dict_range_sound. constructor; auto.
+        + (* ODictRangeDelete *)
+          cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+          apply dict_range_delete_sound. constructor; auto.
       - (* TyEIf *)
         repeat apply_type_sound_IH;
           match goal with

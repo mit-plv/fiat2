@@ -144,7 +144,12 @@ Inductive binop : Type :=
 Inductive ternop : Set :=
 | OInsert
 | OSubstring
-| ODictRange.
+| ODictRange
+(* The exact COMPLEMENT of ODictRange: the entries whose keys the range does
+   NOT cover.  The two therefore partition a dictionary, which is what makes a
+   range-shaped delete one operator rather than a union of two ranges -- a
+   union no dictionary operator provides. *)
+| ODictRangeDelete.
 
 (* What an expr with a list type can be interpreted to *)
 Inductive collection_tag := LikeSet | LikeBag | LikeList.

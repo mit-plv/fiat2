@@ -299,6 +299,47 @@ Section WithHole.
             { intro H_eq. rewrite H_eq, value_eqb_refl in E. discriminate. }
             rewrite IH, dict_lookup_delete_diff, dict_delete_insert_diff; auto.
         Qed.
+
+        (* Building the index of a table RESTRICTED by a test on the indexed
+           attribute is the same as restricting the index of the whole table by
+           that test on its keys.
+
+           An equality and not a permutation, which is the point: both sides
+           are key-sorted and duplicate-free, so a restriction of one is
+           canonical.  Any rule that rewrites a range-shaped write needs this,
+           and the range and its complement both get it from here, because f is
+           an arbitrary test on the key -- exactly as the read side takes its
+           soundness from gallina_to_idx_filter_key. *)
+        Lemma gallina_to_idx_filter_key_eq : forall (f : value -> bool) l rt,
+            type_of_value (VList l) (TList (TRecord rt)) ->
+            gallina_to_idx
+              (VList (filter (fun r => match r with
+                                       | VRecord rc => f (record_proj attr rc)
+                                       | _ => false
+                                       end) l)) =
+              match gallina_to_idx (VList l) with
+              | VDict d => VDict (filter (fun p => f (fst p)) d)
+              | v => v
+              end.
+        Proof.
+          intros * H_ty. invert_type_of_value_clear.
+          lazymatch goal with
+            H: Forall _ l |- _ => induction H as [| r l H_r H_l IH]
+          end; auto.
+          invert_type_of_value_clear.
+          pose proof (gallina_to_idx_SSorted l _ eq_refl) as H_sort.
+          cbn [gallina_to_idx filter fold_right] in *.
+          injection IH as IH.
+          destruct (f (record_proj attr l0)) eqn:E_f; cbn [fold_right].
+          - (* the row's key is kept, so the insertion commutes with the
+               restriction and the lookup it reads is unaffected by it *)
+            rewrite IH, (dict_lookup_filter_true _ _ _ E_f),
+              (filter_dict_insert_true _ _ _ _ E_f H_sort).
+            reflexivity.
+          - (* the row's key is dropped, so the insertion is invisible *)
+            rewrite IH, (filter_dict_insert_false _ _ _ _ E_f).
+            reflexivity.
+        Qed.
       End DictDelete.
 
       Lemma bag_to_list_insert_Permutation : forall (v : value) b,

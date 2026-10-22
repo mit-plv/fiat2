@@ -253,6 +253,12 @@ Section WithWord.
   Definition dict_range (lo hi : value) (d : list (value * value)) : list (value * value) :=
     filter (fun p => in_key_range lo hi (fst p)) d.
 
+  (* and the entries whose keys are NOT.  Defined as the negation of the same
+     test, so that dict_range and dict_range_delete partition the dictionary by
+     construction rather than by a lemma. *)
+  Definition dict_range_delete (lo hi : value) (d : list (value * value)) : list (value * value) :=
+    filter (fun p => negb (in_key_range lo hi (fst p))) d.
+
   Definition interp_ternop (o : ternop) (a b c : value) : value :=
     match o with
     | OInsert => match a, b, c with
@@ -269,6 +275,10 @@ Section WithWord.
                     | VDict d => VDict (dict_range b c d)
                     | _ => VUnit
                     end
+    | ODictRangeDelete => match a with
+                          | VDict d => VDict (dict_range_delete b c d)
+                          | _ => VUnit
+                          end
     end.
 
   Definition interp_aggr (ag : aggr) : (value * (value -> value -> value)) :=

@@ -105,6 +105,9 @@ Fixpoint expr_py (e:expr) : string :=
       (* linear in the number of keys; an ordered map would make this logarithmic.
          A bound of None does not constrain the key, as in the semantics. *)
       "(lambda d, lo, hi: {k: v for k, v in d.items() if (lo is None or lo <= k) and (hi is None or k < hi)})(" ++ expr_py e1 ++ ", " ++ expr_py e2 ++ ", " ++ expr_py e3 ++ ")"
+  | ETernop ODictRangeDelete e1 e2 e3 =>
+      (* the complement of the comprehension above, key for key *)
+      "(lambda d, lo, hi: {k: v for k, v in d.items() if not ((lo is None or lo <= k) and (hi is None or k < hi))})(" ++ expr_py e1 ++ ", " ++ expr_py e2 ++ ", " ++ expr_py e3 ++ ")"
   | ETernop OSubstring e1 e2 e3 =>
       (* negative start or length count as 0, as in the semantics *)
       "(lambda s, i, n: s[i:i+n])(" ++ expr_py e1 ++ ", max(" ++ expr_py e2 ++ ", 0), max(" ++ expr_py e3 ++ ", 0))"
