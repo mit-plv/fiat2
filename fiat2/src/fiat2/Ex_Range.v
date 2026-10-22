@@ -80,7 +80,8 @@ Section WithConcreteMaps.
          (EUnop ODictValues
             (ETernop ODictRange
                (EAccess (EAccess (ELoc "orders") "aux_tag") "0")
-               (EAccess (EVar "q") "lo") (EAccess (EVar "q") "hi")))
+               (EUnop OSome (EAccess (EVar "q") "lo"))
+               (EUnop OSome (EAccess (EVar "q") "hi"))))
          "b" (EVar "b")).
 
   (* The same query with an Unranged index: the source filter, unchanged,

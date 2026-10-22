@@ -228,9 +228,30 @@ Section WithWord.
                  end
     end.
 
-  (* the entries of d whose keys k satisfy lo <= k < hi *)
+  (* A bound is an OPTION because a key type need not have a least or a greatest
+     element to name: a TInt key has no infinity.  An absent bound therefore does
+     not constrain the key, which is how a one-sided range is written.  Only
+     well-typed values reach these, where the bound is a VOption; anything else
+     is read as absent, in the same spirit as the VUnit defaults above. *)
+  Definition above_lo (lo k : value) : bool :=
+    match lo with
+    | VOption (Some l) => negb (value_ltb k l)
+    | _ => true
+    end.
+
+  Definition below_hi (hi k : value) : bool :=
+    match hi with
+    | VOption (Some h) => value_ltb k h
+    | _ => true
+    end.
+
+  (* k is in range when it satisfies every bound that is present *)
+  Definition in_key_range (lo hi k : value) : bool := andb (above_lo lo k) (below_hi hi k).
+
+  (* the entries of d whose keys are in range: lo <= k < hi, half-open, and
+     either side may be absent *)
   Definition dict_range (lo hi : value) (d : list (value * value)) : list (value * value) :=
-    filter (fun p => andb (negb (value_ltb (fst p) lo)) (value_ltb (fst p) hi)) d.
+    filter (fun p => in_key_range lo hi (fst p)) d.
 
   Definition interp_ternop (o : ternop) (a b c : value) : value :=
     match o with

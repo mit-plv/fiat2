@@ -394,27 +394,29 @@ Section WithHole.
           destruct H_in as [ <- | H_in ]; [ eexists; reflexivity | eauto ].
         Qed.
 
-        (* Selecting the rows of a table with lo <= attr < hi gives the rows in the
-           buckets of the index restricted to keys in [lo, hi), up to order *)
-        Lemma gallina_to_idx_range : forall lo hi l,
+        (* Selecting the rows whose attr passes a test on the KEY gives the rows in
+           the buckets that same test selects from the index, up to order.
+
+           Stated for an arbitrary key test rather than for a range, because the
+           three range shapes -- both bounds, lower bound only, upper bound only --
+           differ only in the test they produce, and dict_range is a key filter. *)
+        Lemma gallina_to_idx_filter_key : forall (f : value -> bool) l,
             Forall (fun r => exists rc, r = VRecord rc) l ->
             forall d, gallina_to_idx (VList l) = VDict d ->
             Permutation
               (filter (fun r => match r with
-                                | VRecord rc => andb (negb (value_ltb (record_proj attr rc) lo))
-                                                  (value_ltb (record_proj attr rc) hi)
+                                | VRecord rc => f (record_proj attr rc)
                                 | _ => false
                                 end) l)
-              (range_rows (dict_range lo hi d)).
+              (range_rows (filter (fun p => f (fst p)) d)).
         Proof.
-          intros lo hi l H_l. induction H_l as [| r l [rc ->] H_l IH]; intros d H_d.
+          intros f l H_l. induction H_l as [| r l [rc ->] H_l IH]; intros d H_d.
           - cbn in H_d. injection H_d as <-. cbn. constructor.
           - cbn [gallina_to_idx fold_right] in H_d. injection H_d as <-.
             specialize (IH _ eq_refl).
             pose proof (gallina_to_idx_SSorted l _ eq_refl) as H_sort.
             pose proof (gallina_to_idx_buckets l _ eq_refl) as H_bags.
             set (D := fold_right _ nil l) in *.
-            unfold dict_range in *.
             (* the new index is its entry for the row's key followed by the other entries *)
             eapply perm_trans;
               [ | apply range_rows_Permutation, Permutation_filter_any, Permutation_sym,
@@ -428,13 +430,27 @@ Section WithHole.
             + apply dict_lookup_Some_In in E_lk.
               rewrite Forall_forall in H_bags. apply H_bags in E_lk as [ b H_b ]. cbn in H_b. subst w.
               cbn [filter flat_map fst snd] in *. revert H1.
-              destruct (andb (negb (value_ltb (record_proj attr rc) lo)) (value_ltb (record_proj attr rc) hi)) eqn:E_in; intro H1; [ | exact H1 ].
+              destruct (f (record_proj attr rc)) eqn:E_in; intro H1; [ | exact H1 ].
               eapply perm_trans; [ apply perm_skip, H1 | ].
               apply Permutation_sym. cbn [flat_map snd]. rewrite app_comm_cons.
               apply Permutation_app_tail, bag_to_list_insert_Permutation.
             + revert H1.
-              destruct (andb (negb (value_ltb (record_proj attr rc) lo)) (value_ltb (record_proj attr rc) hi)) eqn:E_in; intro H1; [ | exact H1 ].
+              destruct (f (record_proj attr rc)) eqn:E_in; intro H1; [ | exact H1 ].
               cbn. apply perm_skip, H1.
+        Qed.
+
+        (* The range instance: a key is kept when it satisfies every bound present *)
+        Corollary gallina_to_idx_range : forall lo hi l,
+            Forall (fun r => exists rc, r = VRecord rc) l ->
+            forall d, gallina_to_idx (VList l) = VDict d ->
+            Permutation
+              (filter (fun r => match r with
+                                | VRecord rc => in_key_range lo hi (record_proj attr rc)
+                                | _ => false
+                                end) l)
+              (range_rows (dict_range lo hi d)).
+        Proof.
+          unfold dict_range; intros; apply gallina_to_idx_filter_key; auto.
         Qed.
       End DictRange.
 
@@ -750,27 +766,60 @@ Section WithHole.
         Section range_filter_to_dict_range.
           Context (rv : string).
           Context (tbl : string).
+
+          (* The bound EXPRESSIONS a range filter on the row variable x asks for,
+             as option-typed expressions, or None when the filter is not a range
+             on attr.
+
+             The three shapes are the three ways ordered-map code writes a range:
+             subMap/subSet name both bounds, tailMap/tailSet only the lower one,
+             headMap/headSet only the upper one.  An absent bound is ANone and not
+             a sentinel, because a TInt key has no infinity to name -- which is
+             why the bounds of ODictRange are options in the first place. *)
+          Definition range_bounds (rx : string) (p : expr) : option (expr * expr) :=
+            match p with
+            (* !(row.attr < lo) && row.attr < hi *)
+            | EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) attr0) lo))
+                          (EBinop OLess (EAccess (EVar x2) attr1) hi) =>
+                if all_eqb [(attr, [attr0; attr1]); (rx, [x1; x2])]
+                then Some (EUnop OSome lo, EUnop OSome hi)
+                else None
+            (* !(row.attr < lo) *)
+            | EUnop ONot (EBinop OLess (EAccess (EVar x1) attr0) lo) =>
+                if all_eqb [(attr, [attr0]); (rx, [x1])]
+                then Some (EUnop OSome lo, EAtom (ANone (Some TInt)))
+                else None
+            (* row.attr < hi *)
+            | EBinop OLess (EAccess (EVar x1) attr0) hi =>
+                if all_eqb [(attr, [attr0]); (rx, [x1])]
+                then Some (EAtom (ANone (Some TInt)), EUnop OSome hi)
+                else None
+            | _ => None
+            end.
+
           Definition range_filter_to_dict_range_head (e : expr) :=
-            (* [row <- tbl[id_tag], check(!(row.attr < lo) && row.attr < hi), ret row] (as a bag) -->
-               the concatenated buckets of range(idx, lo, hi) *)
+            (* [row <- tbl[id_tag], check(a range on row.attr), ret row] (as a bag)
+               --> the concatenated buckets of range(idx, lo, hi) *)
             match e with
             | flatmap_filter_bag
-                (EBagOf (EAccess (ELoc tbl0) id_tag0))
-                x0 (EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) attr0) lo))
-                                (EBinop OLess (EAccess (EVar x2) attr1) hi)) x3 _ _ =>
-                (* The kind is one of the rule's own guards.  ODictRange is the
-                   only operator whose typing pins the kind, so this is where
-                   the capability the kind records bites: on an Unranged index
-                   the rule is the identity and the range query is left as the
-                   scan it was. *)
-                if (is_ranged dk &&
-                      all_eqb [(tbl, [tbl0]); (attr, [attr0; attr1]); (x0, [x1; x2; x3]); (id_tag, [id_tag0])] &&
-                      negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi))%bool
-                then EFlatmap LikeBag
-                       (EUnop ODictValues
-                          (ETernop ODictRange (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) lo hi))
-                       rv (EVar rv)
-                else e
+                (EBagOf (EAccess (ELoc tbl0) id_tag0)) x0 p x3 _ _ =>
+                match range_bounds x0 p with
+                | Some (lo, hi) =>
+                    (* The kind is one of the rule's own guards.  ODictRange is the
+                       only operator whose typing pins the kind, so this is where
+                       the capability the kind records bites: on an Unranged index
+                       the rule is the identity and the range query is left as the
+                       scan it was. *)
+                    if (is_ranged dk &&
+                          all_eqb [(tbl, [tbl0]); (x0, [x3]); (id_tag, [id_tag0])] &&
+                          negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi))%bool
+                    then EFlatmap LikeBag
+                           (EUnop ODictValues
+                              (ETernop ODictRange (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) lo hi))
+                           rv (EVar rv)
+                    else e
+                | None => e
+                end
             | _ => e
             end.
 
@@ -789,6 +838,134 @@ Section WithHole.
             apply Permutation_flat_map; auto using list_to_bag_to_list_Permutation.
           Qed.
 
+          (* A range filter's bounds are integer OPTIONS, and the attribute it tests
+             is an integer.  The second half is not a design choice: OLess is the
+             language's only order test and it is int-typed, so a range query is
+             int-keyed while a point lookup is key-generic. *)
+          Lemma range_bounds_ty : forall rx p lo hi (Gstore Genv : tenv) rt,
+              range_bounds rx p = Some (lo, hi) ->
+              type_of Gstore (map.put Genv rx (TRecord rt)) p TBool ->
+              access_record rt attr = Success TInt /\
+                type_of Gstore (map.put Genv rx (TRecord rt)) lo (TOption TInt) /\
+                type_of Gstore (map.put Genv rx (TRecord rt)) hi (TOption TInt).
+          Proof.
+            unfold range_bounds; intros * H_b H_ty.
+            repeat (destruct_match_hyp; try discriminate).
+            all: injection H_b as <- <-.
+            all: cbn [all_eqb all_eqb' andb] in *;
+              repeat rewrite Bool.andb_true_r in *;
+              repeat rewrite Bool.andb_true_iff in *;
+              repeat lazymatch goal with H: _ /\ _ |- _ => destruct H end;
+              rewrite ?eqb_eq in *; subst.
+            all: repeat invert_type_of_clear; repeat invert_type_of_op_clear;
+              repeat rewrite_map_get_put_hyp; repeat (clear_refl; repeat do_injection2).
+            (* the row's type under the binder is the table's row type *)
+            all: repeat lazymatch goal with
+                 | H: Some _ = Some _ |- _ => injection H as H
+                 | H: TRecord _ = TRecord _ |- _ => injection H as H
+                 end; subst.
+            all: repeat split; try eassumption; repeat econstructor; eauto.
+          Qed.
+
+          (* The row's indexed attribute is the integer the bounds bound *)
+          Lemma attr_is_int : forall rt rc,
+              type_of_value (VRecord rc) (TRecord rt) ->
+              access_record rt attr = Success TInt ->
+              exists k, record_proj (width := width) attr rc = VInt k.
+          Proof.
+            intros * H_rc H_attr.
+            assert (H_v : type_of_value (record_proj (width := width) attr rc) TInt).
+            1:{ invert_type_of_value_clear.
+                eapply record_proj_sound.
+                2: eassumption.
+                2: eauto using access_record_sound.
+                (* NoDup is known of the TYPE list; the Forall2 moves it to the
+                   value list, which is what record_proj_sound asks for *)
+                lazymatch goal with
+                  H: context[Forall2] |- _ =>
+                    apply Forall2_split in H; rewrite Forall2_fst_eq in H
+                end.
+                intuition idtac; rewrite_l_to_r; auto. }
+            inversion H_v; eauto.
+          Qed.
+
+          (* A well-typed integer expression evaluates to an integer.  Stated
+             separately so that range_bounds_sem can APPLY it, rather than let a
+             proof search loose on its own goal: type_sound's side conditions
+             are hypotheses here, so this costs one application and no search. *)
+          Lemma bound_is_int : forall (Gstore Genv : tenv) (store env : locals) b,
+              type_of Gstore Genv b TInt ->
+              tenv_wf Gstore -> tenv_wf Genv ->
+              locals_wf Gstore store -> locals_wf Genv env ->
+              exists n, interp_expr store env b = VInt n.
+          Proof.
+            intros * H_ty ? ? ? ?.
+            eapply type_sound in H_ty; eauto.
+            inversion H_ty; eauto.
+          Qed.
+
+          (* And a range filter MEANS the key test ODictRange applies: the row
+             passes exactly when its attribute satisfies every bound present. *)
+          Lemma range_bounds_sem : forall rx p lo hi (Gstore Genv : tenv) rt
+                                          (store env : locals) rc,
+              tenv_wf Gstore -> tenv_wf (map.put Genv rx (TRecord rt)) ->
+              range_bounds rx p = Some (lo, hi) ->
+              free_immut_in rx lo = false -> free_immut_in rx hi = false ->
+              type_of Gstore (map.put Genv rx (TRecord rt)) p TBool ->
+              locals_wf Gstore store ->
+              locals_wf (map.put Genv rx (TRecord rt)) (map.put env rx (VRecord rc)) ->
+              type_of_value (VRecord rc) (TRecord rt) ->
+              interp_expr store (map.put env rx (VRecord rc)) p
+              = VBool (in_key_range
+                         (interp_expr store env lo)
+                         (interp_expr store env hi)
+                         (record_proj (width := width) attr rc)).
+          Proof.
+            intros * H_Gs H_Ge H_b H_flo H_fhi H_ty H_st H_en H_rc.
+            (* The bounds do not read the row, so they may be read in the
+               environment the caller has.  Aligning the two environments here
+               rather than at the use site keeps the rewrite's side conditions
+               next to the hypotheses that discharge them. *)
+            rewrite (not_free_immut_put_sem lo rx store env (VRecord rc) H_flo).
+            rewrite (not_free_immut_put_sem hi rx store env (VRecord rc) H_fhi).
+            pose proof (range_bounds_ty _ _ _ _ _ _ _ H_b H_ty) as [ H_attr _ ].
+            destruct (attr_is_int _ _ H_rc H_attr) as [ k H_k ].
+            unfold range_bounds in H_b.
+            repeat (destruct_match_hyp; try discriminate).
+            all: injection H_b as <- <-.
+            all: cbn [all_eqb all_eqb' andb] in *;
+              repeat rewrite Bool.andb_true_r in *;
+              repeat rewrite Bool.andb_true_iff in *;
+              repeat lazymatch goal with H: _ /\ _ |- _ => destruct H end;
+              rewrite ?eqb_eq in *; subst.
+            all: repeat invert_type_of_clear; repeat invert_type_of_op_clear;
+              repeat rewrite_map_get_put_hyp; repeat (clear_refl; repeat do_injection2).
+            (* Expose the row's attribute and each bound as the integers they are.
+               The inversions above rename the typing context, so this step names
+               no hypothesis: it reads the bound off the goal and discharges
+               bound_is_int's premises by eassumption alone -- never by a search
+               that could wander onto the goal itself. *)
+            all: cbn -[record_proj value_ltb];
+              unfold get_local; rewrite map.get_put_same;
+              cbn -[record_proj value_ltb]; rewrite H_k.
+            all: repeat match goal with
+                 | H: type_of _ _ ?b TInt |- context[interp_expr ?st ?en ?b] =>
+                     let n := fresh "n" in
+                     let Hn := fresh "H_n" in
+                     assert (Hn : exists m, interp_expr st en b = VInt m)
+                       by (eapply bound_is_int; eassumption);
+                     destruct Hn as [ n Hn ]; rewrite Hn; clear H
+                 end.
+            (* and then both sides are the same test on the same integers.
+               in_key_range must be unfolded by hand: cbn refolds it, because an
+               absent bound leaves an "andb _ true" with no constructor to match
+               on.  That identity, and its mirror, are exactly what a one-sided
+               range costs here. *)
+            all: unfold in_key_range, above_lo, below_hi; cbv beta iota;
+              rewrite ?Bool.andb_true_r, ?Bool.andb_true_l;
+              reflexivity.
+          Qed.
+
           Lemma range_filter_to_dict_range_head_preserve_ty : forall tl t aux_tl (Gstore : tenv),
               type_wf t -> is_tbl_ty t = true ->
               map.get Gstore tbl = Some (TRecord tl) ->
@@ -800,18 +977,28 @@ Section WithHole.
             unfold preserve_ty, is_tbl_ty. intros.
             repeat destruct_match_hyp; try congruence.
             repeat destruct_subexpr. simpl.
+            destruct (range_bounds _ _) as [ [ lo hi ] | ] eqn:E_b; auto.
             case_match; auto. repeat rewrite Bool.andb_true_r in *.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
             rewrite !Bool.negb_true_iff, eqb_eq in *; subst.
-            repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+            repeat rewrite_map_get_put_hyp.
             repeat (clear_refl; repeat do_injection2).
             repeat (rewrite_l_to_r; do_injection2).
+            (* Only now does the predicate's typing name the table's ROW type,
+               which is what range_bounds_ty needs to read the bounds and the
+               attribute off it.  The predicate itself is never inverted: it is a
+               variable here, so repeat invert_type_of_clear leaves it alone. *)
+            lazymatch goal with
+              H: type_of _ (map.put _ _ (TRecord _)) _ TBool |- _ =>
+                pose proof (range_bounds_ty _ _ _ _ _ _ _ E_b H) as [ H_attr [ H_lo H_hi ] ]
+            end.
             unfold idx_ty, get_attr_type in *.
             lazymatch goal with
               H: is_ranged dk = true |- _ =>
                 apply is_ranged_true in H; rewrite H in *
             end.
-            lazymatch goal with H: access_record _ attr = Success TInt |- _ => rewrite H in * end.
+            rewrite H_attr in *.
             econstructor.
             (* the index's range, as a bag of buckets *)
             1:{ econstructor; [ constructor | ].
@@ -845,64 +1032,59 @@ Section WithHole.
             invert_type_of_value_clear.
             pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H20 E4 H4).
             repeat destruct_subexpr. unfold range_filter_to_dict_range_head.
+            destruct (range_bounds _ _) as [ [ lo hi ] | ] eqn:E_b; auto.
             cbv beta iota; case_match; auto.
             cbn [all_eqb all_eqb' andb] in *.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
             rewrite !Bool.negb_true_iff, eqb_eq in *; subst. repeat clear_refl.
             rewrite interp_flatmap_filter_bag.
-            (* the bounds are integers that do not depend on the filtered row *)
-            repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
-            repeat (clear_refl; repeat do_injection2).
-            lazymatch goal with H: type_of _ (map.put _ x0 _) e2_1_1_2 TInt |- _ =>
-              apply not_free_immut_put_ty in H; auto end.
-            lazymatch goal with H: type_of _ (map.put _ x0 _) e2_1_2_2 TInt |- _ =>
-              apply not_free_immut_put_ty in H; auto end.
-            apply_type_sound e2_1_1_2. apply_type_sound e2_1_2_2.
-            repeat lazymatch goal with H: type_of_value (interp_expr _ _ _) TInt |- _ => inversion H; clear H end.
             (* the table is a list of records, and the index is built from it *)
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
             invert_type_of_value_clear.
             unfold idx_wf in *.
             repeat (rewrite_l_to_r; do_injection2).
             lazymatch goal with H: type_of_value a (TList _) |- _ => inversion H; subst end.
-            lazymatch goal with H: VDict _ = interp_expr _ _ to_idx |- _ =>
-              erewrite fiat2_gallina_to_idx in H; eauto end.
-            (* the left side collects the rows of the index's buckets for keys in range *)
+            (* The left side collects the rows of the index's buckets for keys in
+               range.  ODictRange's scrutinee has to be a literal VDict before the
+               match will reduce, so the index's own equation is used here and the
+               gallina_to_idx reading is taken afterwards. *)
             erewrite interp_flatmap_dict_values;
               [ | cbn [interp_expr interp_ternop]; unfold get_local; rewrite E;
-                  unfold record_proj; rewrite E2, E4; reflexivity ].
+                  unfold record_proj; rewrite E2, E4;
+                  lazymatch goal with
+                    H: VDict _ = interp_expr _ _ to_idx |- _ => rewrite <- H
+                  end; reflexivity ].
+            lazymatch goal with H: VDict _ = interp_expr _ _ to_idx |- _ =>
+              erewrite fiat2_gallina_to_idx in H; eauto end.
             (* the right side filters the table's rows *)
             cbn [interp_expr]. unfold get_local. rewrite E. unfold record_proj. rewrite E1.
             rewrite list_to_bag_filter_list_to_bag.
             f_equal. apply Permutation_list_to_bag_eq, Permutation_sym.
             erewrite In_filter_ext; [ apply gallina_to_idx_range | ].
+            (* These three select hypotheses by SHAPE rather than by the names the
+               inversions happened to give them: this proof generates them in a
+               different order than the one-shape rule did. *)
             - rewrite Forall_forall in *; intros r H_in.
-              lazymatch goal with H: forall _, In _ l1 -> _ |- _ => apply H in H_in end.
+              match goal with
+              | H: forall _, In _ _ -> _ |- _ => apply H in H_in
+              end.
               inversion H_in; eauto.
-            - lazymatch goal with H: VDict l2 = _ |- _ => rewrite H; reflexivity end.
-            - (* both filters test lo <= r.attr < hi on integers *)
+            - lazymatch goal with H: VDict _ = _ |- _ => rewrite H; reflexivity end.
+            - (* both filters test the same bounds on the row's integer attribute *)
               intros r H_in.
-              lazymatch goal with H: Forall _ l1 |- _ => rewrite Forall_forall in H; apply H in H_in end.
+              match goal with
+              | H: Forall _ _ |- _ => rewrite Forall_forall in H; apply H in H_in
+              end.
               inversion H_in; subst.
-              (* the row's attr field is an int *)
-              lazymatch goal with
-              | H: Forall2 _ ?rc tl1, H': access_record tl1 attr = Success TInt |- _ =>
-                  pose proof (access_record_sound _ _ _ _ H') as H_attr;
-                  apply in_map with (f := fst) in H_attr;
-                  pose proof H as H_fst; apply Forall2_split in H_fst as [ H_fst _ ];
-                  apply Forall2_fst_eq in H_fst; rewrite <- H_fst in H_attr;
-                  apply In_access_record in H_attr as [ v H_v ];
-                  pose proof (Forall2_access_record _ _ _ _ _ _ _ _ H H_v H') as H_vt
-              end.
-              inversion H_vt; subst.
-              cbn [interp_expr interp_binop interp_unop]. unfold get_local, record_proj.
-              cbn [fst] in H_v. rewrite map.get_put_same, H_v.
-              (* the bounds do not mention x0 *)
-              rewrite <- !not_free_immut_put_sem by assumption.
-              lazymatch goal with
-              | H: VInt _ = interp_expr _ _ e2_1_1_2, H': VInt _ = interp_expr _ _ e2_1_2_2 |- _ =>
-                  rewrite <- H, <- H'
-              end.
-              reflexivity.
+              (* The bracket keeps eauto on range_bounds_sem's side conditions.
+                 Letting it see the main goal is what made this proof diverge. *)
+              (* Gstore is pinned: left to eauto, "tenv_wf ?Gstore" is discharged
+                 with the ENV's well-formedness, which instantiates the store
+                 context wrongly and leaves the rest unprovable. *)
+              erewrite range_bounds_sem with (Gstore := Gstore) (Genv := Genv);
+                [ reflexivity | eauto using locals_wf_step with fiat2_hints .. ].
           Qed.
         End range_filter_to_dict_range.
 

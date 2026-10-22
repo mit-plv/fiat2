@@ -1408,8 +1408,7 @@ Section WithWord.
     unfold dict_range; intros * H. inversion H; subst. constructor.
     - rewrite Forall_forall in *; intros ? H_in.
       apply filter_In in H_in as [ H_in _ ]. auto.
-    - rewrite map_fst_filter_fst with
-        (P := fun k => andb (negb (value_ltb k lo)) (value_ltb k hi)).
+    - rewrite map_fst_filter_fst with (P := in_key_range lo hi).
       apply NoDup_filter; assumption.
     - apply filter_preserve_SSorted; assumption.
   Qed.

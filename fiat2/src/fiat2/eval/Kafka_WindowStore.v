@@ -87,13 +87,15 @@ Import ListNotations.
      Then the two limits.
 
      (1) fetch(key, timeFrom, timeTo) is a conjunction, range AND key, and
-     no configuration serves both readers.  Without SplitIf the range rule
-     sees fetchAll's predicate whole and fires, while the conjunction stays
-     a full scan.  With SplitIf the conjunction is split and the range rule
-     fires on its outer half -- a range probe refined by the key test, which
-     is Kafka's plan -- but the SAME splitter also cuts fetchAll's range
-     pair in two, and two one-sided comparisons are no longer a range, so
-     fetchAll degrades to a pair of chained scans.  Both directions are
+     no configuration serves both readers WELL.  Without SplitIf the range
+     rule sees fetchAll's predicate whole and fires, while the conjunction
+     stays a full scan.  With SplitIf the conjunction is split and the range
+     rule fires on its outer half -- a range probe refined by the key test,
+     which is Kafka's plan -- but the SAME splitter also cuts fetchAll's
+     range pair in two.  Since a bound may now be absent, the outer half is
+     still a range: fetchAll becomes a ONE-SIDED probe [lo, inf) whose upper
+     bound survives only as a residual filter.  It reads fewer rows than the
+     table but more than the range it asked for.  Both directions are
      pinned.  What is missing is small and nameable: SplitIf must not split
      a conjunction that is a range pair on one attribute.  This is the third
      rule-ordering hazard of the same kind (TableRep listed first,
@@ -263,7 +265,19 @@ Section WithConcreteMaps.
   Definition range_probe : expr :=
     EFlatmap LikeBag
       (EUnop ODictValues
-         (ETernop ODictRange member (EAccess (EVar "q") "lo") (EAccess (EVar "q") "hi")))
+         (ETernop ODictRange member
+            (EUnop OSome (EAccess (EVar "q") "lo"))
+            (EUnop OSome (EAccess (EVar "q") "hi"))))
+      "b" (EVar "b").
+
+  (* the same probe with only the lower bound named: the shape SplitIf leaves
+     behind, since an absent bound is ANone and not a sentinel *)
+  Definition range_probe_from : expr :=
+    EFlatmap LikeBag
+      (EUnop ODictValues
+         (ETernop ODictRange member
+            (EUnop OSome (EAccess (EVar "q") "lo"))
+            (EAtom (ANone (Some TInt)))))
       "b" (EVar "b").
 
   (* a residual filter over whatever collection it is given *)
@@ -383,13 +397,10 @@ Section WithConcreteMaps.
      before any index rule can see the predicate.  The fix is a guard on
      SplitIf: leave a conjunction alone when it is a range pair on one
      attribute. *)
-  Lemma fetch_all_degrades_split :
+  Lemma fetch_all_loses_a_bound_split :
     query_at 0 (nth 1 prog_transformed CSkip)
     = Some (EACFold AGCount
-              (refine
-                 (refine (EBagOf the_list)
-                    (EUnop ONot (EBinop OLess (EAccess (EVar "r") "time")
-                                   (EAccess (EVar "q") "lo"))))
+              (refine range_probe_from
                  (EBinop OLess (EAccess (EVar "r") "time")
                     (EAccess (EVar "q") "hi")))).
   Proof. vm_compute; reflexivity. Qed.

@@ -208,8 +208,12 @@ Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
 | TyOSubstring : type_of_ternop OSubstring TString TInt TInt TString
 (* The only operator that reads the key ORDER rather than key equality, and so
    the only one a hash table could not answer in the cost its type implies.
-   Pinning it to Ranged is what the kind is for. *)
-| TyODictRange kt vt : type_of_ternop ODictRange (TDict Ranged kt vt) kt kt (TDict Ranged kt vt).
+   Pinning it to Ranged is what the kind is for.
+
+   The bounds are OPTIONS so that a one-sided range needs no infinite key: a
+   TInt key has none to name.  Most range queries in real code are one-sided
+   (headMap/tailMap/headSet/tailSet), so this is not a corner case. *)
+| TyODictRange kt vt : type_of_ternop ODictRange (TDict Ranged kt vt) (TOption kt) (TOption kt) (TDict Ranged kt vt).
 
 Inductive type_of_aggr : aggr -> type -> type -> Prop :=
 | TyAGSum : type_of_aggr AGSum TInt TInt
@@ -757,8 +761,8 @@ Section WithMap.
                                 match expected with
                                 | TDict Ranged kt vt =>
                                     d' <- analyze_expr Gstore Genv (TDict Ranged kt vt) e1 ;;
-                                    lo' <- analyze_expr Gstore Genv kt e2 ;;
-                                    hi' <- analyze_expr Gstore Genv kt e3 ;;
+                                    lo' <- analyze_expr Gstore Genv (TOption kt) e2 ;;
+                                    hi' <- analyze_expr Gstore Genv (TOption kt) e3 ;;
                                     Success (ETernop ODictRange d' lo' hi')
                                 | _ => error:(e "is a ranged dictionary but expected" expected)
                                 end
@@ -1007,8 +1011,8 @@ Section WithMap.
                                                  Success (TString, ETernop OSubstring s' i' n')
                                  | ODictRange => '(t1, d') <- synthesize_expr Gstore Genv e1 ;;
                                                  match t1 with
-                                                 | TDict Ranged kt vt => lo' <- analyze_expr Gstore Genv kt e2 ;;
-                                                                  hi' <- analyze_expr Gstore Genv kt e3 ;;
+                                                 | TDict Ranged kt vt => lo' <- analyze_expr Gstore Genv (TOption kt) e2 ;;
+                                                                  hi' <- analyze_expr Gstore Genv (TOption kt) e3 ;;
                                                                   Success (t1, ETernop ODictRange d' lo' hi')
                                                  | t => error:(e "has type" t "but expected a ranged dictionary")
                                                  end

@@ -93,11 +93,14 @@ the same choice by hand -- `segmentMap` is a `ConcurrentSkipListMap` -- and for 
 reason: every read of it is a time range and the retention policy deletes a time range.
 
 It is also the file that measures the most. Two configurations, because no single one
-serves both of the source's range readers: without `SplitIf` the flat range is a probe
-and the conjunctive one is a scan; with `SplitIf` the conjunctive one becomes a probe
-refined by a key test and the flat one degrades to two chained scans, because the same
-splitter cuts a range pair in half. And `removeExpiredSegments` is a range-shaped
-delete, which rebuilds -- so the list survives.
+serves both of the source's range readers well: without `SplitIf` the flat range is a
+probe and the conjunctive one is a scan; with `SplitIf` the conjunctive one becomes a
+probe refined by a key test, while the flat one keeps only its lower bound -- a
+one-sided probe `[lo, inf)` with the upper bound left as a residual filter, because the
+same splitter cuts the range pair in half and only one half can be a bound. That is a
+real cost and a much smaller one than it was before the bounds became optional, when
+the same split produced two chained table scans. And `removeExpiredSegments` is a
+range-shaped delete, which rebuilds -- so the list survives.
 
 ## Limits stated here rather than hidden
 
@@ -108,8 +111,8 @@ that found it rather than described in prose:
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
-| range-shaped delete | `segmentMap.headMap(minLiveTime, false).clear()` | `expiry_rebuilds` |
-| `SplitIf` destroys a range pair | the same file's two readers | `fetch_all_degrades_split` |
+| range-shaped delete | `subMap(lo, hi).clear()` (two-sided only) | `expiry_rebuilds` |
+| `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
 | count aggregate | `InFlightRequests.inFlightRequestCount` | stated in `Kafka_NamedCache.v`'s header |
 | substring index | none found in seven corpora | -- |
 
