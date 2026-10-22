@@ -111,13 +111,24 @@ that found it rather than described in prose:
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
-| range-shaped delete | `subMap(lo, hi).clear()` (two-sided only) | `expiry_rebuilds` |
+| a rule over a range-shaped WRITE | `headMap(minLive, false).clear()`; `subMap(lo, hi).clear()` | `expiry_rebuilds` |
 | `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
 | substring index | none found in seven corpora | -- |
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
 `counted_erases_the_list`.
+
+The range-shaped delete was on this list as a missing OPERATOR, and the
+operators are now there: a one-sided delete is a restriction to `[lo, inf)`,
+which `ODictRange` expresses since its bounds became optional, and a two-sided
+delete is `ODictRangeDelete`, the exact complement. What is still missing is
+narrower and is what the row above now names: no rewrite rule fires on a
+range-shaped write, so `expiry_rebuilds` still holds and the list still
+survives. The equality such a rule needs is proved --
+`gallina_to_idx_filter_key_eq`, that building the index of a restricted table
+is restricting the index of the whole one -- so what remains is the head
+function and its two preservation lemmas, not the reasoning.
 
 The first row is the one gap with no file of its own: `_labels_index` and
 `_aliases_index` key on each element of a per-row collection rather than on one

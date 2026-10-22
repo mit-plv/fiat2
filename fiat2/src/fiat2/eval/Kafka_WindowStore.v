@@ -348,7 +348,13 @@ Section WithConcreteMaps.
 
      What is missing is a range delete on a Ranged member, and it costs one
      OPERATOR, not one rule.  The dict operators are ODictValues, OLookup,
-     ODelete, OInsert and ODictRange, and ODelete removes ONE named key.
+     ODelete, OInsert, ODictRange and ODictRangeDelete, and ODelete removes
+     ONE named key.  (ODictRangeDelete was added after this file was written,
+     together with optional bounds on ODictRange, so the OPERATOR gap this
+     comment described is closed: a one-sided delete is a restriction to
+     [lo, inf) and a two-sided one is the complement.  What is still missing is
+     a rewrite RULE over a range-shaped write, which is why the pin below is
+     unchanged -- the expiry still rebuilds.)
      Removing the keys in a range would mean iterating them, and nothing
      yields a dict's keys.  Restricting to the SURVIVORS instead is a single
      range when the predicate is one-sided -- but only if the absent bound
