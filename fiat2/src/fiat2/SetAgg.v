@@ -24,19 +24,36 @@ Section WithHole.
     Definition to_idx : expr :=
       flatmap_proj_set (ESetOf (EVar hole)) x (EAccess (EVar x) attr) None.
 
+    (* Any attribute, not just an integer one.  A set needs equality and
+       nothing else -- OSetInsert and OSetMem are both generic in the element
+       type (TypeSystem.v:197,203) -- so the TInt this index was born with was
+       incidental: it came from being written beside min_agg and sum_agg,
+       which really do need numbers.  Keeping it would have held the
+       membership rewrite off every string-keyed table, which is where
+       membership tests mostly live.
+
+       The match is left three deep, on access_record rather than on inb, so
+       that the shape the proofs below destruct is unchanged. *)
     Definition is_tbl_ty (t : type) : bool :=
       match t with
       | TList (TRecord rt) => match access_record rt attr with
-                              | Success t => type_eqb t TInt
+                              | Success _ => true
                               | _ => false
                               end
       | _ => false
       end.
 
-    Definition idx_ty (t : type) : type := TSet TInt.
+    Definition idx_ty (t : type) : type :=
+      match t with
+      | TList (TRecord rt) => TSet (get_attr_type rt attr)
+      | _ => TUnit
+      end.
 
     Lemma idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t).
-      intros; repeat constructor.
+      destruct t; cbn; intros; try congruence.
+      destruct t; try congruence.
+      inversion H; subst.
+      constructor; apply get_attr_type_ty_wf; assumption.
     Qed.
 
     Section WithMap.
@@ -54,8 +71,17 @@ Section WithHole.
       Proof.
         unfold is_tbl_ty, to_idx, idx_ty; intros.
         repeat destruct_match_hyp; try discriminate.
-        rewrite type_eqb_eq in *; subst.
+        assert (H_rwf : type_wf (TRecord l)) by (inversion H; assumption).
+        (* the element type, named through get_attr_type so that the index's
+           type is a function of the table's as the interface requires *)
+        assert (E_gat : access_record l attr = Success (get_attr_type l attr)).
+        1:{ unfold get_attr_type.
+            lazymatch goal with
+              H : access_record _ attr = Success _ |- _ => rewrite H
+            end. reflexivity. }
         repeat econstructor; repeat rewrite_map_get_put_goal; eauto.
+        all: try exact E_gat.
+        all: try (apply get_attr_type_ty_wf; exact H_rwf).
       Qed.
 
       Lemma to_idx_wf : forall (v : value) (t : type),
@@ -116,9 +142,11 @@ Section WithHole.
           Proof.
             unfold preserve_ty, is_tbl_ty. intros.
             repeat destruct_match_hyp; try congruence.
-            (* the attribute is an integer *)
+            (* the attribute's type is the set's element type; keep the
+               equation for the collapse after idx_ty is unfolded below *)
             lazymatch goal with
-              H: type_eqb _ TInt = true |- _ => rewrite type_eqb_eq in H; subst end.
+              H : access_record _ attr = Success _ |- _ => rename H into E_attr
+            end.
             repeat destruct_subexpr. simpl.
             repeat case_match; auto.
             rewrite !Bool.andb_true_r, !Bool.andb_true_iff in *; intuition idtac.
@@ -126,7 +154,7 @@ Section WithHole.
             repeat invert_type_of_clear. repeat invert_type_of_op_clear. repeat rewrite_map_get_put_hyp.
             repeat (clear_refl; repeat do_injection2).
             repeat (rewrite_l_to_r; do_injection2).
-            unfold idx_ty in *.
+            unfold idx_ty, get_attr_type in *; rewrite E_attr in *.
             repeat (econstructor; eauto).
           Qed.
 
@@ -143,7 +171,7 @@ Section WithHole.
               preserve_sem Gstore store set_to_lookup_head.
           Proof.
             unfold preserve_sem, aux_wf_for_idx; intros.
-            unfold is_tbl_ty, idx_ty in *.
+            unfold is_tbl_ty, idx_ty, get_attr_type in *.
             apply_locals_wf store.
             repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
             invert_type_of_value_clear.
