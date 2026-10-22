@@ -330,9 +330,20 @@ Section WithConcreteMaps.
      delete, and the member is rebuilt by a fold over every surviving row.
      Kafka's headMap(minLiveTime, false).clear() touches only the segments
      that expire.  Both delete rules in the development require an equality
-     predicate, so neither fires here; what is missing is a range delete on
-     a Ranged member, expressible with the ODictRange and ODelete that
-     already exist. *)
+     predicate, so neither fires here.
+
+     What is missing is a range delete on a Ranged member, and it costs one
+     OPERATOR, not one rule.  The dict operators are ODictValues, OLookup,
+     ODelete, OInsert and ODictRange, and ODelete removes ONE named key.
+     Removing the keys in a range would mean iterating them, and nothing
+     yields a dict's keys.  Restricting to the SURVIVORS instead is a single
+     range when the predicate is one-sided -- but only if the absent bound
+     can be named, and a TInt key has no infinity; for a two-sided delete
+     the survivors are two disjoint ranges and there is no dict union
+     either.  Five witnesses in this corpus, three one-sided and two
+     two-sided: InMemoryWindowStore:642, InMemorySessionStore:640,
+     TreeMapLogHistory:61, SharePartition:2730,
+     RocksDBTransactionBuffer:147. *)
   Definition expire_expected : expr :=
     ERecord
       [("id_tag", survivors);
