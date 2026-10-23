@@ -1435,6 +1435,105 @@ Section WithHole.
           Qed.
         End filter_to_delete.
 
+        Section filter_range_to_dict_range.
+          (* The index rebuilt from the rows a RANGE keeps is the stored index
+             restricted to that range of keys.
+
+             This is the write-side twin of range_filter_to_dict_range_head and
+             reads its bounds with the same range_bounds, so it covers the same
+             three shapes -- which is what makes a ONE-SIDED range delete need
+             no new operator: removing every key below a bound is restricting
+             to [lo, inf). *)
+          Definition filter_range_to_dict_range_head (e : expr) :=
+            match e with
+            | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+                (flatmap_filter_list e' y p y1 _ _) =>
+                (* the bounds are taken as a PAIR and projected, not matched
+                   apart: a nested "Some (lo, hi)" pattern makes case_match
+                   produce an equation about the pair rather than about
+                   range_bounds, which is the one the bound lemmas need *)
+                match range_bounds y p with
+                | Some lohi =>
+                    if (is_ranged dk && dict_kind_beq dk dk0 &&
+                          all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]);
+                                   (attr, [attr0; attr1]); (x0, [x1]); (y, [y1])] &&
+                          all_neqb [acc0; tup0; x0] &&
+                          negb (free_immut_in y (fst lohi)) &&
+                          negb (free_immut_in y (snd lohi)))%bool
+                    then ETernop ODictRange
+                           (eto_idx dk tup tup tup tup acc acc acc x x attr attr e')
+                           (fst lohi) (snd lohi)
+                    else e
+                | None => e
+                end
+            | _ => e
+            end.
+
+          (* kept folded through cbn: unfolded it becomes a stuck match on the
+             predicate and splits every proof below three ways, once per range
+             shape, where range_bounds_ty and range_bounds_sem handle all three
+             uniformly *)
+          Local Opaque range_bounds.
+
+          Lemma filter_range_to_dict_range_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore filter_range_to_dict_range_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            (* the equation case_match left is about the pair; the bound lemmas
+               want it about the two projections *)
+            lazymatch goal with
+              H: range_bounds _ _ = Some ?lh |- _ =>
+                rewrite (surjective_pairing lh) in H; rename H into E_b
+            end.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            use_dict_kind_beq.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            (* the bounds are integer options, and the attribute is their integer *)
+            lazymatch goal with
+              H: type_of _ (map.put _ _ (TRecord _)) _ TBool |- _ =>
+                pose proof (range_bounds_ty _ _ _ _ _ _ _ E_b H) as [ H_attr [ H_lo H_hi ] ]
+            end.
+            (* The accumulator's annotation is what pins the result's KIND --
+               TyAEmptyDict' reads the kind off AEmptyDict -- and the body's
+               insert pins its KEY type to the indexed attribute's.  Neither is
+               reached by inverting type_of alone, since one is an atom and the
+               other needs the attribute's type, which range_bounds_ty has only
+               just supplied. *)
+            repeat lazymatch goal with
+                   | H: type_of_atom (AEmptyDict _ _) _ |- _ =>
+                       inversion H; subst; clear H
+                   end.
+            rewrite H_attr in *.
+            (* that leaves "Success TInt = Success t" for the key type the fold's
+               insert gave the accumulator; injecting it is what pins the key to
+               the indexed attribute's type, which is what ODictRange's bounds
+               are typed against *)
+            repeat lazymatch goal with
+                   | H: Success _ = Success _ |- _ => injection H as H
+                   end.
+            repeat lazymatch goal with
+                   | H: ?x = ?x |- _ => clear H
+                   end.
+            subst.
+            (* the kind is named by shape: the subst above can rename the
+               section variable out from under a literal "dk" *)
+            lazymatch goal with
+              H: is_ranged _ = true |- _ =>
+                apply is_ranged_true in H; rewrite H in *
+            end.
+            econstructor;
+              [ constructor
+              | repeat (econstructor; eauto);
+                repeat rewrite_map_get_put_goal; auto; try use_is_NoDup
+              | eapply not_free_immut_put_ty; eauto .. ].
+          Qed.
+        End filter_range_to_dict_range.
+
         Section use_idx.
           Context (tbl : string).
           Definition use_idx_head (e : expr) :=
