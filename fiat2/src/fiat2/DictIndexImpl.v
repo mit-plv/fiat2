@@ -1532,6 +1532,265 @@ Section WithHole.
                 repeat rewrite_map_get_put_goal; auto; try use_is_NoDup
               | eapply not_free_immut_put_ty; eauto .. ].
           Qed.
+
+          Lemma filter_range_to_dict_range_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store filter_range_to_dict_range_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [filter_range_to_dict_range_head]. repeat (case_match; auto; []).
+            lazymatch goal with
+              H: range_bounds _ _ = Some ?lh |- _ =>
+                rewrite (surjective_pairing lh) in H; rename H into E_b
+            end.
+            cbn in * |-.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            enough (E_Ternop: forall o e1 e2 e3,
+                       interp_expr store env (ETernop o e1 e2 e3)
+                       = interp_ternop o (interp_expr store env e1)
+                           (interp_expr store env e2) (interp_expr store env e3)); auto.
+            rewrite E_Ternop.
+            (* both folds are the index's own to_idx, so both become
+               gallina_to_idx -- the same ceremony the keyed delete uses *)
+            let pat := open_constr:(EFold e1_1 _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty. }
+            let pat := open_constr:(EFold (EFlatmap _ _ _ _) _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty.
+                1: repeat econstructor; eauto.
+                all: rewrite_map_get_put_goal; reflexivity. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3: prove_sub_wf.
+            2:{ eapply type_of_strengthen;
+                [ | apply map_incl_empty | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3:{ prove_sub_wf.
+                do_injection. repeat econstructor; eauto.
+                all: rewrite_map_get_put_goal; reflexivity. }
+            2:{ eapply type_of_strengthen;
+                [ | apply map_incl_empty | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
+              [ | | | eapply type_sound; eauto ]; eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn [make_sub_env]; rewrite map.get_put_same; reflexivity ];
+              [ | | | eapply type_sound with (Gstore:=Gstore) (Genv:=Genv);
+                      [ repeat econstructor; eauto; try (rewrite_map_get_put_goal; reflexivity) | .. ];
+                      eauto with fiat2_hints ];
+              eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            apply_type_sound e1_1.
+            lazymatch goal with
+              H: type_of_value (interp_expr _ _ e1_1) _ |- _ =>
+                pose proof H as H_l; invert_type_of_value_clear
+            end.
+            rewrite interp_flatmap_filter_list. rewrite_expr_value. cbv beta iota.
+            (* the source's filter is the key test the restriction applies *)
+            erewrite In_filter_ext with
+              (g := fun r => match r with
+                             | VRecord rc =>
+                                 in_key_range (interp_expr store env (fst p))
+                                   (interp_expr store env (snd p)) (record_proj attr rc)
+                             | _ => false
+                             end).
+            2:{ intros r H_in. apply_Forall_In.
+                (* the row named by THIS hypothesis, not whichever typing
+                   hypothesis an untargeted inversion would reach first *)
+                lazymatch goal with
+                  H: type_of_value r (TRecord _) |- _ => inversion H; subst
+                end.
+                erewrite range_bounds_sem with (Gstore := Gstore) (Genv := Genv);
+                  [ reflexivity | eauto using locals_wf_step with fiat2_hints .. ]. }
+            (* ODictRange's dict_range IS that filter on the keys, so the main
+               goal closes by conversion.  The bracket is deliberate: the side
+               condition is the lemma's typing premise and nothing but a
+               hypothesis should be looking at the main goal. *)
+            rewrite gallina_to_idx_filter_key_eq with (rt:=tl);
+              [ reflexivity | eassumption ].
+          Qed.
+
+          (* And the index rebuilt from the rows a range EXCLUDES is the stored
+             index with that range of keys deleted.
+
+             Only the TWO-SIDED shape needs this rule.  The complement of a
+             one-sided bound is itself a one-sided bound, so the restriction
+             rule above already covers it -- both rules fire on a negated
+             one-sided bound and both are sound there, emitting the two
+             spellings of the same restriction. *)
+          Definition filter_range_to_dict_range_delete_head (e : expr) :=
+            match e with
+            | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+                (flatmap_filter_list e' y (EUnop ONot p) y1 _ _) =>
+                match range_bounds y p with
+                | Some lohi =>
+                    if (is_ranged dk && dict_kind_beq dk dk0 &&
+                          all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]);
+                                   (attr, [attr0; attr1]); (x0, [x1]); (y, [y1])] &&
+                          all_neqb [acc0; tup0; x0] &&
+                          negb (free_immut_in y (fst lohi)) &&
+                          negb (free_immut_in y (snd lohi)))%bool
+                    then ETernop ODictRangeDelete
+                           (eto_idx dk tup tup tup tup acc acc acc x x attr attr e')
+                           (fst lohi) (snd lohi)
+                    else e
+                | None => e
+                end
+            | _ => e
+            end.
+
+          (* Both operators have the same typing rule up to the operator name,
+             so this is the restriction rule's script unchanged except for the
+             one extra ONot the pattern carries. *)
+          Lemma filter_range_to_dict_range_delete_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore filter_range_to_dict_range_delete_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            lazymatch goal with
+              H: range_bounds _ _ = Some ?lh |- _ =>
+                rewrite (surjective_pairing lh) in H; rename H into E_b
+            end.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition auto.
+            use_dict_kind_beq.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            lazymatch goal with
+              H: type_of _ (map.put _ _ (TRecord _)) _ TBool |- _ =>
+                pose proof (range_bounds_ty _ _ _ _ _ _ _ E_b H) as [ H_attr [ H_lo H_hi ] ]
+            end.
+            repeat lazymatch goal with
+                   | H: type_of_atom (AEmptyDict _ _) _ |- _ => inversion H; subst; clear H
+                   end.
+            rewrite H_attr in *.
+            repeat lazymatch goal with
+                   | H: Success _ = Success _ |- _ => injection H as H
+                   end.
+            repeat lazymatch goal with
+                   | H: ?x = ?x |- _ => clear H
+                   end.
+            subst.
+            lazymatch goal with
+              H: is_ranged _ = true |- _ =>
+                apply is_ranged_true in H; rewrite H in *
+            end.
+            econstructor;
+              [ constructor
+              | repeat (econstructor; eauto);
+                repeat rewrite_map_get_put_goal; auto; try use_is_NoDup
+              | eapply not_free_immut_put_ty; eauto .. ].
+          Qed.
+
+          Lemma filter_range_to_dict_range_delete_head_preserve_sem : forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store filter_range_to_dict_range_delete_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [filter_range_to_dict_range_delete_head].
+            repeat (case_match; auto; []).
+            lazymatch goal with
+              H: range_bounds _ _ = Some ?lh |- _ =>
+                rewrite (surjective_pairing lh) in H; rename H into E_b
+            end.
+            cbn in * |-.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            repeat (rewrite_l_to_r; do_injection).
+            enough (E_Ternop: forall o e1 e2 e3,
+                       interp_expr store env (ETernop o e1 e2 e3)
+                       = interp_ternop o (interp_expr store env e1)
+                           (interp_expr store env e2) (interp_expr store env e3)); auto.
+            rewrite E_Ternop.
+            let pat := open_constr:(EFold e1_1 _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty. }
+            let pat := open_constr:(EFold (EFlatmap _ _ _ _) _ _ _ _) in
+            erewrite sem_eq_eq with (t:=idx_ty (TList (TRecord tl))) (e1:=pat); [ | eauto .. ].
+            2:{ apply fold_to_idx; eauto using incl_refl.
+                1: use_is_NoDup.
+                1: access_record_Success__is_tbl_ty.
+                1: repeat econstructor; eauto.
+                all: rewrite_map_get_put_goal; reflexivity. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3: prove_sub_wf.
+            2:{ eapply type_of_strengthen;
+                [ | apply map_incl_empty | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole (TList (TRecord tl))); [ | | | | eauto .. ]; eauto using incl_refl with fiat2_hints.
+            3:{ prove_sub_wf.
+                do_injection. repeat econstructor; eauto.
+                all: rewrite_map_get_put_goal; reflexivity. }
+            2:{ eapply type_of_strengthen;
+                [ | apply map_incl_empty | apply map_incl_refl ].
+                apply to_idx_ty; cbn; eauto with fiat2_hints;
+                  access_record_Success__is_tbl_ty. }
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn; rewrite_map_get_put_goal; reflexivity ];
+              [ | | | eapply type_sound; eauto ]; eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            erewrite fiat2_gallina_to_idx2;
+              [ | | | | cbn [make_sub_env]; rewrite map.get_put_same; reflexivity ];
+              [ | | | eapply type_sound with (Gstore:=Gstore) (Genv:=Genv);
+                      [ repeat econstructor; eauto; try (rewrite_map_get_put_goal; reflexivity) | .. ];
+                      eauto with fiat2_hints ];
+              eauto with fiat2_hints;
+              [ | access_record_Success__is_tbl_ty ].
+            apply_type_sound e1_1.
+            lazymatch goal with
+              H: type_of_value (interp_expr _ _ e1_1) _ |- _ =>
+                pose proof H as H_l; invert_type_of_value_clear
+            end.
+            rewrite interp_flatmap_filter_list. rewrite_expr_value. cbv beta iota.
+            (* the source's filter is the COMPLEMENT of that key test *)
+            erewrite In_filter_ext with
+              (g := fun r => match r with
+                             | VRecord rc =>
+                                 negb (in_key_range (interp_expr store env (fst p))
+                                         (interp_expr store env (snd p)) (record_proj attr rc))
+                             | _ => false
+                             end).
+            2:{ intros r H_in. apply_Forall_In.
+                lazymatch goal with
+                  H: type_of_value r (TRecord _) |- _ => inversion H; subst
+                end.
+                cbn [interp_expr].
+                erewrite range_bounds_sem with (Gstore := Gstore) (Genv := Genv);
+                  [ cbn [interp_unop]; reflexivity
+                  | eauto using locals_wf_step with fiat2_hints .. ]. }
+            (* and dict_range_delete IS that complement on the keys.  The key
+               test is given explicitly: unlike the restriction's, it is not a
+               partial application of in_key_range, so leaving it to the
+               unifier asks for a higher-order solution it will not find. *)
+            erewrite gallina_to_idx_filter_key_eq
+              with (rt := tl)
+                   (f := fun k => negb (in_key_range
+                                          (interp_expr store env (fst p))
+                                          (interp_expr store env (snd p)) k));
+              [ reflexivity | eassumption ].
+          Qed.
         End filter_range_to_dict_range.
 
         Section use_idx.
@@ -1714,6 +1973,27 @@ Section WithHole.
         1: eapply filter_neq_to_delete_head_preserve_ty; eauto.
         1: eapply filter_neq_to_delete_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
+
+      (* The two write-side range rules: a range-shaped filter over the table
+         is maintained on the index itself, restricting or deleting a range of
+         keys instead of rebuilding. *)
+      Lemma filter_range_to_dict_range_head_sound :
+          expr_transf_sound (locals:=locals) filter_range_to_dict_range_head.
+      Proof.
+        unfold expr_transf_sound; intros.
+        intuition idtac.
+        1: eapply filter_range_to_dict_range_head_preserve_ty; eauto.
+        1: eapply filter_range_to_dict_range_head_preserve_sem; [ | | eauto .. ]; auto.
+      Qed.
+
+      Lemma filter_range_to_dict_range_delete_head_sound :
+          expr_transf_sound (locals:=locals) filter_range_to_dict_range_delete_head.
+      Proof.
+        unfold expr_transf_sound; intros.
+        intuition idtac.
+        1: eapply filter_range_to_dict_range_delete_head_preserve_ty; eauto.
+        1: eapply filter_range_to_dict_range_delete_head_preserve_sem; [ | | eauto .. ]; auto.
+      Qed.
     End WithMap.
   End WithVars.
 End WithHole.
@@ -1775,6 +2055,8 @@ Qed.
 #[export] Hint Resolve use_idx_head_sound2 : transf_hints.
 #[export] Hint Resolve cons_to_insert_head_sound : transf_hints.
 #[export] Hint Resolve filter_neq_to_delete_head_sound : transf_hints.
+#[export] Hint Resolve filter_range_to_dict_range_head_sound : transf_hints.
+#[export] Hint Resolve filter_range_to_dict_range_delete_head_sound : transf_hints.
 #[export] Hint Resolve eq_filter_to_lookup_head_sound2 : transf_hints.
 #[export] Hint Resolve range_filter_to_dict_range_head_sound2 : transf_hints.
 

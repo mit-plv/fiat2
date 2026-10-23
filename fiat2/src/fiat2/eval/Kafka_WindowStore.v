@@ -48,7 +48,7 @@ Import ListNotations.
 
      And two limitations, pinned rather than described, because both are
      cheap to state and neither is visible from a passing example:
-     fetch_key_scans_or_probes and expiry_rebuilds.
+     fetch_key_scans_unsplit and the_list_filter_keeps_the_list.
 
    Faithfulness -- what this translation drops, and why
      * segmentMap is TWO levels, time -> key -> value.  Here the store is one
@@ -102,16 +102,23 @@ Import ListNotations.
      FilterEmptyToSetMem on a unique-dict table) and the first that no
      ordering can fix.
 
-     (2) removeExpiredSegments is a RANGE-shaped delete, and the index is
-     rebuilt from the surviving rows.  Kafka does it in time proportional to
-     the segments that expire; we pay the whole table.  The delete rules
-     that exist -- DictIndexImpl's filter_neq_to_delete and
-     DictIndexKeyedDelete's keyed delete -- both require an EQUALITY
-     predicate, so neither applies.  And because the rebuild reads the list,
-     the list survives: this file is HA_AreaRegistry before its keyed delete
-     existed, with the same diagnosis.  The missing rule is a range delete
-     on a Ranged member, which ODictRange and ODelete are already enough to
-     express.
+     (2) removeExpiredSegments is a RANGE-shaped delete, and the MEMBER is
+     now maintained by one range operation: the retention predicate
+     !(r.time < lo) is a one-sided bound, so keeping the rows it keeps is
+     restricting the member to [lo, inf), and the write emits exactly that.
+     What the restriction costs is the backend's affair -- a split of a
+     persistent tree, or a walk of the survivors -- and this development
+     fixes the SHAPE, not the constant.  Kafka's headMap(lo, false).clear()
+     touches only the segments that expire, which is the other end of the
+     same split, and the two-sided case is the complement operator
+     ODictRangeDelete.
+
+     What survives is the LIST.  The table's own field is still assigned a
+     row-by-row filter over itself, and because that filter reads the list,
+     the list cannot be erased: nothing recovers the rows from the member.
+     This file is still HA_AreaRegistry before its keyed delete existed, but
+     for a different reason than before -- the member is incremental and the
+     list is not.
    ============================================================ *)
 
 Definition row_ty :=
@@ -280,6 +287,13 @@ Section WithConcreteMaps.
             (EAtom (ANone (Some TInt)))))
       "b" (EVar "b").
 
+  (* the member restricted to the live range: headMap(lo, false).clear()
+     read from the other end -- keep [lo, inf) *)
+  Definition live_range : expr :=
+    ETernop ODictRange member
+      (EUnop OSome (EAccess (EVar "q") "lo"))
+      (EAtom (ANone (Some TInt))).
+
   (* a residual filter over whatever collection it is given *)
   Definition refine (src pred : expr) : expr :=
     EFlatmap LikeBag src "r"
@@ -340,45 +354,44 @@ Section WithConcreteMaps.
     put_of (nth 0 prog_transformed CSkip) = Some put_expected.
   Proof. vm_compute; reflexivity. Qed.
 
-  (* removeExpiredSegments(), :637-642.  THIS IS THE LIMIT: a RANGE-shaped
-     delete, and the member is rebuilt by a fold over every surviving row.
-     Kafka's headMap(minLiveTime, false).clear() touches only the segments
-     that expire.  Both delete rules in the development require an equality
-     predicate, so neither fires here.
+  (* removeExpiredSegments(), :637-642: a RANGE-shaped delete, and the
+     member is maintained by ONE range operation rather than a fold over
+     every surviving row.  The retention predicate !(r.time < lo) is a
+     one-sided bound, so the rows it keeps are the keys in [lo, inf) and
+     the member's new value is the old member restricted to that range.
 
-     What is missing is a range delete on a Ranged member, and it costs one
-     OPERATOR, not one rule.  The dict operators are ODictValues, OLookup,
-     ODelete, OInsert, ODictRange and ODictRangeDelete, and ODelete removes
-     ONE named key.  (ODictRangeDelete was added after this file was written,
-     together with optional bounds on ODictRange, so the OPERATOR gap this
-     comment described is closed: a one-sided delete is a restriction to
-     [lo, inf) and a two-sided one is the complement.  What is still missing is
-     a rewrite RULE over a range-shaped write, which is why the pin below is
-     unchanged -- the expiry still rebuilds.)
-     Removing the keys in a range would mean iterating them, and nothing
-     yields a dict's keys.  Restricting to the SURVIVORS instead is a single
-     range when the predicate is one-sided -- but only if the absent bound
-     can be named, and a TInt key has no infinity; for a two-sided delete
-     the survivors are two disjoint ranges and there is no dict union
-     either.  Five witnesses in this corpus, three one-sided and two
-     two-sided: InMemoryWindowStore:642, InMemorySessionStore:640,
+     This is where the two operators pay off.  ODictRange's bounds are
+     TOption, so the absent upper bound is ANone and needs no infinity for
+     a TInt key; and the two-sided case -- where the survivors are two
+     disjoint ranges and there is no dict union -- is the complement
+     operator ODictRangeDelete rather than a pair of ranges.  Five
+     witnesses in this corpus, three one-sided and two two-sided:
+     InMemoryWindowStore:642, InMemorySessionStore:640,
      TreeMapLogHistory:61, SharePartition:2730,
-     RocksDBTransactionBuffer:147. *)
+     RocksDBTransactionBuffer:147.
+
+     What the restriction COSTS is the backend's affair: splitting a
+     persistent tree is logarithmic, walking the survivors is not, and this
+     development fixes the shape and not the constant.  Kafka's
+     headMap(minLiveTime, false).clear() is the same split taken from the
+     expiring end. *)
   Definition expire_expected : expr :=
     ERecord
       [("id_tag", survivors);
-       ("aux_tag", ERecord [("0", build_by_time survivors)])].
+       ("aux_tag", ERecord [("0", live_range)])].
 
-  Lemma expiry_rebuilds :
+  Lemma expiry_restricts_the_member :
     expire_of (nth 0 prog_transformed CSkip) = Some expire_expected.
   Proof. vm_compute; reflexivity. Qed.
 
-  (* And so the list stays.  Not because a query reads it -- after the
-     rewrite no query does -- but because the rebuild does.  That is
-     HA_AreaRegistry's situation before its keyed delete existed, and it had
-     the same cause and the same cure: make the write incremental and the
-     erasure rule drops the list with no change to the erasure rule. *)
-  Lemma the_rebuild_keeps_the_list :
+  (* And the list stays anyway.  Not because a query reads it -- after the
+     rewrite no query does -- and no longer because the member's rebuild
+     does, but because the TABLE's own field is still assigned a row-by-row
+     filter over itself, and nothing recovers the rows from the member.
+     This is HA_AreaRegistry's situation before its keyed delete existed
+     with one difference: there the member kept the list alive, here only
+     the list does. *)
+  Lemma the_list_filter_keeps_the_list :
     installed_fields (nth 0 prog_transformed CSkip) = ["id_tag"; "aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 

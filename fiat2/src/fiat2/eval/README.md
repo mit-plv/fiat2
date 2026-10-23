@@ -39,7 +39,7 @@ an `exists` against the whole term, which does not terminate in reasonable time.
 | `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete; nothing reads the list, so the list is erased |
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 | `Kafka_NamedCache.v` | `NamedCache.java:44,49` | a keyed store and a running total over it, both maintained across a delete and a put; the total is corrected by a probe, never recomputed |
-| `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained across a put -- and two limits, a conjunctive range reader and a range-shaped delete |
+| `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
 
 The six fall into three groups, and the groups are the argument.
 
@@ -83,8 +83,9 @@ keeps the list alive. Sound either way, asymptotically worse one way -- see
 Read with `HA_AreaRegistry`: before the keyed delete existed, that file kept its list
 -- not because a query read it, but because the rebuild did. The representation gap
 and the maintenance gap were one gap, and closing the second closed the first with no
-change to the erasure rule. `Kafka_WindowStore` is now in that earlier position, for
-the same reason and with the same diagnosis.
+change to the erasure rule. `Kafka_WindowStore` is in that earlier position with one
+difference: its member is now maintained incrementally, and what keeps its list alive
+is the list's own row-by-row filter rather than the member's rebuild.
 
 **What the order asks for** -- `Kafka_WindowStore`. The only file whose index is
 `Ranged`, and so the only one that obliges a backend to provide a structure that can
@@ -99,8 +100,16 @@ probe refined by a key test, while the flat one keeps only its lower bound -- a
 one-sided probe `[lo, inf)` with the upper bound left as a residual filter, because the
 same splitter cuts the range pair in half and only one half can be a bound. That is a
 real cost and a much smaller one than it was before the bounds became optional, when
-the same split produced two chained table scans. And `removeExpiredSegments` is a
-range-shaped delete, which rebuilds -- so the list survives.
+the same split produced two chained table scans.
+
+And `removeExpiredSegments` is a range-shaped delete, which the member now absorbs in
+one operation: its retention predicate is a one-sided bound, so keeping the rows it
+keeps is restricting the member to `[lo, inf)`, and that is what the write emits
+(`expiry_restricts_the_member`). What the restriction costs is the backend's affair --
+splitting a persistent tree is logarithmic, walking the survivors is not -- and this
+development fixes the shape, not the constant. The list still survives, now because
+the table's own field is assigned a row-by-row filter over itself and nothing recovers
+the rows from the member (`the_list_filter_keeps_the_list`).
 
 ## Limits stated here rather than hidden
 
@@ -111,7 +120,7 @@ that found it rather than described in prose:
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
-| a rule over a range-shaped WRITE | `headMap(minLive, false).clear()`; `subMap(lo, hi).clear()` | `expiry_rebuilds` |
+| a list erased when only its own filter reads it | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` |
 | `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
 | substring index | none found in seven corpora | -- |
 
@@ -119,16 +128,22 @@ The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
 `counted_erases_the_list`.
 
-The range-shaped delete was on this list as a missing OPERATOR, and the
-operators are now there: a one-sided delete is a restriction to `[lo, inf)`,
-which `ODictRange` expresses since its bounds became optional, and a two-sided
-delete is `ODictRangeDelete`, the exact complement. What is still missing is
-narrower and is what the row above now names: no rewrite rule fires on a
-range-shaped write, so `expiry_rebuilds` still holds and the list still
-survives. The equality such a rule needs is proved --
-`gallina_to_idx_filter_key_eq`, that building the index of a restricted table
-is restricting the index of the whole one -- so what remains is the head
-function and its two preservation lemmas, not the reasoning.
+The range-shaped delete was on this list, first as a missing operator and then as
+a missing rule, and both are now built. A one-sided delete is a restriction to
+`[lo, inf)`, which `ODictRange` expresses since its bounds became optional, and a
+two-sided one is `ODictRangeDelete`, the exact complement; the rules that fire on
+a range-shaped write are `filter_range_to_dict_range_head` and
+`filter_range_to_dict_range_delete_head`, both resting on the same equality --
+`gallina_to_idx_filter_key_eq`, that building the index of a restricted table is
+restricting the index of the whole one. The one-sided case is witnessed here, in
+`Kafka_WindowStore`. The two-sided case has no witness in these files, because
+the corpus's two-sided retention policies are in files not translated, so it is
+witnessed by `Ex_RangeDelete.v` one directory up -- which is a rule test and is
+cited as nothing more.
+
+What is left is narrower and is what the row above now names: the list. The
+retention write rewrites the table from the table, so the field cannot be
+erased, and no rule turns a filter over the list into one over the member.
 
 The first row is the one gap with no file of its own: `_labels_index` and
 `_aliases_index` key on each element of a per-row collection rather than on one

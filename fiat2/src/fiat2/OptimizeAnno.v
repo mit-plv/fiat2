@@ -203,6 +203,10 @@ Section WithConcreteMaps.
     Definition dict_range_transf := fun tbl => fold_command_with_globals [tbl] (range_filter_to_dict_range_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag "b" tbl).
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr dict_idx_dk "tup" "acc" "x" "y").
     Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr dict_idx_dk "tup" "acc" "x").
+    (* the write-side range pair: a range-shaped filter over the table is
+       maintained on the index, restricting to the range or deleting it *)
+    Definition filter_range_transf := fun tbl => fold_command_with_globals [tbl] (filter_range_to_dict_range_head dict_idx_attr dict_idx_dk "tup" "acc" "x").
+    Definition filter_range_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_range_to_dict_range_delete_head dict_idx_attr dict_idx_dk "tup" "acc" "x").
     Definition use_dict_idx_transf := fun tbl => fold_command_with_globals [tbl] (use_idx_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag tbl).
 
     (* A filter-shaped delete naming a key this dictionary is NOT bucketed
@@ -345,9 +349,16 @@ Section WithConcreteMaps.
        use_dict_idx_transf (String.of_nat cur_tag) attr dk;
        (* inserts and deletes are maintained in the same loop, so that an
           insert into a filtered table and a filter of an extended table are
-          both handled *)
-       fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr dk tbl)
-                                   (cons_to_insert_transf attr dk tbl)) reps],
+          both handled.  Basics.compose applies its RIGHT argument first, so
+          the order of application is insert, keyed delete, range
+          restriction, range delete -- the restriction before the delete,
+          because on a negated ONE-SIDED bound both fire and the restriction
+          is the direct spelling. *)
+       fun tbl => repeat_transf
+                    (Basics.compose (filter_range_delete_transf attr dk tbl)
+                       (Basics.compose (filter_range_transf attr dk tbl)
+                          (Basics.compose (filter_to_delete_transf attr dk tbl)
+                             (cons_to_insert_transf attr dk tbl)))) reps],
       S cur_tag).
 
   (* so that the bare cbn in mk_idx_ok and mk_idx_sound_strengthen reduces a
@@ -450,8 +461,17 @@ Section WithConcreteMaps.
               BE attr, and this rule requires it not to be. *)
            dict_keyed_delete_gated_transf attr Unranged key u_tag ds;
            filter_neq_to_unique_delete_transf' key;
-           fun tbl => repeat_transf (Basics.compose (filter_to_delete_transf attr Unranged tbl)
-                                       (cons_to_insert_transf attr Unranged tbl)) reps;
+           (* the SAME loop mk_dict_idx builds, at this member's kind: the two
+              range rules test the kind themselves and cannot fire on an
+              Unranged member, but they are listed here because
+              keyed_dict_subsumes_dict claims this list contains every transf
+              the standalone DictIdx choice hands out, and that claim has to
+              stay literally true *)
+           fun tbl => repeat_transf
+                        (Basics.compose (filter_range_delete_transf attr Unranged tbl)
+                           (Basics.compose (filter_range_transf attr Unranged tbl)
+                              (Basics.compose (filter_to_delete_transf attr Unranged tbl)
+                                 (cons_to_insert_transf attr Unranged tbl)))) reps;
            cons_to_unique_insert_transf' key],
           S (S cur_tag))
     | CountAgg =>
@@ -981,6 +1001,12 @@ end.
         | prove_In_map_fst_sort_map ].
         1: prove_is_tbl_ty.
         1: prove_idx_wf. }
+    1:{ apply expr_transf_sound__expr_aug_transf_sound.
+        eapply filter_range_to_dict_range_delete_head_sound;
+          eauto with transf_hints. }
+    1:{ apply expr_transf_sound__expr_aug_transf_sound.
+        eapply filter_range_to_dict_range_head_sound;
+          eauto with transf_hints. }
     1:{ apply expr_transf_sound__expr_aug_transf_sound.
         eapply filter_neq_to_delete_head_sound;
           eauto with transf_hints. }
