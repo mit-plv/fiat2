@@ -134,6 +134,36 @@ supplies it: the key member is probed for the row, and that row's id comes out o
 bucket of each trigram of its own text, with a bucket dropped when it empties. One
 choice, two members, and the second exists so the first can be maintained.
 
+## Who chooses the heuristics
+
+Every file here names its own heuristics beside its program: a list of basic rewrites
+and a list of index choices. That is enough for a soundness claim, since the optimizer
+is sound for any choice list, and not enough for a performance one, where "with
+appropriate heuristics" has to mean something a program computes rather than something
+a person chose after seeing the answer.
+
+`src/fiat2/Selector.v` computes them, and `SelectorTests.v` in this directory is where
+the two meet. The selector mentions no table name, no attribute name and no example;
+the dependency runs one way, and the test file is the only place the two are compared.
+
+For the five files here that use the constrained pipeline the test is the strongest
+form available -- `select_anno … = <that file's own anno>` -- so a passing lemma means
+the file could call the selector instead of naming its heuristics and nothing would
+change, and that file's existing output pins carry over unaltered. For the three that
+use the unconstrained one the test compares against the file's own `heuristics` list by
+index. Where a file pins two configurations, the test names which one the selector
+reaches and whether it is the better one; it is, in every case where the two differ in
+quality.
+
+Two of those rows are worth reading for what they say about the rules rather than about
+the selector. `Kafka_Cluster` gets `SplitIf` and `Kafka_WindowStore` does not, from one
+rule -- split when a conjunction's first conjunct is an indexable equality, decline when
+it is a range pair -- and WindowStore is the file where that decision costs something,
+because no configuration serves both of its readers. And `Jenkins_UserSearch`'s second
+configuration is the one thing the selector cannot reach: the read `TableRep` serves
+there is the fallback branch the guarded trigram rule synthesizes, so it is not in the
+program to be found.
+
 ## Limits stated here rather than hidden
 
 Each of these has a witness in the corpus and no rule, and each is pinned in the file
