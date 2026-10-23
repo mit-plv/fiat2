@@ -76,8 +76,8 @@ Variant demand :=
   (* Shapes that decide a BASIC rewrite rather than an index.  They are
      collected by the same traversal and read by a different phase. *)
   | DEmptyEqFilter           (* FilterEmptyToSetMem applies *)
-  | DConjEq                  (* SplitIf would expose an equality filter *)
-  | DConjRange               (* SplitIf would cut a range pair in two *)
+  | DConjSplit               (* SplitIf would expose an indexable conjunct
+                                of a filter no rule matches as it stands *)
   | DFlag (attr : string).   (* FlagFilterToEq applies *)
 
 Scheme Boolean Equality for collection_tag. (* creates collection_tag_beq *)
@@ -128,12 +128,14 @@ Definition range_attr (x : string) (p : expr) : option string :=
   | _ => None
   end.
 
-(* The predicate of a READ, where x is the row the filter binds.  A
-   conjunction is analysed by its FIRST conjunct, which is the one SplitIf
-   would peel off and hand to an index; the rest stays a filter.  That is
-   why a composite key is a measured gap and not a silent one -- only half
-   of it is ever indexed. *)
-Fixpoint pred_demand (x : string) (p : expr) : option demand :=
+(* Is this predicate one that an index rule matches AS IT STANDS, with no
+   splitting?  Three shapes are: a range on a row attribute (one- or
+   two-sided -- range_bounds matches the two-sided pair as a whole), an
+   equality against something the row does not determine, and a substring
+   test.  This is the selector's model of what the read rules can see, and
+   both the demand below and the SplitIf decision are phrased in terms of
+   it rather than in terms of any particular program. *)
+Definition indexable (x : string) (p : expr) : option demand :=
   match range_attr x p with
   | Some a => Some (DRange a)
   | None =>
@@ -143,6 +145,20 @@ Fixpoint pred_demand (x : string) (p : expr) : option demand :=
           then Some (DEq a) else None
       | EBinop OStrContains (EAccess (EVar x1) a) _ =>
           if String.eqb x x1 then Some (DSubstr a) else None
+      | _ => None
+      end
+  end.
+
+(* The predicate of a READ, where x is the row the filter binds.  A
+   conjunction nothing matches whole is analysed by its FIRST conjunct,
+   which is the one SplitIf would peel off and hand to an index; the rest
+   stays a filter.  That is why a composite key is a measured gap and not a
+   silent one -- only half of it is ever indexed. *)
+Fixpoint pred_demand (x : string) (p : expr) : option demand :=
+  match indexable x p with
+  | Some d => Some d
+  | None =>
+      match p with
       | EBinop OAnd p1 _ => pred_demand x p1
       | _ => None
       end
@@ -171,19 +187,24 @@ Definition write_pred_demand (x : string) (p : expr) : option demand :=
       end
   end.
 
-(* evidence about SplitIf, from a filter's predicate *)
+(* Evidence that SplitIf would pay on this filter.  Splitting peels the
+   first conjunct into a position an index rule can match, so it pays
+   exactly when the predicate as a whole is matched by NOTHING -- it would
+   otherwise be a full scan -- and the conjunct that gets peeled IS
+   matched.
+
+   The second half of that is what keeps a bare range pair out.  A
+   two-sided range is itself a conjunction, and range_bounds already
+   matches it whole, so it is served without splitting and splitting it
+   can only cost it one of its two bounds.  The condition declines it for
+   the general reason -- there is nothing to expose -- rather than by a
+   special case. *)
 Definition conj_evidence (x : string) (p : expr) : list demand :=
   match p with
   | EBinop OAnd p1 _ =>
-      match range_attr x p1 with
-      | Some _ => [DConjRange]
-      | None =>
-          match p1 with
-          | EBinop OEq (EAccess (EVar x1) _) k =>
-              if (String.eqb x x1 && negb (free_immut_in x k))%bool
-              then [DConjEq] else []
-          | _ => []
-          end
+      match indexable x p, indexable x p1 with
+      | None, Some _ => [DConjSplit]
+      | _, _ => []
       end
   | _ => []
   end.
@@ -341,29 +362,33 @@ Definition demands_of (tbl : string) (c : command) : list demand :=
    table with a declared key has that guard; a table without one cannot.
 
    SplitIf goes LAST and therefore runs FIRST, and is the one real decision
-   here.  It is emitted when some conjunctive filter's FIRST conjunct is an
-   equality an index could answer, and declined when some conjunctive
-   filter's first conjunct is a range pair, on the grounds that splitting a
-   range pair costs it one of its two bounds.
+   here.  It is emitted when some conjunctive filter over the table is
+   matched by NO rule as it stands while the conjunct the splitter peels IS
+   matched -- that is, when splitting turns a full scan into a probe with a
+   residual filter, and only then.
 
-   Two honest notes about that, both measured rather than reasoned:
+   There is no veto, and the case a veto would have covered is handled by
+   the same condition.  A two-sided range is itself a conjunction, and
+   range_bounds matches it whole, so it is already served; splitting it
+   would cost it one of its two bounds and expose nothing that was not
+   exposed before, so the condition does not fire on it.
 
-   The second clause -- the range-pair veto -- fires on NO subject in the
-   development.  eval/Kafka_WindowStore is the only program with both
-   shapes, and it is declined by the FIRST clause: its conjunction is
-   (range && key), so the first conjunct is the range pair and no
-   conjunct in first position is an equality, so the gain condition is
-   already false.  The veto is a precaution with no witness.
+   What the condition cannot weigh is a program that has both -- a
+   conjunction worth splitting and, elsewhere, a bare range pair that the
+   same global rewrite will split anyway and so will cost a bound.  SplitIf
+   is a whole-program rewrite, so the two cannot be separated here.  The
+   selector takes the split, on the ground that the gain is a read that
+   stops being a scan while the loss is a read that stays a range read and
+   merely widens; which is the better trade in general is a comparison, and
+   comparisons are what this file is built to avoid.  The one subject where
+   both occur pins both configurations side by side.
 
-   And it may be the wrong precaution.  Measured from the extracted terms
-   (harness/) and then pinned in that file at split_erases_the_list and
-   split_expiry_is_only_the_restriction: splitting WindowStore does cost
-   fetchAll one bound, and it also makes the keyed read a probe, erases
-   the list, and reduces retention to the member's own incremental
-   restriction -- removing two O(n) terms.  So the cost of a lost bound is
-   a cost to WEIGH and not a reason to refuse, and getting that right
-   needs a comparison rather than a boolean.  Left as it is, and written
-   down, rather than changed on one subject's evidence.
+   A related limitation, stated because it is easy to miss: the selector
+   looks at the FIRST conjunct, since that is the one split_if_head peels.
+   An indexable conjunct in any other position is invisible to it.  The
+   development has swap_conjuncts_head, but it is unconditional -- it
+   reverses every conjunction it meets -- so it cannot be used to bring one
+   forward without reordering the others.  A guarded swap does not exist.
 
    FlagFilterToEq goes last of all and so runs first: it normalises a filter
    on a boolean attribute into the equality it is, which is the shape the
@@ -375,8 +400,7 @@ Definition basics_of (keys : list string) (ds : list demand) : list basic_transf
        && match keys with [] => true | _ :: _ => false end)%bool
    then [FilterEmptyToSetMem] else [])
   ++ [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
-  ++ (if (demand_mem DConjEq ds && negb (demand_mem DConjRange ds))%bool
-      then [SplitIf] else [])
+  ++ (if demand_mem DConjSplit ds then [SplitIf] else [])
   ++ (if existsb (fun d => match d with DFlag _ => true | _ => false end) ds
       then [FlagFilterToEq] else []).
 

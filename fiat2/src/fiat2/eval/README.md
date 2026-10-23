@@ -130,9 +130,15 @@ one operation: its retention predicate is a one-sided bound, so keeping the rows
 keeps is restricting the member to `[lo, inf)`, and that is what the write emits
 (`expiry_restricts_the_member`). What the restriction costs is the backend's affair --
 splitting a persistent tree is logarithmic, walking the survivors is not -- and this
-development fixes the shape, not the constant. The list still survives, now because
-the table's own field is assigned a row-by-row filter over itself and nothing recovers
-the rows from the member (`the_list_filter_keeps_the_list`).
+development fixes the shape, not the constant.
+
+Whether the list survives turns out to depend on the configuration, which is why this
+file now pins both. Without `SplitIf` it does, because the table's own field is assigned
+a row-by-row filter over itself and nothing recovers the rows from the member
+(`the_list_filter_keeps_the_list`). **With `SplitIf` it does not**: the keyed read stops
+scanning the list, and with the list's last reader gone the field is erased and retention
+is nothing but the member's own restriction (`split_erases_the_list`,
+`split_expiry_is_only_the_restriction`). The deterministic selector takes the split.
 
 **What the author did NOT build** -- `Jenkins_UserSearch`. Every file above compares a
 derived structure with a hand-built one. This file is the exception, and it is the
@@ -177,11 +183,27 @@ index. Where a file pins two configurations, the test names which one the select
 reaches and whether it is the better one; it is, in every case where the two differ in
 quality.
 
-Two of those rows are worth reading for what they say about the rules rather than about
-the selector. `Kafka_Cluster` gets `SplitIf` and `Kafka_WindowStore` does not, from one
-rule -- split when a conjunction's first conjunct is an indexable equality, decline when
-it is a range pair -- and WindowStore is the file where that decision costs something,
-because no configuration serves both of its readers.
+One row is worth reading for what it says about the rules rather than about the selector.
+`SplitIf` is emitted from a single condition: some conjunctive filter over the table is
+matched by **no** rule as it stands, while the conjunct the splitter peels **is** matched.
+Splitting then turns a full scan into a probe with a residual filter, and that is the only
+thing it is asked to do.
+
+There is no veto, and the case a veto would cover falls out of the same condition. A
+two-sided range is itself a conjunction and `range_bounds` matches it whole, so it is
+already served; splitting it would cost it a bound and expose nothing new, so the
+condition does not fire on it. That is why `Ex_RangeDelete`, whose only conjunction is a
+bare range pair, is left alone, while `Kafka_Cluster` (two equalities) and
+`Kafka_WindowStore` (a range conjoined with a key test) are both split.
+
+WindowStore is where the cost shows. Its `fetchAll` reads a bare range pair, contributes
+no reason to split, and is split anyway, because `SplitIf` is a whole-program rewrite --
+so it loses one of its two bounds. The file measures that
+(`fetch_all_loses_a_bound_split`) beside the three gains that come with it: `fetch`
+becomes a probe, the list is erased, and retention reduces to the member's own incremental
+restriction (`split_erases_the_list`, `split_expiry_is_only_the_restriction`). Three gains
+against one loss; which is the better trade in general is a comparison, and the selector
+is built to avoid comparisons, so both configurations stay pinned side by side.
 
 The other is `TableRep`, which the selector never emits. It is the only choice whose
 justification is a shape the pipeline *leaves behind* rather than one the program
@@ -232,8 +254,9 @@ that found it rather than described in prose:
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
-| erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` |
-| `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
+| erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |
+| `SplitIf` is a whole-program rewrite, so a read that gains nothing from it pays anyway | the same file's two readers: one conjunction is worth splitting, the other is a bare range pair that loses a bound | `fetch_all_loses_a_bound_split`. Separating them needs a per-filter decision, which the basic rewrites do not have |
+| moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level | this file's own first draft; `unique_lookup_head` (`UniqueIndexUse.v:438`) matches bag level only | stated in `Jenkins_UserSearch.v`'s Faithfulness |
 | a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |
 | a read that observes row order | none here, by construction | not pinned, and the limit is wider than the write above: **every** index in the development is order-insensitive, so an order-observing read is served by none of them, and such a table keeps its list and gains nothing |

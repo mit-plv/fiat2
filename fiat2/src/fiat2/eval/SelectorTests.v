@@ -122,25 +122,29 @@ Lemma kafka_cluster :
   = nth_heu Kafka_Cluster.heuristics 0 Kafka_Cluster.prog.
 Proof. vm_compute; reflexivity. Qed.
 
-(* The file's configuration 0, the one WITHOUT SplitIf.  The selector
-   declines the split, and the reason is worth stating precisely because it
-   is not the one the hazard list would suggest: this program's conjunction
-   is (range && key), so no conjunct in FIRST position is an equality and
-   the gain condition is already false.  The range-pair veto never gets
-   consulted -- it fires on no subject in the development.
+(* The file's configuration 1, the one WITH SplitIf -- and the selector
+   reaches it for a reason that has nothing to do with this program.  Its
+   fetch predicate is (range && key), which no rule matches as it stands,
+   while the conjunct the splitter peels -- the range -- is matched by the
+   ranged dictionary.  So splitting turns a full scan into a probe, which
+   is the whole of the condition.
 
-   Whether declining is right here is a separate question, and the answer
-   is less clear than the earlier framing made it sound.  Splitting costs
-   fetchAll one of its two bounds, and it also makes the keyed read a
-   probe, erases the list, and reduces retention to the member's own
-   incremental restriction -- see split_erases_the_list and
-   split_expiry_is_only_the_restriction in that file, both of which were
-   found by walking the extracted terms rather than by reading the rules.
-   Three gains against one loss. The pin below records what the selector
-   does; it does not claim that is the better program. *)
+   fetchAll's predicate is a bare two-sided range, which range_bounds
+   already matches whole, so it contributes no reason to split; it is
+   split anyway, because SplitIf is a whole-program rewrite, and it loses
+   one of its two bounds.  That is the cost, and the file measures it
+   (fetch_all_loses_a_bound_split) alongside the three gains that come
+   with it: fetch becomes a probe, the list is erased, and retention
+   reduces to the member's own incremental restriction
+   (split_erases_the_list, split_expiry_is_only_the_restriction).
+
+   An earlier version of the selector declined here, on a veto that read a
+   range conjunct as purely a cost.  That was a category error -- a range
+   conjunct is exactly as indexable as an equality -- and the veto fired
+   on no subject anyway. *)
 Lemma kafka_window_store :
   unconstrained "segments" Kafka_WindowStore.prog
-  = nth_heu Kafka_WindowStore.heuristics 0 Kafka_WindowStore.prog.
+  = nth_heu Kafka_WindowStore.heuristics 1 Kafka_WindowStore.prog.
 Proof. vm_compute; reflexivity. Qed.
 
 (* The ranged dictionary, demanded by the read and by both range-shaped

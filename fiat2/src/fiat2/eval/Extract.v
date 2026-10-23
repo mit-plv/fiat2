@@ -84,7 +84,7 @@ Definition user_search_opt : command := Eval vm_compute in JU.optimized.
 Definition cluster_opt : command :=
   Eval vm_compute in nth 0 KCl.prog_transformed CSkip.
 Definition window_store_opt : command :=
-  Eval vm_compute in nth 0 KWS.prog_transformed CSkip.
+  Eval vm_compute in nth 1 KWS.prog_transformed CSkip.
 Definition range_delete_opt : command :=
   Eval vm_compute in nth 0 ERD.prog_transformed CSkip.
 
@@ -102,9 +102,11 @@ Definition user_search_opt_rep : command := Eval vm_compute in JU.optimized_rep.
 (* without SplitIf: both conjunctive reads stay scans *)
 Definition cluster_opt_unsplit : command :=
   Eval vm_compute in nth 1 KCl.prog_transformed CSkip.
-(* with SplitIf: the keyed read probes and the range read loses a bound *)
-Definition window_store_opt_split : command :=
-  Eval vm_compute in nth 1 KWS.prog_transformed CSkip.
+(* without SplitIf: fetchAll keeps both of its bounds, and fetch stays a
+   scan -- over a list that therefore survives, and that retention then
+   rewrites in full on every call *)
+Definition window_store_opt_unsplit : command :=
+  Eval vm_compute in nth 0 KWS.prog_transformed CSkip.
 
 (* ---- one value for the harness to iterate over ---- *)
 
@@ -123,6 +125,6 @@ Definition alternatives : list (string * command) :=
   ; ("named_cache/swapped", named_cache_opt_swapped)
   ; ("user_search/table-rep", user_search_opt_rep)
   ; ("cluster/unsplit", cluster_opt_unsplit)
-  ; ("window_store/split", window_store_opt_split) ].
+  ; ("window_store/unsplit", window_store_opt_unsplit) ].
 
 Extraction "ast.ml" subjects alternatives.
