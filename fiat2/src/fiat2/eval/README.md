@@ -40,8 +40,9 @@ an `exists` against the whole term, which does not terminate in reasonable time.
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 | `Kafka_NamedCache.v` | `NamedCache.java:44,49` | a keyed store and a running total over it, both maintained across a delete and a put; the total is corrected by a probe, never recomputed |
 | `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
+| `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and a second configuration erases the list |
 
-The six fall into three groups, and the groups are the argument.
+The seven fall into four groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
 `HA_LookinFunctions`. The first two are a pair and should be read as one: they put
@@ -111,6 +112,28 @@ development fixes the shape, not the constant. The list still survives, now beca
 the table's own field is assigned a row-by-row filter over itself and nothing recovers
 the rows from the member (`the_list_filter_keeps_the_list`).
 
+**What the author did NOT build** -- `Jenkins_UserSearch`. Every file above compares a
+derived structure with a hand-built one. This file is the exception, and it is the
+exception on purpose: `hudson.search.CollectionSearchIndex` gives one collection two
+lookups in one class, and the author built a `ConcurrentHashMap` for the exact one and
+left the substring one a linear `contains` scan. So the two halves of the same file make
+the two different claims -- `find_is_a_probe` reproduces the map they wrote (C4), and
+`suggest_is_a_guarded_trigram_probe` replaces the scan they wrote (C3) -- out of one
+source program and one index choice.
+
+It is also the only file where a read is GUARDED rather than rewritten outright. The
+search token comes from the request, so its length is not a rewrite-time fact, and a
+pattern shorter than three characters has no trigram at all; the rule emits the test and
+keeps the source query as the other branch. That branch is why the list survives here,
+and `rep_erases_the_list` shows what it takes to remove it: ask for the table's set
+representation too, and the fallback scans that instead.
+
+The delete is the part to read twice. The write names a key, not a row, so the postings
+cannot be corrected without knowing which text the departing row carried -- and the pair
+supplies it: the key member is probed for the row, and that row's id comes out of the
+bucket of each trigram of its own text, with a bucket dropped when it empties. One
+choice, two members, and the second exists so the first can be maintained.
+
 ## Limits stated here rather than hidden
 
 Each of these has a witness in the corpus and no rule, and each is pinned in the file
@@ -122,7 +145,7 @@ that found it rather than described in prose:
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` |
 | `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
-| an `eval/` subject for the substring index | Jenkins `hudson.search.CollectionSearchIndex:54-75` -- `find` is a hand-built map lookup and `suggest` a `contains` scan, same class, same collection | not yet written |
+| a declared-key read at SET level | this file's own first draft; `unique_lookup_head` (`UniqueIndexUse.v:438`) matches bag level only | stated in `Jenkins_UserSearch.v`'s Faithfulness |
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
@@ -156,8 +179,9 @@ collection two lookups in one class, `find` by exact name through a hand-built m
 with one of them missing. NetBox hand-builds the other half -- `CachedValue` is an
 inverted index held as a table, postings carrying object identity, maintained on save
 and delete, queried with `icontains`. So the claim for this index is **C3**, we beat the
-hand-written code, rather than the **C4** claim the files above make; that is the
+hand-written code, rather than the **C4** claim the other files make; that is the
 stronger of the two and the paper should say which it is.
+`Jenkins_UserSearch.v` is that subject, written on 2026-10-23.
 
 The first row is the one gap with no file of its own: `_labels_index` and
 `_aliases_index` key on each element of a per-row collection rather than on one
