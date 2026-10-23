@@ -97,6 +97,11 @@ Import ListNotations.
        collection is modelled.
      * Nothing is added.  Both writes are the writes the source performs.
 
+     * The insert prepends the row, where the source quoted above appends
+       (result.add).  The two differ as lists and agree as bags, and nothing
+       here observes row order -- the suggestion read is a set and the
+       exact-match read is counted -- so the substitution is sound.  See the
+       note on row order in this directory's README.
    Expected
      ONE choice installs two members, because a trigram dictionary holds KEYS
      and cannot resolve them on its own: the postings on fullName, and the

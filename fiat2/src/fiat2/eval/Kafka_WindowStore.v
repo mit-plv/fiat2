@@ -78,6 +78,11 @@ Import ListNotations.
        the one this file is about.
      * Nothing is added.
 
+     * put prepends the row.  The source puts into a NavigableMap keyed by
+       time, so it names no position in a sequence of rows, and nothing here
+       observes row order -- the ordering this file is about is the ORDER ON
+       THE KEY, which the ranged dictionary holds.  See the note on row order
+       in this directory's README.
    Expected
      ONE Ranged dict on time, installed and maintained incrementally across
      the put.  fetchAll becomes a range probe: ODictRange on the member,

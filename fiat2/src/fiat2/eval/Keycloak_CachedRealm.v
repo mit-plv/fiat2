@@ -54,6 +54,9 @@ Import ListNotations.
        list of strings, so each read is counted; under a declared unique key
        that count is 0 or 1.
 
+     * The added insert prepends the row.  The source puts into two maps, so
+       it names no position, and nothing here observes row order -- see the
+       note on row order in this directory's README.
    Expected
      Both scans become single-row probes into the two declared members, and the
      list survives, because getRequiredActionProviderList() still reads it --

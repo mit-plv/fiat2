@@ -30,6 +30,28 @@ The expectation in (5) is then pinned by a lemma, in the style of `Ex_Range.v`: 
 projection out of the optimized program closed by `vm_compute; reflexivity`, rather than
 an `exists` against the whole term, which does not terminate in reasonable time.
 
+## Row order, and the one way to add a row
+
+Five of these files write a row into the table, and all five do it by **prepending**:
+`EBinop OCons row (ELoc tbl)`. Their sources do not prepend. Four of them put into a map
+(Keycloak's two `HashMap`s, `NamedCache`'s and `WindowStore`'s `NavigableMap`, Home
+Assistant's registry dict), so the source names no position in a sequence of rows at all;
+Jenkins appends, and its header quotes the `result.add` that does it. The remaining two
+files have no table write -- `Cluster` is immutable, and the Lookin functions program only
+reads -- so the question does not arise there.
+
+The substitution is sound here, and for a reason that is checkable rather than assumed:
+**no read in any of these files observes row order.** There is no `ESort` anywhere in this
+directory, and every read is a count, a probe, a filter or an aggregate -- all invariant
+under permutation of the rows. A prepend and an append differ as lists and agree as bags,
+so where nothing observes more than the bag they are the same write. Each affected file
+now says this in its Faithfulness section.
+
+Worth separating from that: appending **is** expressible. `OConcat : TList t -> TList t ->
+TList t` exists, with typing, semantics and a backend case, so an append at the end is
+`OConcat (ELoc tbl) (OCons row nil)`, and a fold expresses an insert at a position. What is
+missing is not the operator but the rule -- see the limits table below.
+
 ## The files
 
 | file | source | what it is for |
@@ -213,6 +235,8 @@ that found it rather than described in prose:
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` |
 | `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
 | a declared-key read at SET level | this file's own first draft; `unique_lookup_head` (`UniqueIndexUse.v:438`) matches bag level only | stated in `Jenkins_UserSearch.v`'s Faithfulness |
+| a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |
+| a read that observes row order | none here, by construction | not pinned, and the limit is wider than the write above: **every** index in the development is order-insensitive, so an order-observing read is served by none of them, and such a table keeps its list and gains nothing |
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and

@@ -64,6 +64,9 @@ Import ListNotations.
        two files, because the output channel is a list of strings.
      * Nothing is added.
 
+     * The insert prepends the row.  The source stores into a dict keyed by
+       id, so it names no position, and nothing here observes row order --
+       see the note on row order in this directory's README.
    Expected
      Both members installed; both reads probe; both writes maintain both
      members incrementally.  THE DELETE IS THE POINT: the primary member

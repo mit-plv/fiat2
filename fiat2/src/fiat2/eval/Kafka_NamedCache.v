@@ -88,6 +88,9 @@ Import ListNotations.
      * Nothing is added.  In particular the put below is written exactly as
        NamedCache writes it: remove the key, then insert the new row.
 
+     * The insert prepends the row.  The source puts into a NavigableMap, so
+       it names no position in a sequence of rows, and nothing here observes
+       row order -- see the note on row order in this directory's README.
    Expected
      Two members and no list: a dictionary from key to row, and one integer.
      That is NamedCache's two fields, derived from a program that declares a
