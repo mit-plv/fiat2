@@ -79,12 +79,26 @@ Proof. vm_compute; reflexivity. Qed.
    exact-match read and the elaborated uniqueness guard, and dropped again
    because the trigram pair's second member already carries its rules.
 
-   This is the file's FIRST configuration.  Its second asks for the table's
-   set representation as well, which erases the list by giving the trigram
-   rule's short-token fallback something other than the list to scan; the
-   selector does not reach it, and cannot, because the read that
-   configuration serves does not exist until the trigram rule has run.  See
-   the note at the end of Selector.v. *)
+   This is the file's FIRST configuration, and it is the one to want.  Its
+   second asks for the table's set representation as well, which erases the
+   list by giving the trigram rule's short-token fallback something other
+   than the list to scan.  The selector does not reach it, for two reasons
+   that are worth keeping apart:
+
+     - It could not be asked for by a shape.  The read that configuration
+       serves is the else branch of a guarded probe, which the rewriting
+       creates by keeping its own input, so it is not in the program.
+     - It should not be asked for at all.  Measured in that file at
+       rep_delete_filters_the_rep and rep_insert_is_a_set_insert: the
+       erasure moves the delete's O(n) filter from the list to the rep
+       member rather than removing it, and degrades the insert from a cons
+       to a set insert.
+
+   A feedback step -- run the pipeline, find the surviving read, add
+   TableRep and run again -- closes the first gap and does reach that
+   configuration.  It was built and removed, because the second reason
+   makes reaching it the wrong goal.  See the note at the end of
+   Selector.v. *)
 Lemma jenkins_user_search :
   select_anno (("users", (JU.row_ty, JU.decls)) :: cenv_rm "users" []) "users" O
     (JU.elaborated JU.decls)

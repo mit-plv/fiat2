@@ -159,10 +159,24 @@ Two of those rows are worth reading for what they say about the rules rather tha
 the selector. `Kafka_Cluster` gets `SplitIf` and `Kafka_WindowStore` does not, from one
 rule -- split when a conjunction's first conjunct is an indexable equality, decline when
 it is a range pair -- and WindowStore is the file where that decision costs something,
-because no configuration serves both of its readers. And `Jenkins_UserSearch`'s second
-configuration is the one thing the selector cannot reach: the read `TableRep` serves
-there is the fallback branch the guarded trigram rule synthesizes, so it is not in the
-program to be found.
+because no configuration serves both of its readers.
+
+The other is `TableRep`, which the selector never emits. It is the only choice whose
+justification is a shape the pipeline *leaves behind* rather than one the program
+contains -- the read it serves in `Jenkins_UserSearch` is the else branch of a guarded
+probe, which the rewriting creates by keeping its own input -- so no matcher can ask for
+it. A feedback step that runs the pipeline, finds the surviving read, adds `TableRep` and
+runs again does reach that configuration; it was built and then removed, because the
+goal turned out to be the wrong one. `TableRep` is a copy of the table, so erasing the
+list while adding a rep member removes no structure: measured at
+`rep_delete_filters_the_rep` and `rep_insert_is_a_set_insert`, the delete applies the
+same O(n) filter to the member that it applied to the list, and the insert degrades from
+a cons to a set insert. `Kafka_WindowStore` behaves the same way with a bag.
+
+So the erasures that are wins are the ones where every read is answered by an index and
+**nothing replaces the list** -- `Kafka_Cluster`, `HA_AreaRegistry`, `Kafka_NamedCache`,
+and `Keycloak_CachedRealm` with its count. `TableRep` erases by substitution, which is an
+expressiveness result and not a performance one.
 
 ## Limits stated here rather than hidden
 

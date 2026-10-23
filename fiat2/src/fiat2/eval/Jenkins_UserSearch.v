@@ -122,6 +122,14 @@ Import ListNotations.
      second configuration asks for the table's set representation as well,
      and then the fallback scans THAT -- so nothing reads the list and the
      list is erased.  Both are pinned.
+
+     Which to prefer is settled below rather than left to the reader, and
+     the answer is the FIRST.  The erasure substitutes the structure the
+     remaining readers and writers walk instead of removing one: the delete
+     applies the same filter to the rep member that it applied to the list,
+     and the insert degrades from a cons to a set insert.  So the second
+     configuration carries TableRep as an expressiveness result -- the
+     table can be its own index -- and not as a faster program.
    ============================================================ *)
 
 Definition row_ty :=
@@ -447,6 +455,88 @@ Section WithConcreteMaps.
 
   Lemma rep_find_is_still_a_probe :
     find_of optimized_rep = Some (EACFold AGCount (key_probe (member "2") token)).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
+     WHAT THE SECOND CONFIGURATION COSTS, measured rather than assumed.
+
+     The erasure above is easy to misread as a win -- a field disappears.
+     It is not one.  TableRep IS a copy of the table, so what the erasure
+     does is SUBSTITUTE the structure the remaining readers and writers
+     walk, and the four lemmas below are the comparison, side by side.
+
+     The delete applies the SAME filter either way -- the source's own,
+     over whatever holds the rows -- so the O(n) scan moves from the list
+     to the rep member and does not go away.  And the insert degrades: a
+     cons onto a list becomes an insert into a set.
+
+     So the two configurations are a wash on the delete and the second is
+     slightly worse on the insert, and the honest reading of the pair is
+     that TableRep here is an EXPRESSIVENESS result -- a table can be its
+     own index, and the fallback scan is served by a member rather than by
+     a field -- and not a performance one.  Contrast the erasures that ARE
+     wins: in Kafka_Cluster, HA_AreaRegistry, Kafka_NamedCache and
+     Keycloak with its count, every read is answered by an index and
+     NOTHING replaces the list.
+
+     This is why the deterministic selector (src/fiat2/Selector.v) does not
+     emit TableRep.  A feedback step that runs the pipeline, finds the
+     surviving read and adds TableRep for it does reach the configuration
+     below -- it was built and then removed, because "the list was erased"
+     is not a proxy for "this paid". *)
+
+  (* the body a write assigns to a named field, at the top level of the
+     record or one level down inside aux_tag *)
+  Definition field (f : string) (l : list (string * expr)) : option expr :=
+    option_map snd (find (fun p => String.eqb f (fst p)) l).
+
+  Definition written_to (f : string) (e : option expr) : option expr :=
+    match e with
+    | Some (ERecord l) =>
+        match field f l with
+        | Some b => Some b
+        | None =>
+            match field "aux_tag" l with
+            | Some (ERecord l') => field f l'
+            | _ => None
+            end
+        end
+    | _ => None
+    end.
+
+  Definition drop_named (src : expr) (tag : collection_tag) : expr :=
+    EFlatmap tag src "r"
+      (EIf (EUnop ONot (EBinop OEq (EAccess (EVar "r") "id") token))
+         (match tag with
+          | LikeList => EBinop OCons (EVar "r") (EAtom (ANil (Some row_ty)))
+          | LikeBag => EBinop OBagInsert (EAtom (AEmptyBag (Some row_ty))) (EVar "r")
+          | LikeSet => EBinop OSetInsert (EAtom (AEmptySet (Some row_ty))) (EVar "r")
+          end)
+         (match tag with
+          | LikeList => EAtom (ANil (Some row_ty))
+          | LikeBag => EAtom (AEmptyBag (Some row_ty))
+          | LikeSet => EAtom (AEmptySet (Some row_ty))
+          end)).
+
+  Lemma delete_filters_the_list :
+    written_to "id_tag" (delete_of optimized) = Some (drop_named the_list LikeList).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* the same filter, over the member that replaced the list *)
+  Lemma rep_delete_filters_the_rep :
+    written_to "0" (delete_of optimized_rep)
+    = Some (drop_named (member "0") LikeSet).
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma insert_conses_onto_the_list :
+    written_to "id_tag" (insert_of optimized)
+    = Some (EBinop OCons new_user the_list).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* and this is the price: a cons becomes a set insert *)
+  Lemma rep_insert_is_a_set_insert :
+    written_to "0" (insert_of optimized_rep)
+    = Some (EBinop OSetInsert (member "0") new_user).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------

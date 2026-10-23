@@ -80,7 +80,8 @@ Variant demand :=
   | DConjRange               (* SplitIf would cut a range pair in two *)
   | DFlag (attr : string).   (* FlagFilterToEq applies *)
 
-Scheme Boolean Equality for demand. (* creates demand_beq *)
+Scheme Boolean Equality for collection_tag. (* creates collection_tag_beq *)
+Scheme Boolean Equality for demand.         (* creates demand_beq *)
 
 Definition str_mem (a : string) (l : list string) : bool :=
   existsb (String.eqb a) l.
@@ -447,8 +448,7 @@ Definition drop_subsumed_by_trigram (cs : list index_choice) : list index_choice
                    | UniqueDictIdx k => negb (str_mem k keyed)
                    | _ => true end) cs.
 
-Scheme Boolean Equality for collection_tag. (* creates collection_tag_beq *)
-Scheme Boolean Equality for index_choice.   (* creates index_choice_beq *)
+Scheme Boolean Equality for index_choice. (* creates index_choice_beq *)
 
 Fixpoint dedup_choices_acc (seen l : list index_choice) : list index_choice :=
   match l with
@@ -496,7 +496,7 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
 
 (* ---------- the selector ---------- *)
 
-(* The two phases run on two different programs, which is the whole reason
+(* The two scans run on two different programs, which is the whole reason
    they are separate: the basics are decided by the source, and the index
    demands by what the basics leave behind. *)
 Definition select (ce : cenv) (tbl : string) (c : command)
@@ -521,14 +521,43 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
 
 (* ---------- what is deliberately not selected ---------- *)
 
-(* TableRep.  The choice serves the bare coercion the push-down leaves on a
-   read of the table, and once it does, nothing reads the list and the list
-   is erased.  It cannot be demanded by a shape the way the others are: the
-   question it answers is whether the output STILL reads the table after the
-   other choices have taken what they can, and a read the trigram rule
-   leaves in its own short-token fallback branch is not in the source at
-   all.  Deciding it needs the pipeline's output, not the program's text.
 
-   MinAgg.  Emitted when the program asks for it, but no eval subject does.
+
+(* TableRep.  Not emitted, and the reason is measured rather than assumed.
+
+   It could not be demanded by a shape in any case: the read it serves is
+   one the REWRITING leaves behind -- trigram_lookup_guarded_head rewrites
+   e into EIf (pattern_has_trigram p) (probe) e, keeping its own input as
+   the else branch -- so there is no second read in the program to map to a
+   choice.  A feedback step closes that gap easily: run the pipeline, look
+   for a surviving coercion of the table's list member, add TableRep at
+   that level and run again, keeping it if the list is now erased.  That
+   was built, and it does reach eval/Jenkins_UserSearch's second
+   configuration.
+
+   It was removed again, because "the list was erased" is not a proxy for
+   "this paid".  TableRep IS a copy of the table, so erasing the list
+   while adding a rep member removes no structure.  Measured on the two
+   subjects where a list survives:
+
+     Jenkins_UserSearch -- the delete applies the SAME filter either way,
+       at list level over the list or at set level over the rep member
+       (rep_delete_filters_the_rep), so the O(n) scan moves rather than
+       going away; and the insert degrades from a cons to a set insert
+       (rep_insert_is_a_set_insert).
+     Kafka_WindowStore -- the expiry stays an O(n) filter, over a bag
+       member instead of the list, and the put degrades from a cons to a
+       bag insert.
+
+   Erasing the list is a real win where another index already answers
+   every read and NOTHING replaces the list -- Kafka_Cluster,
+   HA_AreaRegistry, Kafka_NamedCache, Keycloak with its count.  TableRep
+   erases by substitution, which is an expressiveness result (a table can
+   BE its index) and not a performance one, so it is not selected.  If a
+   rewrite ever makes a rep member cheaper to maintain than the list it
+   replaces, the feedback step is the way to ask for it, and the test it
+   needs is a cost comparison rather than a boolean. *)
+
+(* MinAgg.  Emitted when the program asks for it, but no eval subject does.
    The corpus witnesses for a minimum are per-key counters held in a
    dictionary -- the dictionary-of-aggregates shape, which is deferred. *)
