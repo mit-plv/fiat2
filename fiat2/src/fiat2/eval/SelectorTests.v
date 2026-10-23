@@ -122,14 +122,22 @@ Lemma kafka_cluster :
   = nth_heu Kafka_Cluster.heuristics 0 Kafka_Cluster.prog.
 Proof. vm_compute; reflexivity. Qed.
 
-(* The file's configuration 0, the one WITHOUT SplitIf -- and the one place
-   in the suite where the selector has to choose between two readers it
-   cannot both serve.  Splitting would make fetch(key, lo, hi) a probe and
-   cost fetchAll(lo, hi) one of its two bounds; declining keeps the range
-   pair whole and leaves fetch scanning.  The selector declines, because a
-   conjunction here IS a range pair.  Both configurations are pinned in the
-   file; which is preferable is a property of the workload, and the fix is
-   a splitter that leaves a range pair alone. *)
+(* The file's configuration 0, the one WITHOUT SplitIf.  The selector
+   declines the split, and the reason is worth stating precisely because it
+   is not the one the hazard list would suggest: this program's conjunction
+   is (range && key), so no conjunct in FIRST position is an equality and
+   the gain condition is already false.  The range-pair veto never gets
+   consulted -- it fires on no subject in the development.
+
+   Whether declining is right here is a separate question, and the answer
+   is less clear than the earlier framing made it sound.  Splitting costs
+   fetchAll one of its two bounds, and it also makes the keyed read a
+   probe, erases the list, and reduces retention to the member's own
+   incremental restriction -- see split_erases_the_list and
+   split_expiry_is_only_the_restriction in that file, both of which were
+   found by walking the extracted terms rather than by reading the rules.
+   Three gains against one loss. The pin below records what the selector
+   does; it does not claim that is the better program. *)
 Lemma kafka_window_store :
   unconstrained "segments" Kafka_WindowStore.prog
   = nth_heu Kafka_WindowStore.heuristics 0 Kafka_WindowStore.prog.

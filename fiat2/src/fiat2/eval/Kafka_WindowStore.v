@@ -429,6 +429,38 @@ Section WithConcreteMaps.
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------
+     AND THE REST OF THE PRICE, which runs the other way and which this
+     file did not record until it was measured from the extracted terms.
+
+     Splitting does not only cost fetchAll a bound.  It also makes the
+     keyed read a probe (above), and -- because the keyed read was the
+     list's last reader -- it ERASES THE LIST, and with the list gone the
+     expiry is nothing but the member's own incremental restriction.  So
+     configuration 1 removes two O(n) terms that configuration 0 pays on
+     every call and every write: fetch's full scan, and the rewrite of the
+     whole list that retention performs.
+
+     Read together with Expected (1) above, which said that neither
+     configuration serves both readers: that is still true of the two
+     READS, and it is not the whole comparison.  Configuration 1 is better
+     on three of the four, and worse on one -- fetchAll reads [lo, inf)
+     and filters, where configuration 0 reads exactly [lo, hi).  Which to
+     prefer is a question about how much of the table lies beyond hi, so
+     it is a workload question and not a soundness one; what is NOT in
+     question is that the earlier framing undersold the split. *)
+
+  Lemma split_erases_the_list :
+    installed_fields (nth 1 prog_transformed CSkip) = ["aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* nothing but the restriction: no filter over a whole collection
+     anywhere in the retention write *)
+  Lemma split_expiry_is_only_the_restriction :
+    expire_of (nth 1 prog_transformed CSkip)
+    = Some (ERecord [("aux_tag", ERecord [("0", live_range)])]).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
      And all of it is sound: every program above computes what the source
      program computes, on every store and environment.  The two
      configurations are equal to the same source, so the limitations are

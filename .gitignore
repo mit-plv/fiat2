@@ -31,3 +31,8 @@ __pycache__
 
 CLAUDE.md
 fiat2/prototype
+
+# extracted by src/fiat2/eval/Extract.v
+fiat2/harness/generated/*.ml
+fiat2/harness/generated/*.mli
+fiat2/harness/_build/

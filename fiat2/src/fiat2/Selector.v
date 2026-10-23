@@ -341,14 +341,29 @@ Definition demands_of (tbl : string) (c : command) : list demand :=
    table with a declared key has that guard; a table without one cannot.
 
    SplitIf goes LAST and therefore runs FIRST, and is the one real decision
-   here.  It is worth running when some conjunctive filter's first conjunct
-   is an equality an index could answer, and harmful when some conjunctive
-   filter's first conjunct is a range pair, because splitting a range pair
-   costs it one of its two bounds.  A program with both is a program no
-   configuration serves well; the selector declines the split, keeping the
-   range pair whole, and the equality filter stays a scan.  That is a known
-   incompleteness of SplitIf and not of the choice made here: the fix is a
-   splitter that leaves a range pair alone.
+   here.  It is emitted when some conjunctive filter's FIRST conjunct is an
+   equality an index could answer, and declined when some conjunctive
+   filter's first conjunct is a range pair, on the grounds that splitting a
+   range pair costs it one of its two bounds.
+
+   Two honest notes about that, both measured rather than reasoned:
+
+   The second clause -- the range-pair veto -- fires on NO subject in the
+   development.  eval/Kafka_WindowStore is the only program with both
+   shapes, and it is declined by the FIRST clause: its conjunction is
+   (range && key), so the first conjunct is the range pair and no
+   conjunct in first position is an equality, so the gain condition is
+   already false.  The veto is a precaution with no witness.
+
+   And it may be the wrong precaution.  Measured from the extracted terms
+   (harness/) and then pinned in that file at split_erases_the_list and
+   split_expiry_is_only_the_restriction: splitting WindowStore does cost
+   fetchAll one bound, and it also makes the keyed read a probe, erases
+   the list, and reduces retention to the member's own incremental
+   restriction -- removing two O(n) terms.  So the cost of a lost bound is
+   a cost to WEIGH and not a reason to refuse, and getting that right
+   needs a comparison rather than a boolean.  Left as it is, and written
+   down, rather than changed on one subject's evidence.
 
    FlagFilterToEq goes last of all and so runs first: it normalises a filter
    on a boolean attribute into the equality it is, which is the shape the
