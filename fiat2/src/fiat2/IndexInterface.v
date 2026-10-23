@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TypeSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith.
 
 Class index :=
@@ -11,7 +11,7 @@ Class index :=
     }.
 
 Class ok (idx : index)
-  {width: Z} {word: word.word width} {word_ok: word.ok word} (idx_wf : value (width:=width) -> value (width:=width) -> Prop)
+  (idx_wf : value -> value -> Prop)
   {tenv : map.map string type} {tenv_ok : map.ok tenv}
   {locals : map.map string value} {locals_ok : map.ok locals} :=
   { idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t);
@@ -24,8 +24,7 @@ Class ok (idx : index)
       idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx);
   }.
 
-Arguments IndexInterface.Build_ok idx {width}%Z_scope {word}
-  {word_ok} idx_wf {tenv tenv_ok locals locals_ok}
+Arguments IndexInterface.Build_ok idx idx_wf {tenv tenv_ok locals locals_ok}
   (idx_ty_wf to_idx_ty to_idx_wf)%function_scope.
 
 (* There is no second interface for an index that needs a precondition on the

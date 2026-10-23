@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.IndexInterface fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute
   fiat2.Constraint.
 Require fiat2.DictIndexImpl.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted.
 Import ListNotations.
 
@@ -85,8 +85,7 @@ Section WithHole.
 
     Section WithMap.
       Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-      Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-      Notation value := (value (width:=width)).
+      Notation value := (value).
       Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
       Lemma to_idx_ty : forall (t : type),

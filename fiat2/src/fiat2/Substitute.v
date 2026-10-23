@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation.
 
 Fixpoint repeat_string (s : string) (n : nat) : string :=
@@ -215,8 +215,6 @@ Section WithMap.
     Qed.
 
 
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (word:=word)).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Fixpoint make_sub_env (store env : locals) (sub : list (string * expr)) : locals :=

@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.Surface fiat2.Constraint fiat2.Substitute fiat2.PrimaryKeyCheck
   fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.TrigramIndexUse
   fiat2.OptimizeAnno.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import String ZArith List.
 
 Import ListNotations.
@@ -163,8 +163,7 @@ Definition query_ty :=
   TRecord (record_sort [("kind", TInt); ("k", TString); ("new_user", row_ty)]).
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
 
   Local Open Scope string.
 
@@ -241,7 +240,7 @@ Section WithConcreteMaps.
       basics [TrigramIdx "fullName" "id"] [] (elaborated decls).
 
   Definition optimized : command :=
-    apply_optimize_anno_constrained (width:=width) anno init_Gstore init_Genv.
+    apply_optimize_anno_constrained anno init_Gstore init_Genv.
 
   (* The second configuration.  TableRep is listed FIRST, which is what makes
      it run last: its pattern is the bare coercion of the table's read, which
@@ -251,7 +250,7 @@ Section WithConcreteMaps.
       basics [TableRep LikeSet; TrigramIdx "fullName" "id"] [] (elaborated decls).
 
   Definition optimized_rep : command :=
-    apply_optimize_anno_constrained (width:=width) anno_rep init_Gstore init_Genv.
+    apply_optimize_anno_constrained anno_rep init_Gstore init_Genv.
 
   (* ---- projections, so every claim below is an equality of closed terms ---- *)
 

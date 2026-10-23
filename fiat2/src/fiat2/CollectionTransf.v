@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfUtils fiat2.TransfSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
@@ -60,9 +60,6 @@ Definition ex1 : expr :=
 (* Compute fold_expr push_down_collection (fold_expr annotate_collection ex1). *)
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
-  Local Notation value := (Value.value (word := word)).
 
   Local Coercion is_true : bool >-> Sortclass.
 

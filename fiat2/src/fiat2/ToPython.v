@@ -37,7 +37,6 @@ Definition Z_py : Z -> string := of_Z.
 
 Definition atom_py (a : atom) : string :=
   match a with
-  | AWord n => Z_py n
   | AInt n => Z_py n
   | ABool b => bool_py b
   | AString s => """" ++ s ++ """"
@@ -51,7 +50,6 @@ Definition atom_py (a : atom) : string :=
 
 Definition unop_py (o:unop) (e:string) : string :=
   match o with
-  | OWNeg => paren ("-" ++ e)
   | ONeg => paren ("-" ++ e)
   | ONot => paren ("not " ++ e)
   | OLength => "len(" ++ e ++ ")"
@@ -63,19 +61,19 @@ Definition unop_py (o:unop) (e:string) : string :=
 
 Definition binop_py (o:binop) (e1 e2:string) : string :=
   match o with
-  | OWPlus | OPlus => paren (e1 ++ " + " ++ e2)
-  | OWMinus | OMinus => paren (e1 ++ " - " ++ e2)
-  | OWTimes | OTimes => paren (e1 ++ " * " ++ e2)
-  | OWDivU | OWDivS | ODiv => paren (e1 ++ " // " ++ e2)
-  | OWModU | OWModS | OMod => paren (e1 ++ " % " ++ e2)
+  | OPlus => paren (e1 ++ " + " ++ e2)
+  | OMinus => paren (e1 ++ " - " ++ e2)
+  | OTimes => paren (e1 ++ " * " ++ e2)
+  | ODiv => paren (e1 ++ " // " ++ e2)
+  | OMod => paren (e1 ++ " % " ++ e2)
   | OAnd => paren (e1 ++ " and " ++ e2)
   | OOr => paren (e1 ++ " or " ++ e2)
   | OConcat => paren (e1 ++ " + " ++ e2)
   | OConcatString => paren (e1 ++ " + " ++ e2)
-  | OWLessU | OWLessS | OLess => paren (e1 ++ " < " ++ e2)
+  | OLess => paren (e1 ++ " < " ++ e2)
   | OEq => paren (e1 ++ " == " ++ e2)
   | OCons => paren ("[" ++ e1 ++ "] + " ++ e2)
-  | ORange | OWRange => "list(range(" ++ e1 ++ "," ++ e2 ++ "))"
+  | ORange => "list(range(" ++ e1 ++ "," ++ e2 ++ "))"
   | OBagInsert => paren ("[" ++ e2 ++ "]" ++ " + " ++ e1)
   (* sets are Python lists, since their elements may be unhashable dicts;
      the lambdas evaluate each operand once.  An insert must not duplicate an

@@ -4,7 +4,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
   fiat2.EraseField fiat2.RepIdx
   fiat2.FlagFilter.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
 
@@ -136,8 +136,7 @@ Definition compose_basic_transfs : list (command -> command) -> command -> comma
   fold_right Basics.compose id.
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
 
   Local Open Scope string.
 
@@ -193,7 +192,7 @@ Section WithConcreteMaps.
        only the range rule needs Ranged, and mk_idx hands it out accordingly. *)
     Context (dict_idx_dk : dict_kind).
 
-    Definition dict_idx_wf := (DictIndexImpl.idx_wf (width:=width) "hole" dict_idx_attr dict_idx_dk "tup" "acc" "x").
+    Definition dict_idx_wf := (DictIndexImpl.idx_wf "hole" dict_idx_attr dict_idx_dk "tup" "acc" "x").
     Instance cdict_idx : IndexInterface.index := (dict_idx "hole" dict_idx_attr dict_idx_dk "tup" "acc" "x").
     Instance cdict_idx_ok : IndexInterface.ok cdict_idx dict_idx_wf.
     apply dict_idx_ok. auto with transf_hints.
@@ -546,7 +545,7 @@ end.
     end.
 
   Definition mk_compo_idx (idxs : list (string * IndexInterface.index * (value -> value -> Prop))) : IndexInterface.index :=
-    compo_idx idxs "hole" (word:=word).
+    compo_idx idxs "hole".
 
   Lemma Forall_tag_bound_trans : forall a b c l,
       Forall (fun s => exists n, s = String.of_nat n /\ a <= n < b) l ->
@@ -895,7 +894,7 @@ end.
      here and the In fact picks the member. *)
   Lemma compo_member_wf : forall tg idx' idx_wf' l (v : value),
       In (tg, idx', idx_wf') l ->
-      @aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v ->
+      @aux_wf (@compo_idx_wf l) "id_tag" "aux_tag" v ->
       aux_wf_for_idx "id_tag" "aux_tag" tg idx_wf' v.
   Proof.
     unfold aux_wf, aux_wf_for_idx, compo_idx_wf.
@@ -913,7 +912,7 @@ end.
         type_wf t ->
         @IndexInterface.is_tbl_ty (mk_compo_idx l) t = true ->
         type_of_value v (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag" t) ->
-        (@aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v
+        (@aux_wf (@compo_idx_wf l) "id_tag" "aux_tag" v
          /\ at_id_tag "id_tag" (declared_holds (locals := clocals) row_ty ds) v) ->
         aux_wf_for_idx "id_tag" "aux_tag" u_tag
           (UniqueDictIndexImpl.idx_wf_unique "hole" attr "tup" "acc" (locals := clocals)) v.
@@ -931,7 +930,7 @@ end.
     eapply (compo_declared__unique_aux_wf_at "hole" attr "tup" "acc"
               "id_tag" "aux_tag" ltac:(discriminate) u_tag
               (tenv := ctenv) (tenv_ok := ctenv_ok)
-              (word_ok := word_ok) (locals_ok := clocals_ok));
+ (locals_ok := clocals_ok));
       [ exact H_in | exact H_uq | | exact E_attr | exact H_ty | exact H_aux | exact H_id ].
     invert_type_wf; assumption.
   Qed.
@@ -962,8 +961,8 @@ end.
       forall l (Q : value -> Prop),
         incl idxs l ->
         NoDup (map fst (map fst l)) ->
-        (forall v, Q v -> @aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v) ->
-        @aug_transf_sound width word ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
+        (forall v, Q v -> @aux_wf (@compo_idx_wf l) "id_tag" "aux_tag" v) ->
+        @aug_transf_sound ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
           (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") Q f.
   Proof.
     intros dk attr cur_tag reps idxs transfs next_tag f H_mk H_in l Q H_incl H_nd H_Q.
@@ -1021,14 +1020,14 @@ end.
       forall l (Q : value -> Prop),
         incl idxs l ->
         NoDup (map fst (map fst l)) ->
-        (forall v, Q v -> @aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag" v) ->
+        (forall v, Q v -> @aux_wf (@compo_idx_wf l) "id_tag" "aux_tag" v) ->
         (* and, for a member that needs a declaration, that the installation
            propagates the declarations too.  Needed only where such a member's
            gate fires, which is why it is guarded. *)
         (forall a, declares_unique a ds = true ->
                    forall v, Q v -> at_id_tag "id_tag"
                                       (declared_holds (locals := clocals) row_ty ds) v) ->
-        @aug_transf_sound width word ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
+        @aug_transf_sound ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
           (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") Q f.
   Proof.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
@@ -1090,7 +1089,7 @@ end.
             eapply (unique_lookup_gated_sound "hole" a "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag) "y"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             intros H_uq. unfold unique_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1107,7 +1106,7 @@ end.
             eapply (unique_use_idx_transf_sound "hole" a "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             unfold unique_idx_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1120,12 +1119,12 @@ end.
             eapply (filter_neq_to_unique_delete_transf_sound a "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+ (locals_ok := clocals_ok)). }
         1:{ unfold cons_to_unique_insert_transf'.
             eapply (cons_to_unique_insert_transf_sound a "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)). } }
+ (locals_ok := clocals_ok)). } }
     (* the trigram choice: two members.  The trigram lookup and the trigram
        delete each read BOTH of them, so each is owed two layouts; the
        primary-key lookup is owed one, with the declaration; the two use
@@ -1140,7 +1139,7 @@ end.
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (String.of_nat (S init_tag)) "b" "k" "y"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             intros H_uq. unfold trigram_bridges.
             split; [ | split; [ | split; [ | split ] ] ].
             (* the two members' places in the record *)
@@ -1173,7 +1172,7 @@ end.
             eapply (unique_lookup_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat (S init_tag)) "y"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             intros H_uq. unfold unique_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1194,7 +1193,7 @@ end.
                       ltac:(discriminate) ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             unfold trigram_idx_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1209,7 +1208,7 @@ end.
             eapply (unique_use_idx_transf_sound "hole" ak "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat (S init_tag))
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             unfold unique_idx_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1230,7 +1229,7 @@ end.
                       (String.of_nat (S init_tag))
                       ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             intros H_uq. unfold trigram_bridges.
             split; [ | split; [ | split; [ | split ] ] ].
             1: prove_aux_ty_for_idx;
@@ -1255,20 +1254,20 @@ end.
             eapply (filter_neq_to_unique_delete_transf_sound ak "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+ (locals_ok := clocals_ok)). }
         1:{ unfold cons_to_tri_insert_transf.
             (* maintenance does not mention the hole, so it is not a
                parameter of this rule *)
             eapply (cons_to_tri_insert_sound a ak "tup" "acc" "pos" "sacc" "bkt"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             discriminate. }
         (* and its insert, likewise *)
         1:{ unfold cons_to_unique_insert_transf'.
             eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+ (locals_ok := clocals_ok)). }
         }
     (* the keyed-delete pair: two members.  The keyed delete reads BOTH of
        them, so it is owed two layouts and the declaration; the primary-key
@@ -1297,7 +1296,7 @@ end.
             eapply (unique_lookup_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat (S init_tag)) "y"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             intros H_uq. unfold unique_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1316,7 +1315,7 @@ end.
             eapply (unique_use_idx_transf_sound "hole" ak "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat (S init_tag))
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             unfold unique_idx_bridges; split; [ | split ].
             1: prove_aux_ty_for_idx;
             [ prove_access_record_idx_ty
@@ -1336,7 +1335,7 @@ end.
                       (String.of_nat (S init_tag)) "bkt" "rvar"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)).
+ (locals_ok := clocals_ok)).
             intros H_uq. unfold dict_keyed_delete_bridges.
             split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
             (* the two members' places in the record *)
@@ -1367,7 +1366,7 @@ end.
             eapply (filter_neq_to_unique_delete_transf_sound ak "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)). }
+ (locals_ok := clocals_ok)). }
         (* the dictionary member's insert-and-delete loop *)
         1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
               (cur_tag := init_tag) (reps := reps);
@@ -1378,7 +1377,7 @@ end.
             eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
-                      (word_ok := word_ok) (locals_ok := clocals_ok)). } }
+ (locals_ok := clocals_ok)). } }
     (* the table's own representation: one use rule, and the basic push-down
        for maintenance *)
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
@@ -1415,8 +1414,8 @@ end.
       forall l,
         incl idxs l ->
         NoDup (map fst (map fst l)) ->
-        @aug_transf_sound width word ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
-          (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") (@aux_wf width word (@compo_idx_wf width word l) "id_tag" "aux_tag") f.
+        @aug_transf_sound ctenv clocals (@IndexInterface.is_tbl_ty (mk_compo_idx l))
+          (@aux_ty (mk_compo_idx l) "id_tag" "aux_tag") (@aux_wf (@compo_idx_wf l) "id_tag" "aux_tag") f.
   Proof.
     intros. eapply (mk_idx_sound_strengthen _ [] TUnit); eauto.
     intros a H_a; cbn in H_a; discriminate.
@@ -1448,11 +1447,11 @@ end.
   Lemma mk_idx_use_transfs_sound_strengthen :
     forall ics ds row_ty idxs transfs n init_tag reps (Q : value -> Prop),
       (idxs, transfs, n) = mk_idxs ds init_tag reps ics ->
-      (forall v, Q v -> @aux_wf width word (@compo_idx_wf width word idxs) "id_tag" "aux_tag" v) ->
+      (forall v, Q v -> @aux_wf (@compo_idx_wf idxs) "id_tag" "aux_tag" v) ->
       (forall a, declares_unique a ds = true ->
                  forall v, Q v -> at_id_tag "id_tag"
                                     (declared_holds (locals := clocals) row_ty ds) v) ->
-      @aug_transf_sound width word ctenv clocals
+      @aug_transf_sound ctenv clocals
         (@IndexInterface.is_tbl_ty (mk_compo_idx idxs))
         (@aux_ty (mk_compo_idx idxs) "id_tag" "aux_tag") Q
         (mk_idx_use_transfs transfs).

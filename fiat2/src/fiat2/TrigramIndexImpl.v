@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.IndexInterface fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute
   fiat2.StringFacts fiat2.Constraint fiat2.CollectionTransf.
 Require fiat2.DictIndexImpl.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted Lia.
 Import ListNotations.
 
@@ -159,8 +159,7 @@ Section WithHole.
 
     Section WithMap.
       Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-      Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-      Notation value := (value (width:=width)).
+      Notation value := (value).
       Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
       (* as elsewhere, so that a boolean order can be read as a relation *)
@@ -429,9 +428,9 @@ Section WithHole.
         cbn [interp_expr].
         unfold get_local; rewrite E_tup, E_pos, E_sacc.
         unfold row_key in H_txt |- *.
-        destruct r as [ | | | | | | rv | | | | ]; try discriminate.
+        destruct r as [ | | | | | rv | | | | ]; try discriminate.
         rewrite H_txt, !interp_trigram_at_val.
-        destruct a as [ | | | | | | | d | | | ]; try reflexivity.
+        destruct a as [ | | | | | | d | | | ]; try reflexivity.
         cbn [interp_binop interp_ternop].
         destruct (dict_lookup (tri_key txt p) d) as [ bk | ];
           cbn [bucket_insert interp_atom].
@@ -588,7 +587,7 @@ Section WithHole.
           buckets_are_sets a -> buckets_are_sets (tri_step txt k p a).
       Proof.
         unfold buckets_are_sets, tri_step; intros * H.
-        destruct a as [ | | | | | | | d | | | ]; try contradiction.
+        destruct a as [ | | | | | | d | | | ]; try contradiction.
         apply Forall_dict_insert; [ exact H | ].
         cbn [snd]; unfold bucket_insert.
         destruct (dict_lookup (tri_key txt p) d) as [ b | ] eqn:E_lk; [ | exact I ].
@@ -619,7 +618,7 @@ Section WithHole.
           key_at g k a -> key_at g k (tri_step txt k' p a).
       Proof.
         unfold key_at, tri_step; intros * H.
-        destruct a as [ | | | | | | | d | | | ]; try contradiction.
+        destruct a as [ | | | | | | d | | | ]; try contradiction.
         destruct (value_eqb_dec (tri_key txt p) g) as [ E | E ].
         1:{ subst g. rewrite DictIndexImpl.dict_lookup_insert_same.
             unfold bucket_insert.
@@ -663,7 +662,7 @@ Section WithHole.
                about it is destructed too *)
             remember (fold_right (tri_step txt k) a l) as A eqn:E_A.
             unfold buckets_are_sets in H_bs'.
-            destruct A as [ | | | | | | | d | | | ]; try contradiction.
+            destruct A as [ | | | | | | d | | | ]; try contradiction.
             unfold key_at, tri_step.
             rewrite DictIndexImpl.dict_lookup_insert_same.
             unfold bucket_insert.
@@ -697,7 +696,7 @@ Section WithHole.
           key_at g k (tri_step txt k' p a) -> k = k' \/ key_at g k a.
       Proof.
         unfold key_at, tri_step; intros * H.
-        destruct a as [ | | | | | | | d | | | ]; try contradiction.
+        destruct a as [ | | | | | | d | | | ]; try contradiction.
         destruct (value_eqb_dec (tri_key txt p) g) as [ E | E ].
         1:{ subst g. rewrite DictIndexImpl.dict_lookup_insert_same in H.
             unfold bucket_insert in H.
@@ -1109,7 +1108,7 @@ Section WithHole.
         rewrite tri_unstep_d_eq.
         destruct (dict_lookup (tri_key txt p) d) as [ bk | ];
           [ | split; assumption ].
-        destruct bk as [ | | | | | | | | | b | ]; try (split; assumption).
+        destruct bk as [ | | | | | | | | b | ]; try (split; assumption).
         destruct (value_eqb (VSet (bucket_remove k b)) (VSet nil)) eqn:E.
         1: split; [ apply dict_delete_preserve_dict_wf; exact H_wf
                   | apply Forall_dict_delete; exact H_ne ].
@@ -1128,7 +1127,7 @@ Section WithHole.
         apply value_eqb_neq in H_ne.
         rewrite tri_unstep_d_eq.
         destruct (dict_lookup (tri_key txt p) d) as [ bk | ]; [ | reflexivity ].
-        destruct bk as [ | | | | | | | | | b | ]; try reflexivity.
+        destruct bk as [ | | | | | | | | b | ]; try reflexivity.
         destruct (value_eqb (VSet (bucket_remove k b)) (VSet nil)).
         1: apply dict_lookup_delete_diff; exact H_ne.
         1: apply DictIndexImpl.dict_lookup_insert_diff; exact H_ne.
@@ -1245,7 +1244,7 @@ Section WithHole.
         cbn [interp_expr].
         unfold get_local; rewrite E_tup, E_pos, E_sacc.
         unfold row_key in H_txt |- *.
-        destruct r as [ | | | | | | rv | | | | ]; try discriminate.
+        destruct r as [ | | | | | rv | | | | ]; try discriminate.
         rewrite H_txt, interp_trigram_at_val.
         (* the mirror is unfolded here so that its removal and the one the
            interpreter computes are the same term, and the test can be

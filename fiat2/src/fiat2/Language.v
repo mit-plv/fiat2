@@ -10,7 +10,6 @@ Inductive dict_kind : Type := Ranged | Unranged.
 
 (* Fiat2 types *)
 Inductive type : Type :=
-| TWord
 | TInt
 | TBool
 | TString
@@ -24,7 +23,7 @@ Inductive type : Type :=
 
 Section TypeIH.
   Context (P : type -> Prop).
-    Hypothesis (f_word : P TWord) (f_int : P TInt) (f_bool : P TBool) (f_string : P TString) (f_unit : P TUnit)
+    Hypothesis (f_int : P TInt) (f_bool : P TBool) (f_string : P TString) (f_unit : P TUnit)
       (f_option : forall t : type, P t -> P (TOption t)) (f_list : forall t : type, P t -> P (TList t))
       (f_record : forall l : list (string * type), Forall (fun p => P (snd p)) l -> P (TRecord l))
       (f_dict : forall (dk : dict_kind) (tk tv : type), P tk -> P tv -> P (TDict dk tk tv))
@@ -40,7 +39,6 @@ Section TypeIH.
     End __.
     Fixpoint type_IH (t : type) : P t :=
       match t with
-      | TWord => f_word
       | TInt => f_int
       | TBool => f_bool
       | TString => f_string
@@ -80,7 +78,6 @@ Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
 
 (* Literals *)
 Inductive atom : Type :=
-| AWord (n : Z)
 | AInt (n : Z)
 | ABool (b : bool)
 | AString (s : string)
@@ -96,7 +93,6 @@ Inductive atom : Type :=
 
 (* Unary operators *)
 Inductive unop : Type :=
-| OWNeg
 | ONeg
 | ONot
 | OLength
@@ -107,29 +103,19 @@ Inductive unop : Type :=
 
 (* Binary operators *)
 Inductive binop : Type :=
-| OWPlus
 | OPlus
-| OWMinus
 | OMinus
-| OWTimes
 | OTimes
-| OWDivU
-| OWDivS
 | ODiv
-| OWModU
-| OWModS
 | OMod
 | OAnd
 | OOr
 | OConcat
 | OConcatString
-| OWLessU
-| OWLessS
 | OLess
 | OEq
 | OCons
 | ORange
-| OWRange
 | OBagInsert
 | OSetInsert
 | OSetUnion

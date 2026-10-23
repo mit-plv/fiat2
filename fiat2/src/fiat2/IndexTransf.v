@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface
   fiat2.Utils fiat2.TransfSound fiat2.Substitute fiat2.TransfUtils.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
@@ -19,8 +19,7 @@ Ltac NoDup_map_record_sort :=
 
 Section compo_idx.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Context (idxs : list (string * IndexInterface.index * (value -> value -> Prop))).
@@ -143,8 +142,7 @@ End compo_idx.
 
 Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
+    Notation value := (value).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Definition apply_below_letmut f (Gstore Genv : tenv) (c : command) :=

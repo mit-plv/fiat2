@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 Require Import Ltac2.Ltac2 Ltac2.Control Ltac2.Constr.
@@ -755,8 +755,6 @@ Qed.
 
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value_eqb := (value_eqb (word:=word)).
 
   Lemma value_eqb_refl : forall (v : value), value_eqb v v = true.
   Proof.
@@ -788,7 +786,7 @@ Section WithWord.
   Lemma NoDup_SSorted__Lt : forall (k v : value) d,
       NoDup (k :: List.map fst d) ->
       StronglySorted dict_entry_leb ((k, v) :: d) ->
-      forall p, In p d -> value_compare (word:=word) k (fst p) = Lt.
+      forall p, In p d -> value_compare k (fst p) = Lt.
   Proof.
     intros. invert_NoDup; invert_SSorted. destruct p; simpl.
     apply_Forall_In; unfold dict_entry_leb in *; simpl in *.
@@ -800,7 +798,7 @@ Section WithWord.
   Lemma dict_lookup_Lt : forall d k,
       StronglySorted dict_entry_leb d ->
       (forall p, In p d -> value_compare k (fst p) = Lt) ->
-      dict_lookup (word:=word) k d = None.
+      dict_lookup k d = None.
   Proof.
     intros. induction d; auto.
     simpl. destruct a; simpl in *.
@@ -810,14 +808,14 @@ Section WithWord.
     - apply IHd; inversion H; auto.
   Qed.
 
-  Lemma not_In__dict_lookup : forall (v : value) d, ~ In v (List.map fst d) -> dict_lookup (word:=word) v d = None.
+  Lemma not_In__dict_lookup : forall (v : value) d, ~ In v (List.map fst d) -> dict_lookup v d = None.
   Proof.
     intros * H. induction d; simpl; auto.
     destruct a; simpl in *. intuition idtac. case_match; auto.
     apply value_eqb_eq in E; subst; intuition fail.
   Qed.
 
-  Lemma not_In__dict_delete : forall (k : value) d, ~ In k (List.map fst d) -> dict_delete (word:=word) k d = d.
+  Lemma not_In__dict_delete : forall (k : value) d, ~ In k (List.map fst d) -> dict_delete k d = d.
   Proof.
     induction d; intros; simpl; auto.
     destruct a; case_match; simpl in *.
@@ -826,7 +824,7 @@ Section WithWord.
   Qed.
 
   Lemma Forall_dict_lookup : forall P d k v,
-      Forall P d -> dict_lookup (width:=width) k d = Some v -> P (k, v).
+      Forall P d -> dict_lookup k d = Some v -> P (k, v).
   Proof.
     intros * H_P H. induction d; simpl in H; try congruence.
     destruct a. inversion H_P; subst.
@@ -838,7 +836,7 @@ Section WithWord.
   Qed.
 
   Lemma dict_insert_preserve_SSorted : forall d k v,
-      StronglySorted (dict_entry_leb (word:=word)) d ->
+      StronglySorted (dict_entry_leb) d ->
       StronglySorted dict_entry_leb (dict_insert k v d).
   Proof.
     induction d; intros; simpl.
@@ -864,7 +862,7 @@ Section WithWord.
             * eapply List.Forall_In in H3; eauto.
   Qed.
 
-  Local Notation value := (value (width:=width)).
+  Local Notation value := (value).
 
   (* Deleting a key from a sorted dictionary, and how it interacts with an
      insertion.  These are facts about dict_insert and dict_delete alone, so
@@ -1308,8 +1306,6 @@ Qed.
 
 Section WithMap.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Lemma tenv_wf_empty : tenv_wf map.empty.
@@ -1704,8 +1700,6 @@ Proof.
 Qed.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma Permutation_dedup_app : forall (l1 l2 l3 l4 : list value),
@@ -1944,7 +1938,6 @@ Create HintDb transf_hints.
 #[export] Hint Resolve <- is_NoDup_to_transparent : transf_hints.
 #[export] Hint Extern 5 (is_NoDup _) => simpl; intuition discriminate : transf_hints.
 #[export] Hint Extern 5 ((_ : string) <> _) => apply eqb_neq : transf_hints.
-#[export] Hint Extern 5 (word.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 (map.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 string => exact (EmptyString:string) : transf_hints.
 
@@ -1977,8 +1970,6 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Open Scope string_scope.

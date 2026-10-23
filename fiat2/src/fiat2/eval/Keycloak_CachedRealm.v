@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Surface fiat2.Constraint fiat2.Substitute fiat2.PrimaryKeyCheck
   fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.OptimizeAnno.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import String ZArith List.
 
 Import ListNotations.
@@ -79,8 +79,7 @@ Definition query_ty :=
   TRecord (record_sort [("kind", TInt); ("k", TString); ("new_action", row_ty)]).
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
 
   Local Open Scope string.
 
@@ -139,7 +138,7 @@ Section WithConcreteMaps.
       basics [UniqueDictIdx "id"; UniqueDictIdx "alias"] [] (elaborated decls).
 
   Definition optimized : command :=
-    apply_optimize_anno_constrained (width:=width) anno init_Gstore init_Genv.
+    apply_optimize_anno_constrained anno init_Gstore init_Genv.
 
   (* A second configuration, adding the maintained row count.  The only read
      this example had left on the list is a whole-table count, so this is the
@@ -150,7 +149,7 @@ Section WithConcreteMaps.
       basics [UniqueDictIdx "id"; UniqueDictIdx "alias"; CountAgg] [] (elaborated decls).
 
   Definition optimized_counted : command :=
-    apply_optimize_anno_constrained (width:=width) anno_counted init_Gstore init_Genv.
+    apply_optimize_anno_constrained anno_counted init_Gstore init_Genv.
 
   Definition installed_fields (c : command) : list string :=
     match c with

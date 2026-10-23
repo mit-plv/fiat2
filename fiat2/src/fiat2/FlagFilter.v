@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.TransfSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
@@ -45,18 +45,17 @@ Definition flag_filter_to_eq_head (e : expr) : expr :=
 
 Section WithWord.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   (* comparing a boolean against each literal: the two facts the rewrite
      turns on *)
   Lemma value_eqb_bool_true : forall b,
-      value_eqb (width:=width) (VBool b) (VBool true) = b.
+      value_eqb (VBool b) (VBool true) = b.
   Proof. destruct b; reflexivity. Qed.
 
   Lemma value_eqb_bool_false : forall b,
-      value_eqb (width:=width) (VBool b) (VBool false) = negb b.
+      value_eqb (VBool b) (VBool false) = negb b.
   Proof. destruct b; reflexivity. Qed.
 
   Lemma flag_to_eq_preserve_ty : forall (Gstore Genv : tenv) p,

@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.TransfSound fiat2.TransfUtils.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
@@ -328,8 +328,7 @@ Proof.
 Qed.
 
 Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   (* ----------------------------------------------------------------

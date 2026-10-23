@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.PrimaryKeyCheck
   fiat2.Utils fiat2.Substitute fiat2.TransfSound fiat2.Constraint fiat2.FlatmapForms.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
 Import ListNotations.
 
@@ -245,8 +245,7 @@ Fixpoint elab (ce : cenv) (free_vars : list string) (sc : scommand) : command :=
   end.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 

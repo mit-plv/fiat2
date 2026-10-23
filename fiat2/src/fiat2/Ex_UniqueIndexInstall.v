@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TransfSound fiat2.IndexInterface fiat2.Utils fiat2.Substitute
   fiat2.IndexTransf fiat2.Constraint fiat2.UniqueDictIndexImpl
   fiat2.UniqueIndexInstall fiat2.PrimaryKeyCheck.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString
   coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
 
@@ -45,8 +45,7 @@ Lemma uid_neq_uaux : uid <> uaux.
 Proof. unfold uid, uaux; intro H; discriminate H. Qed.
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
 
   Local Open Scope string.
 

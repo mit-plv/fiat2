@@ -4,7 +4,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.CollectionTransf fiat2.StringFacts
   fiat2.UniqueDictIndexImpl fiat2.UniqueIndexInstall fiat2.UniqueIndexGate
   fiat2.UniqueIndexUse fiat2.TrigramIndexImpl fiat2.Surface.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List Permutation Sorted Lia.
 
 Import ListNotations.
@@ -25,8 +25,7 @@ Import ListNotations.
    three, so it needs no runtime guard. *)
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
   (* the text attribute the index is built on, and the table's primary key *)
@@ -49,7 +48,7 @@ Section WithWord.
       TrigramIndexImpl.key_at g k d -> In k (tri_bucket g d).
   Proof.
     unfold TrigramIndexImpl.key_at, tri_bucket; intros g k d H.
-    destruct d as [ | | | | | | | d' | | | ]; try contradiction.
+    destruct d as [ | | | | | | d' | | | ]; try contradiction.
     destruct (dict_lookup g d') as [ b | ]; try contradiction.
     destruct b; try contradiction.
     exact H.
@@ -71,7 +70,7 @@ Section WithWord.
       String.index 0 p (TrigramIndexImpl.row_str attr r) <> None.
   Proof.
     unfold contains_test, TrigramIndexImpl.row_str; intros p r H.
-    destruct (row_key attr r) as [ | | | s | | | | | | | ];
+    destruct (row_key attr r) as [ | | s | | | | | | | ];
       cbn in H; try discriminate.
     destruct (String.index 0 p s); discriminate.
   Qed.
@@ -119,11 +118,11 @@ Section WithWord.
         1:{ apply key_at__In_tri_bucket.
             (* word_ok is implicit but not found by instance search from
                outside the section, so it is named here and below *)
-            apply (TrigramIndexImpl.tri_lookup_complete attr key (word_ok := word_ok));
+            apply (TrigramIndexImpl.tri_lookup_complete attr key);
               [ exact H_in | exact H_len
               | apply contains_test_true__occurrence; exact H_p ]. }
         1:{ unfold probe_body.
-            rewrite (UniqueDictIndexImpl.idx_lookup_Some key (word_ok := word_ok)
+            rewrite (UniqueDictIndexImpl.idx_lookup_Some key
                        rows v H_nd H_in).
             rewrite H_p. cbn [In]; auto. } }
     1:{ (* and every row the probe keeps is a row of the table that passes *)
@@ -134,7 +133,7 @@ Section WithWord.
           as [ r | ] eqn:E_lk; [ | contradiction ].
         destruct (contains_test p r) eqn:E_p; [ | contradiction ].
         destruct H_v as [ E_v | H_bad ]; [ subst r | contradiction ].
-        apply (UniqueDictIndexImpl.idx_lookup_Some_inv key (word_ok := word_ok))
+        apply (UniqueDictIndexImpl.idx_lookup_Some_inv key)
           in E_lk as [ H_rows _ ].
         apply list_to_set_incl_r, filter_In; split; [ | exact E_p ].
         apply list_to_set_incl_r; exact H_rows. }
@@ -168,8 +167,7 @@ Section WithIndexUse.
 
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
+    Notation value := (value).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Notation tridx_wf :=
@@ -422,8 +420,8 @@ Section WithIndexUse.
     Proof.
       cbn [IndexInterface.is_tbl_ty trigram_idx]; unfold TrigramIndexImpl.is_tbl_ty.
       intros t H.
-      destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-      destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+      destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+      destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
       destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr; try discriminate.
       destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
       apply type_eqb_eq in H; subst at_ty.
@@ -494,7 +492,7 @@ Section WithIndexUse.
         (* v is destructed before the invariants are introduced, so that
            their names survive; and each later destruct is pushed into them
            by hand, since destruct rewrites the goal but not hypotheses *)
-        destruct v as [ | | | | | | rv | | | | ];
+        destruct v as [ | | | | | rv | | | | ];
           intros H_vty H_tri H_pk;
           cbv beta iota in H_tri, H_pk; try contradiction.
         (* destruct on a match's scrutinee substitutes it in the hypotheses
@@ -503,7 +501,7 @@ Section WithIndexUse.
           cbv beta iota in H_tri, H_pk; try contradiction.
         destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
           cbv beta iota in H_tri, H_pk; try contradiction.
-        destruct v_aux as [ | | | | | | rv_aux | | | | ];
+        destruct v_aux as [ | | | | | rv_aux | | | | ];
           cbv beta iota in H_tri, H_pk; try contradiction.
         destruct (access_record rv_aux tri_tag) as [ v_tri | ] eqn:E_vtri;
           cbv beta iota in H_tri; try contradiction.
@@ -526,10 +524,10 @@ Section WithIndexUse.
         assert (H_bs : TrigramIndexImpl.buckets_are_sets
                          (TrigramIndexImpl.tri_entries attr key rows)).
         1:{ unfold TrigramIndexImpl.tri_entries.
-            apply (TrigramIndexImpl.tri_entries_buckets attr key (word_ok := word_ok)).
+            apply (TrigramIndexImpl.tri_entries_buckets attr key).
             constructor. }
         destruct (TrigramIndexImpl.tri_entries attr key rows) as
-          [ | | | | | | | td | | | ] eqn:E_te;
+          [ | | | | | | td | | | ] eqn:E_te;
           cbn [TrigramIndexImpl.buckets_are_sets] in H_bs; try contradiction.
         (* and the primary-key dictionary is its own mirror *)
         rewrite (UniqueDictIndexImpl.fiat2_gallina_to_idx hole key utup uacc
@@ -593,7 +591,7 @@ Section WithIndexUse.
             eapply List.Forall_In in H_sets; [ | exact E_lk ].
             (* substituting a constructor for bkv does not reduce the match
                inside the hypothesis, so reduce it again after the destruct *)
-            destruct bkv as [ | | | | | | | | | bl | ];
+            destruct bkv as [ | | | | | | | | bl | ];
               cbn [snd] in H_sets; try contradiction.
             exists bl; reflexivity. }
         destruct H_bl as [ bl E_bl ]; subst bkv.
@@ -614,10 +612,10 @@ Section WithIndexUse.
         unfold contains_test, row_key.
         destruct (interp_binop OStrContains
                     (match r with VRecord fs => record_proj attr fs | _ => VUnit end)
-                    (VString pv)) as [ | | bb | | | | | | | | ].
+                    (VString pv)) as [ | bb | | | | | | | | ].
         (* only the boolean branch has anything to do: a test that is not a
            boolean fails the recheck and contributes nothing, on both sides *)
-        3:{ destruct bb.
+        2:{ destruct bb.
             1:{ rewrite interp_EBinop, interp_EAtom, interp_EVar.
                 unfold get_local; rewrite map.get_put_same.
                 cbn [interp_atom interp_binop set_insert]. reflexivity. }
@@ -649,7 +647,7 @@ Section WithIndexUse.
       Proof.
         unfold literal_trigram; intros p g H.
         destruct p as [ | | a | | | | | | | | | | | | | | | ]; try discriminate.
-        destruct a as [ | | | str | | | | | | ]; try discriminate.
+        destruct a as [ | | str | | | | | | ]; try discriminate.
         destruct (Nat.leb 3 (String.length str)) eqn:E_len; [ | discriminate ].
         injection H as H; subst.
         exists str. split.
@@ -771,8 +769,8 @@ Section WithIndexUse.
                unique_dict_idx] in H_is, E_tri, E_pk.
         unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty,
           UniqueDictIndexImpl.idx_ty in H_is, E_tri, E_pk.
-        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
         destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr;
           try discriminate.
         destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
@@ -883,8 +881,8 @@ Section WithIndexUse.
                unique_dict_idx] in H_is, E_tri, E_pk.
         unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty,
           UniqueDictIndexImpl.idx_ty in H_is, E_tri, E_pk.
-        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
         destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr;
           try discriminate.
         destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
@@ -997,8 +995,8 @@ Section WithIndexUse.
                       store env H_sw H_ew) as H_pval.
         assert (H_pstr : exists pv, interp_expr store env pat = VString pv).
         1:{ destruct (interp_expr store env pat)
-              as [ | | | pv | | | | | | | ] eqn:E_pv.
-            4: exists pv; reflexivity.
+              as [ | | pv | | | | | | | ] eqn:E_pv.
+            3: exists pv; reflexivity.
             all: inversion H_pval. }
         destruct H_pstr as [ pv E_pv ].
         (* the guard *)
@@ -1095,13 +1093,13 @@ Section WithIndexUse.
       Proof.
         unfold aux_wf_for_idx, TrigramIndexImpl.idx_wf.
         intros tl rt v H_attr E_id.
-        destruct v as [ | | | | | | rv | | | | ];
+        destruct v as [ | | | | | rv | | | | ];
           intros H_vty H_tri; cbv beta iota in H_tri; try contradiction.
         destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
           cbv beta iota in H_tri; try contradiction.
         destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
           cbv beta iota in H_tri; try contradiction.
-        destruct v_aux as [ | | | | | | rv_aux | | | | ];
+        destruct v_aux as [ | | | | | rv_aux | | | | ];
           cbv beta iota in H_tri; try contradiction.
         destruct (access_record rv_aux tri_tag) as [ v_tri | ] eqn:E_vtri;
           cbv beta iota in H_tri; try contradiction.
@@ -1175,8 +1173,8 @@ Section WithIndexUse.
         intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_tri.
         cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty trigram_idx] in H_is, E_tri.
         unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty in H_is, E_tri.
-        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
         destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr; try discriminate.
         destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
         apply type_eqb_eq in H_is; subst at_ty.
@@ -1411,7 +1409,7 @@ Section WithIndexUse.
         destruct (dict_lookup (interp_expr store env kexp)
                     (UniqueDictIndexImpl.idx_entries key rows)) as [ r | ] eqn:E_lk.
         1:{ (* the row the key names, which the primary-key member resolves *)
-            apply (UniqueDictIndexImpl.idx_lookup_Some_inv key (word_ok := word_ok))
+            apply (UniqueDictIndexImpl.idx_lookup_Some_inv key)
               in E_lk as [ H_in E_k ].
             (* its text, from the row's type *)
             pose proof (TrigramIndexImpl.typed_rows_have_text attr rows rt
@@ -1445,7 +1443,7 @@ Section WithIndexUse.
             apply TrigramIndexImpl.tri_dict_filter_neq_absent; try assumption.
             all: intros r H_in E_k;
               pose proof (UniqueDictIndexImpl.idx_lookup_Some key
-                            (word_ok := word_ok) rows r H_nd H_in) as E_s;
+ rows r H_nd H_in) as E_s;
               rewrite E_k, E_lk in E_s; discriminate. }
       Qed.
 

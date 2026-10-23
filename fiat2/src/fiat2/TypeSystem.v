@@ -85,7 +85,6 @@ Proof.
 Qed.
 
 Inductive type_wf : type -> Prop :=
-| WFTWord : type_wf TWord
 | WFTInt : type_wf TInt
 | WFTBool : type_wf TBool
 | WFTString : type_wf TString
@@ -108,7 +107,7 @@ Inductive type_wf : type -> Prop :=
 
 Fixpoint type_wf_comp (t : type) : bool :=
   match t with
-  | TWord | TInt | TBool | TString | TUnit => true
+  | TInt | TBool | TString | TUnit => true
   | TOption t | TList t | TBag t | TSet t => type_wf_comp t
   | TRecord tl => NoDup_comp String.eqb (List.map fst tl) &&
                     StronglySorted_comp record_entry_leb tl &&
@@ -133,7 +132,6 @@ Qed.
 
 (* Inductive typing relation *)
 Inductive type_of_atom : atom -> type -> Prop :=
-| TyAWord n : type_of_atom (AWord n) TWord
 | TyAInt n : type_of_atom (AInt n) TInt
 | TyABool b : type_of_atom (ABool b) TBool
 | TyAString s : type_of_atom (AString s) TString
@@ -160,7 +158,6 @@ Inductive type_of_atom : atom -> type -> Prop :=
 | TyAUnit : type_of_atom AUnit TUnit.
 
 Inductive type_of_unop : unop -> type -> type -> Prop :=
-| TyOWNeg : type_of_unop OWNeg TWord TWord
 | TyONeg : type_of_unop ONeg TInt TInt
 | TyONot : type_of_unop ONot TBool TBool
 | TyOLength t : type_of_unop OLength (TList t) TInt
@@ -170,29 +167,19 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyODictValues dk kt vt : type_of_unop ODictValues (TDict dk kt vt) (TBag vt).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
-| TyOWPlus : type_of_binop OWPlus TWord TWord TWord
 | TyOPlus : type_of_binop OPlus TInt TInt TInt
-| TyOWMinus : type_of_binop OWMinus TWord TWord TWord
 | TyOMinus : type_of_binop OMinus TInt TInt TInt
-| TyOWTimes : type_of_binop OWTimes TWord TWord TWord
 | TyOTimes : type_of_binop OTimes TInt TInt TInt
-| TyOWDivU : type_of_binop OWDivU TWord TWord TWord
-| TyOWDivS : type_of_binop OWDivS TWord TWord TWord
 | TyODiv : type_of_binop ODiv TInt TInt TInt
-| TyOWModU : type_of_binop OWModU TWord TWord TWord
-| TyOWModS : type_of_binop OWModS TWord TWord TWord
 | TyOMod : type_of_binop OMod TInt TInt TInt
 | TyOAnd : type_of_binop OAnd TBool TBool TBool
 | TyOOr : type_of_binop OOr TBool TBool TBool
 | TyOConcat t : type_of_binop OConcat (TList t) (TList t) (TList t)
 | TyOConcatString : type_of_binop OConcatString TString TString TString
-| TyOWLessU : type_of_binop OWLessU TWord TWord TBool
-| TyOWLessS : type_of_binop OWLessS TWord TWord TBool
 | TyOLess : type_of_binop OLess TInt TInt TBool
 | TyOEq t : type_of_binop OEq t t TBool
 | TyOCons t : type_of_binop OCons t (TList t) (TList t)
 | TyORange : type_of_binop ORange TInt TInt (TList TInt)
-| TyOWRange : type_of_binop OWRange TWord TWord (TList TWord)
 | TyOBagInsert t : type_of_binop OBagInsert (TBag t) t (TBag t)
 | TyOSetInsert t : type_of_binop OSetInsert (TSet t) t (TSet t)
 | TyOLookup dk kt vt : type_of_binop OLookup (TDict dk kt vt) kt (TOption vt)
@@ -439,7 +426,6 @@ End WithMap.
 (* Bidirectional type checking *)
 Fixpoint type_eqb (t t' : type) {struct t} : bool :=
   match t, t' with
-  | TWord, TWord
   | TInt, TInt
   | TBool, TBool
   | TString, TString
@@ -487,7 +473,6 @@ Definition compare_types (expected : type) (t : type) {A : Type} (a : A): result
 
 Definition analyze_atom (expected : type) (a : atom) : result atom :=
   match a with
-  | AWord n => compare_types expected TWord a
   | AInt n => compare_types expected TInt a
   | ABool b => compare_types expected TBool a
   | AString s => compare_types expected TString a
@@ -529,7 +514,6 @@ Definition analyze_atom (expected : type) (a : atom) : result atom :=
 (* Computable type-checker *)
 Definition synthesize_atom (a : atom) : result (type * atom) :=
   match a with
-  | AWord n => Success (TWord, a)
   | AInt n => Success (TInt, a)
   | ABool b => Success (TBool, a)
   | AString s => Success (TString, a)
@@ -568,7 +552,6 @@ Definition synthesize_atom (a : atom) : result (type * atom) :=
 
 Definition unop_types (o : unop) : (type * type) :=
   match o with
-  | OWNeg => (TWord, TWord)
   | ONeg => (TInt, TInt)
   | ONot => (TBool, TBool)
   | OLengthString => (TString, TInt)
@@ -578,14 +561,11 @@ Definition unop_types (o : unop) : (type * type) :=
 
 Definition binop_types (o : binop) : (type * type * type) :=
   match o with
-  | OWPlus | OWMinus | OWTimes | OWDivU | OWDivS | OWModU | OWModS => (TWord, TWord, TWord)
   | OPlus | OMinus | OTimes | ODiv | OMod => (TInt, TInt, TInt)
   | OConcatString => (TString, TString, TString)
   | OStrContains => (TString, TString, TBool)
   | OAnd | OOr => (TBool, TBool, TBool)
-  | OWLessU | OWLessS => (TWord, TWord, TBool)
   | OLess => (TInt, TInt, TBool)
-  | OWRange => (TWord, TWord, TList TWord)
   | ORange => (TInt, TInt, TList TInt)
   | _ => (TUnit, TUnit, TUnit) (* unused *)
   end.

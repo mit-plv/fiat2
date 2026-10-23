@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.Utils fiat2.Substitute
   fiat2.IndexTransf fiat2.Constraint fiat2.UniqueDictIndexImpl.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
 
 Import ListNotations.
@@ -51,8 +51,7 @@ Section WithIndexVars.
 
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
+    Notation value := (value).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Notation uidx_wf := (UniqueDictIndexImpl.idx_wf hole attr tup acc (locals:=locals)).

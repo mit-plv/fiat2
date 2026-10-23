@@ -1,18 +1,13 @@
 From Stdlib Require Import ZArith String List DecimalString.
 Require Import fiat2.Language fiat2.Value.
-Require Import coqutil.Word.Interface coqutil.Map.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 
 Local Open Scope Z_scope.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
-
-  Notation value := (value (word := word)).
 
   Definition interp_atom (a : atom) : value :=
     match a with
-    | AWord n => VWord (word.of_Z n)
     | AInt n => VInt n
     | ABool b => VBool b
     | AString s => VString s
@@ -40,10 +35,6 @@ Section WithWord.
 
   Definition interp_unop (o : unop) (v : value) : value :=
     match o with
-    | OWNeg => match v with
-               | VWord w => VWord (word.opp w)
-               | _ => VUnit
-               end
     | ONeg => match v with
               | VInt z => VInt (Z.opp z)
               | _ => VUnit
@@ -71,12 +62,6 @@ Section WithWord.
                      end
     end.
 
-  Definition apply_word_binop (o : word -> word -> word) (a b : value) : value :=
-    match a, b with
-    | VWord a, VWord b => VWord (o a b)
-    | _, _ => VUnit
-    end.
-
   Definition apply_int_binop (o : Z -> Z -> Z) (a b : value) : value :=
     match a, b with
     | VInt a, VInt b => VInt (o a b)
@@ -93,12 +78,6 @@ Section WithWord.
     match len with
     | 0%nat => nil
     | S n => VInt lo :: eval_range (lo + 1) n
-    end.
-
-  Fixpoint eval_range_word (lo : word) (len : nat) : list value :=
-    match len with
-    | 0%nat => nil
-    | S n => VWord lo :: eval_range_word (word.add lo (word.of_Z 1)) n
     end.
 
   Fixpoint dict_insert (k v : value) (l : list (value * value)) : list (value * value) :=
@@ -137,17 +116,10 @@ Section WithWord.
 
   Definition interp_binop (o : binop) (a b : value) : value :=
     match o with
-    | OWPlus => apply_word_binop word.add a b
     | OPlus => apply_int_binop Z.add a b
-    | OWMinus => apply_word_binop word.sub a b
     | OMinus => apply_int_binop Z.sub a b
-    | OWTimes => apply_word_binop word.mul a b
     | OTimes => apply_int_binop Z.mul a b
-    | OWDivU => apply_word_binop word.divu a b
-    | OWDivS => apply_word_binop word.divs a b
     | ODiv => apply_int_binop Z.div a b
-    | OWModU => apply_word_binop word.modu a b
-    | OWModS => apply_word_binop word.mods a b
     | OMod => apply_int_binop Z.modulo a b
     | OAnd => apply_bool_binop andb a b
     | OOr => apply_bool_binop orb a b
@@ -159,14 +131,6 @@ Section WithWord.
                        | VString a, VString b => VString (String.append a b)
                        | _, _ => VUnit
                        end
-    | OWLessU => match a, b with
-                 | VWord a, VWord b => VBool (word.ltu a b)
-                 | _, _ => VUnit
-                 end
-    | OWLessS => match a, b with
-                 | VWord a, VWord b => VBool (word.lts a b)
-                 | _, _ => VUnit
-                 end
     | OLess => match a, b with
                | VInt a, VInt b => VBool (Z.ltb a b)
                | _, _ => VUnit
@@ -180,10 +144,6 @@ Section WithWord.
                 | VInt s, VInt e => VList (eval_range s (Z.to_nat (e - s)))
                 |_,  _ => VUnit
                 end
-    | OWRange => match a, b with
-                 | VWord s, VWord e => VList (eval_range_word s (Z.to_nat (word.unsigned e - word.unsigned s)))
-                 | _, _ => VUnit
-                 end
     | OBagInsert => match a with
                     | VBag l => VBag (bag_insert b l)
                     | _ => VUnit

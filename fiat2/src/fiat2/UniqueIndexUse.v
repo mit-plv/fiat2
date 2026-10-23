@@ -3,7 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.IndexTransf fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms fiat2.TransfUtils
   fiat2.UniqueDictIndexImpl fiat2.UniqueIndexInstall fiat2.UniqueIndexGate
   fiat2.Surface.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List Permutation Sorted.
 
 Import ListNotations.
@@ -24,8 +24,7 @@ Import ListNotations.
    for that a declaration-free index does not. *)
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context (attr : string).
 
   (* ------------------------------------------------------------------
@@ -98,8 +97,7 @@ Section WithIndexUse.
 
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
+    Notation value := (value).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Notation uidx_wf := (UniqueDictIndexImpl.idx_wf hole attr tup acc (locals := locals)).
@@ -397,8 +395,6 @@ Section WithIndexUse.
       rewrite (interp_uto_idx_at store env e1_1 rows E_rows).
       cbn [interp_binop].
       f_equal. symmetry. apply UniqueDictIndexImpl.idx_entries_filter_neq.
-      (* the instance an eapply above left open *)
-      exact word_ok.
     Qed.
 
     Lemma filter_neq_to_unique_delete_head_sound :
@@ -592,13 +588,13 @@ Section WithIndexUse.
       Proof.
         unfold aux_wf_for_idx, UniqueDictIndexImpl.idx_wf.
         intros tl rt v E_id.
-        destruct v as [ | | | | | | rv | | | | ];
+        destruct v as [ | | | | | rv | | | | ];
           intros H_vty H_wf; cbv beta iota in H_wf; try contradiction.
         destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
           cbv beta iota in H_wf; try contradiction.
         destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
           cbv beta iota in H_wf; try contradiction.
-        destruct v_aux as [ | | | | | | rv_aux | | | | ];
+        destruct v_aux as [ | | | | | rv_aux | | | | ];
           cbv beta iota in H_wf; try contradiction.
         destruct (access_record rv_aux idx_tag) as [ v_idx | ] eqn:E_vidx;
           cbv beta iota in H_wf; try contradiction.
@@ -661,8 +657,8 @@ Section WithIndexUse.
         intros tl ctl t Gstore H_twf H_is E_tbl E_id E_aux E_idx.
         cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty unique_dict_idx] in H_is, E_idx.
         unfold UniqueDictIndexImpl.is_tbl_ty, UniqueDictIndexImpl.idx_ty in H_is, E_idx.
-        destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-        destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+        destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
         rewrite inb_true_iff in H_is.
         apply In_access_record in H_is as [ kt E_attr ].
         assert (E_kt : get_attr_type rt attr = kt)
@@ -760,12 +756,12 @@ Section WithIndexUse.
       repeat destruct_match_hyp; try contradiction.
       eapply List.Forall_In in H_aux as H_mem; [ | exact H_in ]; cbn in H_mem.
       repeat destruct_match_hyp; try contradiction.
-      (* the map and word instances are named: none of them occurs in the
+      (* the map instances are named: none of them occurs in the
          lemma's conclusion, so from outside its section eapply turns each one
          it cannot determine into a goal of its own *)
       eapply (idx_wf__idx_wf_unique hole attr tup acc
                 (tenv := tenv) (tenv_ok := tenv_ok)
-                (word_ok := word_ok) (locals_ok := locals_ok));
+ (locals_ok := locals_ok));
         [ exact H_rt | exact H_attr | | exact H_mem | ].
       1:{ eapply type_of_value_at_id_tag; [ exact H_tags_diff | exact H_ty | eassumption ]. }
       1:{ eapply unique_constr_holds_row_ty_irrel.
@@ -912,8 +908,8 @@ Section WithIndexUse.
     Proof.
       cbn [IndexInterface.is_tbl_ty unique_dict_idx].
       unfold UniqueDictIndexImpl.is_tbl_ty; intros t H_is.
-      destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-      destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+      destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+      destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
       rewrite inb_true_iff in H_is.
       apply In_access_record in H_is as [ kt E_attr ].
       exists rt, kt; split; [ reflexivity | exact E_attr ].

@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.CollectionTransf.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation.
 
 Open Scope string_scope.
@@ -15,8 +15,6 @@ Definition swap_if_nil_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_if_nil_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_if_nil_head.
@@ -56,8 +54,6 @@ Definition merge_if_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma merge_if_head_preserve_ty : forall Gstore, preserve_ty Gstore merge_if_head.
@@ -97,8 +93,6 @@ Definition split_if_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma split_if_head_preserve_ty : forall Gstore, preserve_ty Gstore split_if_head.
@@ -139,8 +133,6 @@ Definition swap_flatmap_if_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_flatmap_if_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_flatmap_if_head.
@@ -219,8 +211,6 @@ Definition if_nil_into_flatmap_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma if_nil_into_flatmap_head_preserve_ty : forall Gstore, preserve_ty Gstore if_nil_into_flatmap_head.
@@ -275,8 +265,6 @@ Definition flatmap_assoc_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   (* Binding x around e does not change e's type when x is not free in e *)
@@ -365,8 +353,6 @@ Qed.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma flatmap_singleton_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_singleton_head.
@@ -439,8 +425,6 @@ Definition flatmap_if_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma flatmap_if_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_if_head.
@@ -489,8 +473,6 @@ Definition swap_conjuncts_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_conjuncts_head_preserve_ty : forall Gstore,
@@ -524,8 +506,6 @@ End WithMap.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma filter_repeat_true : forall A f (v : A) n,
@@ -558,16 +538,12 @@ End WithMap.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
 End WithMap.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma bag_insert_comm : forall (x y : value) l,
@@ -664,8 +640,6 @@ Definition swap_flatmap_likebag_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_flatmap_likebag_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_flatmap_likebag_head.

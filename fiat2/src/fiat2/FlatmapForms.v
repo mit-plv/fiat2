@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.CollectionTransf.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
 
@@ -45,9 +45,6 @@ Ltac rewrite_flat_map_singleton :=
     end.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
-  Local Notation value := (Value.value (word := word)).
 
   Section WithMap.
     Context {locals: map.map string value} {locals_ok: map.ok locals}.

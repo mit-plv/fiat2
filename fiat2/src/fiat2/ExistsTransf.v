@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.TransfSound fiat2.CollectionTransf fiat2.FlatmapForms.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.
 
@@ -41,8 +41,7 @@ Definition filter_eq_empty_to_set_mem_head (e : expr) : expr :=
 
 Section WithWord.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   (* one step of interp_expr, so that the derived-form lemmas below have a

@@ -1,13 +1,10 @@
 From Stdlib Require Import ZArith String List Sorted Permutation.
-Require Import coqutil.Word.Interface coqutil.Word.Properties coqutil.Datatypes.List coqutil.Datatypes.Result.
+Require Import coqutil.Datatypes.List coqutil.Datatypes.Result.
 Require Import Std.Sorting.Mergesort.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
 
   Inductive value :=
-  | VWord (w : word)
   | VInt (z : Z)
   | VBool (b : bool)
   | VString (s : string)
@@ -21,7 +18,7 @@ Section WithWord.
 
   Section ValueIH.
     Context (P : value -> Prop).
-    Hypothesis (f_word : forall w : word, P (VWord w)) (f_int : forall z : Z, P (VInt z)) (f_bool : forall b : bool, P (VBool b)) (f_string : forall s : string, P (VString s))
+    Hypothesis (f_int : forall z : Z, P (VInt z)) (f_bool : forall b : bool, P (VBool b)) (f_string : forall s : string, P (VString s))
       (f_option : forall m : option value, match m with Some v => P v | None => True end -> P (VOption m))
       (f_list : forall l : list value, Forall P l -> P (VList l))
       (f_record : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l))
@@ -55,7 +52,6 @@ Section WithWord.
 
     Fixpoint value_IH (v : value) {struct v} : P v :=
       match v with
-      | VWord w => f_word w
       | VInt z => f_int z
       | VBool b => f_bool b
       | VString s => f_string s
@@ -115,8 +111,6 @@ Section WithWord.
 
   Fixpoint value_compare (a b : value) : comparison :=
     match a, b with
-    | VWord a, VWord b =>
-        if word.eqb a b then Eq else if word.ltu a b then Lt else Gt
     | VInt a, VInt b =>
         Z.compare a b (* if Z.eqb a b then Eq else if Z.ltb a b then Lt else Gt *)
     | VBool a, VBool b =>
@@ -136,7 +130,6 @@ Section WithWord.
     | VUnit, VUnit => Eq
     | VUnit, _ => Lt | _, VUnit => Gt
     | VBool _, _ => Lt | _, VBool _ => Gt
-    | VWord _, _ => Lt | _, VWord _ => Gt
     | VInt _, _ => Lt | _, VInt _ => Gt
     | VString _, _ => Lt | _, VString _ => Gt
     | VOption _, _ => Lt | _, VOption _ => Gt
@@ -192,7 +185,6 @@ Section WithWord.
 
   Lemma value_compare_refl : forall v : value, value_compare v v = Eq.
     induction v using value_IH; auto; intros; simpl.
-    - rewrite word.eqb_eq; trivial.
     - apply Z.compare_refl.
     - destruct b; trivial.
     - apply string_compare_refl.
@@ -216,14 +208,6 @@ Section WithWord.
   Proof.
     intro u. apply (value_IH ((fun u => forall v, value_compare u v = CompOpp (value_compare v u))));
       destruct v; auto; intros; simpl.
-    - repeat match goal with
-             | |- context[word.eqb ?a ?b] => destruct (word.eqb_spec a b)
-             | |- context[word.ltu ?a ?b] => destruct (word.ltu_spec a b)
-             | H1: ?a <> ?b, H2: ?b = ?a |- _ => symmetry in H2; intuition idtac
-             end; auto; intuition idtac.
-      + exfalso. apply (Z.lt_asymm _ _ H1). assumption.
-      + exfalso. apply H. apply (Z.le_antisymm _ _ H1) in H2.
-        rewrite <-word.of_Z_unsigned. rewrite <-word.of_Z_unsigned at 1. congruence.
     - apply Z.compare_antisym.
     - destruct b, b0; auto.
     - apply String.compare_antisym.
@@ -309,7 +293,6 @@ Section WithWord.
     intros. generalize dependent v'. induction v using value_IH; intros;
       destruct v'; simpl in *; try discriminate;
       repeat destruct_match; try discriminate; auto; f_equal.
-      - apply word.eqb_true; auto.
       - apply Z.compare_eq; auto.
       - destruct b, b0; try discriminate; auto.
       - apply compare_eq_iff; auto.
@@ -424,11 +407,6 @@ Section WithWord.
                                                value_compare v v'' = Lt.
     induction v using value_IH.
     all: destruct v', v''; simpl in *; intros; try discriminate; auto.
-    - repeat destruct_match; try discriminate.
-      rewrite word.unsigned_ltu in *. unfold Z.ltb in *.
-      repeat destruct_match; try discriminate. eapply Zcompare_Lt_trans in E3; eauto.
-      rewrite E3. destruct (word.eqb w w1) eqn:E'; try discriminate; auto.
-      apply word.eqb_true in E'; subst. rewrite Z.compare_refl in E3. discriminate.
     - eapply Zcompare_Lt_trans; eauto.
     - destruct b, b0, b1; try discriminate; auto.
     - eapply string_compare_trans; eauto.

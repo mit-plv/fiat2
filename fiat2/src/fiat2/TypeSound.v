@@ -1,5 +1,4 @@
 Require Import fiat2.Value fiat2.Language fiat2.Interpret fiat2.TypeSystem.
-Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.Result.
 Import ResultMonadNotations.
@@ -26,12 +25,9 @@ Ltac destruct_match_hyp :=
       destruct x eqn:E end.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
 
   Section WithMap.
     Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-    Local Notation value := (Value.value (word := word)).
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
     Local Coercion is_true : bool >-> Sortclass.
@@ -105,7 +101,6 @@ Section WithWord.
     Qed.
 
     Inductive type_of_value : value -> type -> Prop :=
-    | TyVWord w : type_of_value (VWord w) TWord
     | TyVInt n : type_of_value (VInt n) TInt
     | TyVBool b : type_of_value (VBool b) TBool
     | TyVString s : type_of_value (VString s) TString
@@ -338,7 +333,7 @@ Section WithWord.
                  Permutation ((s, t) :: tl) tl' ->
                  ~ In s (List.map fst l) -> NoDup (List.map fst tl') ->
                  List.map (fun '(s, _) => (s, get_attr_type tl' s)) l = List.map (fun '(s, _) => (s, get_attr_type tl s)) l).
-      { generalize dependent width; generalize dependent tenv; clear; intros. induction l; simpl; intros; auto.
+      { generalize dependent locals; generalize dependent tenv; clear; intros. induction l; simpl; intros; auto.
         destruct a; simpl in *. f_equal.
         - rewrite <- Permutation_NoDup_In_get_attr_type with (tl := (s,t) :: tl) (tl' := tl'); auto.
           + simpl. destruct (String.eqb s s0) eqn:E.
@@ -555,8 +550,8 @@ Section WithWord.
     Qed.
 
     Lemma atom_typechecker_preserve_sem : forall a t a',
-        (synthesize_atom a = Success (t, a') -> interp_atom (word:=word) a' = interp_atom a) /\
-          (analyze_atom t a = Success a' -> interp_atom (word:=word) a' = interp_atom a).
+        (synthesize_atom a = Success (t, a') -> interp_atom a' = interp_atom a) /\
+          (analyze_atom t a = Success a' -> interp_atom a' = interp_atom a).
     Proof.
       destruct a; split; cbn; unfold compare_types; intro H.
       all: repeat (destruct_match_hyp; try discriminate).
@@ -765,7 +760,7 @@ Section WithWord.
     Lemma record_proj_sound : forall l, NoDup (List.map fst l) ->
                                         forall tl, Forall2 (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) l tl ->
                                                    forall x t, In (x, t) tl ->
-                                                               type_of_value (record_proj (width := width) x l) t.
+                                                               type_of_value (record_proj x l) t.
     Proof.
       intros l Hnodup tl Hvt x t Hin. generalize dependent tl. induction l; intros; simpl in *.
       - inversion Hvt; subst. apply in_nil in Hin. intuition idtac.
@@ -780,7 +775,7 @@ Section WithWord.
     Lemma dict_insert_preserve_NoDup : forall k k' v l,
         ~ In k (map fst l) ->
         k <> k' ->
-        ~ In k (map fst (dict_insert (word := word) k' v l)).
+        ~ In k (map fst (dict_insert k' v l)).
     Proof.
       induction l; intros.
       - simpl; intuition auto.
@@ -790,7 +785,7 @@ Section WithWord.
         destruct (value_compare k' v0); simpl; intuition auto.
     Qed.
 
-    Lemma dict_insert_incl : forall k v l, incl (dict_insert (word:=word) k v l) ((k, v) :: l).
+    Lemma dict_insert_incl : forall k v l, incl (dict_insert k v l) ((k, v) :: l).
     Proof.
       induction l; simpl; intuition auto with *.
       unfold value_ltb, value_eqb; destruct value_compare eqn:E; intuition auto with *.
@@ -884,14 +879,14 @@ Section WithWord.
     Qed.
 
     Lemma dict_delete_preserve_NoDup : forall k k' l,
-        ~ In k (map fst l) -> ~ In k (map fst (dict_delete (word:=word) k' l)).
+        ~ In k (map fst l) -> ~ In k (map fst (dict_delete k' l)).
     Proof.
       induction l; simpl; auto; intros.
       repeat lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
         simpl; intuition idtac.
     Qed.
 
-    Lemma dict_delete_incl : forall k l, incl (dict_delete (word:=word) k l) l.
+    Lemma dict_delete_incl : forall k l, incl (dict_delete k l) l.
     Proof.
       induction l; simpl; intuition auto with *.
       lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
@@ -1454,7 +1449,7 @@ Section WithWord.
         end; intuition auto.
       - (* TyEBinop *)
         inversion H; subst.
-        26:{ (* OLookup.  The kind occurs only in the premise, never in the
+        16:{ (* OLookup.  The kind occurs only in the premise, never in the
                conclusion -- a lookup is answerable either way -- so it has to
                be named here or it is left as an unresolved evar.  Unranged is
                an arbitrary instance of a universally quantified variable:
@@ -1464,43 +1459,38 @@ Section WithWord.
           eapply dict_lookup_sound with (dk := Unranged);[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.
           constructor; auto. }
-        26:{ (* ODelete *)
+        16:{ (* ODelete *)
           cbn. revert IHtype_of2. apply_type_sound_IH. intros.
           eapply dict_delete_sound;[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.
           constructor; auto. }
-        24:{ revert IHtype_of2; apply_type_sound_IH; intros.
+        14:{ revert IHtype_of2; apply_type_sound_IH; intros.
              cbn. constructor; auto using bag_insert_preserve_pos,
                bag_insert_preserve_SSorted, bag_insert_preserve_NoDup.
              rewrite Forall_forall; intros ? H_in.
              eapply bag_insert_incl in H_in as [ H_in | H_in ].
              2: apply_Forall_In.
              rewrite_asm; auto. }
-        24:{ revert IHtype_of2; apply_type_sound_IH; intros.
+        14:{ revert IHtype_of2; apply_type_sound_IH; intros.
              cbn. constructor; auto using set_insert_preserve_SSorted, set_insert_preserve_NoDup.
              rewrite Forall_forall; intros ? H_in.
              eapply set_insert_incl in H_in as [ H_in | H_in ].
              2: apply_Forall_In.
              rewrite_asm; auto. }
-        24:{ (* OSetUnion *)
+        14:{ (* OSetUnion *)
              repeat apply_type_sound_IH. cbn. apply set_union_sound; auto; constructor; auto. }
-        24:{ (* OSetIntersect *)
+        14:{ (* OSetIntersect *)
              repeat apply_type_sound_IH. cbn. apply set_filter_sound; constructor; auto. }
-        24:{ (* OSetDiff *)
+        14:{ (* OSetDiff *)
              repeat apply_type_sound_IH. cbn. apply set_filter_sound; constructor; auto. }
-        24:{ (* OSetMem *)
+        14:{ (* OSetMem *)
              revert IHtype_of2; apply_type_sound_IH; intros.
              cbn. constructor. }
-        24:{ (* OStrContains *)
+        14:{ (* OStrContains *)
              repeat apply_type_sound_IH. cbn. constructor. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).
-          { clear; induction len; simpl; intros.
-            - apply Forall_nil.
-            - repeat constructor; auto. }
-          auto.
-        + assert (forall len lo, Forall (fun v => type_of_value v TWord) (eval_range_word lo len)).
           { clear; induction len; simpl; intros.
             - apply Forall_nil.
             - repeat constructor; auto. }

@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.SumAgg fiat2.MinAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf
   fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno fiat2.ToPython.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith.
 
 Import ListNotations.
@@ -47,8 +47,7 @@ Definition query_ty :=
   TRecord (record_sort [("type", TInt); ("new_order", row_ty_orders); ("lo", TInt); ("hi", TInt)]).
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
 
   Local Open Scope string.
 
@@ -68,7 +67,7 @@ Section WithConcreteMaps.
 
   Compute (typecheck init_Gstore init_Genv prog).
 
-  Definition prog_transformed := map (fun heu => apply_optimize_anno (width:=width) (heu prog) init_Gstore init_Genv) heuristics.
+  Definition prog_transformed := map (fun heu => apply_optimize_anno (heu prog) init_Gstore init_Genv) heuristics.
 
   Compute prog_transformed.
 

@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf
   fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import String ZArith List.
 
 Import ListNotations.
@@ -135,8 +135,7 @@ Definition query_ty :=
               ("new_rec", row_ty)]).
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
 
   Local Open Scope string.
 
@@ -206,7 +205,7 @@ Section WithConcreteMaps.
     ].
 
   Definition prog_transformed :=
-    map (fun heu => apply_optimize_anno (width:=width) (heu prog) init_Gstore init_Genv)
+    map (fun heu => apply_optimize_anno (heu prog) init_Gstore init_Genv)
       heuristics.
 
   (* ---- projections, so every claim below is an equality of closed terms

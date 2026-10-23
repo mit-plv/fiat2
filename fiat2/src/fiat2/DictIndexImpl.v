@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils fiat2.Substitute fiat2.FlatmapForms.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
@@ -58,8 +58,7 @@ Section WithHole.
 
     Section WithMap.
       Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-      Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-      Notation value := (value (width:=width)).
+      Notation value := (value).
       Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
       Ltac apply_In_access_record :=
@@ -569,7 +568,7 @@ Section WithHole.
           is_tbl_ty t = true ->
           type_of Gstore Genv e t ->
           incl (get_free_vars Genv) free_vars ->
-          sem_eq (word:=word) Gstore Genv (idx_ty t)
+          sem_eq Gstore Genv (idx_ty t)
             (EFold e (EAtom (AEmptyDict dk None)) tup0 acc0
            (ETernop OInsert (EVar acc0) (EAccess (EVar tup0) attr)
               (EBinop OBagInsert
@@ -912,10 +911,10 @@ Section WithHole.
           Lemma attr_is_int : forall rt rc,
               type_of_value (VRecord rc) (TRecord rt) ->
               access_record rt attr = Success TInt ->
-              exists k, record_proj (width := width) attr rc = VInt k.
+              exists k, record_proj attr rc = VInt k.
           Proof.
             intros * H_rc H_attr.
-            assert (H_v : type_of_value (record_proj (width := width) attr rc) TInt).
+            assert (H_v : type_of_value (record_proj attr rc) TInt).
             1:{ invert_type_of_value_clear.
                 eapply record_proj_sound.
                 2: eassumption.
@@ -960,7 +959,7 @@ Section WithHole.
               = VBool (in_key_range
                          (interp_expr store env lo)
                          (interp_expr store env hi)
-                         (record_proj (width := width) attr rc)).
+                         (record_proj attr rc)).
           Proof.
             intros * H_Gs H_Ge H_b H_flo H_fhi H_ty H_st H_en H_rc.
             (* The bounds do not read the row, so they may be read in the
@@ -2002,12 +2001,10 @@ Lemma use_idx_head_sound2 : forall (hole attr : string) (dk : dict_kind),
        forall tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
-       forall (width : Z) (word : Interface.word width),
-       word.ok word ->
-       forall locals : map.map string (value (word:=word)),
+       forall locals : map.map string (value),
        map.ok locals ->
        forall (id_tag aux_tag idx_tag : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
-         (forall v : (value (word:=word)),
+         (forall v : (value),
              aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) -> aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr dk) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
        is_NoDup_opaque [tup; acc; x] ->
@@ -2020,14 +2017,12 @@ Lemma eq_filter_to_lookup_head_sound2 : forall (hole attr : string) (dk : dict_k
        forall tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
-       forall (width : Z) (word : Interface.word width),
-       word.ok word ->
-       forall locals : map.map string (value (word:=word)),
+       forall locals : map.map string (value),
        map.ok locals ->
        forall (id_tag aux_tag idx_tag b : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
        aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr dk) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
-       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) ->
+       (forall v : (value), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (eq_filter_to_lookup_head attr id_tag aux_tag idx_tag b).
 Proof.
@@ -2038,14 +2033,12 @@ Lemma range_filter_to_dict_range_head_sound2 : forall (hole attr : string) (dk :
        forall tup acc x : string,
        forall tenv : map.map string type,
        map.ok tenv ->
-       forall (width : Z) (word : Interface.word width),
-       word.ok word ->
-       forall locals : map.map string (value (word:=word)),
+       forall locals : map.map string (value),
        map.ok locals ->
        forall (id_tag aux_tag idx_tag rv : string) (is_tbl_ty' : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop),
        aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr dk) aux_ty ->
        (forall t : type, is_tbl_ty' t = true -> DictIndexImpl.is_tbl_ty attr t = true) ->
-       (forall v : (value (word:=word)), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) ->
+       (forall v : (value), aux_wf v -> aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr dk tup acc x) v) ->
        is_NoDup_opaque [tup; acc; x] ->
        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf (range_filter_to_dict_range_head attr dk id_tag aux_tag idx_tag rv).
 Proof.

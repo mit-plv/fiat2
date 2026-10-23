@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.Surface fiat2.Constraint fiat2.Substitute fiat2.PrimaryKeyCheck
   fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.TrigramIndexUse
   fiat2.OptimizeAnno.
-Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Word.Interface.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import String ZArith List.
 
 Import ListNotations.
@@ -20,14 +20,13 @@ Import ListNotations.
    on the result. *)
 
 Section WithConcreteMaps.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
 
   Local Open Scope string.
 
   Instance ctenv : map.map string type := SortedListString.map _.
   Instance ctenv_ok : map.ok ctenv := SortedListString.ok _.
 
-  Instance clocals : map.map string (value (width:=width)) := SortedListString.map _.
+  Instance clocals : map.map string (value) := SortedListString.map _.
   Instance clocals_ok : map.ok clocals := SortedListString.ok _.
 
   Definition prow_ty := TRecord [("id", TInt); ("name", TString)].
@@ -52,7 +51,7 @@ Section WithConcreteMaps.
       pbasics [UniqueDictIdx "id"] icss (pelaborated ds).
 
   Definition poptimized (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (panno ds []) pGstore0 pGenv0.
+    apply_optimize_anno_constrained (panno ds []) pGstore0 pGenv0.
 
   (* Declared key on "id": the dictionary goes in, and the guard that decided
      whether the key was free -- a scan of the table -- is one lookup in it. *)
@@ -144,7 +143,7 @@ Section WithConcreteMaps.
      is not the basic phase alone; it is the installation with a use rule that
      never fires. *)
   Definition pinstall_only (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width)
+    apply_optimize_anno_constrained
       (CAC [] O pbasics [UniqueDictIdx "id"] [] (pelaborated ds))
       pGstore0 pGenv0.
 
@@ -166,7 +165,7 @@ Section WithConcreteMaps.
      table the declared index already owns: its is_tbl_ty is false of the
      record the installation leaves behind. *)
   Lemma punconstrained_layer_after :
-    apply_optimize_anno_constrained (width:=width) (panno [DUnique "id"] [[DictIdx "id"]]) pGstore0 pGenv0
+    apply_optimize_anno_constrained (panno [DUnique "id"] [[DictIdx "id"]]) pGstore0 pGenv0
     = poptimized [DUnique "id"].
   Proof. reflexivity. Qed.
 
@@ -194,11 +193,11 @@ Section WithConcreteMaps.
   Theorem poptimized_sound : forall icss,
       well_typed pGstore0 pGenv0 (pelaborated [DUnique "id"]) ->
       well_typed pGstore0 pGenv0
-        (apply_optimize_anno_constrained (width:=width) (panno [DUnique "id"] icss) pGstore0 pGenv0) /\
+        (apply_optimize_anno_constrained (panno [DUnique "id"] icss) pGstore0 pGenv0) /\
         forall (store env : clocals),
           locals_wf pGstore0 store -> locals_wf pGenv0 env ->
           interp_command store env
-            (apply_optimize_anno_constrained (width:=width) (panno [DUnique "id"] icss) pGstore0 pGenv0)
+            (apply_optimize_anno_constrained (panno [DUnique "id"] icss) pGstore0 pGenv0)
           = interp_command store env (pelaborated [DUnique "id"]).
   Proof.
     intros icss H_wt. unfold panno, pelaborated, pprog in *.
@@ -259,7 +258,7 @@ Section WithConcreteMaps.
       pbasics [UniqueDictIdx "id"] icss (qelaborated ds).
 
   Definition qoptimized (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (qanno ds []) qGstore0 qGenv0.
+    apply_optimize_anno_constrained (qanno ds []) qGstore0 qGenv0.
 
   Compute (qelaborated [DUnique "id"]).
   Compute (qoptimized [DUnique "id"]).
@@ -340,7 +339,7 @@ Section WithConcreteMaps.
       mbasics [] [[SetAgg "id"]] (pelaborated ds).
 
   Definition moptimized (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (manno ds) pGstore0 pGenv0.
+    apply_optimize_anno_constrained (manno ds) pGstore0 pGenv0.
 
   Compute (moptimized [DUnique "id"]).
 
@@ -405,7 +404,7 @@ Section WithConcreteMaps.
       pbasics [UniqueDictIdx "id"; SetAgg "id"] [] (pelaborated ds).
 
   Definition boptimized (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (banno ds) pGstore0 pGenv0.
+    apply_optimize_anno_constrained (banno ds) pGstore0 pGenv0.
 
   (* The table is now the key-to-row dictionary at tag "0" and the set of
      keys at tag "1", and nothing else: the list is erased here too. *)
@@ -436,7 +435,7 @@ Section WithConcreteMaps.
         = interp_command store env (pelaborated [DUnique "id"]).
   Proof.
     intros H_wt. unfold boptimized, banno, pelaborated, pprog in *.
-    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+    apply (elab_apply_optimize_anno_constrained_sound);
       [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
@@ -462,7 +461,7 @@ Section WithConcreteMaps.
       (nelaborated ds).
 
   Definition noptimized (depth : nat) (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (nanno depth ds) pGstore0 pGenv0.
+    apply_optimize_anno_constrained (nanno depth ds) pGstore0 pGenv0.
 
   Compute (noptimized (S O) [DUnique "id"]).
 
@@ -493,7 +492,7 @@ Section WithConcreteMaps.
         = interp_command store env (nelaborated [DUnique "id"]).
   Proof.
     intros H_wt. unfold noptimized, nanno, nelaborated, nprog in *.
-    apply (elab_apply_optimize_anno_constrained_nested_sound (width:=width)
+    apply (elab_apply_optimize_anno_constrained_nested_sound
              "n" (EAtom (AInt 0)) _ [] _ pbasics [UniqueDictIdx "id"] []
              pGstore0 pGenv0 "users" prow_ty [DUnique "id"] TInt (EAtom (AInt 0)));
       [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
@@ -540,7 +539,7 @@ Section WithConcreteMaps.
       pbasics [TrigramIdx "name" "id"] [] (pelaborated ds).
 
   Definition toptimized (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (tanno ds) pGstore0 pGenv0.
+    apply_optimize_anno_constrained (tanno ds) pGstore0 pGenv0.
 
   Compute (toptimized [DUnique "id"]).
 
@@ -636,7 +635,7 @@ Section WithConcreteMaps.
         = interp_command store env (pelaborated [DUnique "id"]).
   Proof.
     intros H_wt. unfold toptimized, tanno, pelaborated, pprog in *.
-    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+    apply (elab_apply_optimize_anno_constrained_sound);
       [ apply pGstore0_wf | apply pGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
@@ -674,7 +673,7 @@ Section WithConcreteMaps.
       pbasics [TrigramIdx "name" "id"] [] (selaborated p ds).
 
   Definition soptimized (p : expr) (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (sanno p ds) sGstore0 sGenv0.
+    apply_optimize_anno_constrained (sanno p ds) sGstore0 sGenv0.
 
   Compute (soptimized (EAtom (AString "abc")) [DUnique "id"]).
   Compute (soptimized (EVar "p") [DUnique "id"]).
@@ -760,7 +759,7 @@ Section WithConcreteMaps.
       pbasics [TableRep LikeSet; TrigramIdx "name" "id"] [] (selaborated p ds).
 
   Definition voptimized (p : expr) (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (vanno p ds) sGstore0 sGenv0.
+    apply_optimize_anno_constrained (vanno p ds) sGstore0 sGenv0.
 
   Compute (voptimized (EVar "p") [DUnique "id"]).
 
@@ -836,7 +835,7 @@ Section WithConcreteMaps.
         = interp_command store env (selaborated (EVar "p") [DUnique "id"]).
   Proof.
     intros H_wt. unfold voptimized, vanno, selaborated, sprog in *.
-    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+    apply (elab_apply_optimize_anno_constrained_sound);
       [ apply sGstore0_wf | apply sGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
@@ -850,7 +849,7 @@ Section WithConcreteMaps.
         = interp_command store env (selaborated (EVar "p") [DUnique "id"]).
   Proof.
     intros H_wt. unfold soptimized, sanno, selaborated, sprog in *.
-    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+    apply (elab_apply_optimize_anno_constrained_sound);
       [ apply sGstore0_wf | apply sGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.
@@ -885,7 +884,7 @@ Section WithConcreteMaps.
       pbasics [TrigramIdx "name" "id"] [] (delaborated ds).
 
   Definition doptimized (ds : list decl) : command :=
-    apply_optimize_anno_constrained (width:=width) (danno ds) pGstore0 dGenv0.
+    apply_optimize_anno_constrained (danno ds) pGstore0 dGenv0.
 
   Compute (doptimized [DUnique "id"]).
 
@@ -985,7 +984,7 @@ Section WithConcreteMaps.
         = interp_command store env (delaborated [DUnique "id"]).
   Proof.
     intros H_wt. unfold doptimized, danno, delaborated, dprog in *.
-    apply (elab_apply_optimize_anno_constrained_sound (width:=width));
+    apply (elab_apply_optimize_anno_constrained_sound);
       [ apply pGstore0_wf | apply dGenv0_wf | apply prow_ty_wf
       | apply incl_refl | apply pdecl_wf_unique_id | exact H_wt ].
   Qed.

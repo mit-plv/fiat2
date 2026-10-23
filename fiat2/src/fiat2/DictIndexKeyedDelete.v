@@ -27,7 +27,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.IndexInterface fiat2.UniqueDictIndexImpl fiat2.Surface fiat2.UniqueIndexGate
   fiat2.TransfSound fiat2.TransfUtils
   fiat2.Substitute.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
@@ -48,8 +48,6 @@ Proof.
 Qed.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
 
   (* Filtering a bag is filtering its entry list: no multiplicity changes,
      only whole entries go, and the result is already canonical so the
@@ -120,8 +118,6 @@ Section WithWord.
 End WithWord.
 
 Section WithAttrs.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
 
   (* attr is the attribute this index buckets on; key is the primary key the
      delete names.  They are different -- when they coincide the O(1) rule
@@ -399,8 +395,8 @@ Section WithRule.
   Proof.
     cbn [IndexInterface.is_tbl_ty dict_idx]; unfold DictIndexImpl.is_tbl_ty.
     intros t H.
-    destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-    destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+    destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+    destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
     rewrite inb_true_iff in H; apply In_access_record in H as [ at_ty E_attr ].
     exists rt, at_ty; split; [ reflexivity | exact E_attr ].
   Qed.
@@ -418,8 +414,8 @@ Section WithRule.
     cbn [IndexInterface.is_tbl_ty unique_dict_idx];
       unfold UniqueDictIndexImpl.is_tbl_ty.
     intros t H.
-    destruct t as [ | | | | | | t1 | | | | ]; try discriminate.
-    destruct t1 as [ | | | | | | | rt | | | ]; try discriminate.
+    destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+    destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
     rewrite inb_true_iff in H; apply In_access_record in H as [ kt E_key ].
     exists rt, kt; split; [ reflexivity | exact E_key ].
   Qed.
@@ -435,8 +431,7 @@ Section WithRule.
 
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
+    Notation value := (value).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     (* ----------------------------------------------------------------
@@ -699,14 +694,14 @@ Section WithRule.
       (* v is destructed before the invariants are introduced, so that their
          names survive; each later destruct is pushed into them by hand,
          since destruct rewrites the goal but not hypotheses *)
-      destruct v as [ | | | | | | rv | | | | ];
+      destruct v as [ | | | | | rv | | | | ];
         intros H_vty H_idx H_pk;
         cbv beta iota in H_idx, H_pk; try contradiction.
       destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
         cbv beta iota in H_idx, H_pk; try contradiction.
       destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
         cbv beta iota in H_idx, H_pk; try contradiction.
-      destruct v_aux as [ | | | | | | rv_aux | | | | ];
+      destruct v_aux as [ | | | | | rv_aux | | | | ];
         cbv beta iota in H_idx, H_pk; try contradiction.
       destruct (access_record rv_aux idx_tag) as [ v_idx | ] eqn:E_vidx;
         cbv beta iota in H_idx; try contradiction.
@@ -1089,7 +1084,7 @@ Section WithRule.
         destruct (dict_lookup (interp_expr store env kexp)
                     (UniqueDictIndexImpl.idx_entries key rows)) as [ r | ] eqn:E_lk.
         1:{ (* the one row the key names, which the member resolves in O(1) *)
-            apply (UniqueDictIndexImpl.idx_lookup_Some_inv key (word_ok := word_ok))
+            apply (UniqueDictIndexImpl.idx_lookup_Some_inv key)
               in E_lk as [ H_in E_k ].
             (* what the per-row body computes, its binders read by shape *)
             assert (E_acc' : map.get
@@ -1123,7 +1118,7 @@ Section WithRule.
             apply (idx_of_filter_neq_absent attr key rows).
             intros r H_in E_k.
             pose proof (UniqueDictIndexImpl.idx_lookup_Some key
-                          (word_ok := word_ok) rows r H_nd H_in) as E_s.
+ rows r H_nd H_in) as E_s.
             rewrite E_k, E_lk in E_s; discriminate. }
       Qed.
     End WithTable.
