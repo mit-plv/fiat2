@@ -122,7 +122,7 @@ that found it rather than described in prose:
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` |
 | `SplitIf` costs a range pair one bound | the same file's two readers | `fetch_all_loses_a_bound_split` |
-| substring index | none found in seven corpora | -- |
+| an `eval/` subject for the substring index | Jenkins `hudson.search.CollectionSearchIndex:54-75` -- `find` is a hand-built map lookup and `suggest` a `contains` scan, same class, same collection | not yet written |
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
@@ -144,6 +144,20 @@ cited as nothing more.
 What is left is narrower and is what the row above now names: the list. The
 retention write rewrites the table from the table, so the field cannot be
 erased, and no rule turns a filter over the list into one over the member.
+
+The substring row changed on 2026-10-23 and the change is worth stating, because the
+earlier reading of it was wrong. There is still **no hand-built substring index** in any
+of the seven corpora -- no trigram, n-gram, trie or suffix array -- and that is
+structural: substring search is outsourced to a database or a search engine, so looking
+for the structure finds nothing. But the *query* over a table the program maintains is
+there and is first-class. Jenkins's own search facility gives every searchable
+collection two lookups in one class, `find` by exact name through a hand-built map and
+`suggest` by `contains` through a linear scan, which is the trigram pair's two members
+with one of them missing. NetBox hand-builds the other half -- `CachedValue` is an
+inverted index held as a table, postings carrying object identity, maintained on save
+and delete, queried with `icontains`. So the claim for this index is **C3**, we beat the
+hand-written code, rather than the **C4** claim the files above make; that is the
+stronger of the two and the paper should say which it is.
 
 The first row is the one gap with no file of its own: `_labels_index` and
 `_aliases_index` key on each element of a per-row collection rather than on one
