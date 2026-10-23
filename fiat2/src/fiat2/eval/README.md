@@ -18,7 +18,7 @@ Every file opens with a header comment giving, in this order:
 
 1. **Source** — repository, path, and the commit the reading is from, so the
    translation can be checked against the original.
-2. **Pattern** — the pattern IDs from `fiat2-paper/pattern-study` that the original
+2. **Pattern** — the pattern IDs from the separate pattern study that the original
    instantiates. These say why the example was chosen; the study's counts are a
    discovery aid and never appear in the paper.
 3. **Claim** — which evaluation claim the example evidences (see the evaluation log).
@@ -175,8 +175,31 @@ a cons to a set insert. `Kafka_WindowStore` behaves the same way with a bag.
 
 So the erasures that are wins are the ones where every read is answered by an index and
 **nothing replaces the list** -- `Kafka_Cluster`, `HA_AreaRegistry`, `Kafka_NamedCache`,
-and `Keycloak_CachedRealm` with its count. `TableRep` erases by substitution, which is an
-expressiveness result and not a performance one.
+and `Keycloak_CachedRealm` with its count.
+
+`TableRep` erases by substitution, so what it establishes is a **representation** fact
+rather than a cost one, and that is the right way to read it. The collection phase has
+already decided, per read, the weakest level a read's consumers observe -- a table read
+that comes out under a bag or set coercion is exactly the statement that nothing
+downstream observes more. `TableRep` lets that conclusion be realised in storage instead
+of only in the plan: the member it installs has type `TBag t` or `TSet t`, the program is
+well typed holding it, and it computes what the scan form computes. Both conjuncts are in
+the configuration's soundness theorem, so *a set suffices here* is checked rather than
+asserted; and once the list field is erased, no stored copy of the rows is finer than the
+level the program needs. It is the same move the dictionary kinds make -- a representation
+obligation pushed into the type, where a backend can read it.
+
+The claim is about information and not about structures, which is worth protecting in both
+directions: a set in the semantics is a canonical duplicate-free sorted list, which a
+backend need not build, and a list-typed table may still be hash-backed, since nothing in
+the language observes arbitrary order.
+
+And it is a claim about what remains stored, not that one relaxed collection replaces
+everything. `TableRep` at set level **alone** does not erase `Jenkins_UserSearch`'s list:
+`find` is a counted bag-level filter, so multiplicity is observed and the rep rule, which
+matches only a set coercion, leaves that read scanning the list. At bag level alone the
+list survives too, because the suggestion read is at set level. The erasure in that file's
+second configuration happens only because the trigram pair has already taken `find`.
 
 ## Limits stated here rather than hidden
 

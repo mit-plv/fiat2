@@ -127,9 +127,28 @@ Import ListNotations.
      the answer is the FIRST.  The erasure substitutes the structure the
      remaining readers and writers walk instead of removing one: the delete
      applies the same filter to the rep member that it applied to the list,
-     and the insert degrades from a cons to a set insert.  So the second
-     configuration carries TableRep as an expressiveness result -- the
-     table can be its own index -- and not as a faster program.
+     and the insert degrades from a cons to a set insert.
+
+     The second configuration is therefore not a faster program, and that
+     is not what it is for.  What it establishes is a REPRESENTATION fact.
+     The collection phase had already found that nothing downstream of the
+     suggestion read observes order or multiplicity -- that is what the set
+     coercion on the table read means -- and TableRep lets that conclusion
+     be realised in storage rather than only in the plan.  The member it
+     installs has type TSet row_ty (RepIdx's idx_ty), the program is well
+     typed holding it, and it computes what the scan form computes; both
+     conjuncts are optimized_rep_sound.  So a set suffices here stops being
+     a remark about one read and becomes a checked property of what is
+     stored, and once the list field is erased, no stored copy of the rows
+     is finer than the level the program needs.
+
+     What it does NOT say is that the table may be stored as a set, and the
+     difference matters.  TableRep at set level ALONE does not erase this
+     list: find is a counted bag-level filter, so multiplicity is observed,
+     and the rep rule matches only a set coercion -- the list stays and
+     find keeps scanning it.  At bag level alone it is not erased either,
+     since the suggestion read is at set level.  The erasure below happens
+     only because the trigram pair has already taken find.
    ============================================================ *)
 
 Definition row_ty :=
