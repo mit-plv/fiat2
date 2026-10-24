@@ -265,20 +265,29 @@ reported elsewhere play no part here. Wall-clock seconds are printed alongside, 
 as a check that the counters have the right shape: they time a tree-walking interpreter
 over an extracted AST, so their constants say nothing about a backend.
 
-Growing n eightfold, from 100 rows to 800, and counting the query phase alone:
+Each op kind is measured at six sizes -- 50, 100, 200, 400, 800, 1600 -- and what is
+reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the logs. A
+ratio between two sizes would not settle the question it looks like it settles: over an
+8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
 | | reads and writes measured | source | optimized |
 |---|---|---|---|
-| grows with the table | | 23 of 25 | 3 of 25 |
-| flat | | 2 of 25 | 22 of 25 |
+| linear in the table, `a` = 0.92 to 1.05 | | 23 of 25 | 3 of 25 |
+| independent of it, `a` = -0.01 to 0.02 | | 2 of 25 | 22 of 25 |
 
-The two flat ones in the source column are the two O(1) writes -- a prepend is a prepend
-whether or not anything is indexed. The twenty-three that grow do so by 6.9x to 8.7x,
-which is the table size; the twenty-two flat ones in the optimized column are 1.0x
-across the span.
+The two in the source column that do not grow are the two O(1) writes -- a prepend is a
+prepend whether or not anything is indexed. The twenty-two in the optimized column are
+not merely flatter, they are flat: the Lookin membership test, to take one, costs
+**exactly 300 steps at every one of the six sizes**. Their comparison counts are where
+the index shows through, at `a` = 0.08 to 0.31, which is `log n` appearing as the weak
+power law it is -- the same subject's comparison count goes 114, 134, 157, 177, 191,
+211, gaining about twenty per doubling across twenty queries. Two of the twenty-two do
+no comparisons at all (`a` = 0.00): `getRequiredActionProviderList`'s count and
+`sizeInBytes`, which are maintained aggregates and so are field reads, cheaper than a
+probe.
 
 **The three that still grow are the interesting column, and all three were already
-known and pinned.**
+known and pinned.** Their exponents are 0.94, 0.94 and 0.19.
 
 * `Kafka_WindowStore`'s `fetchAll`, 7.0x. This is `fetch_all_loses_a_bound_split`,
   the cost named in the limits table below: `SplitIf` is a whole-program rewrite, so the
@@ -292,13 +301,11 @@ known and pinned.**
 * `Jenkins_UserSearch`'s `suggest`, 1.5x -- sublinear, and it is the answer growing
   rather than the search: a three-character token matches more of a larger table.
 
-The seconds agree where they can be read at all. In the source column twenty of the
-twenty-five op phases are long enough to time, and they grow by 2.5x to 9.9x against the
-counters' 6.9x to 8.7x. In the optimized column only two are: `fetchAll` at 7.3x against
-its 7.0x, and Jenkins's `remove` at 6.5x against its 7.2x -- the two curves that were
-supposed to be there, confirmed by a second instrument. Everything else in that column
-is under 50 microseconds per op phase, which is to say a few hundred interpreter steps,
-and the harness prints that rather than a ratio.
+The seconds agree where they can be read at all, and over the full 32x span they are
+read more easily: the source op phases that resolve grow about 30x, against a counted
+exponent of 1. In the optimized column only the exceptions resolve at all -- everything
+else is under 50 microseconds per op phase, which is to say a few hundred interpreter
+steps, and the harness prints that rather than a ratio.
 
 The build phase is where the optimized program pays, and for the four subjects with a
 declared key it is where it collects instead. The uniqueness guard the elaborator emits

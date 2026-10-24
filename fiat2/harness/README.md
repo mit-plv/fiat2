@@ -97,6 +97,30 @@ generators keep keys short.
 Neither is a count of AST nodes. `report` prints those -- they say how big a program
 the optimizer wrote -- and nothing below uses them. `bench` runs the programs.
 
+## Asymptotics, which is what the claim is about
+
+An op kind is measured at **every** size, and the per-kind table reports the exponent
+`a` in `cost ~ rows^a`, fitted by least squares on the logs. A ratio between two sizes
+cannot do this job: over an 8x range, `n` grows 8.0x and `n log n` grows 9.4x, which is
+inside the spread the generators' own bucketing produces. The default sizes double --
+50, 100, 200, 400, 800, 1600 -- because an exponent is read off evenly spaced points on
+a log axis, and 32x is as wide as the quadratic source build phases allow. `bench 100
+400 1600` overrides them.
+
+The exponent is printed with a `~` when the fit is loose, because reporting a fitted
+exponent without saying how it fit would be worse than reporting nothing. A logarithmic
+cost fits a power law loosely and should: a probe's comparison count comes out around
+0.2 over this range, with a visible `~` on the subjects where the constant term is large
+enough to bend it.
+
+`csv [n ...]` prints the same op-phase series as one row per `(subject, kind, program,
+rows)`, so the curves can be plotted or fitted independently. The table's exponents are
+computed from exactly those numbers and nothing else. It is worth looking at the series
+directly at least once -- for instance the Lookin membership test, whose optimized op
+phase is **exactly 300 steps at every one of the six sizes** while its comparison count
+goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling for twenty queries.
+That is `log n`, stated by the data rather than by a curve fit.
+
 Wall-clock seconds are printed too, per op kind, as a check that the counters have the
 right shape and not as the result. They are weak evidence on purpose: they time a
 tree-walking OCaml interpreter over an extracted AST, so the constants belong to this

@@ -89,7 +89,14 @@ let op_phase (c : command) (sp : Gen.spec) ~rows ~ops ~only : run =
   let full = run_one c (Gen.workload sp ~rows ~ops ~only) in
   sub full base
 
-let default_sizes = [ 100; 200; 400; 800 ]
+(* Six sizes spanning 32x, doubling.  Doubling rather than adding a constant
+   because the quantity being estimated is an EXPONENT, and an exponent is
+   read off evenly spaced points on a log axis -- equal additive steps crowd
+   the small end of a log plot and tell you least where the curves separate.
+   Thirty-two-fold is as wide as the quadratic build phases allow: the
+   elaborated uniqueness guard makes a source build O(n^2), so the top size
+   costs sixteen times the 400-row one for those four subjects. *)
+let default_sizes = [ 50; 100; 200; 400; 800; 1600 ]
 let ops_per_kind = 20
 
 let factor (small : int) (large : int) : string =
@@ -101,6 +108,86 @@ let factor_f (small : float) (large : float) : string =
 
 let secs_str (x : float) : string =
   if x < resolvable then "   <50us" else Printf.sprintf "%8.6f" x
+
+(* ---- the exponent, which is what an asymptotic claim actually says ----
+
+   A ratio between two sizes cannot tell linear from n log n: over an 8x
+   range n grows 8.0x and n log n grows 9.4x, and the generators' own
+   bucketing moves the measured ratio by about that much.  So fit
+
+     log(cost) = a * log(rows) + b
+
+   by least squares over all the sizes and report a.  1.0 is linear in the
+   table, 0.0 is independent of it, and about 0.2 is what a tree probe's
+   COMPARISON count comes to over this range, log n being a weak power law
+   in disguise.
+
+   Reporting a fitted exponent without saying how well it fit would be
+   worse than reporting nothing, so [fit] also returns the largest relative
+   residual, and the printer marks an exponent whose fit is loose.  A cost
+   that is genuinely logarithmic, or that has a large constant term beside
+   a linear one, SHOULD fit a power law loosely; the mark is information,
+   not a defect. *)
+
+type fitted = { exponent : float; residual : float }
+
+let fit (pts : (int * int) list) : fitted option =
+  let pts = List.filter (fun (n, y) -> n > 0 && y > 0) pts in
+  let m = float (List.length pts) in
+  if m < 3. then None
+  else begin
+    let xs = List.map (fun (n, _) -> log (float n)) pts
+    and ys = List.map (fun (_, y) -> log (float y)) pts in
+    let mean l = List.fold_left ( +. ) 0. l /. m in
+    let mx = mean xs and my = mean ys in
+    let cov = List.fold_left2 (fun a x y -> a +. ((x -. mx) *. (y -. my))) 0. xs ys
+    and var = List.fold_left (fun a x -> a +. ((x -. mx) ** 2.)) 0. xs in
+    if var <= 0. then None
+    else begin
+      let a = cov /. var in
+      let b = my -. (a *. mx) in
+      (* residuals in the logs are relative errors in the costs *)
+      let worst =
+        List.fold_left2
+          (fun acc x y -> Float.max acc (Float.abs (exp (y -. ((a *. x) +. b)) -. 1.)))
+          0. xs ys in
+      Some { exponent = a; residual = worst }
+    end
+  end
+
+let exp_str (f : fitted option) : string =
+  match f with
+  | None -> "    -"
+  | Some { exponent; residual } ->
+      Printf.sprintf "%s%4.2f" (if residual > 0.15 then "~" else " ") exponent
+
+(* ---- the same series, as data rather than as a table ----
+
+   One row per (subject, kind, program, size), so the curves can be plotted
+   or fitted by something other than the fit above.  It prints the op phase
+   only, which is the phase the asymptotic claim is about; the build phase
+   is in the table.  Nothing here is derived -- the exponents in the table
+   are computed from exactly these numbers. *)
+
+let csv (sizes : int list) =
+  let sizes = if sizes = [] then default_sizes else sizes in
+  print_string "subject,kind,program,rows,steps,cmps\n";
+  List.iter
+    (fun ((name, src), opt) ->
+       let sp = List.assoc name Gen.specs in
+       List.iter
+         (fun (kind, _) ->
+            let only = Some kind in
+            List.iter
+              (fun rows ->
+                 List.iter
+                   (fun (tag, c) ->
+                      let r = op_phase c sp ~rows ~ops:ops_per_kind ~only in
+                      Printf.printf "%s,%s,%s,%d,%d,%d\n" name kind tag rows r.steps r.cmps)
+                   [ ("src", src); ("opt", opt) ])
+              sizes)
+         sp.kinds)
+    subjects
 
 let run (sizes : int list) =
   let sizes = if sizes = [] then default_sizes else sizes in
@@ -148,20 +235,34 @@ let run (sizes : int list) =
             Printf.printf "  bag canonicalisations in the op phase (src/opt): %s\n"
               (String.concat ", "
                  (List.map (fun (r, a, b) -> Printf.sprintf "%d rows %d/%d" r a b) l)));
-       (* one kind at a time: which read is responsible for the curve *)
-       Printf.printf "  per kind, op phase only, %d rows -> %d rows:\n" lo hi;
-       Printf.printf "    %-14s %11s %7s %11s %7s\n" "kind" "src steps" "growth"
-         "opt steps" "growth";
+       (* One kind at a time, at every size: which read is responsible for
+          the curve, and what shape the curve is.  'a' is the fitted
+          exponent; a leading ~ means the fit was loose, which for a
+          probe's comparison count is the expected answer. *)
+       Printf.printf
+         "  per kind, op phase only, over all %d sizes.  a is the exponent in\n\
+         \  cost ~ rows^a (1.0 linear, 0.0 independent, ~0.2 a probe's compares);\n\
+         \  a leading ~ marks a loose fit.  Columns are at %d rows.\n"
+         (List.length sizes) hi;
+       Printf.printf "    %-14s %11s %6s %6s %11s %6s %6s\n" "kind"
+         "src steps" "a" "a cmp" "opt steps" "a" "a cmp";
        let timings =
          List.map
            (fun (kind, _) ->
               let only = Some kind in
-              let sl = op_phase src sp ~rows:lo ~ops:ops_per_kind ~only
-              and sh = op_phase src sp ~rows:hi ~ops:ops_per_kind ~only
-              and ol = op_phase opt sp ~rows:lo ~ops:ops_per_kind ~only
-              and oh = op_phase opt sp ~rows:hi ~ops:ops_per_kind ~only in
-              Printf.printf "    %-14s %11d %7s %11d %7s\n" kind sh.steps
-                (factor sl.steps sh.steps) oh.steps (factor ol.steps oh.steps);
+              let series c =
+                List.map
+                  (fun rows -> (rows, op_phase c sp ~rows ~ops:ops_per_kind ~only))
+                  sizes in
+              let ss = series src and os = series opt in
+              let at l rows = List.assoc rows l in
+              Printf.printf "    %-14s %11d %6s %6s %11d %6s %6s\n" kind
+                (at ss hi).steps
+                (exp_str (fit (List.map (fun (n, r) -> (n, r.steps)) ss)))
+                (exp_str (fit (List.map (fun (n, r) -> (n, r.cmps)) ss)))
+                (at os hi).steps
+                (exp_str (fit (List.map (fun (n, r) -> (n, r.steps)) os)))
+                (exp_str (fit (List.map (fun (n, r) -> (n, r.cmps)) os)));
               (kind,
                op_phase_secs src sp ~rows:lo ~ops:ops_per_kind ~only,
                op_phase_secs src sp ~rows:hi ~ops:ops_per_kind ~only,
@@ -169,8 +270,9 @@ let run (sizes : int list) =
                op_phase_secs opt sp ~rows:hi ~ops:ops_per_kind ~only))
            sp.kinds in
        Printf.printf
-         "  the same in wall-clock seconds, for the shape only ('<50us' is an op\n\
-         \  phase too fast to separate from its build phase -- see the counts above):\n";
+         "  wall-clock seconds at the two end sizes, %d -> %d, for the shape only\n\
+         \  ('<50us' is an op phase too fast to separate from its build phase):\n"
+         lo hi;
        Printf.printf "    %-14s %11s %7s %11s %7s\n" "kind" "src secs" "growth"
          "opt secs" "growth";
        List.iter
