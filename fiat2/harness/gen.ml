@@ -34,7 +34,12 @@
    read that is inherently proportional (NamedCache's sizeInBytes over the
    whole cache, Keycloak's getRequiredActionProviderList), it is kept as it
    is, because a maintained aggregate is exactly what the optimizer offers
-   for it. *)
+   for it.
+
+   Jenkins's two short-token kinds are the other exception, and a different
+   kind of one: a substring scan's answer is whatever matches, and no index
+   is claimed for it.  What they measure is which BRANCH runs -- see the
+   note beside them. *)
 
 open Value
 
@@ -166,6 +171,22 @@ let user_search =
     kinds =
       [ ("byId", fun rows j -> q 2 (Printf.sprintf "u%d" (spread rows j)));
         ("suggest", fun _ j -> q 3 (Printf.sprintf "%03d" (spread 1000 j)));
+        (* Three characters is the shortest token the trigram rule probes
+           for, so these two kinds sit on the other side of its guard: the
+           kind above always probes, these two always take the FALLBACK
+           branch, which is the source query scanning the table as a set.
+
+           They are here because that branch is the only reader keeping the
+           list alive, and with every token three characters long it never
+           ran -- so its cost was absent from the measurement rather than
+           small in it.
+
+           The two differ in what they match, which separates the two costs
+           the fallback pays.  A token that occurs in no name isolates the
+           fixed part: coercing the table to a set, and walking it.  A token
+           drawn from the names also pays for the answer. *)
+        ("suggestMiss", fun _ _ -> q 3 "zz");
+        ("suggestShort", fun _ j -> q 3 (Printf.sprintf "%02d" (spread 100 j)));
         ("remove", fun rows j -> q 1 (Printf.sprintf "u%d" (victim rows j))) ] }
 
 (* ---------- cluster: conjunctive reads over a preloaded table ----------
