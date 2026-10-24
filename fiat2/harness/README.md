@@ -110,10 +110,12 @@ kind: 240 configurations, 0 mismatches. A failure there would be a bug in `eval.
 ## Reading the numbers
 
 A workload has two phases, and `bench` reports them separately by running the subject
-twice and subtracting. **build** brings the table to its size: for the five subjects
+twice and subtracting. **build** brings the table to its size: for the four subjects
 whose table is introduced empty, that is the insert queries, and the optimized program
-pays its index maintenance there; for the three whose table arrives in the environment
-it is the one-off cost of building the indexes from it. **ops** is the queries, which is
+pays its index maintenance there; for the four whose table arrives in the environment
+it is the one-off cost of building the indexes from it. Which of the two a subject gets
+is not the harness's choice -- it is whether the source builds the structure or is
+handed it. **ops** is the queries, which is
 what the optimizer is about.
 
 Selectivity is the choice that matters. A read whose answer is a constant fraction of

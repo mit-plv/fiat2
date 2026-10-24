@@ -67,14 +67,6 @@ Lemma ha_area_registry :
   = AR.anno.
 Proof. vm_compute; reflexivity. Qed.
 
-(* Nothing is declared here, which is why FilterEmptyToSetMem is safe to
-   run: there is no uniqueness guard for it to break. *)
-Lemma ha_lookin_functions :
-  select_anno (("functions", (LF.row_ty, LF.decls)) :: cenv_rm "functions" []) "functions" O
-    (LF.elaborated LF.decls)
-  = LF.anno.
-Proof. vm_compute; reflexivity. Qed.
-
 (* One choice, two members.  UniqueDictIdx "id" is demanded by both the
    exact-match read and the elaborated uniqueness guard, and dropped again
    because the trigram pair's second member already carries its rules.
@@ -145,6 +137,13 @@ Proof. vm_compute; reflexivity. Qed.
 Lemma kafka_window_store :
   unconstrained "segments" Kafka_WindowStore.prog
   = nth_heu Kafka_WindowStore.heuristics 1 Kafka_WindowStore.prog.
+Proof. vm_compute; reflexivity. Qed.
+
+(* Nothing is declared here, which is why FilterEmptyToSetMem is safe to
+   run: there is no uniqueness guard for it to break.  The selector is given
+   the empty cenv, which is the whole of what this subject tells it. *)
+Lemma ha_lookin_functions :
+  unconstrained "functions" LF.elaborated = LF.anno.
 Proof. vm_compute; reflexivity. Qed.
 
 (* The ranged dictionary, demanded by the read and by both range-shaped

@@ -56,10 +56,21 @@ Import ListNotations.
        is not vendored.  The component reads only `.name`, so the row is
        modelled as that one field; whatever else a Function carries is never
        read here.  The derivation and all four reads are Home Assistant's.
-     * The set is built once per entity and the function list does not change
-       during the entity's life, so this is A1a built-once, as in
-       Keycloak_CachedRealm and Kafka_Cluster.  There is no write.  The
-       write-side evidence is HA_AreaRegistry's.
+     * The function list is not built here.  `self._device = device`
+       (entity.py:91) is handed the device at construction and the set is
+       derived from its list at :94, so the list is an INPUT -- and the table
+       below is bound from an input variable, which is the same shape
+       Kafka_Cluster uses for the same reason: Cluster is immutable too, and
+       is likewise given its partitions rather than filling them in.  This is
+       A1a built-once, as in Keycloak_CachedRealm and Kafka_Cluster.  There is
+       no write and none is added; the write-side evidence is
+       HA_AreaRegistry's.
+     * Because the list is an input and nothing is declared about it, the
+       plain pipeline is the one used here, not the constrained one.  There is
+       then no declaration slot to leave empty, which states the claim below
+       more directly than an empty one would.  That the CONSTRAINED pipeline
+       also runs with no declaration is pinned separately, at
+       Ex_UniqueIndexPipeline's puse_closed_without_decl.
      * POWER_ON_CMD and POWER_OFF_CMD are string constants from aiolookin, so
        those two reads probe at a literal.  The loop at media_player.py:86-88
        probes at a key that varies, which is the `q.k` case below; the two
@@ -120,8 +131,12 @@ Section WithConcreteMaps.
   Definition say (s : string) : scommand :=
     SAssign "outputs" (EBinop OCons (EAtom (AString s)) (ELoc "outputs")) SSkip.
 
-  Definition prog_s (ds : list decl) : scommand :=
-    SLetConstrained "functions" row_ty ds
+  (* `self._device = device` (entity.py:91): the list is given.  SLetMut
+     binds the table from the input, where SLetConstrained would start it
+     empty -- and with no write in this component, empty is where it would
+     stay. *)
+  Definition prog_s : scommand :=
+    SLetMut (EVar "functions_tbl") "functions"
       (SForeach (EVar "queries") "q"
          (SIf (EBinop OEq (EAccess (EVar "q") "kind") (EAtom (AInt 0)))
             (* media_player.py:86-88 -- the key varies with the iteration *)
@@ -135,14 +150,11 @@ Section WithConcreteMaps.
     map.put map.empty "outputs" (TList TString).
 
   Definition init_Genv : ctenv :=
-    map.put map.empty "queries" (TList query_ty).
+    map.put (map.put map.empty "functions_tbl" (TList row_ty))
+      "queries" (TList query_ty).
 
-  Definition elaborated (ds : list decl) : command :=
-    elab [] (get_free_vars init_Genv) (prog_s ds).
-
-  (* Nothing is declared.  That is the point: the rewrite here is licensed by
-     what the queries observe, not by a constraint on the state. *)
-  Definition decls : list decl := [].
+  Definition elaborated : command :=
+    elab [] (get_free_vars init_Genv) prog_s.
 
   (* FilterEmptyToSetMem first in the list, so it runs LAST
      (compose_basic_transfs is a fold_right): it has to see the bag-level
@@ -150,12 +162,12 @@ Section WithConcreteMaps.
   Definition basics : list basic_transf :=
     [FilterEmptyToSetMem; PushdownCollection; AnnotateCollection; IfNilIntoFlatmap].
 
-  Definition anno : canno_command :=
-    CAC (("functions", (row_ty, decls)) :: cenv_rm "functions" []) O
-      basics [SetAgg "name"] [] (elaborated decls).
+  (* Nothing is declared.  That is the point: the rewrite here is licensed by
+     what the queries observe, not by a constraint on the state. *)
+  Definition anno : anno_command := AC basics [[SetAgg "name"]] elaborated.
 
   Definition optimized : command :=
-    apply_optimize_anno_constrained anno init_Gstore init_Genv.
+    apply_optimize_anno anno init_Gstore init_Genv.
 
   Definition installed_fields (c : command) : list string :=
     match c with
@@ -181,14 +193,12 @@ Section WithConcreteMaps.
     | _ => None
     end.
 
-  Definition empty_rows : expr := EAtom (ANil (Some row_ty)).
-
   (* the index: the set of the values `name` takes over the table *)
   Definition name_set (src : expr) : expr :=
     flatmap_proj_set (ESetOf src) "x" (EAccess (EVar "x") "name") None.
 
   Definition install_expected : expr :=
-    ERecord [("aux_tag", ERecord [("0", name_set empty_rows)])].
+    ERecord [("aux_tag", ERecord [("0", name_set (EVar "functions_tbl"))])].
 
   Definition member0 : expr :=
     EAccess (EAccess (ELoc "functions") "aux_tag") "0".
@@ -248,17 +258,15 @@ Section WithConcreteMaps.
   Lemma init_Genv_wf : tenv_wf init_Genv.
   Proof.
     unfold init_Genv.
-    apply tenv_wf_step; [ apply tenv_wf_empty | constructor; apply query_ty_wf ].
+    apply tenv_wf_step;
+      [ apply tenv_wf_step; [ apply tenv_wf_empty | constructor; apply row_ty_wf ]
+      | constructor; apply query_ty_wf ].
   Qed.
 
-  (* Nothing is declared, so there is nothing to check. *)
-  Lemma decls_wf : Forall (decl_wf (tenv:=ctenv) row_ty) decls.
-  Proof. unfold decls; apply Forall_nil. Qed.
-
   Lemma elaborated_well_typed :
-    well_typed init_Gstore init_Genv (elaborated decls).
+    well_typed init_Gstore init_Genv elaborated.
   Proof.
-    eapply command_typechecker_sound with (c := elaborated decls).
+    eapply command_typechecker_sound with (c := elaborated).
     1: apply init_Gstore_wf.
     1: apply init_Genv_wf.
     reflexivity.
@@ -269,11 +277,10 @@ Section WithConcreteMaps.
       forall (store env : clocals),
         locals_wf init_Gstore store -> locals_wf init_Genv env ->
         interp_command store env optimized
-        = interp_command store env (elaborated decls).
+        = interp_command store env elaborated.
   Proof.
-    unfold optimized, anno, elaborated, prog_s.
-    apply elab_apply_optimize_anno_constrained_sound;
-      [ apply init_Gstore_wf | apply init_Genv_wf | apply row_ty_wf
-      | apply incl_refl | apply decls_wf | apply elaborated_well_typed ].
+    unfold optimized, anno.
+    apply apply_all_transfs_sound;
+      [ apply init_Gstore_wf | apply init_Genv_wf | apply elaborated_well_typed ].
   Qed.
 End WithConcreteMaps.

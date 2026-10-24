@@ -66,10 +66,6 @@ let run (sizes : int list) =
     (fun ((name, src), opt) ->
        let sp = List.assoc name Gen.specs in
        Printf.printf "\n=== %s ===" name;
-       if List.mem name Gen.unscalable then
-         Printf.printf
-           "\n  (the translated program never writes its table, so it stays empty:\n\
-           \   these rows are not a scaling result)";
        Printf.printf
          "\n  rows  phase   src steps    opt steps     src cmps     opt cmps  agree\n";
        let canon = ref [] in

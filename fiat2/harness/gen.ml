@@ -9,10 +9,10 @@
    SHAPE OF A WORKLOAD.  Two phases, kept separate so the measurement can
    separate them:
 
-     build   brings the table to [rows] rows.  For the five subjects whose
+     build   brings the table to [rows] rows.  For the four subjects whose
              table is introduced empty by SLetConstrained, that is [rows]
              insert queries, and the optimized program pays its index
-             maintenance here.  For the three whose table arrives in the
+             maintenance here.  For the four whose table arrives in the
              environment it is the initial list, and the optimized program
              pays once, before the loop, to build its indexes from it.
 
@@ -123,19 +123,27 @@ let area_registry =
         ("byFloor", fun rows j -> q rows 3 "" (Printf.sprintf "f%d" (j mod buckets rows)));
         ("remove", fun rows j -> q rows 1 (Printf.sprintf "i%d" (victim rows j)) "") ] }
 
-(* ---------- lookin: a membership test over a table nothing writes ----------
+(* ---------- lookin: a membership test over a preloaded table ----------
 
-   The translated program has no write at all -- the source reads a fixed
-   capability set off a device -- so SLetConstrained introduces the table
-   empty and it stays empty.  [rows] is therefore ignored here and the
-   subject has nothing to measure at scale; bench.ml says so rather than
-   printing a flat line as if it were a result. *)
+   The component writes nothing: the function list is handed to the entity
+   at construction and only read, so the table arrives in the environment
+   as Cluster's does.
+
+   Row 0 is named "mode", the literal the second read probes at, so that
+   read hits; the varying read probes at names that are mostly absent, so
+   both branches of both tests are exercised.  Which branch is taken costs
+   the same either way -- the unindexed form is a flatmap over the whole bag
+   whether or not it finds anything, and the probe is a tree descent -- so
+   this is about exercising the program, not about the numbers. *)
 
 let lookin =
+  let row j = rcd [ ("name", if j = 0 then s "mode" else s (Printf.sprintf "f%d" j)) ] in
   let q kind k = rcd [ ("kind", i kind); ("k", s k) ] in
-  { queries_var = "queries"; store = outputs_only; table = no_table; build = no_build;
+  { queries_var = "queries"; store = outputs_only;
+    table = (fun rows -> [ ("functions_tbl", VList (List.init rows row)) ]);
+    build = no_build;
     kinds =
-      [ ("varyingKey", fun _ j -> q 0 (Printf.sprintf "f%d" j));
+      [ ("varyingKey", fun rows j -> q 0 (Printf.sprintf "f%d" (spread rows j)));
         ("literalKey", fun _ _ -> q 1 "") ] }
 
 (* ---------- user search: a unique key and a trigram index ----------
@@ -230,9 +238,6 @@ let specs =
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("window_store", window_store); ("range_delete", range_delete) ]
-
-(* the subjects whose table the workload cannot grow; see [lookin] *)
-let unscalable = [ "lookin" ]
 
 let workload (sp : spec) ~(rows : int) ~(ops : int) ~(only : string option) : workload =
   let kinds =

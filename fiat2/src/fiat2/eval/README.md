@@ -262,13 +262,13 @@ interpreter work in the query phase alone:
 
 | | reads and writes measured | source | optimized |
 |---|---|---|---|
-| grows with the table | | 21 of 23 | 3 of 23 |
-| flat | | 2 of 23 | 20 of 23 |
+| grows with the table | | 23 of 25 | 3 of 25 |
+| flat | | 2 of 25 | 22 of 25 |
 
 The two flat ones in the source column are the two O(1) writes -- a prepend is a prepend
-whether or not anything is indexed. The twenty-one that grow do so by 6.9x to 8.7x,
-which is the table size; the twenty flat ones in the optimized column are 1.0x across
-the span.
+whether or not anything is indexed. The twenty-three that grow do so by 6.9x to 8.7x,
+which is the table size; the twenty-two flat ones in the optimized column are 1.0x
+across the span.
 
 **The three that still grow are the interesting column, and all three were already
 known and pinned.**
@@ -290,20 +290,23 @@ declared key it is where it collects instead. The uniqueness guard the elaborato
 is a scan, so building an n-row table costs O(n^2) in the source; the declared index
 turns the guard into one probe. At 800 rows that is 4.50M steps against 51.2K for
 `Keycloak_CachedRealm`, 5.77M against 58.4K for `Kafka_NamedCache`, 2.25M against 41.6K
-for `HA_AreaRegistry` and 2.25M against 139K for `Jenkins_UserSearch`. For the three
+for `HA_AreaRegistry` and 2.25M against 139K for `Jenkins_UserSearch`. For the four
 subjects whose table arrives already populated the direction reverses, as it should:
-the source does no setup at all and the optimized program spends 9.6K to 19.2K steps
+the source does no setup at all and the optimized program spends 3.2K to 19.2K steps
 building its indexes once, before the loop.
 
-`HA_LookinFunctions` is absent from all of this. Its translation has no write -- the
-source reads a fixed capability set off a device -- so `SLetConstrained` introduces the
-table empty and nothing ever puts a row in it. Its claim is an expressiveness one and is
-pinned in Rocq; there is nothing in it to measure at scale, and the harness says so
-rather than printing a flat line as if it were a result. What it does show is the one
-place the set coercion is visible at runtime: the source canonicalises a bag 40 times in
-a query phase, to compare it against the empty bag, and the optimized program does it
-zero times, because `FilterEmptyToSetMem` has replaced the comparison with a membership
-test.
+`HA_LookinFunctions` is where the set coercion is visible at runtime rather than only in
+the term. Both of its membership tests go from 7.8x and 7.9x to 1.0x, and alongside that
+the source canonicalises a bag 40 times in a query phase, to compare it against the
+empty bag, while the optimized program does it zero times, because `FilterEmptyToSetMem`
+has replaced the comparison with a membership test. Its table is the one that arrives
+populated for a reason worth naming: the component is handed its device at construction
+(`entity.py:91`) and only reads the list, so the list is an input, not something the
+program builds. An earlier version of that file introduced the table with
+`SLetConstrained`, which starts a table empty by definition; with no write anywhere in
+the component the table then stayed empty at every n, and the subject could not be
+measured at all. The fix was to model the input as an input, which is what
+`Kafka_Cluster` -- immutable for the same reason -- already did.
 
 ## Limits stated here rather than hidden
 
