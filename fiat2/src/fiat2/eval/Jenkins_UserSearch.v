@@ -348,11 +348,23 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
 
-  (* the source query, left as the fallback, over whatever it is given *)
+  (* the source query, left as the fallback, over whatever it is given.
+     At set level, which is where it ends up when what it is given IS a set
+     -- a stored member, in the second configuration below. *)
   Definition scan (src : expr) : expr :=
     flatmap_filter_set src "r"
       (EBinop OStrContains (EAccess (EVar "r") "fullName") token)
       "r" (Some row_ty) (Some row_ty).
+
+  (* And the same query at LIST level with the coercion on its result, which
+     is how the source wrote it and where it ends up when nothing absorbs
+     the coercion.  The two differ in what the set is built from: the rows
+     the filter kept, here, against the rows it read, above.  See
+     UnpushCollection.v, and the measurement in the harness. *)
+  Definition scan_then_coerce (src : expr) : expr :=
+    ESetOf (flatmap_filter_list src "r"
+              (EBinop OStrContains (EAccess (EVar "r") "fullName") token)
+              "r" (Some row_ty) (Some row_ty)).
 
   Definition long_enough : expr :=
     EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString token).
@@ -387,7 +399,7 @@ Section WithConcreteMaps.
     suggest_of optimized
     = Some (EIf long_enough
               (tri_probe "0" "1" (tri_at token (EAtom (AInt 0))))
-              (scan (ESetOf the_list))).
+              (scan_then_coerce the_list)).
   Proof. vm_compute; reflexivity. Qed.
 
   (* AllUsers.putIfAbsent: the declared key costs one lookup, not a scan. *)

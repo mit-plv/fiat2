@@ -3,7 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
   fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
   fiat2.EraseField fiat2.RepIdx
-  fiat2.FlagFilter.
+  fiat2.FlagFilter fiat2.UnpushCollection.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -96,6 +96,9 @@ Variant anno_command :=
 
 Definition annotate_collection_transf := fold_command id annotate_collection.
 Definition push_down_collection_transf := fold_command id push_down_collection.
+(* Not a basic transf: it runs after the index phase, because what it reads
+   is whether that phase took the coercion.  See UnpushCollection.v. *)
+Definition unpush_collection_transf := fold_command id unpush_set_filter_head.
 Definition swap_if_nil_transf := fold_command id swap_if_nil_head.
 Definition merge_if_transf := fold_command id merge_if_head.
 Definition split_if_transf := fold_command id split_if_head.
@@ -700,8 +703,9 @@ end.
              mk_idx_related_transfs cidx idx_use_transfs) icss in
     (Basics.compose
        (compose_all_idx_transfs O (erase_transfs (List.length icss)) Gstore Genv)
-       (Basics.compose (compose_all_idx_transfs O idx_transfs Gstore Genv)
-          (compose_basic_transfs (map mk_basic_transf fs)))).
+       (Basics.compose unpush_collection_transf
+          (Basics.compose (compose_all_idx_transfs O idx_transfs Gstore Genv)
+             (compose_basic_transfs (map mk_basic_transf fs))))).
 
   Definition apply_optimize_anno (ac : anno_command) (Gstore Genv : ctenv) :=
     match ac with
@@ -1493,6 +1497,8 @@ end.
   Proof.
     unfold apply_all_transfs; intros.
     apply transf_sound_compose; [ apply compose_erase_transfs_sound | ].
+    apply transf_sound_compose;
+      [ apply fold_command_id_sound, unpush_set_filter_head_sound | ].
     apply transf_sound_compose.
     2: apply compose_basic_transfs_sound.
     apply compose_all_idx_transfs_sound.
@@ -1849,11 +1855,12 @@ end.
     (icss : list (list index_choice)) (Gstore Genv : ctenv) : command -> command :=
     Basics.compose
       (compose_all_idx_transfs O (erase_transfs (S depth + List.length icss)) Gstore Genv)
-      (Basics.compose
-         (compose_all_idx_transfs O (idx_transfs_of reps icss) Gstore Genv)
+      (Basics.compose unpush_collection_transf
          (Basics.compose
-            (apply_below_n_letmuts depth (idx_transf_of ce reps cics) Gstore Genv)
-            (compose_basic_transfs (map mk_basic_transf fs)))).
+            (compose_all_idx_transfs O (idx_transfs_of reps icss) Gstore Genv)
+            (Basics.compose
+               (apply_below_n_letmuts depth (idx_transf_of ce reps cics) Gstore Genv)
+               (compose_basic_transfs (map mk_basic_transf fs))))).
 
   (* The premise: at the declared table's depth, the cenv describes the
      program, its initializer is an atom, and every enclosing initializer
@@ -1891,13 +1898,21 @@ end.
     (* the unconstrained index layer: sound for every well-typed program *)
     pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H_Gs H_Ge H_wt2)
       as [ H_wt3 H_sem3 ].
+    (* taking back the coercions no index absorbed: an expression rewrite,
+       so it needs only well-typedness, and it runs here because what its
+       guard reads is what the layer above just did *)
+    pose proof (fold_command_id_sound (locals := clocals)
+                  unpush_set_filter_head unpush_set_filter_head_sound
+                  Gstore Genv _ H_Gs H_Ge H_wt3)
+      as [ H_wt3' H_sem3' ]; cbn in H_wt3', H_sem3'.
     (* and the erasure, which needs only well-typedness *)
     pose proof (compose_erase_transfs_sound (S depth + List.length icss)
-                  Gstore Genv _ H_Gs H_Ge H_wt3)
+                  Gstore Genv _ H_Gs H_Ge H_wt3')
       as [ H_wt4 H_sem4 ].
     split; [ assumption | ].
     intros store env H_lws H_lwe.
     rewrite H_sem4 by assumption.
+    rewrite H_sem3' by assumption.
     rewrite H_sem3 by assumption.
     rewrite H_sem2 by assumption.
     apply H_sem1; assumption.
@@ -1920,12 +1935,17 @@ end.
       as [ H_wt1 H_sem1 ]; cbn in H_wt1, H_sem1.
     pose proof (compose_all_idx_transfs_of_sound reps icss Gstore Genv _ H H0 H_wt1)
       as [ H_wt2 H_sem2 ].
-    pose proof (compose_erase_transfs_sound (S depth + List.length icss)
+    pose proof (fold_command_id_sound (locals := clocals)
+                  unpush_set_filter_head unpush_set_filter_head_sound
                   Gstore Genv _ H H0 H_wt2)
+      as [ H_wt2' H_sem2' ]; cbn in H_wt2', H_sem2'.
+    pose proof (compose_erase_transfs_sound (S depth + List.length icss)
+                  Gstore Genv _ H H0 H_wt2')
       as [ H_wt3 H_sem3 ].
     split; [ exact H_wt3 | ].
     intros store env H_lws H_lwe.
     rewrite H_sem3 by assumption.
+    rewrite H_sem2' by assumption.
     rewrite H_sem2 by assumption. apply H_sem1; assumption.
   Qed.
 

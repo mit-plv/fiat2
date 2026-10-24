@@ -691,11 +691,15 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
 
-  (* the query the pushdown leaves, which is also the fallback below *)
+  (* The fallback: the source query, with the coercion where the source put
+     it.  The pushdown drove it onto the table's read and no index absorbed
+     it there, so the post-index rewrite put it back on the result -- the
+     set is built from the rows the filter kept rather than from the whole
+     table.  See UnpushCollection.v. *)
   Definition sscan (p : expr) : expr :=
-    flatmap_filter_set (ESetOf (EAccess (ELoc "users") "id_tag")) "r"
-      (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
-      (Some prow_ty) (Some prow_ty).
+    ESetOf (flatmap_filter_list (EAccess (ELoc "users") "id_tag") "r"
+              (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
+              (Some prow_ty) (Some prow_ty)).
 
   (* A literal pattern that has a trigram: the trigram is computed at rewrite
      time, and nothing of the scan is left. *)
