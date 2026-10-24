@@ -257,8 +257,15 @@ the source program's final store against the optimized one's, so each measuremen
 also a concrete witness of that subject's soundness theorem on that input.
 
 The workload grows the table to n rows and then issues a fixed number of queries of each
-kind the subject dispatches on. Growing n eightfold, from 100 rows to 800, and counting
-interpreter work in the query phase alone:
+kind the subject dispatches on. What is counted is interpreter work -- entries into
+`interp_expr` plus one per element any primitive linear in its argument walks -- and
+value comparisons, which is where the cost of a dictionary, bag or set operation sits.
+Both are machine-independent; neither is a count of AST nodes, and the program sizes
+reported elsewhere play no part here. Wall-clock seconds are printed alongside, but only
+as a check that the counters have the right shape: they time a tree-walking interpreter
+over an extracted AST, so their constants say nothing about a backend.
+
+Growing n eightfold, from 100 rows to 800, and counting the query phase alone:
 
 | | reads and writes measured | source | optimized |
 |---|---|---|---|
@@ -284,6 +291,14 @@ known and pinned.**
   `ODictValues` would erase it and this number with it.
 * `Jenkins_UserSearch`'s `suggest`, 1.5x -- sublinear, and it is the answer growing
   rather than the search: a three-character token matches more of a larger table.
+
+The seconds agree where they can be read at all. In the source column twenty of the
+twenty-five op phases are long enough to time, and they grow by 2.5x to 9.9x against the
+counters' 6.9x to 8.7x. In the optimized column only two are: `fetchAll` at 7.3x against
+its 7.0x, and Jenkins's `remove` at 6.5x against its 7.2x -- the two curves that were
+supposed to be there, confirmed by a second instrument. Everything else in that column
+is under 50 microseconds per op phase, which is to say a few hundred interpreter steps,
+and the harness prints that rather than a ratio.
 
 The build phase is where the optimized program pays, and for the four subjects with a
 declared key it is where it collects instead. The uniqueness guard the elaborator emits

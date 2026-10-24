@@ -1,8 +1,12 @@
 (* The counters the measurement is made of.
 
-   Wall-clock time is reported too, but it is not the evidence: it depends on
-   the machine, on the allocator, and on how hard OCaml's Map happens to work
-   on a given shape.  These two counters do not.
+   Wall-clock time is reported alongside them by bench.ml, but it is not the
+   evidence: it depends on the machine, on the allocator, on how hard OCaml's
+   Map happens to work on a given shape, and above all on the fact that it is
+   timing a tree-walking interpreter rather than any backend anyone would
+   ship.  These counters depend on none of that.  What the seconds are good
+   for is a check on the SHAPE: a read these counters call flat had better
+   not take eight times longer on an eight-times-larger table.
 
      comparisons  every entry into Value.compare, including the recursive
                   entries on sub-values.  This is where the cost of a

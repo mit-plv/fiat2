@@ -94,6 +94,20 @@ Both are machine-independent, which is why they and not wall-clock time are the
 evidence. A string comparison counts as one, which is honest only because the
 generators keep keys short.
 
+Neither is a count of AST nodes. `report` prints those -- they say how big a program
+the optimizer wrote -- and nothing below uses them. `bench` runs the programs.
+
+Wall-clock seconds are printed too, per op kind, as a check that the counters have the
+right shape and not as the result. They are weak evidence on purpose: they time a
+tree-walking OCaml interpreter over an extracted AST, so the constants belong to this
+harness rather than to anything a backend would produce, and the only thing worth
+reading off them is whether a curve the counters call flat is flat in seconds too. An
+op phase is timed as (build + ops) less (build alone), each side repeated until it has
+accumulated 0.1s; where that difference falls under 50us the table prints `<50us`
+rather than a ratio, because two nearly-equal timings subtracted do not have a
+meaningful quotient. That happens for most of the optimized column, which is the point
+being made rather than a gap in it: those op phases are a few hundred interpreter steps.
+
 ## The two checks that come free
 
 `bench` compares the final stores of the source and the optimized program on every
