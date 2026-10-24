@@ -245,6 +245,66 @@ matches only a set coercion, leaves that read scanning the list. At bag level al
 list survives too, because the suggestion read is at set level. The erasure in that file's
 second configuration happens only because the trigram pair has already taken `find`.
 
+## What it costs, measured
+
+The claims above are about what the optimizer *produces*. What it *buys* is measured by
+running the produced programs, which happens outside this directory: `Extract.v` hands
+the terms to OCaml and the harness beside them evaluates them over generated workloads.
+How the evaluator is built, and what it assumes, is documented where it lives; the two
+things worth repeating here are that the evaluator is checked against the Gallina
+interpreter on all sixteen programs over 240 configurations, and that every run compares
+the source program's final store against the optimized one's, so each measurement is
+also a concrete witness of that subject's soundness theorem on that input.
+
+The workload grows the table to n rows and then issues a fixed number of queries of each
+kind the subject dispatches on. Growing n eightfold, from 100 rows to 800, and counting
+interpreter work in the query phase alone:
+
+| | reads and writes measured | source | optimized |
+|---|---|---|---|
+| grows with the table | | 21 of 23 | 3 of 23 |
+| flat | | 2 of 23 | 20 of 23 |
+
+The two flat ones in the source column are the two O(1) writes -- a prepend is a prepend
+whether or not anything is indexed. The twenty-one that grow do so by 6.9x to 8.7x,
+which is the table size; the twenty flat ones in the optimized column are 1.0x across
+the span.
+
+**The three that still grow are the interesting column, and all three were already
+known and pinned.**
+
+* `Kafka_WindowStore`'s `fetchAll`, 7.0x. This is `fetch_all_loses_a_bound_split`,
+  the cost named in the limits table below: `SplitIf` is a whole-program rewrite, so the
+  read that gains nothing from it pays anyway. The measurement turns the pin into a
+  number, and into a trade that can be stated: in the same file and the same
+  configuration, `fetch` goes flat (1.0x) and the retention write goes flat (1.0x), so
+  the split buys two scans and sells one.
+* `Jenkins_UserSearch`'s `remove`, 7.2x. This is the list, and this file is the only one
+  of the eight that still has one. The delete filters it; a rule recovering rows from
+  `ODictValues` would erase it and this number with it.
+* `Jenkins_UserSearch`'s `suggest`, 1.5x -- sublinear, and it is the answer growing
+  rather than the search: a three-character token matches more of a larger table.
+
+The build phase is where the optimized program pays, and for the four subjects with a
+declared key it is where it collects instead. The uniqueness guard the elaborator emits
+is a scan, so building an n-row table costs O(n^2) in the source; the declared index
+turns the guard into one probe. At 800 rows that is 4.50M steps against 51.2K for
+`Keycloak_CachedRealm`, 5.77M against 58.4K for `Kafka_NamedCache`, 2.25M against 41.6K
+for `HA_AreaRegistry` and 2.25M against 139K for `Jenkins_UserSearch`. For the three
+subjects whose table arrives already populated the direction reverses, as it should:
+the source does no setup at all and the optimized program spends 9.6K to 19.2K steps
+building its indexes once, before the loop.
+
+`HA_LookinFunctions` is absent from all of this. Its translation has no write -- the
+source reads a fixed capability set off a device -- so `SLetConstrained` introduces the
+table empty and nothing ever puts a row in it. Its claim is an expressiveness one and is
+pinned in Rocq; there is nothing in it to measure at scale, and the harness says so
+rather than printing a flat line as if it were a result. What it does show is the one
+place the set coercion is visible at runtime: the source canonicalises a bag 40 times in
+a query phase, to compare it against the empty bag, and the optimized program does it
+zero times, because `FilterEmptyToSetMem` has replaced the comparison with a membership
+test.
+
 ## Limits stated here rather than hidden
 
 Each of these has a witness in the corpus and no rule, and each is pinned in the file

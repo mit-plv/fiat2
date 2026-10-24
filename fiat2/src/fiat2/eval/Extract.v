@@ -1,4 +1,5 @@
-Require Import fiat2.Language.
+Require Import fiat2.Language fiat2.Value fiat2.Interpret.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
@@ -15,17 +16,29 @@ Local Open Scope string.
    WHAT CROSSES THE BOUNDARY, and why exactly this much.
 
    The abstract syntax -- type, atom, unop, binop, ternop, expr, command,
-   and the three tags -- and the subject programs themselves, each one
-   both before and after the optimizer.  Nothing else.
+   and the three tags -- the subject programs themselves, each one both
+   before and after the optimizer, and the Gallina interpreter.
 
-   In particular NOT interp_expr.  The Gallina interpreter is the
-   specification of the semantics and is not a source to derive an
-   implementation from: its dictionaries are canonical sorted association
-   lists, so extracting it would hand us an evaluator in which every
-   insert and every lookup is linear -- destroying the incrementality the
-   measurement exists to show, in exactly the direction that matters.  The
-   evaluator is written by hand against the denotations, with persistent
-   maps.
+   THE INTERPRETER IS HERE AS AN ORACLE, NOT AS THE EVALUATOR.  Nothing
+   that measures anything calls it.  The measurement runs harness/eval.ml,
+   which is written by hand against the denotations with persistent maps,
+   because the specification's dictionaries are canonical sorted
+   association lists: extracting it as the evaluator would give one in
+   which every insert and every lookup is linear, destroying the
+   incrementality the measurement exists to show, in exactly the direction
+   that matters.
+
+   What the extracted interpreter is for is harness/differential.ml, which
+   runs it and the hand-written evaluator on the same subject programs over
+   the same generated inputs and compares the results.  That is the only
+   link between the two, and it is the right one: a specification is a
+   thing to be checked against, and the hand-written evaluator is otherwise
+   unverified code sitting directly underneath the performance claim.
+
+   ref_run takes and returns association lists rather than the map type, so
+   that the boundary carries no coqutil representation into OCaml; the
+   locals instance is fixed here, where it is an implementation detail of
+   the oracle and of nothing else.
 
    WHY EXTRACT THE PROGRAMS rather than print and re-parse them.  Each
    term below is the normal form of the very definition the soundness
@@ -49,6 +62,14 @@ Local Open Scope string.
                              the wrong parameter and would distort the
                              trigram subject specifically.
    ============================================================ *)
+
+Section Oracle.
+  Instance rlocals : map.map string value := SortedListString.map _.
+
+  Definition ref_run (store env : list (string * value)) (c : command)
+    : list (string * value) :=
+    map.tuples (interp_command (map.of_list store) (map.of_list env) c).
+End Oracle.
 
 Extraction Language OCaml.
 Set Extraction Output Directory "harness/generated".
@@ -127,4 +148,4 @@ Definition alternatives : list (string * command) :=
   ; ("cluster/unsplit", cluster_opt_unsplit)
   ; ("window_store/unsplit", window_store_opt_unsplit) ].
 
-Extraction "ast.ml" subjects alternatives.
+Extraction "extracted.ml" subjects alternatives ref_run.

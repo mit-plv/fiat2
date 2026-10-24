@@ -1,6 +1,6 @@
 ; Extracted by src/fiat2/eval/Extract.v -- do not edit by hand, and do not
 ; check the .ml/.mli in.  Warnings are off because this is generated code.
 (library
- (name conquord_ast)
+ (name conquord_extracted)
  (wrapped false)
  (flags (:standard -w -a)))
