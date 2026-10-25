@@ -3,7 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.Constraint.
 Require fiat2.DictIndexImpl.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
-From Stdlib Require Import List String ZArith Sorted.
+From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
 Open Scope string_scope.
@@ -266,6 +266,58 @@ Section WithHole.
 
       Definition idx_wf_unique (tbl_v idx_v : value) : Prop :=
         idx_wf tbl_v idx_v /\ keys_distinct tbl_v.
+
+      (* ------------------------------------------------------------------
+         What keys_distinct buys: the dictionary is a faithful COPY.
+
+         Each row is inserted at its own key, so with the keys distinct nothing
+         ever overwrites and the dictionary holds one entry per row.  Its values
+         are then the table's rows up to order -- which is why a read that
+         observes neither order nor multiplicity can be served from the member
+         instead of from the table.  The declared key is not decoration here:
+         the conclusion is false without it, since two rows sharing a key leave
+         one entry behind and a row is simply lost.
+         ------------------------------------------------------------------ *)
+
+      (* The fold's own step, as an equation, so the induction below can use it
+         without unfolding idx_entries in the induction hypothesis too. *)
+      Lemma idx_entries_cons : forall (r : value) (l : list value),
+          idx_entries (r :: l) = dict_insert (row_key attr r) r (idx_entries l).
+      Proof.
+        reflexivity.
+      Qed.
+
+      (* Deleting a key no row carries leaves the entries alone.  Proved by
+         running idx_entries_filter_neq backwards: the delete is the index of a
+         filtered table, and the filter discards nothing. *)
+      Lemma dict_delete_idx_entries_absent : forall (l : list value) (k : value),
+          ~ In k (List.map (row_key attr) l) ->
+          dict_delete k (idx_entries l) = idx_entries l.
+      Proof.
+        intros l k H_ni. rewrite <- idx_entries_filter_neq. f_equal.
+        rewrite filter_ext_in with (g := fun _ => true); [ apply filter_true | ].
+        intros r H_in. rewrite Bool.negb_true_iff.
+        destruct (value_eqb (row_key attr r) k) eqn:E; [ | reflexivity ].
+        apply value_eqb_eq in E. exfalso. apply H_ni.
+        rewrite <- E. apply in_map; assumption.
+      Qed.
+
+      (* The faithful-copy statement itself. *)
+      Lemma idx_entries_values_Permutation : forall (l : list value),
+          NoDup (List.map (row_key attr) l) ->
+          Permutation (List.map snd (idx_entries l)) l.
+      Proof.
+        induction l as [| r l IH]; intros H_nd.
+        1: reflexivity.
+        cbn [List.map] in H_nd. inversion H_nd; subst.
+        rewrite idx_entries_cons.
+        eapply perm_trans.
+        1: apply Permutation_map, DictIndexImpl.dict_insert_Permutation,
+             idx_entries_SSorted.
+        cbn [List.map snd].
+        rewrite dict_delete_idx_entries_absent by assumption.
+        apply perm_skip, IH; assumption.
+      Qed.
 
       (* ------------------------------------------------------------------
          The index's keys are exactly the table's keys.

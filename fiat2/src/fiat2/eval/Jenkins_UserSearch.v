@@ -297,7 +297,6 @@ Section WithConcreteMaps.
 
   Definition member (i : string) : expr :=
     EAccess (EAccess (ELoc "users") "aux_tag") i.
-  Definition the_list : expr := EAccess (ELoc "users") "id_tag".
   Definition new_user : expr := EAccess (EVar "q") "new_user".
   Definition token : expr := EAccess (EVar "q") "k".
   Definition no_rows : expr := EAtom (ANil (Some row_ty)).
@@ -348,23 +347,17 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
 
-  (* the source query, left as the fallback, over whatever it is given.
-     At set level, which is where it ends up when what it is given IS a set
-     -- a stored member, in the second configuration below. *)
-  Definition scan (src : expr) : expr :=
-    flatmap_filter_set src "r"
-      (EBinop OStrContains (EAccess (EVar "r") "fullName") token)
-      "r" (Some row_ty) (Some row_ty).
-
-  (* And the same query at LIST level with the coercion on its result, which
-     is how the source wrote it and where it ends up when nothing absorbs
-     the coercion.  The two differ in what the set is built from: the rows
-     the filter kept, here, against the rows it read, above.  See
-     UnpushCollection.v, and the measurement in the harness. *)
-  Definition scan_then_coerce (src : expr) : expr :=
-    ESetOf (flatmap_filter_list src "r"
-              (EBinop OStrContains (EAccess (EVar "r") "fullName") token)
-              "r" (Some row_ty) (Some row_ty)).
+  (* The source query, left as the fallback, served from the primary-key
+     member.  The member's
+     values are a BAG, so the scan runs at bag level and the coercion to a
+     set lands once, on the rows the filter kept -- not on the rows it read.
+     This is what the declared key buys the fallback: the rows are already
+     in a structure, so the list it used to scan has no reader left. *)
+  Definition scan_the_member (m : expr) : expr :=
+    EUnop OSetOfBag
+      (flatmap_filter_bag (EUnop ODictValues m) "r"
+         (EBinop OStrContains (EAccess (EVar "r") "fullName") token)
+         "r" (Some row_ty) (Some row_ty)).
 
   Definition long_enough : expr :=
     EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString token).
@@ -376,8 +369,7 @@ Section WithConcreteMaps.
      table -- a trigram lookup is a point lookup on a derived key. *)
   Definition install_expected : expr :=
     ERecord
-      [("id_tag", no_rows);
-       ("aux_tag", ERecord [("0", build_postings no_rows);
+      [("aux_tag", ERecord [("0", build_postings no_rows);
                             ("1", build_keys no_rows)])].
 
   Lemma installs_the_pair : install_of optimized = Some install_expected.
@@ -399,7 +391,7 @@ Section WithConcreteMaps.
     suggest_of optimized
     = Some (EIf long_enough
               (tri_probe "0" "1" (tri_at token (EAtom (AInt 0))))
-              (scan_then_coerce the_list)).
+              (scan_the_member (member "1"))).
   Proof. vm_compute; reflexivity. Qed.
 
   (* AllUsers.putIfAbsent: the declared key costs one lookup, not a scan. *)
@@ -417,8 +409,7 @@ Section WithConcreteMaps.
      key.  Neither member is rebuilt. *)
   Definition insert_expected : expr :=
     ERecord
-      [("id_tag", EBinop OCons new_user the_list);
-       ("aux_tag",
+      [("aux_tag",
          ERecord
            [("0", ELet (member "0") "acc" (ELet new_user "tup" (post_row (EVar "acc"))));
             ("1", ELet (member "1") "acc"
@@ -448,10 +439,7 @@ Section WithConcreteMaps.
 
   Definition delete_expected : expr :=
     ERecord
-      [("id_tag", flatmap_filter_list the_list "r"
-                    (EUnop ONot (EBinop OEq (EAccess (EVar "r") "id") token))
-                    "r" (Some row_ty) (Some row_ty));
-       ("aux_tag",
+      [("aux_tag",
          ERecord
            [("0", ELet (member "0") "acc"
                     (EOptMatch (EBinop OLookup (member "1") token)
@@ -461,31 +449,42 @@ Section WithConcreteMaps.
   Lemma delete_maintains_both : delete_of optimized = Some delete_expected.
   Proof. vm_compute; reflexivity. Qed.
 
-  (* And the list survives.  Not because find reads it -- find is a probe now
-     -- but because the fallback branch of suggest scans it.  That is a READ
-     the index rules could not take, and nothing about guards or maintenance
-     is involved. *)
-  Lemma the_fallback_keeps_the_list :
-    installed_fields optimized = ["id_tag"; "aux_tag"].
+  (* And the list is GONE.  The fallback used to be its last reader -- find
+     is a probe, the guard is a probe, and the two writes only maintained it
+     -- so once the fallback is served from the primary-key member there is
+     no reader left and erase_dead_field drops the field.  The table's whole
+     representation is the two members: the trigram postings, and the
+     byName map the source itself keeps. *)
+  Lemma the_declared_key_erases_the_list :
+    installed_fields optimized = ["aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 
   (* ============ configuration 1: and the table's set as well ============ *)
 
-  (* Nothing about either read's rewrite changes; what changes is what the
-     fallback scans.  Above it coerces the whole list on every evaluation;
-     here that coercion IS a member, so the fallback reads it -- and then the
-     list has no reader left and is erased.  The table IS its three indexes. *)
+  (* The second configuration adds TableRep, which makes the table's own set
+     a member.  It was built to reach the erasure above by a different route:
+     give the fallback a member to scan, and the list loses its last reader.
+     It still does that -- but the erasure is no longer what distinguishes
+     it, since the declared key reaches the same place without adding a copy.
+     What remains is the comparison below, which is now one-sided. *)
   Lemma rep_erases_the_list :
     installed_fields optimized_rep = ["aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 
   (* The set is "0", so the postings are "1" and the keys they point through
-     are "2".  The probe is otherwise the same term. *)
-  Lemma rep_suggest_falls_back_to_the_set :
+     are "2".  The probe is otherwise the same term -- and the FALLBACK is
+     the same term too: it reads the primary-key member at "2", not the
+     table's own set at "0".  The scan rule runs after TableRep's, so where
+     both could serve the read the declared key wins, which is the right way
+     round: the key member is one the source already maintains, while the set
+     is a copy.  The consequence for this configuration is stark -- its extra
+     member now has no reader at all, and the two lemmas further down show it
+     is still maintained by both writes. *)
+  Lemma rep_suggest_also_uses_the_key_member :
     suggest_of optimized_rep
     = Some (EIf long_enough
               (tri_probe "1" "2" (tri_at token (EAtom (AInt 0))))
-              (scan (member "0"))).
+              (scan_the_member (member "2"))).
   Proof. vm_compute; reflexivity. Qed.
 
   Lemma rep_find_is_still_a_probe :
@@ -495,30 +494,34 @@ Section WithConcreteMaps.
   (* ------------------------------------------------------------------
      WHAT THE SECOND CONFIGURATION COSTS, measured rather than assumed.
 
-     The erasure above is easy to misread as a win -- a field disappears.
-     It is not one.  TableRep IS a copy of the table, so what the erasure
-     does is SUBSTITUTE the structure the remaining readers and writers
-     walk, and the four lemmas below are the comparison, side by side.
+     Both configurations erase the list, so the erasure cannot be what
+     tells them apart -- which is the whole lesson here, and it is sharper
+     now than when only the second one reached it.  TableRep IS a copy of
+     the table, so what it does is SUBSTITUTE the structure the remaining
+     readers and writers walk; the declared key instead serves the read
+     from a member the source's own code already maintains.  The four
+     lemmas below are the comparison, side by side.
 
-     The delete applies the SAME filter either way -- the source's own,
-     over whatever holds the rows -- so the O(n) scan moves from the list
-     to the rep member and does not go away.  And the insert degrades: a
-     cons onto a list becomes an insert into a set.
+     The first configuration writes nothing to a list, because there is no
+     list: both writes touch only the two members, each at one key.  The
+     second still pays the source's own filter on the delete -- the scan
+     moves from the list to the rep member rather than going away -- and
+     degrades the insert, a cons onto a list becoming an insert into a set.
 
-     So the two configurations are a wash on the delete and the second is
-     slightly worse on the insert, and the honest reading of the pair is
-     that TableRep here is an EXPRESSIVENESS result -- a table can be its
-     own index, and the fallback scan is served by a member rather than by
-     a field -- and not a performance one.  Contrast the erasures that ARE
-     wins: in Kafka_Cluster, HA_AreaRegistry, Kafka_NamedCache and
-     Keycloak with its count, every read is answered by an index and
-     NOTHING replaces the list.
+     So the comparison is one-sided, and TableRep is dominated on this
+     subject: it buys an erasure that is available without it, at the price
+     of a copy.  What survives is the expressiveness reading -- a table CAN
+     be its own index -- and the warning that "the list was erased" is not
+     a proxy for "this paid".  Contrast the erasures that ARE wins: in
+     Kafka_Cluster, HA_AreaRegistry, Kafka_NamedCache and Keycloak with its
+     count, every read is answered by an index and NOTHING replaces the
+     list.  This subject now joins them.
 
      This is why the deterministic selector (src/fiat2/Selector.v) does not
-     emit TableRep.  A feedback step that runs the pipeline, finds the
+     emit TableRep.  A feedback step that runs the pipeline, finds a
      surviving read and adds TableRep for it does reach the configuration
-     below -- it was built and then removed, because "the list was erased"
-     is not a proxy for "this paid". *)
+     below; it was built and then removed.  Here the surviving read it
+     would have fired on is gone, so there is nothing left for it to find. *)
 
   (* the body a write assigns to a named field, at the top level of the
      record or one level down inside aux_tag *)
@@ -553,8 +556,9 @@ Section WithConcreteMaps.
           | LikeSet => EAtom (AEmptySet (Some row_ty))
           end)).
 
-  Lemma delete_filters_the_list :
-    written_to "id_tag" (delete_of optimized) = Some (drop_named the_list LikeList).
+  (* Nothing at all, in the first configuration: there is no list to filter. *)
+  Lemma delete_writes_no_list :
+    written_to "id_tag" (delete_of optimized) = None.
   Proof. vm_compute; reflexivity. Qed.
 
   (* the same filter, over the member that replaced the list *)
@@ -563,9 +567,8 @@ Section WithConcreteMaps.
     = Some (drop_named (member "0") LikeSet).
   Proof. vm_compute; reflexivity. Qed.
 
-  Lemma insert_conses_onto_the_list :
-    written_to "id_tag" (insert_of optimized)
-    = Some (EBinop OCons new_user the_list).
+  Lemma insert_writes_no_list :
+    written_to "id_tag" (insert_of optimized) = None.
   Proof. vm_compute; reflexivity. Qed.
 
   (* and this is the price: a cons becomes a set insert *)

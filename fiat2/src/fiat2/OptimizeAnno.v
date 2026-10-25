@@ -255,6 +255,11 @@ Section WithConcreteMaps.
     Definition unique_lookup_gated_transf (ds : list decl) :=
       unique_lookup_gated unique_idx_attr "id_tag" "aux_tag" tag "y" ds.
 
+    (* The same member, read whole instead of at one key.  Gated on the same
+       declaration and owed the same bridges; see UniqueIndexUse. *)
+    Definition unique_scan_gated_transf (ds : list decl) :=
+      unique_scan_gated unique_idx_attr "id_tag" "aux_tag" tag ds.
+
     (* Maintaining the dictionary.  An insertion adds one entry and a keyed
        delete removes one, and neither needs the declaration: a row
        contributes only to its own key's entry, so the rows a keyed filter
@@ -405,7 +410,11 @@ Section WithConcreteMaps.
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
         ([(u_tag, cunique_idx attr, unique_idx_wf attr)],
-          [unique_lookup_gated_transf u_tag attr ds;
+          [(* first in the list is last to run: every rule that could serve
+              this read better has had its turn by then, and the trigram
+              rule in particular EMITS the scan this one retargets *)
+           unique_scan_gated_transf u_tag attr ds;
+           unique_lookup_gated_transf u_tag attr ds;
            (* last in the list is first to run: maintenance leaves the index
               of the unchanged rows behind, and the use rule above it turns
               that recomputation into a read *)
@@ -422,7 +431,10 @@ Section WithConcreteMaps.
         let u_tag := String.of_nat (S cur_tag) in
         ([(t_tag, ctrigram_idx attr key, trigram_idx_wf attr key);
           (u_tag, cunique_idx key, unique_idx_wf key)],
-          [trigram_lookup_gated_transf t_tag attr key u_tag ds;
+          [(* last to run, after the trigram rule has emitted the fallback
+              scan this retargets onto the primary-key member *)
+           unique_scan_gated_transf u_tag key ds;
+           trigram_lookup_gated_transf t_tag attr key u_tag ds;
            (* the primary-key member's own lookup, pointed at this record's
               second member; with it the choice installs every rule
               UniqueDictIdx would (trigram_subsumes_unique_dict) *)
@@ -450,7 +462,8 @@ Section WithConcreteMaps.
         let u_tag := String.of_nat (S cur_tag) in
         ([(d_tag, cdict_idx attr Unranged, dict_idx_wf attr Unranged);
           (u_tag, cunique_idx key, unique_idx_wf key)],
-          [dict_lookup_transf d_tag attr;
+          [unique_scan_gated_transf u_tag key ds;
+           dict_lookup_transf d_tag attr;
            dict_range_transf d_tag attr Unranged;
            use_dict_idx_transf d_tag attr Unranged;
            unique_lookup_gated_transf u_tag key ds;
@@ -1089,6 +1102,23 @@ end.
        three maintenance rules are not -- the use rule needs the member's own
        weak relation, and the insert and the delete need nothing *)
     1:{ repeat destruct_In; try apply_in_nil.
+        1:{ unfold unique_scan_gated_transf.
+            eapply (unique_scan_gated_sound "hole" a "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := a); assumption ]. } }
         1:{ unfold unique_lookup_gated_transf.
             eapply (unique_lookup_gated_sound "hole" a "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag) "y"
@@ -1135,6 +1165,23 @@ end.
        rules are owed their own member's weak relation only; the two inserts
        and the primary-key delete are owed nothing. *)
     1:{ repeat destruct_In; try apply_in_nil.
+        1:{ unfold unique_scan_gated_transf.
+            eapply (unique_scan_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag))
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
         1:{ unfold trigram_lookup_gated_transf.
             eapply (trigram_lookup_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
@@ -1279,6 +1326,23 @@ end.
        one member's own business and comes from that member's own lemma --
        which is what makes this choice subsume both standalone ones. *)
     1:{ repeat destruct_In; try apply_in_nil.
+        1:{ unfold unique_scan_gated_transf.
+            eapply (unique_scan_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag))
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
         (* the dictionary member's lookup, range and use rules, from the
            shared dictionary lemma: exactly the rules DictIdx hands out *)
         1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)

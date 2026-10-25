@@ -691,15 +691,18 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
 
-  (* The fallback: the source query, with the coercion where the source put
-     it.  The pushdown drove it onto the table's read and no index absorbed
-     it there, so the post-index rewrite put it back on the result -- the
-     set is built from the rows the filter kept rather than from the whole
-     table.  See UnpushCollection.v. *)
+  (* The fallback: the source query, served from the primary-key member
+     rather than from the table's list.  The key is declared, so that member
+     holds every row exactly once and a scan of it answers the same query;
+     the member's values are a bag, so the scan runs at bag level and the
+     coercion to a set lands on the rows the filter kept.  See
+     UniqueIndexUse.unique_scan_head. *)
   Definition sscan (p : expr) : expr :=
-    ESetOf (flatmap_filter_list (EAccess (ELoc "users") "id_tag") "r"
-              (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
-              (Some prow_ty) (Some prow_ty)).
+    EUnop OSetOfBag
+      (flatmap_filter_bag
+         (EUnop ODictValues (EAccess (EAccess (ELoc "users") "aux_tag") "1"))
+         "r" (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
+         (Some prow_ty) (Some prow_ty)).
 
   (* A literal pattern that has a trigram: the trigram is computed at rewrite
      time, and nothing of the scan is left. *)
@@ -717,10 +720,11 @@ Section WithConcreteMaps.
      length condition is a soundness obligation of probe_recheck_eq, not a
      heuristic, so it cannot be dropped.
 
-     This is the one example here whose list survives, and the reason is a
-     READ the index rules could not take: the fallback branch scans.  Nothing
-     about guards or maintenance is involved -- the delete, which used to
-     survive for a guard, no longer does. *)
+     The fallback is a scan, but not of the list: with the key declared it
+     reads the primary-key member, which holds the same rows.  So no read is
+     left on the list and this example's list is erased too -- the delete
+     used to keep it alive for a guard, and the fallback used to keep it
+     alive for a scan, and neither does now. *)
   Lemma sguarded_splits : exists inst grd,
       soptimized (EVar "p") [DUnique "id"]
       = CLetMut inst "users"
@@ -781,16 +785,22 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
 
-  (* the fallback: the same scan as sscan, over the SET member instead of a
-     coercion of the list *)
+  (* The fallback: literally sscan.  This configuration also stores the
+     table's own set, at "0", so there are two members a scan could read --
+     and the declared key's wins, because the scan rule runs after the one
+     that would have served it from the set.  The consequence is that the
+     set member is installed and maintained here without being read. *)
   Definition vscan (p : expr) : expr :=
-    flatmap_filter_set (EAccess (EAccess (ELoc "users") "aux_tag") "0") "r"
-      (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
-      (Some prow_ty) (Some prow_ty).
+    EUnop OSetOfBag
+      (flatmap_filter_bag
+         (EUnop ODictValues (EAccess (EAccess (ELoc "users") "aux_tag") "2"))
+         "r" (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
+         (Some prow_ty) (Some prow_ty)).
 
   (* Both branches of the split read index members, and the table is only its
-     indexes.  Compare sguarded_splits, where the fallback reads ESetOf of the
-     list and the list therefore stays. *)
+     indexes.  Compare sguarded_splits, which reaches the same place with one
+     member fewer: the declared key alone erases the list, so the set member
+     this configuration adds pays for nothing. *)
   Lemma vquery_reads_only_members : exists i0 i1 i2 grd,
       voptimized (EVar "p") [DUnique "id"]
       = CLetMut

@@ -146,6 +146,47 @@ Section WithWord.
     apply bag_insert_bag_insert, list_to_bag_SSorted.
   Qed.
 
+  (* ------------------------------------------------------------------
+     A bag's values are the set of the same elements.
+
+     Read at the level of expressions, map_fst_list_to_bag says that
+     OSetOfBag after EBagOf is ESetOf: the new operator does not add a way
+     of building a set, it just lets an existing one start from a bag.
+
+     No sortedness is needed, because the two insert functions agree
+     structurally.  bag_insert and set_insert split on the same two tests in
+     the same order; where the element is already present one bumps a count
+     and the other returns the list untouched, and neither changes a key.
+     ------------------------------------------------------------------ *)
+  Lemma map_fst_bag_insert : forall (v : value) (b : list (value * nat)),
+      List.map fst (bag_insert v b) = set_insert v (List.map fst b).
+  Proof.
+    induction b as [| [v' n'] b IH]; [ reflexivity | ].
+    cbn [bag_insert List.map fst set_insert].
+    destruct (value_ltb v v'); [ reflexivity | ].
+    destruct (value_eqb v v') eqn:E_eq.
+    - apply value_eqb_eq in E_eq; subst. cbn [List.map fst]. reflexivity.
+    - cbn [List.map fst]. rewrite IH. reflexivity.
+  Qed.
+
+  Lemma map_fst_list_to_bag : forall (l : list value),
+      List.map fst (list_to_bag l) = list_to_set l.
+  Proof.
+    induction l as [| v l IH]; [ reflexivity | ].
+    cbn [list_to_bag list_to_set fold_right].
+    rewrite map_fst_bag_insert, IH. reflexivity.
+  Qed.
+
+  (* And the bridge pays for itself: a set is canonical under reordering, which
+     would otherwise want a commutation lemma for set_insert of its own. *)
+  Lemma Permutation_list_to_set_eq : forall (l l' : list value),
+      Permutation l l' ->
+      list_to_set l = list_to_set l'.
+  Proof.
+    intros l l' H. rewrite <- !map_fst_list_to_bag.
+    f_equal. apply Permutation_list_to_bag_eq; assumption.
+  Qed.
+
   Lemma lt_bag_insert : forall x (b : list (value * nat)),
       Forall (fun v => value_compare x (fst v) = Lt) b -> bag_insert x b = (x, 1) :: b.
   Proof.
@@ -578,6 +619,23 @@ Section WithWord.
         apply list_to_set_incl, in_map_iff in H_in.
         destruct H_in as [u [H_eq H_u]]; subst.
         apply list_to_set_incl_r, in_map, list_to_set_incl_r; auto.
+    Qed.
+
+    (* and neither does a filter of one: the same statement for filter rather
+       than map, which is what a scan whose source was deduplicated needs *)
+    Lemma list_to_set_filter_list_to_set : forall (p : value -> bool) l,
+        list_to_set (filter p (list_to_set l)) = list_to_set (filter p l).
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, filter_In in H_in as [ H_w H_p ].
+        apply list_to_set_incl in H_w.
+        apply list_to_set_incl_r, filter_In; split; assumption.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, filter_In in H_in as [ H_w H_p ].
+        apply list_to_set_incl_r, filter_In; split;
+          [ apply list_to_set_incl_r | ]; assumption.
     Qed.
 
     (* dropping every row whose attribute is k drops exactly k from the set *)

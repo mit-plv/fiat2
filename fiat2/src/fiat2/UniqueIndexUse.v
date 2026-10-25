@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TransfSound fiat2.IndexInterface fiat2.Utils fiat2.Substitute
   fiat2.IndexTransf fiat2.Constraint fiat2.DictIndexImpl fiat2.FlatmapForms fiat2.TransfUtils
   fiat2.UniqueDictIndexImpl fiat2.UniqueIndexInstall fiat2.UniqueIndexGate
-  fiat2.Surface.
+  fiat2.CollectionTransf fiat2.Surface.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List Permutation Sorted.
 
@@ -538,6 +538,127 @@ Section WithIndexUse.
         intros rty1 rty2 v H. rewrite <- H.
         cbn [interp_expr interp_atom]. reflexivity.
       Qed.
+
+      (* The annotation that types an empty set types the matching empty bag.
+         A rule that rewrites a set-level flatmap into a bag-level one owes
+         this for the two empty collections the body is built from; the atom
+         rules are parallel (TypeSystem.v TyAEmptyBag'/TyAEmptySet'), so it is
+         a case split and nothing more. *)
+      Lemma type_of_atom_AEmptySet__AEmptyBag : forall (ot : option type) (t : type),
+          type_of_atom (AEmptySet ot) (TSet t) ->
+          type_of_atom (AEmptyBag ot) (TBag t).
+      Proof.
+        intros ot t H. destruct ot; invert_type_of_atom; constructor; assumption.
+      Qed.
+
+      (* ------------------------------------------------------------------
+         A whole scan, served from the primary-key dictionary.
+
+         The second consequence of the fact the lookup rule above rests on.
+         With the key declared the dictionary is a faithful copy of the table
+         (UniqueDictIndexImpl.idx_entries_values_Permutation), so any read of
+         the table that observes neither order nor multiplicity may be served
+         from the member instead.  A point lookup was the first consequence;
+         a scan whose result is a set is the second, and it needs the same
+         declaration for the same reason -- with duplicate keys the dictionary
+         holds fewer rows than the table, and the scan would miss some.
+
+         The rule buys the program no asymptotics by itself: a substring scan
+         has to look at every row either way, and this one still does.  What
+         it buys is that the LIST stops being read, so erase_dead_field can
+         drop the field and the writes that maintained it go with it, leaving
+         the member pair as the table's only representation.
+
+         The pattern is the SET-level scan, because that is the shape the
+         expression has when this phase runs: apply_all_transfs applies the
+         basic rewrites first, and push_down_collection has already driven the
+         coercion onto the table read.  The emitted form is at BAG level, so
+         the coercion lands on the rows the filter kept rather than on the
+         rows it read -- the distinction UnpushCollection.v exists to make,
+         here obtained directly because the rule gets to choose its output.
+         ------------------------------------------------------------------ *)
+      Definition unique_scan_head (e : expr) : expr :=
+        match e with
+        | flatmap_filter_set
+            (ESetOf (EAccess (ELoc tbl0) id_tag0)) x0 p y0 t1 t2 =>
+            if all_eqb [(tbl, [tbl0]); (id_tag, [id_tag0]); (x0, [y0])]
+            then EUnop OSetOfBag
+                   (flatmap_filter_bag
+                      (EUnop ODictValues
+                         (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag))
+                      x0 p x0 t1 t2)
+            else e
+        | _ => e
+        end.
+
+      Lemma unique_scan_head_preserve_ty : forall tl ctl t (Gstore : tenv),
+          type_wf t -> @IndexInterface.is_tbl_ty uidx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl idx_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore unique_scan_head.
+      Proof.
+        unfold preserve_ty, IndexInterface.is_tbl_ty, IndexInterface.idx_ty,
+          unique_dict_idx, UniqueDictIndexImpl.is_tbl_ty,
+          UniqueDictIndexImpl.idx_ty in *.
+        intros.
+        repeat destruct_match_hyp; try congruence.
+        repeat destruct_subexpr. cbn [unique_scan_head].
+        case_match; auto.
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst.
+        repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+        repeat rewrite_map_get_put_hyp.
+        repeat (clear_refl; repeat do_injection2).
+        repeat (rewrite_l_to_r; do_injection2).
+        repeat (econstructor; eauto).
+        all: try apply map.get_put_same.
+        all: eapply type_of_atom_AEmptySet__AEmptyBag; eassumption.
+      Qed.
+
+      Lemma unique_scan_head_preserve_sem :
+        forall tl ctl t (Gstore : tenv) (store : locals),
+          type_wf t -> @IndexInterface.is_tbl_ty uidx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl idx_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          match map.get store tbl with
+          | Some v => unique_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store unique_scan_head.
+      Proof.
+        unfold preserve_sem, aux_wf_for_idx, UniqueDictIndexImpl.idx_wf_unique,
+          UniqueDictIndexImpl.idx_wf, UniqueDictIndexImpl.keys_distinct,
+          IndexInterface.is_tbl_ty, IndexInterface.idx_ty, unique_dict_idx,
+          UniqueDictIndexImpl.is_tbl_ty, UniqueDictIndexImpl.idx_ty in *.
+        intros.
+        repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+        rewrite fiat2_gallina_to_idx in * by assumption.
+        repeat destruct_subexpr. cbn [unique_scan_head].
+        cbv beta iota; case_match; auto.
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        rewrite eqb_eq in *; subst. repeat clear_refl.
+        rewrite interp_flatmap_filter_set.
+        rewrite interp_EUnop, interp_flatmap_filter_bag.
+        rewrite interp_ESetOf, interp_EUnop.
+        rewrite !interp_EAccess, !interp_ELoc.
+        unfold get_local, record_proj.
+        repeat rewrite_l_to_r.
+        cbv beta iota.
+        (* Both sides are now the canonical set of the rows the filter kept.
+           The left reached them through the member, the right through the
+           list; the three steps below are exactly the difference. *)
+        cbn [interp_unop].
+        rewrite map_fst_list_to_bag, list_to_set_filter_list_to_set.
+        f_equal. apply Permutation_list_to_set_eq, Permutation_filter_any.
+        eapply perm_trans; [ apply list_to_bag_to_list_Permutation | ].
+        apply idx_entries_values_Permutation; assumption.
+      Qed.
       (* ------------------------------------------------------------------
          The index of the table's rows IS the index the table stores.
 
@@ -867,6 +988,82 @@ Section WithIndexUse.
       intros * H_br. unfold unique_lookup_gated.
       destruct (declares_unique attr ds) eqn:E_uq.
       1: apply unique_lookup_transf_sound, H_br; reflexivity.
+      1: unfold aug_transf_sound, id; intros; repeat split; auto.
+    Qed.
+
+    (* ------------------------------------------------------------------
+       The scan rule, gated the same way and on the same bridges.
+
+       It needs no bridge of its own, because it rests on the same relation:
+       unique_aux_wf_at is the faithful copy, and whether the copy is asked
+       for one row or for all of them is a question about the READ, not about
+       the invariant.  So the three bridges below are literally
+       unique_bridges, the gate is literally declares_unique, and nothing new
+       is owed at installation.  That is the sense in which serving a scan
+       from a declared key is not a new capability but a second use of one.
+       ------------------------------------------------------------------ *)
+    Lemma unique_scan_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        aux_ty_for_idx id_tag aux_tag idx_tag (@IndexInterface.idx_ty uidx) aux_ty ->
+        (forall t, is_tbl_ty' t = true -> @IndexInterface.is_tbl_ty uidx t = true) ->
+        (* the strengthening needs the value's TYPE, which is not part of a
+           value predicate -- an ordinary member's bridge does not.  Every
+           rewrite site has it, from locals_wf. *)
+        (forall (t : type) (v : value),
+            type_wf t -> is_tbl_ty' t = true ->
+            type_of_value v (aux_ty t) -> aux_wf v -> unique_aux_wf_at v) ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf unique_scan_head.
+    Proof.
+      unfold aux_ty_for_idx, expr_aug_transf_sound; intros * H_aty H_is H_wf *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      specialize (H_aty tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ repeat rewrite_l_to_r.
+          eapply unique_scan_head_preserve_ty; eauto using H_is. }
+      1:{ repeat rewrite_l_to_r.
+          eapply unique_scan_head_preserve_sem; eauto using H_is.
+          (* all that is left is that the store carries the strong invariant
+             at the table, which is the third bridge *)
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          eapply H_wf; [ exact H_twf | exact H_is' | | exact H_aw ].
+          lazymatch goal with E : aux_ty tbl_ty = _ |- _ => rewrite E end.
+          assumption. }
+    Qed.
+
+    Definition unique_scan_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (unique_scan_head tbl).
+
+    Lemma unique_scan_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        unique_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf unique_scan_transf.
+    Proof.
+      intros * [ H_aty [ H_is H_wf ] ]. unfold unique_scan_transf.
+      apply fold_command_with_globals_sound.
+      apply unique_scan_head_sound; assumption.
+    Qed.
+
+    Definition unique_scan_gated (ds : list decl) : string -> command -> command :=
+      if declares_unique attr ds then unique_scan_transf else fun _ => id.
+
+    Lemma unique_scan_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
+        (declares_unique attr ds = true -> unique_bridges is_tbl_ty' aux_ty aux_wf) ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf (unique_scan_gated ds).
+    Proof.
+      intros * H_br. unfold unique_scan_gated.
+      destruct (declares_unique attr ds) eqn:E_uq.
+      1: apply unique_scan_transf_sound, H_br; reflexivity.
       1: unfold aug_transf_sound, id; intros; repeat split; auto.
     Qed.
 
