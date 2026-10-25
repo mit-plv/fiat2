@@ -62,9 +62,10 @@ missing is not the operator but the rule -- see the limits table below.
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 | `Kafka_NamedCache.v` | `NamedCache.java:44,49` | a keyed store and a running total over it, both maintained across a delete and a put; the total is corrected by a probe, never recomputed |
 | `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
+| `Jenkins_ItemDeletion.v` | `ItemDeletion.java:74,129,149,165` | the only WHOLE-ROW read: a `Set<Item>` asked `contains(item)`, so the question is about a row and not an attribute, no dictionary can be keyed for it, and `TableRep` is the only index that applies |
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
 
-The seven fall into four groups, and the groups are the argument.
+The eight fall into five groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
 `HA_LookinFunctions`. The first two are a pair and should be read as one: they put
@@ -175,6 +176,13 @@ cannot be corrected without knowing which text the departing row carried -- and 
 supplies it: the key member is probed for the row, and that row's id comes out of the
 bucket of each trigram of its own text, with a bucket dropped when it empties. One
 choice, two members, and the second exists so the first can be maintained.
+
+**What no key can answer** -- `Jenkins_ItemDeletion`. Every read above names an
+attribute, which is what lets a dictionary be keyed for it. This one does not: the
+source stores whole rows in a `Set<Item>` and asks `contains(item)`, so there is no key
+to probe with and the only index in the development that applies is the one that
+represents the table itself. It is the file that makes `TableRep` a measurement rather
+than a listing, and it is argued where the numbers are, under *What it costs* below.
 
 ## Who chooses the heuristics
 
@@ -338,22 +346,32 @@ reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the 
 ratio between two sizes would not settle the question it looks like it settles: over an
 8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
-| | reads and writes measured | source | optimized |
-|---|---|---|---|
-| linear in the table, `a` = 0.92 to 1.05 | | 25 of 27 | 3 of 27 |
-| independent of it, `a` = -0.01 to 0.02 | | 2 of 27 | 23 of 27 |
-| sublinear, `a` = 0.19 | | 0 of 27 | 1 of 27 |
+Thirty-one reads and writes across the eight subjects, by the exponent of their STEP
+count:
 
-The two in the source column that do not grow are the two O(1) writes -- a prepend is a
-prepend whether or not anything is indexed. The twenty-three in the optimized column are
-not merely flatter, they are flat: the Lookin membership test, to take one, costs
-**exactly 300 steps at every one of the six sizes**. Their comparison counts are where
-the index shows through, at `a` = 0.08 to 0.31, which is `log n` appearing as the weak
-power law it is -- the same subject's comparison count goes 114, 134, 157, 177, 191,
-211, gaining about twenty per doubling across twenty queries. Two of the twenty-two do
-no comparisons at all (`a` = 0.00): `getRequiredActionProviderList`'s count and
-`sizeInBytes`, which are maintained aggregates and so are field reads, cheaper than a
-probe.
+| | source | optimized |
+|---|---|---|
+| linear in the table, `a` = 0.92 to 1.05 | 26 of 31 | 2 of 31 |
+| independent of it, `a` = -0.01 to 0.02 | 5 of 31 | 28 of 31 |
+| sublinear, `a` = 0.19 | 0 of 31 | 1 of 31 |
+
+Five in the source column do not grow in steps, and they are two different things.
+Three are genuinely O(1) writes -- `window_store/put`, `range_delete/insert` and
+`item_deletion/register` -- because a prepend is a prepend whether or not anything is
+indexed. The other two are `Jenkins_ItemDeletion`'s two membership reads, which are one
+`OSetMem` step over a collection the step counter does not walk and whose cost is
+therefore entirely in COMPARISONS, at `a` = 1.22. That is not a blind spot in the
+instrument but where `count.ml` puts a tree operation's cost, and it is why the table
+below that subject reports comparisons.
+
+The twenty-eight in the optimized column are not merely flatter, they are flat: the
+Lookin membership test, to take one, costs **exactly 300 steps at every one of the six
+sizes**. Their comparison counts are where the index shows through, at `a` = 0.08 to
+0.31, which is `log n` appearing as the weak power law it is -- the same subject's
+comparison count goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling
+across twenty queries. Two of the twenty-eight do no comparisons at all (`a` = 0.00):
+`getRequiredActionProviderList`'s count and `sizeInBytes`, which are maintained
+aggregates and so are field reads, cheaper than a probe.
 
 **The three that still grow are the interesting column, and every one of them is a correct
 answer rather than a cost.** Their exponents are 0.98, 0.98 and 0.19.
@@ -412,6 +430,48 @@ program builds. An earlier version of that file introduced the table with
 the component the table then stayed empty at every n, and the subject could not be
 measured at all. The fix was to model the input as an input, which is what
 `Kafka_Cluster` -- immutable for the same reason -- already did.
+
+## Against the originals' own structures
+
+Everything above compares the source form with the optimized form, and the source form
+is **not** the original author's code: the hand-built structure was removed so the query
+could be written against one plain collection. So that comparison measures
+declarative-with-no-index against compiler-indexed, and a reviewer can fairly say nobody
+would write the left-hand column. `harness/baseline.ml` is the other comparison --
+the authors' own structures and operations transcribed into OCaml, each citing the file
+and line it came from, run over the same workloads. **Parity is the positive result**: the
+compiler is supposed to arrive back at what the author built.
+
+All thirty-one kinds agree with the optimized program on every workload -- the check that
+a transcription computes the same answers, which caught a wrong one on its first run --
+and every optimized exponent matches the author's except `Jenkins_UserSearch`'s `suggest`,
+at 0.52 against the author's 1.00, because that index is the one the author did not build.
+
+Two places run the other way, and both are a composite key the author indexed and this
+development has no index for: `Cluster.partition(new TopicPartition(topic, partition))`
+and `InMemoryWindowStore`'s inner map from key to value. The statement is structural, so
+that it does not depend on how a counter is read: **the author descends a map on the whole
+composite key, where the derived form probes one attribute and filters the bucket.** The
+bucket is bounded, so the exponents still match. A third is noted rather than measured:
+`partitionCountForTopic` answers a per-bucket count in O(1) from `ArrayList.size()`, which
+would need a maintained aggregate per bucket -- the dict-of-aggregates combinator this
+development does not build.
+
+Three biases, all of them running in the author's favour and stated rather than corrected:
+the originals' maps are hash maps where ours are `Map.Make(Value)`, so they win a log
+factor on every point lookup (a backend freedom the type system records, not a defect in
+the rewriting -- and `Kafka_NamedCache` is the exception, since its author chose a
+`TreeMap`); wall-clock seconds are about 25% inflated on our side by the tree-walking
+interpreter, measured; and the row counter charges each pipeline stage, so its constant is
+not comparable factor for factor against code that has no stages. The build phase is never
+compared at all -- the source's is O(n^2) because the declared-key subjects elaborate a
+uniqueness guard into a scan while the originals check nothing, which is a claim about
+constraint checking and not about a missing index. `harness/README.md` has the table.
+
+One subject in that comparison has no author: `Ex_RangeDelete` is our own example, so what
+stands in for one is the implementation its structure asks for. It is listed in
+`Baseline.hand_written` and the report marks it, rather than letting it pass as a
+transcription.
 
 ## Limits stated here rather than hidden
 
