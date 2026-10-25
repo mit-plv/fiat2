@@ -565,11 +565,15 @@ module Cluster = struct
      chosen silently -- and it changes no exponent, since both sides are
      linear in the bucket and the bucket is bounded.
 
-     onePartition is the other way round and is measured, not noted: the key
-     is composite, `new TopicPartition(p.topic(), p.partition())`, Kafka has a
-     map on it, and Conquord has no composite-key index -- so the author
-     probes once where the optimizer probes on topic and filters the bucket.
-     That is the subject's own one_partition_probes_then_filters, in rows.
+     onePartition is the other way round, and the claim is the STRUCTURAL
+     one: the key is composite, `new TopicPartition(p.topic(), p.partition())`,
+     Kafka has a map on it, and Conquord has no composite-key index, so the
+     author descends a map on the whole key where the optimizer probes one
+     attribute and filters the bucket.  That is the subject's own
+     one_partition_probes_then_filters.  The row column shows it as a bounded
+     constant and not as an exponent, which is the honest form of it: the
+     ratio there also carries the stage count the header warns about, where
+     the sentence above does not.
 
      availablePartitionsByTopic is built in a second pass over
      partitionsByTopic (:164-:184, with Kafka's shortcut for the common case
@@ -683,7 +687,10 @@ module WindowStore = struct
      parity -- both walk the window -- and `fetch` is the D4 gap in the row
      column: Kafka descends the inner map once per segment and enumerates
      only the rows that match, where the optimizer enumerates the window and
-     filters it.  Same exponent, and the constant is the window's width.
+     filters it.  Same exponent, and a bucket bounded by the window's width.
+     As with Cluster's composite key, the sentence is the claim and the ratio
+     in the row column is not: it also carries the stage count the header
+     warns about.
 
      Ranges here are [lo, hi) to match the subject, whose rule's shape is
      half-open; Kafka's subMap is closed with hi = timeTo.  Nothing turns on

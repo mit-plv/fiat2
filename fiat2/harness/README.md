@@ -162,11 +162,14 @@ original used a hash), not the evaluation strategy.
 
 `main.exe baseline` is the other comparison, and the more important one. Everything above
 compares our source form against our optimized form — but **the source form is not the
-author's code**: in seven of eight subjects the author's hand-built structure was removed
-so the query could be written declaratively, so `src -> opt` measures "declarative with no
-index" against "compiler-indexed", and a reviewer can fairly say nobody would write that
-baseline. `baseline.ml` transcribes the **authors' own structures**, each citing the file
-and line it came from, and runs them over the same workloads.
+author's code**: the author's hand-built structure was removed so the query could be
+written declaratively, so `src -> opt` measures "declarative with no index" against
+"compiler-indexed", and a reviewer can fairly say nobody would write that baseline.
+`baseline.ml` transcribes the **authors' own structures**, each citing the file and line
+it came from, and runs them over the same workloads. Eight of the nine subjects have an
+author; `range_delete` is our own example, so what stands in for one there is the
+implementation its structure asks for, and it is listed in `Baseline.hand_written` so the
+report marks it instead of letting it pass as a transcription.
 
 **Parity is the expected result.** The compiler is supposed to arrive back at what the
 author built, so matching asymptotics is the positive finding and a win would mean one of
@@ -177,7 +180,7 @@ Three instruments, because no one of them crosses the boundary cleanly:
 | | crosses? | bias |
 |---|---|---|
 | `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
-| `rows` | yes — the headline | none. Counts the stored rows an operation **enumerates**: a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 |
+| `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per pipeline stage**, so a derived read can count the same rows more than once. See below |
 | `cmps` | yes | **undercounts a hash map** — one key equality per probe, no hashing. Flatters the author |
 | s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed |
 
@@ -186,6 +189,33 @@ compares nothing, which is how Keycloak's whole-list **count** came out at expon
 the source side when its step count is linear. The build phase is never compared — our
 source build is O(n²) because the declared-key subjects elaborate a uniqueness guard into a
 table scan while the originals check nothing.
+
+**What the constant in the `rows` column is not.** The counter charges every stage of a
+pipeline that iterates a collection, and an intermediate collection is not storage.
+Measured: `window_store/fetchAll` answers a window of 8 rows and reports **24** — eight
+dict entries out of the ranged member, then the eight buckets they hold, then the eight
+rows inside them — while `cluster/forTopic` answers a bucket of 8 through one lookup and
+reports **8**. Hand-written code has no stages at all. The number of stages is a constant
+of the term, so the **exponent** is unaffected, which is why the claims are exponents; an
+opt-against-base ratio on a multi-stage read is partly an artifact of how many stages the
+rewriting left, and the gaps that matter are named structurally as well as numbered. This
+is also why `named_cache/delete` reports 2 rows per delete against the author's 1 and is
+*not* reading the row twice: `delete_corrects_by_a_probe` pins one probe, and the second
+tick is the fold over the projection of the row the probe found.
+
+**The result.** All 31 kinds `agree`, and every optimized exponent matches the author's
+except `user_search/suggest` at **0.52 against 1.00** — the trigram index Jenkins never
+built, 66x faster than their own `contains` scan at 1600 rows. Two places run the other
+way, both a composite key the author indexed and this development has no index for:
+`Cluster.partition(new TopicPartition(topic, partition))` and `InMemoryWindowStore`'s
+inner map from key to value. Stated structurally, because that statement does not depend
+on how stages are counted: **the author descends a map on the whole composite key, where
+the derived form probes one attribute and filters the bucket.** Same exponent, bounded
+bucket, and each is the gap its own subject file pins (`one_partition_probes_then_filters`,
+`fetch_key_probes_split`). Kafka's `partitionCountForTopic` is a third, noted rather than
+measured: it answers a per-bucket count in O(1) from `ArrayList.size()`, which would need
+a maintained aggregate per bucket — the dict-of-aggregates combinator this development
+does not build.
 
 The column that actually matters is `agree`: each transcription's final store is printed the
 same way the subject's is, so a transcription that computes something else is caught before

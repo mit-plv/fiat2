@@ -458,6 +458,10 @@ let baseline (sizes : int list) =
      the author's structure was removed to write the query declaratively -- so\n\
      the claim is that the compiler arrives back at what the author built.\n\
      'a' is the fitted exponent over %d sizes; cmps and s/op are at %d rows.\n\
+     The EXPONENT is the claim.  The rows constant is not comparable factor\n\
+     for factor: it charges each pipeline stage that iterates a collection,\n\
+     so a derived read counts the same rows once per stage and hand-written\n\
+     code has no stages (see count.ml).\n\
      cmps undercounts a hash map (one key equality per probe, no hashing) and\n\
      s/op is ~25%% inflated on the opt side by the interpreter: both biases run\n\
      in the author's favour and are stated rather than corrected.\n\
