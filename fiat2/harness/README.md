@@ -158,6 +158,41 @@ magnitude: what separates these seconds from hand-written code is the **represen
 (boxed dynamic values compared structurally) and the **structure choice** (tree where the
 original used a hash), not the evaluation strategy.
 
+## The originals, beside the optimizer's output
+
+`main.exe baseline` is the other comparison, and the more important one. Everything above
+compares our source form against our optimized form — but **the source form is not the
+author's code**: in seven of eight subjects the author's hand-built structure was removed
+so the query could be written declaratively, so `src -> opt` measures "declarative with no
+index" against "compiler-indexed", and a reviewer can fairly say nobody would write that
+baseline. `baseline.ml` transcribes the **authors' own structures**, each citing the file
+and line it came from, and runs them over the same workloads.
+
+**Parity is the expected result.** The compiler is supposed to arrive back at what the
+author built, so matching asymptotics is the positive finding and a win would mean one of
+the two is not what it claims to be.
+
+Three instruments, because no one of them crosses the boundary cleanly:
+
+| | crosses? | bias |
+|---|---|---|
+| `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
+| `rows` | yes — the headline | none. Counts the stored rows an operation **enumerates**: a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 |
+| `cmps` | yes | **undercounts a hash map** — one key equality per probe, no hashing. Flatters the author |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed |
+
+`rows` is the instrument the other two cannot replace: `cmps` is blind to a traversal that
+compares nothing, which is how Keycloak's whole-list **count** came out at exponent 0.00 on
+the source side when its step count is linear. The build phase is never compared — our
+source build is O(n²) because the declared-key subjects elaborate a uniqueness guard into a
+table scan while the originals check nothing.
+
+The column that actually matters is `agree`: each transcription's final store is printed the
+same way the subject's is, so a transcription that computes something else is caught before
+any of its numbers are read. It earned its place on the first run — `item_deletion`'s table
+arrives in the environment rather than through build queries, the transcription started
+empty, and every `containsHit` disagreed.
+
 ## The two checks that come free
 
 `bench` compares the final stores of the source and the optimized program on every

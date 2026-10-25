@@ -22,7 +22,7 @@
 
 open Extracted
 
-type run = { steps : int; cmps : int; canon : int; out : string }
+type run = { steps : int; cmps : int; canon : int; rows : int; out : string }
 
 let run_one (c : command) (w : Gen.workload) : run =
   let store = Gen.locals_of w.store and env = Gen.locals_of w.env in
@@ -33,11 +33,11 @@ let run_one (c : command) (w : Gen.workload) : run =
       (List.map (fun (k, v) -> k ^ " = " ^ Value.to_string v) (Eval.SMap.bindings final))
   in
   { steps = !Count.steps; cmps = !Count.comparisons;
-    canon = !Count.canonicalisations; out }
+    canon = !Count.canonicalisations; rows = !Count.rows; out }
 
 let sub (a : run) (b : run) : run =
   { steps = a.steps - b.steps; cmps = a.cmps - b.cmps; canon = a.canon - b.canon;
-    out = a.out }
+    rows = a.rows - b.rows; out = a.out }
 
 (* ---- wall clock, which is a cross-check and not the evidence ----
 
@@ -116,11 +116,10 @@ let max_timed_ops = 20480
 
 type per_op = { secs : float; ops_used : int; scaled : bool }
 
-let secs_per_op (c : command) (sp : Gen.spec) ~rows ~(kind : string) : per_op =
+let secs_per_op_of (run1 : Gen.workload -> unit) (sp : Gen.spec) ~rows
+      ~(kind : string) : per_op =
   let only = Some kind in
-  let time_it (w : Gen.workload) =
-    seconds_per_run (fun () ->
-      ignore (Eval.interp_command (Gen.locals_of w.store) (Gen.locals_of w.env) c)) in
+  let time_it (w : Gen.workload) = seconds_per_run (fun () -> run1 w) in
   let base = time_it (Gen.workload sp ~rows ~ops:0 ~only) in
   let diff ops = Float.max 0. (time_it (Gen.workload sp ~rows ~ops ~only) -. base) in
   if List.mem kind sp.Gen.mutating then
@@ -133,6 +132,12 @@ let secs_per_op (c : command) (sp : Gen.spec) ~rows ~(kind : string) : per_op =
       then { secs = d /. float ops; ops_used = ops; scaled = true }
       else go (ops * 4) in
     go ops_per_kind
+
+let interp_once (c : command) (w : Gen.workload) : unit =
+  ignore (Eval.interp_command (Gen.locals_of w.store) (Gen.locals_of w.env) c)
+
+let secs_per_op (c : command) (sp : Gen.spec) ~rows ~(kind : string) : per_op =
+  secs_per_op_of (interp_once c) sp ~rows ~kind
 
 (* the op phase of one workload, with the build phase subtracted off *)
 let op_phase (c : command) (sp : Gen.spec) ~rows ~ops ~only : run =
@@ -418,3 +423,83 @@ let run (sizes : int list) =
               (g sl sh) sh.ops_used (p oh) (g ol oh) oh.ops_used)
          timings)
     subjects
+
+(* ---------- the authors' own code, beside the optimizer's output ----------
+
+   See baseline.ml for what is transcribed and for the three constraints on
+   what these numbers may be read as saying.  The short form: `steps` cannot
+   cross the boundary and is not shown; `cmps` can, and undercounts a hash
+   map; seconds can, and are about 25% inflated on our side by the
+   interpreter.  The BUILD phase is not comparable and is not shown.
+
+   The column that matters is not either cost but `agree`.  Each
+   transcription is run over the very workload the subject programs are run
+   over, and its final store is printed the same way, so a transcription that
+   computes something else is caught before any of its numbers are read. *)
+
+type base_run = { b_cmps : int; b_rows : int; b_out : string }
+
+let baseline_phase (brun : Baseline.runner) (sp : Gen.spec) ~rows ~ops ~only
+  : base_run =
+  let go w =
+    Count.reset ();
+    let st = brun w in
+    (!Count.comparisons, !Count.rows, Baseline.format_store st) in
+  let c0, r0, _ = go (Gen.workload sp ~rows ~ops:0 ~only) in
+  let c1, r1, out = go (Gen.workload sp ~rows ~ops ~only) in
+  { b_cmps = c1 - c0; b_rows = r1 - r0; b_out = out }
+
+let baseline (sizes : int list) =
+  let sizes = if sizes = [] then default_sizes else sizes in
+  let hi = List.nth sizes (List.length sizes - 1) in
+  Printf.printf
+    "The original authors' own structures, against what the optimizer derived.\n\
+     PARITY is the expected result: the source form is not the author's code --\n\
+     the author's structure was removed to write the query declaratively -- so\n\
+     the claim is that the compiler arrives back at what the author built.\n\
+     'a' is the fitted exponent over %d sizes; cmps and s/op are at %d rows.\n\
+     cmps undercounts a hash map (one key equality per probe, no hashing) and\n\
+     s/op is ~25%% inflated on the opt side by the interpreter: both biases run\n\
+     in the author's favour and are stated rather than corrected.\n\
+     'agree' is the real check -- the two computed the same answer.\n"
+    (List.length sizes) hi;
+  List.iter
+    (fun (name, brun) ->
+       match List.find_opt (fun ((n, _), _) -> n = name) subjects with
+       | None -> Printf.eprintf "  (no extracted subject named %s)\n" name
+       | Some ((_, src), opt) ->
+           let sp = List.assoc name Gen.specs in
+           Printf.printf "\n=== %s ===\n" name;
+           Printf.printf
+             "    %-13s %18s %18s %10s %10s %11s %11s %6s\n"
+             "kind" "rows a (src/opt/base)" "rows at n (s/o/b)"
+             "opt cmps" "base cmps" "opt s/op" "base s/op" "agree";
+           List.iter
+             (fun (kind, _) ->
+                let only = Some kind in
+                let series_s f = List.map (fun r ->
+                  (r, f (op_phase src sp ~rows:r ~ops:ops_per_kind ~only))) sizes
+                and series_o f = List.map (fun r ->
+                  (r, f (op_phase opt sp ~rows:r ~ops:ops_per_kind ~only))) sizes
+                and series_b f = List.map (fun r ->
+                  (r, f (baseline_phase brun sp ~rows:r ~ops:ops_per_kind ~only)))
+                  sizes in
+                let s_hi = op_phase src sp ~rows:hi ~ops:ops_per_kind ~only
+                and o_hi = op_phase opt sp ~rows:hi ~ops:ops_per_kind ~only
+                and b_hi = baseline_phase brun sp ~rows:hi ~ops:ops_per_kind ~only in
+                let os = secs_per_op opt sp ~rows:hi ~kind
+                and bs =
+                  secs_per_op_of (fun w -> ignore (brun w)) sp ~rows:hi ~kind in
+                let p x = if x.secs < resolvable /. float x.ops_used then "   <50us"
+                          else Printf.sprintf "%8.3e" x.secs in
+                Printf.printf
+                  "    %-13s %5s %5s %5s %6d %5d %5d %10d %10d %11s %11s %6s\n"
+                  kind
+                  (exp_str (fit (series_s (fun r -> r.rows))))
+                  (exp_str (fit (series_o (fun r -> r.rows))))
+                  (exp_str (fit (series_b (fun r -> r.b_rows))))
+                  s_hi.rows o_hi.rows b_hi.b_rows
+                  o_hi.cmps b_hi.b_cmps (p os) (p bs)
+                  (if o_hi.out = b_hi.b_out then "yes" else "NO"))
+             sp.kinds)
+    Baseline.runners

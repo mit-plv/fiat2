@@ -272,6 +272,7 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
   | EFold (e1, e2, x, y, e3) ->
       (match interp_expr store env e1 with
        | VList l ->
+           Count.visit (List.length l);
            let a = interp_expr store env e2 in
            List.fold_right
              (fun v acc -> interp_expr store (SMap.add y acc (SMap.add x v env)) e3)
@@ -292,14 +293,24 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
        | _ -> VUnit)
   | ESort (tag, e) ->
       (match tag, interp_expr store env e with
-       | LikeList, VList l -> VList (List.stable_sort Value.compare l)
-       | LikeBag, VBag b -> VList (bag_canonical b)
-       | LikeSet, VSet s -> VList (VSet.elements s)
+       | LikeList, VList l ->
+           Count.visit (List.length l); VList (List.stable_sort Value.compare l)
+       | LikeBag, VBag b -> Count.visit (List.length b); VList (bag_canonical b)
+       | LikeSet, VSet s -> Count.visit (VSet.cardinal s); VList (VSet.elements s)
        | _, _ -> VUnit)
+  (* A coercion READS every row: bag_of_list and set_of_list walk the list, and
+     set_of_list inserts each element into a tree.  Counting these is what keeps
+     the row counter honest about the source programs, whose whole cost on a
+     membership test is the coercion -- eval/Jenkins_ItemDeletion's source does
+     nothing else, and would otherwise be reported as touching no rows at all. *)
   | EBagOf e ->
-      (match interp_expr store env e with VList l -> VBag (bag_of_list l) | _ -> VUnit)
+      (match interp_expr store env e with
+       | VList l -> Count.visit (List.length l); VBag (bag_of_list l)
+       | _ -> VUnit)
   | ESetOf e ->
-      (match interp_expr store env e with VList l -> VSet (set_of_list l) | _ -> VUnit)
+      (match interp_expr store env e with
+       | VList l -> Count.visit (List.length l); VSet (set_of_list l)
+       | _ -> VUnit)
 
 (* EFlatmap, one case per tag.
 
@@ -308,6 +319,7 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
 and interp_flatmap store env tag e1 x e2 =
   match tag, interp_expr store env e1 with
   | LikeList, VList l ->
+      Count.visit (List.length l);
       VList
         (List.concat_map
            (fun v ->
@@ -316,6 +328,7 @@ and interp_flatmap store env tag e1 x e2 =
   | LikeBag, VBag b ->
       (* rev_append rather than append: a bag has no order to preserve, and
          the left fold would otherwise be quadratic *)
+      Count.visit (List.length b);
       VBag
         (List.fold_left
            (fun acc v ->
@@ -324,6 +337,7 @@ and interp_flatmap store env tag e1 x e2 =
               | _ -> acc)
            bag_empty b)
   | LikeSet, VSet s ->
+      Count.visit (VSet.cardinal s);
       VSet
         (VSet.fold
            (fun v acc ->

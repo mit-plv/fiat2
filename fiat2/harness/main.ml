@@ -21,6 +21,8 @@ let () =
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
   | _ :: "csv" :: rest -> Bench.csv (List.filter_map int_of_string_opt rest)
   | _ :: "timing" :: rest -> Bench.timing rest
+  | _ :: "baseline" :: rest ->
+      Bench.baseline (List.filter_map int_of_string_opt rest)
   | _ :: other :: _ ->
       Printf.eprintf "unknown command %s; expected report, check, bench or csv\n" other;
       exit 2

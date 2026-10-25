@@ -44,11 +44,20 @@
 let comparisons = ref 0
 let steps = ref 0
 let canonicalisations = ref 0
+let rows = ref 0
 
 let reset () =
   comparisons := 0;
   steps := 0;
-  canonicalisations := 0
+  canonicalisations := 0;
+  rows := 0
 
 (* a primitive that walks n elements without evaluating anything *)
-let walk (n : int) = steps := !steps + n
+let walk (n : int) =
+  steps := !steps + n;
+  rows := !rows + n
+
+(* n stored elements inspected.  [walk] implies this; [visit] is for the places
+   that inspect elements by evaluating something for each of them, which the
+   step counter already sees but the row counter would otherwise miss. *)
+let visit (n : int) = rows := !rows + n
