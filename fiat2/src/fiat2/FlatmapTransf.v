@@ -84,10 +84,36 @@ Section WithMap.
   Qed.
 End WithMap.
 
+(* The two conjuncts of a TWO-SIDED RANGE on one attribute: a lower bound and
+   an upper bound, on the same attribute of the same row.  This is exactly the
+   first shape range_bounds (DictIndexImpl.v) matches, and it matches it
+   WHOLE.
+
+   Splitting such a conjunction is the one case where splitting can only
+   lose.  There is nothing to expose -- both halves are bounds on the same
+   attribute, and the rule that serves them wants them together -- while the
+   split leaves the outer half a ONE-SIDED range and demotes the inner half to
+   a residual filter, so the read goes from [lo, hi) to [lo, inf) and a test.
+   Measured in eval/Kafka_WindowStore: fetchAll lost its upper bound to a
+   split it had no use for, demanded by a DIFFERENT read of the same table.
+
+   Selector.v's conj_evidence already declines to ASK for SplitIf on a bare
+   range pair, for this reason.  That is not enough, and the gap is what this
+   guard closes: SplitIf is one whole-program rewrite, so a table with two
+   range readers turns it on for one of them and it then reaches the other. *)
+Definition is_two_sided_range (p1 p2 : expr) : bool :=
+  match p1, p2 with
+  | EUnop ONot (EBinop OLess (EAccess (EVar x1) a1) _),
+    EBinop OLess (EAccess (EVar x2) a2) _ =>
+      (String.eqb x1 x2 && String.eqb a1 a2)%bool
+  | _, _ => false
+  end.
+
 Definition split_if_head (e : expr) :=
   match e with
   | EIf (EBinop OAnd p1 p2) e1 (EAtom (ANil t)) =>
-      EIf p1 (EIf p2 e1 (EAtom (ANil t))) (EAtom (ANil t))
+      if is_two_sided_range p1 p2 then e
+      else EIf p1 (EIf p2 e1 (EAtom (ANil t))) (EAtom (ANil t))
   | _ => e
   end.
 
@@ -110,6 +136,9 @@ Section WithMap.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
     repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
     repeat invert_type_of_clear. invert_type_of_op_clear.
+    (* the guard's own case_match means the outer condition is no longer
+       destructed for us, so both conditions are reduced to booleans here *)
+    apply_type_sound e1_1; invert_type_of_value_clear.
     apply_type_sound e1_2; invert_type_of_value_clear.
     cbn; destruct b, b0; reflexivity.
   Qed.

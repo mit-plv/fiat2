@@ -116,12 +116,11 @@ answer a key range; every other member in these files may be a hash table. Kafka
 the same choice by hand -- `segmentMap` is a `ConcurrentSkipListMap` -- and for the same
 reason: every read of it is a time range and the retention policy deletes a time range.
 
-It is also the file that measures the most. Two configurations, because no single one
-serves both of the source's range readers well: without `SplitIf` the flat range is a
-probe and the conjunctive one is a scan; with `SplitIf` the conjunctive one becomes a
-probe refined by a key test, while the flat one keeps only its lower bound -- a
-one-sided probe `[lo, inf)` with the upper bound left as a residual filter, because the
-same splitter cuts the range pair in half and only one half can be a bound. That is a
+It is also the file that measures the most. Two configurations, and the second now serves
+both of the source's range readers: without `SplitIf` the flat range is a probe and the
+conjunctive one is a scan; with `SplitIf` the conjunctive one becomes a probe refined by a
+key test and the flat one is **unchanged**, because `is_two_sided_range` stops the
+splitter cutting a range pair in half. It did not use to be, and what that cost is a
 real cost and a much smaller one than it was before the bounds became optional, when
 the same split produced two chained table scans.
 
@@ -211,14 +210,20 @@ condition does not fire on it. That is why `Ex_RangeDelete`, whose only conjunct
 bare range pair, is left alone, while `Kafka_Cluster` (two equalities) and
 `Kafka_WindowStore` (a range conjoined with a key test) are both split.
 
-WindowStore is where the cost shows. Its `fetchAll` reads a bare range pair, contributes
-no reason to split, and is split anyway, because `SplitIf` is a whole-program rewrite --
-so it loses one of its two bounds. The file measures that
-(`fetch_all_loses_a_bound_split`) beside the three gains that come with it: `fetch`
-becomes a probe, the list is erased, and retention reduces to the member's own incremental
-restriction (`split_erases_the_list`, `split_expiry_is_only_the_restriction`). Three gains
-against one loss; which is the better trade in general is a comparison, and the selector
-is built to avoid comparisons, so both configurations stay pinned side by side.
+WindowStore is where the cost used to show. Its `fetchAll` reads a bare range pair,
+contributes no reason to split, and was split anyway, because `SplitIf` is a
+whole-program rewrite -- so it lost one of its two bounds. The selector's condition
+already declined to *ask* for the split on such a read, which was not enough: one reader
+of the table asked for it and the rewrite then reached the other.
+
+**That is now fixed in the rule rather than worked around.**
+`FlatmapTransf.is_two_sided_range` makes `SplitIf` leave a conjunction alone when the
+conjunction *is* a two-sided range on one attribute -- the shape `range_bounds` matches
+whole -- because splitting it can expose nothing and can only cost a bound.
+`fetch_all_keeps_both_bounds_split` pins the result: the same term as the unsplit
+configuration, both bounds named, no residual filter. So configuration 1 is better on all
+four measured operations and configuration 0 is dominated; it stays only because
+`fetch_key_scans_unsplit` is the evidence that the split is needed at all.
 
 The other is `TableRep`, which the selector emits for exactly one kind of read. Two kinds
 have to be told apart. A read the **rewriting leaves behind** -- the else branch of a
@@ -350,17 +355,8 @@ no comparisons at all (`a` = 0.00): `getRequiredActionProviderList`'s count and
 `sizeInBytes`, which are maintained aggregates and so are field reads, cheaper than a
 probe.
 
-**The four that still grow are the interesting column, and every one of them is known
-and pinned.** Their exponents are 0.94, 0.98, 0.98 and 0.19 -- and only the first is a
-cost rather than a correct answer.
-
-* `Kafka_WindowStore`'s `fetchAll`, `a` = 0.94. This is `fetch_all_loses_a_bound_split`,
-  the cost named in the limits table below: `SplitIf` is a whole-program rewrite, so the
-  read that gains nothing from it pays anyway. The measurement turns the pin into a
-  number, and into a trade that can be stated: in the same file and the same
-  configuration, `fetch` goes flat and the retention write goes flat, so the split buys
-  two scans and sells one. This is the one remaining entry here that a better rule would
-  remove.
+**The three that still grow are the interesting column, and every one of them is a correct
+answer rather than a cost.** Their exponents are 0.98, 0.98 and 0.19.
 * `Jenkins_UserSearch`'s `suggestMiss` and `suggestShort`, `a` = 0.98 each. These are the
   guarded fallback, reached by a token with no trigram and by one shorter than three
   characters, and they are linear because a substring match **has** to look at every row.
@@ -372,11 +368,21 @@ cost rather than a correct answer.
 * `Jenkins_UserSearch`'s `suggest`, `a` = 0.19 -- sublinear, and it is the answer growing
   rather than the search: a three-character token matches more of a larger table.
 
-`Jenkins_UserSearch`'s `remove` used to be in this list at `a` = 0.94, with the note that
-"a rule recovering rows from `ODictValues` would erase it and this number with it". That
-rule is `UniqueIndexUse.unique_scan_head`, and it did: `remove` is now `a` = 0.01, 318,320
-steps against 4,500 at 1600 rows, and the list it filtered is gone. The build phase went
-with it, from 8,983,202 steps to 270,409.
+Two entries have left this list, and both left the same way -- a rule named in the note
+that described them.
+
+`Jenkins_UserSearch`'s `remove` used to be here at `a` = 0.94, with the note that "a rule
+recovering rows from `ODictValues` would erase it and this number with it". That rule is
+`UniqueIndexUse.unique_scan_head`, and it did: `remove` is now `a` = 0.01, 318,320 steps
+against 4,500 at 1600 rows, and the list it filtered is gone. The build phase went with
+it, from 8,983,202 steps to 270,409.
+
+`Kafka_WindowStore`'s `fetchAll` used to be here at `a` = 0.94 -- the one entry that was a
+**cost** rather than a correct answer, with the note that a better rule would remove it.
+That rule is `FlatmapTransf.is_two_sided_range`, a guard declining to split a conjunction
+that is already a two-sided range, and it did: `fetchAll` is now `a` = 0.01, 448,700 steps
+against 900 at 1600 rows. **So every measured read and write in the optimized column is
+now flat except the two substring fallbacks, which have to be linear.**
 
 The seconds agree where they can be read at all, and over the full 32x span they are
 read more easily: the source op phases that resolve grow about 30x, against a counted
@@ -417,7 +423,6 @@ that found it rather than described in prose:
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |
-| `SplitIf` is a whole-program rewrite, so a read that gains nothing from it pays anyway | the same file's two readers: one conjunction is worth splitting, the other is a bare range pair that loses a bound | `fetch_all_loses_a_bound_split`. Separating them needs a per-filter decision, which the basic rewrites do not have |
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
 | a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |

@@ -201,7 +201,15 @@ Definition write_pred_demand (x : string) (p : expr) : option demand :=
    matches it whole, so it is served without splitting and splitting it
    can only cost it one of its two bounds.  The condition declines it for
    the general reason -- there is nothing to expose -- rather than by a
-   special case. *)
+   special case.
+
+   Declining to ASK is not enough, and eval/Kafka_WindowStore measured why:
+   SplitIf is ONE whole-program rewrite, so a table with two range readers
+   has the split demanded by one of them and applied to both.  The guard
+   that actually protects the pair is on the rule, FlatmapTransf's
+   is_two_sided_range.  This condition still belongs here -- it is what
+   keeps SplitIf out of the basics list when nothing in the program wants
+   it -- but it is no longer what makes the pair safe. *)
 Definition conj_evidence (x : string) (p : expr) : list demand :=
   match p with
   | EBinop OAnd p1 _ =>

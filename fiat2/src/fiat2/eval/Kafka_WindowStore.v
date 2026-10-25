@@ -92,20 +92,31 @@ Import ListNotations.
      Then the two limits.
 
      (1) fetch(key, timeFrom, timeTo) is a conjunction, range AND key, and
-     no configuration serves both readers WELL.  Without SplitIf the range
-     rule sees fetchAll's predicate whole and fires, while the conjunction
-     stays a full scan.  With SplitIf the conjunction is split and the range
-     rule fires on its outer half -- a range probe refined by the key test,
-     which is Kafka's plan -- but the SAME splitter also cuts fetchAll's
-     range pair in two.  Since a bound may now be absent, the outer half is
-     still a range: fetchAll becomes a ONE-SIDED probe [lo, inf) whose upper
-     bound survives only as a residual filter.  It reads fewer rows than the
-     table but more than the range it asked for.  Both directions are
-     pinned.  What is missing is small and nameable: SplitIf must not split
-     a conjunction that is a range pair on one attribute.  This is the third
-     rule-ordering hazard of the same kind (TableRep listed first,
-     FilterEmptyToSetMem on a unique-dict table) and the first that no
-     ordering can fix.
+     it needs SplitIf: without the split the range rule sees fetchAll's
+     predicate whole and fires, while the conjunction stays a full scan.
+     With the split the range rule fires on its outer half -- a range probe
+     refined by the key test, which is Kafka's plan.
+
+     This file used to record a LIMIT here, and the limit is now closed.
+     SplitIf is one whole-program rewrite, so turning it on for fetch used
+     to reach fetchAll too, and cut ITS range pair in two: since an absent
+     bound is ANone and not a sentinel, the outer half was still a range,
+     and fetchAll degraded to a ONE-SIDED probe [lo, inf) with its upper
+     bound surviving only as a residual filter.  No ordering of the rules
+     could recover it, because SplitIf runs in the basic phase before any
+     index rule sees the predicate.
+
+     What closed it is a guard on the rule rather than a reordering:
+     FlatmapTransf.is_two_sided_range declines to split a conjunction that
+     IS a two-sided range on one attribute -- the shape range_bounds matches
+     whole -- because splitting that can only lose a bound and can expose
+     nothing.  fetchAll now keeps both bounds under the split
+     (fetch_all_keeps_both_bounds_split), so configuration 1 serves every
+     reader here and configuration 0 is kept only to pin what fetch costs
+     without the split.  The hazard this used to be an instance of -- a
+     per-site need applied program-wide -- is the one the three catalogued
+     pessimizations share, and this is the first of them fixed where it
+     belongs, in the rule's own guard.
 
      (2) removeExpiredSegments is a RANGE-shaped delete, and the MEMBER is
      now maintained by one range operation: the retention predicate
@@ -281,16 +292,6 @@ Section WithConcreteMaps.
             (EUnop OSome (EAccess (EVar "q") "hi"))))
       "b" (EVar "b").
 
-  (* the same probe with only the lower bound named: the shape SplitIf leaves
-     behind, since an absent bound is ANone and not a sentinel *)
-  Definition range_probe_from : expr :=
-    EFlatmap LikeBag
-      (EUnop ODictValues
-         (ETernop ODictRange member
-            (EUnop OSome (EAccess (EVar "q") "lo"))
-            (EAtom (ANone (Some TInt)))))
-      "b" (EVar "b").
-
   (* the member restricted to the live range: headMap(lo, false).clear()
      read from the other end -- keep [lo, inf) *)
   Definition live_range : expr :=
@@ -412,20 +413,17 @@ Section WithConcreteMaps.
     = Some (EACFold AGCount (refine range_probe key_eq)).
   Proof. vm_compute; reflexivity. Qed.
 
-  (* And here is the price, which is why both configurations are in the
-     file.  The same splitter cuts fetchAll's range pair in two, and two
-     one-sided comparisons are not a range: the probe becomes a scan
-     filtered by one bound, chained into a scan filtered by the other.  No
-     ordering of the rules recovers it -- SplitIf runs in the basic phase,
-     before any index rule can see the predicate.  The fix is a guard on
-     SplitIf: leave a conjunction alone when it is a range pair on one
-     attribute. *)
-  Lemma fetch_all_loses_a_bound_split :
+  (* And fetchAll is UNHARMED by the split, which is what this file used to
+     pin the opposite of.  It is the same term as in configuration 0 --
+     range_probe, both bounds named, no residual filter -- because
+     FlatmapTransf.is_two_sided_range declines to split a conjunction that
+     is already a two-sided range on one attribute.  Splitting it could
+     expose nothing (both halves bound the same attribute, and the range
+     rule wants them together) and could only cost it a bound, which is
+     exactly what it used to cost. *)
+  Lemma fetch_all_keeps_both_bounds_split :
     query_at 0 (nth 1 prog_transformed CSkip)
-    = Some (EACFold AGCount
-              (refine range_probe_from
-                 (EBinop OLess (EAccess (EVar "r") "time")
-                    (EAccess (EVar "q") "hi")))).
+    = Some (EACFold AGCount range_probe).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------
@@ -440,14 +438,15 @@ Section WithConcreteMaps.
      every call and every write: fetch's full scan, and the rewrite of the
      whole list that retention performs.
 
-     Read together with Expected (1) above, which said that neither
-     configuration serves both readers: that is still true of the two
-     READS, and it is not the whole comparison.  Configuration 1 is better
-     on three of the four, and worse on one -- fetchAll reads [lo, inf)
-     and filters, where configuration 0 reads exactly [lo, hi).  Which to
-     prefer is a question about how much of the table lies beyond hi, so
-     it is a workload question and not a soundness one; what is NOT in
-     question is that the earlier framing undersold the split. *)
+     So configuration 1 is now better on all four and configuration 0 is
+     DOMINATED: fetchAll is the same probe either way, fetch is a probe
+     only here, the list exists only there, and retention rewrites the
+     whole of it only there.  That is a stronger statement than this file
+     could make twice over -- first it undersold the split by counting only
+     the reads, then it oversold its cost by pinning a lost bound that a
+     guard on the rule removes.  Configuration 0 is kept because
+     fetch_key_scans_unsplit is the evidence that the split is needed at
+     all. *)
 
   Lemma split_erases_the_list :
     installed_fields (nth 1 prog_transformed CSkip) = ["aux_tag"].
