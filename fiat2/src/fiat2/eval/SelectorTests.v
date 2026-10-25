@@ -1,5 +1,6 @@
 Require Import fiat2.Selector fiat2.OptimizeAnno fiat2.Surface fiat2.Language.
-Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
+Require fiat2.eval.Jenkins_ItemDeletion
+  fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.Jenkins_UserSearch
@@ -35,6 +36,7 @@ Module NC := Kafka_NamedCache.
 Module AR := HA_AreaRegistry.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
+Module JID := Jenkins_ItemDeletion.
 
 (* ---------- the constrained subjects: the annotation itself ---------- *)
 
@@ -144,6 +146,23 @@ Proof. vm_compute; reflexivity. Qed.
    the empty cenv, which is the whole of what this subject tells it. *)
 Lemma ha_lookin_functions :
   unconstrained "functions" LF.elaborated = LF.anno.
+Proof. vm_compute; reflexivity. Qed.
+
+(* TableRep, demanded.  This is the one subject whose read names no
+   attribute -- registrations.contains(item) asks about a whole row -- so
+   whole_collection_binop fires and nothing else can.  The two pins together
+   are the claim that the condition is not an overfit: this subject gets
+   TableRep and the one ABOVE does not, although Lookin's source also hands
+   a bare coercion of its table to a membership test.  What separates them
+   is that Lookin's membership test is reached through an EAccess, so
+   FilterEmptyToSetMem and SetAgg claim it first and the coercion the
+   selector sees is of an ATTRIBUTE's values, not of the table. *)
+Lemma jenkins_item_deletion :
+  select_choices [] "registrations" JID.elaborated = [TableRep LikeSet].
+Proof. vm_compute; reflexivity. Qed.
+
+Lemma jenkins_item_deletion_anno :
+  unconstrained "registrations" JID.elaborated = JID.anno_rep.
 Proof. vm_compute; reflexivity. Qed.
 
 (* The ranged dictionary, demanded by the read and by both range-shaped

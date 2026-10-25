@@ -220,13 +220,15 @@ restriction (`split_erases_the_list`, `split_expiry_is_only_the_restriction`). T
 against one loss; which is the better trade in general is a comparison, and the selector
 is built to avoid comparisons, so both configurations stay pinned side by side.
 
-The other is `TableRep`, which the selector never emits. It is the only choice whose
-justification is a shape the pipeline *leaves behind* rather than one the program
-contains -- the read it serves is the else branch of a guarded probe, which the rewriting
-creates by keeping its own input -- so no matcher can ask for it. A feedback step that
-runs the pipeline, finds the surviving read, adds `TableRep` and runs again does reach
-that configuration; it was built and then removed, because the goal turned out to be the
-wrong one.
+The other is `TableRep`, which the selector emits for exactly one kind of read. Two kinds
+have to be told apart. A read the **rewriting leaves behind** -- the else branch of a
+guarded probe, which `trigram_lookup_guarded_head` creates by keeping its own input -- is
+nowhere in the source, so no matcher can ask for it; a feedback step that runs the
+pipeline, finds the surviving read, adds `TableRep` and runs again does reach that
+configuration, and it was built and then removed, because the goal turned out to be the
+wrong one. A read the **programmer wrote** is an ordinary shape, and that is the one the
+selector now demands (`whole_collection_binop`): an operator that takes the collection
+whole and names no attribute, so no dictionary or aggregate can be keyed for it.
 
 In `Jenkins_UserSearch` that case is now closed from the other end. The declared key
 serves the fallback, so the read `TableRep` was added for is gone before it can be found,

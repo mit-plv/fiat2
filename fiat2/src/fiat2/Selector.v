@@ -73,6 +73,9 @@ Variant demand :=
   | DSum (attr : string)     (* sum_to_agg_lookup *)
   | DMin (attr : string)     (* min_to_agg_lookup *)
   | DCount                   (* count_to_agg_lookup *)
+  | DRep (ctag : collection_tag)
+                             (* rep_lookup: the table's own rows, stored at
+                                the level a read asks for them *)
   (* Shapes that decide a BASIC rewrite rather than an index.  They are
      collected by the same traversal and read by a different phase. *)
   | DEmptyEqFilter           (* FilterEmptyToSetMem applies *)
@@ -218,6 +221,39 @@ Definition flag_evidence (x : string) (p : expr) : list demand :=
   | _ => []
   end.
 
+(* The operators that consume a collection WHOLE.  They ask about rows as
+   rows and name no attribute, so there is nothing in them for a dictionary
+   or an aggregate to key on -- and that is the entire content of the
+   condition.  Every other matcher in this file reaches an EAccess and
+   extracts an attribute; these are exactly the reads where none can be
+   reached, which is why TableRep is the only choice that serves them.
+
+   OLength and the counted folds are deliberately NOT here.  A whole-table
+   count names no attribute either, but CountAgg answers it with one number
+   rather than a copy of the table, and DCount already asks for that. *)
+Definition whole_collection_binop (o : binop) : bool :=
+  match o with
+  | OSetMem | OSetUnion | OSetIntersect | OSetDiff | OEq => true
+  | _ => false
+  end.
+
+Definition coerced_read (tbl : string) (ctag : collection_tag) (e : expr) : bool :=
+  match ctag, e with
+  | LikeSet, ESetOf (ELoc t) => String.eqb tbl t
+  | LikeBag, EBagOf (ELoc t) => String.eqb tbl t
+  | _, _ => false
+  end.
+
+(* Which operands of o could be the table.  OSetMem takes its ELEMENT
+   second, so only its first operand is a collection; the others are
+   symmetric in it. *)
+Definition rep_demands (tbl : string) (o : binop) (e1 e2 : expr) : list demand :=
+  if whole_collection_binop o then
+    let ops := match o with OSetMem => [e1] | _ => [e1; e2] end in
+    (if existsb (coerced_read tbl LikeSet) ops then [DRep LikeSet] else [])
+      ++ (if existsb (coerced_read tbl LikeBag) ops then [DRep LikeBag] else [])
+  else [].
+
 (* ---------- phase 2b: one node of the program ---------- *)
 
 Definition is_read (tbl : string) (e : expr) : bool :=
@@ -268,6 +304,11 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
       if (String.eqb tbl t && String.eqb x x1 && String.eqb x y
           && negb (free_immut_in x k))%bool
       then [DEmptyEqFilter] else []
+  (* the whole table handed to an operator that consumes a collection whole:
+     rep_lookup.  Last of the EBinop branches, so the two specific ones
+     above keep their shapes; see whole_collection_binop for why these
+     operators and no others. *)
+  | EBinop o e1 e2 => rep_demands tbl o e1 e2
   | _ => []
   end.
 
@@ -516,13 +557,18 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    between them is free, and the aggregates come out in the fixed kind order
    SetAgg, SumAgg, MinAgg, CountAgg.
 
-   TableRep, which has to be listed first of all, is not emitted here; see
-   the note at the end of this file. *)
+   TableRep comes first of all, which by that same reading makes it the LAST
+   to run: every other index gets first refusal on every read, and TableRep
+   picks up only what is left.  That is what makes co-installing it safe,
+   and it is hazard 1 of the six.  It is emitted for one kind of read only;
+   see the note at the end of this file. *)
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in
   let dicts := drop_subsumed_by_trigram
                  (pair_keyed_delete keys ds (omap (dict_of_demand keys ds) ds)) in
+  let reps :=
+    omap (fun d => match d with DRep ct => Some (TableRep ct) | _ => None end) ds in
   let aggs :=
     omap (fun d => match d with
                    | DSetOf a => Some (SetAgg a)
@@ -531,7 +577,7 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
     ++ omap (fun d => match d with DSum a => Some (SumAgg a) | _ => None end) ds
     ++ omap (fun d => match d with DMin a => Some (MinAgg a) | _ => None end) ds
     ++ (if demand_mem DCount ds then [CountAgg] else []) in
-  dedup_choices (dicts ++ aggs).
+  dedup_choices (reps ++ dicts ++ aggs).
 
 (* ---------- the selector ---------- *)
 
@@ -562,60 +608,61 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
 
 
 
-(* TableRep.  Not emitted -- but the reason is narrower than it looks, and
-   one half of what used to be written here has been measured false.
+(* TableRep.  Emitted for ONE kind of read, and the distinction is the
+   measured one rather than a guess.
 
-   TWO KINDS OF READ have to be separated, because they answer "could a
-   shape demand this?" differently.
+   WHAT DECIDES IT is whether a dictionary or an aggregate can serve the
+   read that keeps the list alive.  Every other matcher in this file reaches
+   an EAccess and extracts an attribute, which is what a dictionary keys on.
+   whole_collection_binop is the complement: the operators that take the
+   collection whole and name no attribute, so no attribute-level index can
+   be built for them.
 
-     A read the REWRITING leaves behind.  trigram_lookup_guarded_head
-     rewrites e into EIf (pattern_has_trigram p) (probe) e, keeping its own
-     input as the else branch, so the surviving coercion is nowhere in the
-     source and no matcher here can see it.  A feedback step -- run the
-     pipeline, look for a surviving coercion of the table's list member, add
-     TableRep at that level, run again -- does reach
-     eval/Jenkins_UserSearch's second configuration.  It was built and then
-     removed, because "the list was erased" is not a proxy for "this paid".
+   WHERE IT PAYS, measured on eval/Jenkins_ItemDeletion -- a whole-row
+   membership test, from jenkins ItemDeletion.java's Set<Item> asked
+   contains(item).  There is no key, because the question is about a row,
+   so the unindexed form coerces the whole table on every evaluation:
+   764,164 comparisons against 444 at 1600 rows, and wall-clock growth over
+   a 32x span from 69.5x to unmeasurable.  The write side gives a log factor
+   back -- a cons becomes a set insert, 40 comparisons to 578 -- and the
+   filter-shaped delete is 11.7x worse at set level, because rebuilding a
+   set costs n log n where filtering a list costs n.  That delete removes
+   ONE row, which on a set is one tree deletion, so what is owed is a rule
+   maintaining a rep member AT ITS OWN LEVEL: a set-level removal rather
+   than a rebuild, which would take 744,280 to the size of a probe.
 
-     A read the PROGRAMMER wrote.  eval/Jenkins_ItemDeletion's membership
-     test is EBinop OSetMem (ESetOf (ELoc tbl)) row IN THE SOURCE, which is
-     an ordinary matchable shape -- so a demand for TableRep could be
-     derived there exactly as every other demand is.  None is.  That is a
-     gap, not an impossibility, and it is the one thing this note used to
-     get wrong.
+   WHERE IT IS DOMINATED, measured on eval/Jenkins_UserSearch, and the
+   reason it took a feedback step to find there at all:
 
-   WHERE IT IS DOMINATED, measured on eval/Jenkins_UserSearch:
+     the read it would serve is one the REWRITING leaves behind --
+       trigram_lookup_guarded_head rewrites e into
+       EIf (pattern_has_trigram p) (probe) e, keeping its own input as the
+       else branch -- so the coercion is nowhere in the source and no
+       matcher here can see it.  A feedback step that runs the pipeline,
+       finds the surviving coercion, adds TableRep and runs again does reach
+       that configuration; it was built and removed, because "the list was
+       erased" is not a proxy for "this paid".
+     and it did not pay: the configuration WITHOUT it writes nothing to a
+       list, because the declared key has already erased the list
+       (delete_writes_no_list, insert_writes_no_list), while the one WITH it
+       still pays the source's filter on the delete over the rep member
+       (rep_delete_filters_the_rep), degrades the insert
+       (rep_insert_is_a_set_insert), and has a rep member read by no query
+       at all (rep_suggest_also_uses_the_key_member,
+       rep_find_is_still_a_probe).
 
-     the configuration WITHOUT it writes nothing to a list, because the
-       declared key has already erased the list (delete_writes_no_list,
-       insert_writes_no_list);
-     the configuration WITH it still pays the source's own row-by-row
-       filter on the delete, now over the rep member
-       (rep_delete_filters_the_rep), and degrades the insert from a cons
-       to a set insert (rep_insert_is_a_set_insert);
-     and its rep member is read by no query at all
-       (rep_suggest_also_uses_the_key_member, rep_find_is_still_a_probe).
+   So a read created by the rewriting is still not demanded, and should not
+   be: where a dictionary can serve it, TableRep is a copy, and erasing the
+   list by substitution is an expressiveness result (a table can BE its
+   index) and not a performance one.  What IS demanded is the read written
+   in the source that no key can answer.
 
-   WHERE IT PAYS, measured on eval/Jenkins_ItemDeletion: a WHOLE-ROW
-   membership test.  There is no key -- the question is about a row and not
-   about an attribute -- so no dictionary can serve it, and the unindexed
-   form coerces the whole table on every evaluation.  764,164 comparisons
-   against 444 at 1600 rows, and wall-clock growth across a 32x span from
-   69.5x to unmeasurable.  The write side gives a log factor back (a cons
-   becomes a set insert, 40 comparisons to 578) and the filter-shaped delete
-   is 11.7x worse at set level, because rebuilding a set costs n log n where
-   filtering a list costs n.
-
-   So what decides it is whether a DICTIONARY is available for the read that
-   keeps the list alive.  Where one is, TableRep is a copy and is dominated:
-   erasing the list by substitution is an expressiveness result (a table can
-   BE its index), not a performance one.  Where the read is whole-row,
-   nothing else can serve it and the saving is asymptotic.  The choice
-   therefore stays available and unselected, and the two things that would
-   change that are both nameable: a demand derived from a programmer-written
-   coercion of a table read, and a rule maintaining a rep member AT ITS OWN
-   LEVEL -- a set-level removal rather than a rebuild -- which would take
-   that delete column from 744,280 to the size of a probe. *)
+   The two eval/SelectorTests pins around jenkins_item_deletion are the
+   claim that this is not an overfit: HA_LookinFunctions also hands a bare
+   coercion of its table to a membership test and gets no TableRep, because
+   its test is reached through an EAccess, so FilterEmptyToSetMem and SetAgg
+   claim it first and the coercion left for this phase to see is of an
+   ATTRIBUTE's values. *)
 
 (* MinAgg.  Emitted when the program asks for it, but no eval subject does.
    The corpus witnesses for a minimum are per-key counters held in a
