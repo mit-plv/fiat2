@@ -64,8 +64,8 @@ Import ListNotations.
 
    WHAT IT MEASURED (harness/, subject "item_deletion", 20 ops of each kind,
    COMPARISONS, which is where a tree operation's cost lives -- count.ml says
-   so, and it is why the step counts below are equal: neither configuration
-   walks the table at the AST level for this read)
+   so, and it is why the read's step counts are equal: neither configuration
+   walks the table at the AST level for a membership test)
 
      kind            50 rows   1600 rows            32x the rows
      containsHit  src  10,872     764,164   70.3x   -- the coercion, n log n
@@ -75,26 +75,24 @@ Import ListNotations.
      register     src      40          40    1.0x   -- a cons
                   opt     340         578    1.7x   -- a set insert
      deregister   src   1,680      63,680   37.9x   -- filter a list
-                  opt   9,952     744,280   74.8x   -- filter a SET
+                  opt     268         532    2.0x   -- a tree deletion
 
-   So the read TableRep exists for goes from 764,164 comparisons to 444 at
-   1600 rows, a factor of 1721, and wall-clock growth across that span goes
-   from 69.5x to unmeasurable.  This is the first measured case in the
-   development where TableRep pays, and the reason it can is that the read is
-   whole-row: no dictionary is available to serve it instead.
+   Every read and every write is FLAT.  The exponents in cost ~ rows^a are
+   0.18, 0.21, 0.15 and 0.20, against the source's 1.22, 1.22, 0.00 and 1.04,
+   and the op phase as a whole falls from 289,220 steps and 1,592,358
+   comparisons to 1,200 and 2,126.  The one column TableRep loses is
+   register, by 538 comparisons on an operation whose cost does not grow.
 
-   AND THE SAME TABLE NAMES A MISSING RULE, with a number on it.  The delete
-   is 11.7x WORSE at set level, and asymptotically worse: filtering a list
-   costs one comparison per row, while rebuilding a set costs n log n because
-   every survivor is inserted into a growing tree.  But this delete removes
-   ONE ROW, which on a set is one tree deletion -- OSetDiff against the
-   singleton -- not a rebuild.  A rule rewriting
-       flatmap_filter_set s x (not (x = v)) x
-   to a removal would take that column from 744,280 to the size of a probe,
-   and it is the rule meant by "maintain a rep member AT ITS OWN LEVEL" in
-   Selector.v's note on why TableRep is not selected.  Until it exists, this
-   subject's verdict is: a large win on the read, a log factor given back on
-   the write.
+   THE DELETE DID NOT START OUT THAT WAY, and the history is the point.
+   Before SetRemoveTransf existed it cost 744,280 comparisons -- 11.7x WORSE
+   than the source's list filter, and asymptotically worse, because the
+   semantics of a set-level filter rebuilds the member and every surviving
+   row pays a logarithmic insert.  So the first measurement of this subject
+   was a trade: a large win on the read, a log factor given back on the
+   write.  What rules that out is rep_delete_is_a_set_removal -- the filter
+   recognised for what it is, one row leaving a set -- and the column drops
+   by a factor of 1399.  The rule is not about TableRep and is stated for any
+   set (SetRemoveTransf.v); this subject is only where its absence showed.
 
    Faithfulness -- what this translation drops, and why
      * Item carries a name, a parent and much else.  Two fields are kept:
@@ -268,18 +266,17 @@ Section WithConcreteMaps.
                       ERecord [("0", EBinop OSetInsert (member "0") the_item)])]).
   Proof. vm_compute; reflexivity. Qed.
 
-  (* The delete is the same filter it always was, now at set level over the
-     member instead of at list level over the list -- so it is the one write
-     this choice neither helps nor hurts. *)
-  Lemma rep_delete_filters_the_member :
+  (* The delete is no longer a filter at all.  push_down_collection puts the
+     source's row-by-row filter at set level over the member, and
+     filter_neq_to_set_remove_head then says what that filter IS: the member,
+     less the one row.  A tree deletion rather than a rebuild. *)
+  Lemma rep_delete_is_a_set_removal :
     delete_of optimized_rep
     = Some (ERecord
               [("aux_tag",
                 ERecord
-                  [("0",
-                    flatmap_filter_set (member "0") "r"
-                      (EUnop ONot (EBinop OEq (EVar "r") the_item))
-                      "r" (Some row_ty) (Some row_ty))])]).
+                  [("0", EBinop OSetDiff (member "0")
+                           (EBinop OSetInsert (EAtom (AEmptySet None)) the_item))])]).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------

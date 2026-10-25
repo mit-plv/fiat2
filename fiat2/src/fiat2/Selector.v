@@ -623,13 +623,12 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
    contains(item).  There is no key, because the question is about a row,
    so the unindexed form coerces the whole table on every evaluation:
    764,164 comparisons against 444 at 1600 rows, and wall-clock growth over
-   a 32x span from 69.5x to unmeasurable.  The write side gives a log factor
-   back -- a cons becomes a set insert, 40 comparisons to 578 -- and the
-   filter-shaped delete is 11.7x worse at set level, because rebuilding a
-   set costs n log n where filtering a list costs n.  That delete removes
-   ONE row, which on a set is one tree deletion, so what is owed is a rule
-   maintaining a rep member AT ITS OWN LEVEL: a set-level removal rather
-   than a rebuild, which would take 744,280 to the size of a probe.
+   a 32x span from 69.5x to unmeasurable.  The delete is flat too, 63,680
+   against 532, since SetRemoveTransf recognises the filter the push-down
+   leaves on the member for what it is -- one row leaving a set -- rather
+   than a rebuild of it.  The one column it loses is the insert, 40
+   comparisons to 578, a cons becoming a set insert on an operation whose
+   cost does not grow.
 
    WHERE IT IS DOMINATED, measured on eval/Jenkins_UserSearch, and the
    reason it took a feedback step to find there at all:

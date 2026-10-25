@@ -2,7 +2,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.CollectionTransf fiat2.ExistsTransf fiat2.DictIndexImpl fiat2.SumAgg fiat2.CountAgg fiat2.MinAgg fiat2.SetAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf fiat2.TransfSound fiat2.Utils fiat2.Substitute
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
   fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
-  fiat2.EraseField fiat2.RepIdx
+  fiat2.EraseField fiat2.RepIdx fiat2.SetRemoveTransf
   fiat2.FlagFilter fiat2.UnpushCollection.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
@@ -340,6 +340,14 @@ Section WithConcreteMaps.
     Definition rep_maintain_transf :=
       fun tbl => fold_command_with_globals [tbl] push_down_collection.
 
+    (* And then what the push-down leaves on a DELETE is a filter at set
+       level, whose semantics rebuilds the member out of the rows that
+       stayed.  This says what the delete is instead: the member, less the
+       one row.  It has to run AFTER rep_maintain_transf, so it is listed
+       BEFORE it. *)
+    Definition set_remove_transf :=
+      fun tbl => fold_command_with_globals [tbl] filter_neq_to_set_remove_head.
+
   End CommonPipelineParts.
 
   (* What both dictionary hints build.  They hand out the SAME rules and
@@ -501,6 +509,7 @@ Section WithConcreteMaps.
         let r_tag := String.of_nat cur_tag in
         ([(r_tag, crep_idx ctag, rep_idx_wf ctag)],
           [rep_lookup_transf r_tag ctag;
+           set_remove_transf;
            (* last in the list is first to run: maintenance leaves the
               coercion of the unchanged table behind, and the rule above it
               turns that into a read *)
@@ -1446,8 +1455,9 @@ end.
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)). } }
-    (* the table's own representation: one use rule, and the basic push-down
-       for maintenance *)
+    (* the table's own representation: one use rule, the basic push-down for
+       maintenance, and the set-level removal that the push-down's output on a
+       delete is really asking for *)
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply RepIdx.rep_to_lookup_head_sound; auto using ctenv_ok, clocals_ok.
@@ -1458,6 +1468,7 @@ end.
             1: prove_is_tbl_ty.
             1: prove_idx_wf. }
         all: apply expr_transf_sound__expr_aug_transf_sound.
+        1: apply filter_neq_to_set_remove_head_sound.
         1: apply push_down_collection_sound. }
     (* the maintained row count: a lookup rule, an insert that adds one, and a
        keyed delete that subtracts the rows carrying the key *)

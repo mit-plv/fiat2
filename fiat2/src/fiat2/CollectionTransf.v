@@ -638,6 +638,18 @@ Section WithWord.
           [ apply list_to_set_incl_r | ]; assumption.
     Qed.
 
+    (* A set is already canonical, so deduplicating it again does nothing.
+       This is the fact that lets a rewrite replace a set-level filter -- whose
+       semantics rebuilds the set from its survivors -- with an operator that
+       just drops elements. *)
+    Lemma list_to_set_canonical : forall (l : list value),
+        NoDup l -> StronglySorted value_leb l -> list_to_set l = l.
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted,
+                   list_to_set_incl, list_to_set_incl_r.
+    Qed.
+
     (* dropping every row whose attribute is k drops exactly k from the set *)
     Lemma filter_list_to_set_map : forall (f : value -> value) k l,
         filter (fun w => negb (value_eqb w k)) (list_to_set (List.map f l))

@@ -253,20 +253,23 @@ coerces the whole table on every evaluation. Comparisons for twenty reads:
 | `register` without (a cons) | 40 | 40 | 1.0x |
 | `register` with (a set insert) | 340 | 578 | 1.7x |
 | `deregister` without (filter a list) | 1,680 | 63,680 | 37.9x |
-| `deregister` with (filter a set) | 9,952 | 744,280 | 74.8x |
+| `deregister` with (a tree deletion) | 268 | **532** | 2.0x |
 
-So the read goes from 764,164 comparisons to 444, and wall-clock growth across that span
-from 69.5x to unmeasurable. The step counts are equal in both columns and that is the
-correct reading, not a blind spot: `count.ml` puts a tree operation's cost in comparisons,
-and neither configuration walks the table at the AST level for this read.
+Every read and every write is flat: the exponents are 0.18, 0.21, 0.15 and 0.20 against
+the source's 1.22, 1.22, 0.00 and 1.04, and the op phase as a whole falls from 289,220
+steps and 1,592,358 comparisons to 1,200 and 2,126. The one column `TableRep` loses is the
+insert, by 538 comparisons on an operation whose cost does not grow. The read's step counts
+are equal in both columns and that is the correct reading, not a blind spot: `count.ml`
+puts a tree operation's cost in comparisons.
 
-The same table names a missing rule with a number on it. Filtering a **set** costs
-`n log n` where filtering a list costs `n`, because every survivor is inserted into a
-growing tree -- but this delete removes **one row**, which on a set is one tree deletion
-(`OSetDiff` against the singleton) rather than a rebuild. A rule rewriting
-`flatmap_filter_set s x (not (x = v)) x` to a removal would take that last row from
-744,280 to the size of a probe. That is the rule meant by *maintain a rep member at its
-own level*.
+**The delete did not start out flat, and the history is the result.** Measured first, it
+cost 744,280 comparisons -- 11.7x *worse* than the source's list filter, and
+asymptotically worse, because the semantics of a set-level filter rebuilds the member and
+every surviving row pays a logarithmic insert. So `TableRep` was a trade: a large win on
+the read, a log factor given back on the write. `SetRemoveTransf.v` rules that out by
+recognising the filter for what it is -- one row leaving a set, `OSetDiff` against the
+singleton -- and the column drops by a factor of 1399. The rule is stated for any set and
+mentions no index; this subject is only where its absence showed.
 
 What decides between the two subjects is therefore whether a **dictionary is available**
 for the read that keeps the list alive. Where one is, `TableRep` is a copy and is
