@@ -46,9 +46,16 @@ Import ListNotations.
      index is Ranged -- the other four are point-lookup structures a backend
      may hash.
 
-     And two limitations, pinned rather than described, because both are
-     cheap to state and neither is visible from a passing example:
-     fetch_key_scans_unsplit and the_list_filter_keeps_the_list.
+     And what the index does NOT reach, pinned rather than described,
+     because it is cheap to state and is not visible from a passing
+     example: the key narrowing stays a filter over the time bucket, since
+     there is no composite-key index (fetch_key_probes_split).  The two
+     costs this file used to record as limitations -- a conjunctive read
+     left scanning, and a list that survives its own retention filter --
+     are both properties of configuration 0 only, and both are gone in the
+     configuration the selector picks: fetch_key_scans_unsplit and
+     the_list_filter_keeps_the_list are now the evidence that the split is
+     needed, not limits of what is derived.
 
    Faithfulness -- what this translation drops, and why
      * segmentMap is TWO levels, time -> key -> value.  Here the store is one
@@ -129,12 +136,15 @@ Import ListNotations.
      same split, and the two-sided case is the complement operator
      ODictRangeDelete.
 
-     What survives is the LIST.  The table's own field is still assigned a
-     row-by-row filter over itself, and because that filter reads the list,
-     the list cannot be erased: nothing recovers the rows from the member.
-     This file is still HA_AreaRegistry before its keyed delete existed, but
-     for a different reason than before -- the member is incremental and the
-     list is not.
+     WITHOUT the split the LIST survives: the table's own field is still
+     assigned a row-by-row filter over itself, and because that filter reads
+     the list, the list cannot be erased -- nothing recovers the rows from
+     the member (the_list_filter_keeps_the_list).  WITH the split the keyed
+     read becomes a probe, the list loses its last reader, and the retention
+     write is nothing but the member's restriction: see
+     split_erases_the_list and split_expiry_is_only_the_restriction.  That
+     is why configuration 1 dominates, and why what retention costs here is
+     a tree operation and not a rewrite of the rows that stay.
    ============================================================ *)
 
 Definition row_ty :=

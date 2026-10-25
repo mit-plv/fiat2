@@ -469,7 +469,10 @@ let baseline (sizes : int list) =
        | None -> Printf.eprintf "  (no extracted subject named %s)\n" name
        | Some ((_, src), opt) ->
            let sp = List.assoc name Gen.specs in
-           Printf.printf "\n=== %s ===\n" name;
+           Printf.printf "\n=== %s ===%s\n" name
+             (if List.mem name Baseline.hand_written then
+                "  (no author: our own example, against the implementation its\n                 \         structure asks for -- weaker evidence than the rest)"
+              else "");
            Printf.printf
              "    %-13s %18s %18s %10s %10s %11s %11s %6s\n"
              "kind" "rows a (src/opt/base)" "rows at n (s/o/b)"

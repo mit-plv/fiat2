@@ -38,6 +38,32 @@
                   constant: EBagOf is free here because a bag is its
                   elements in any order, so a list already IS one.
 
+     rows         the stored elements an operation ITERATES, counted once
+                  per STAGE that iterates them.  A scan of n rows is n, a
+                  probe that yields one row is 1, a membership test is 0
+                  because it yields nothing, and a write is 0 because it
+                  writes.  This is the counter that crosses the boundary to
+                  hand-written code in baseline.ml, because it means
+                  something there: `steps` counts entries into interp_expr
+                  and has no analogue outside this interpreter.
+
+                  "ONCE PER STAGE" IS NOT "ONCE", and the difference is
+                  worth knowing before a ratio in this column is believed.
+                  An intermediate collection is not storage, but iterating
+                  one is still counted, so a pipeline can count the same
+                  rows more than once: window_store's optimized fetchAll
+                  answers a window of 8 rows and reports 24 -- the eight
+                  dict entries pulled out of the ranged member, then the
+                  eight buckets those entries hold, then the eight rows
+                  inside them -- where cluster's forTopic answers a bucket
+                  of 8 through one lookup and reports 8.  The number of
+                  stages is a constant of the term, so the EXPONENT is
+                  unaffected and the claims are stated as exponents; the
+                  constant is comparable between two forms of the same
+                  subject only when they have the same shape, and is not
+                  comparable stage-for-stage against code that has no
+                  stages.
+
    Both are global and both are reset before each run.  Nothing in the
    evaluator reads them, so they cannot change what it computes. *)
 

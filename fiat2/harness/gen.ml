@@ -240,10 +240,21 @@ let window_store =
     kinds =
       [ (* fetchAll(timeFrom, timeTo): a window of bounded width *)
         ("fetchAll", fun rows j -> let lo = spread rows j in q rows 0 lo (lo + bucket_size) "");
-        (* fetch(key, timeFrom, timeTo): one key, same bounded window *)
+        (* fetch(key, timeFrom, timeTo): one key, same bounded window.
+
+           The key is one that IS in the window -- the key of the row at its
+           lower bound -- because fetch is asked about a key its caller
+           expects to find, and because of what the row column compares.
+           Kafka descends its inner map once per segment and enumerates only
+           what matches; the derived form enumerates the window and filters
+           it.  With a key drawn independently of the window almost every
+           query would answer nothing, and the comparison would be an empty
+           answer against a window scan, which measures the generator's aim
+           rather than the composite-key gap. *)
         ("fetch", fun rows j ->
            let lo = spread rows j in
-           q rows 1 lo (lo + bucket_size) (Printf.sprintf "k%d" (j mod buckets rows)));
+           q rows 1 lo (lo + bucket_size)
+             (Printf.sprintf "k%d" (lo mod buckets rows)));
         ("put", fun rows j ->
            rcd [ ("kind", i 2); ("lo", i 0); ("hi", i 0); ("key", s "");
                  ("new_rec", row rows (rows + j)) ]);
