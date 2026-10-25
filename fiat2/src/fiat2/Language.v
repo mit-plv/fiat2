@@ -99,7 +99,22 @@ Inductive unop : Type :=
 | OLengthString
 | OIntToString
 | OSome
-| ODictValues.
+| ODictValues
+(* The set form of a dictionary's values.
+
+   The constructs that are generic in the collection come at every level the
+   rules need: AEmptyBag/AEmptySet, OBagInsert/OSetInsert, EBagOf/ESetOf,
+   EFlatmap LikeBag/LikeSet, EACFold over a bag beside EACIFold over a set.
+   ODictValues was the one such construct available at the bag level only, so
+   an order-insensitive read served from a dictionary could not deliver a set.
+   (The set-specific operators -- OSetUnion, OSetIntersect, OSetDiff, OSetMem
+   -- have no bag counterpart and want none; the pairing is a response to what
+   the rules need at both levels, not a law about the language.)
+
+   Converting is not a coercion.  No typing rule is relaxed, no type_le is
+   introduced, and type_eqb stays exact equality: this is an explicit, one-way
+   computation, which is why it is an operator. *)
+| OSetOfBag.
 
 (* Binary operators *)
 Inductive binop : Type :=

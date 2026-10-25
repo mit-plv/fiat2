@@ -617,6 +617,21 @@ Section WithWord.
     - apply bag_entry_leb_total.
     - apply bag_entry_leb_trans.
   Qed.
+
+  (* A canonical bag lists each distinct value exactly once, in value order, so
+     the values it carries are already a canonical set.  That is this lemma:
+     bag_entry_leb is value_leb pulled back along fst, so projecting the entries
+     transports the sortedness without re-sorting anything. *)
+  Lemma StronglySorted_map_fst_bag : forall (l : list (value * nat)),
+      StronglySorted bag_entry_leb l ->
+      StronglySorted value_leb (List.map fst l).
+  Proof.
+    induction l as [| p l IH]; cbn; intros H_sorted.
+    1: apply SSorted_nil.
+    inversion H_sorted; subst. apply SSorted_cons.
+    - apply IH; assumption.
+    - apply Forall_map. assumption.
+  Qed.
 End WithWord.
 
 Arguments list_beq {A}.

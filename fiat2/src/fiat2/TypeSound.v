@@ -1440,13 +1440,24 @@ Section WithWord.
         inversion H; apply_type_sound_IH; try discriminate;
           try solve [ repeat constructor; auto ].
         (* ODictValues: the values of a well-typed dictionary form a well-typed bag *)
-        lazymatch goal with H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst end.
-        apply list_to_bag_sound.
-        rewrite Forall_forall; intros v H_in.
-        apply in_map_iff in H_in; destruct H_in as [p [H_eq H_p]]; subst.
-        lazymatch goal with
-          H: Forall _ ?l, H': In _ ?l |- _ => rewrite Forall_forall in H; apply H in H'
-        end; intuition auto.
+        1:{ lazymatch goal with H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst end.
+            apply list_to_bag_sound.
+            rewrite Forall_forall; intros v H_in.
+            apply in_map_iff in H_in; destruct H_in as [p [H_eq H_p]]; subst.
+            lazymatch goal with
+              H: Forall _ ?l, H': In _ ?l |- _ => rewrite Forall_forall in H; apply H in H'
+            end; intuition auto. }
+        (* OSetOfBag: a canonical bag's values are already a canonical set, so
+           every premise is either a premise of TyVBag verbatim or that premise
+           transported along fst *)
+        (* OSetOfBag: a canonical bag's values are already a canonical set, so
+           every premise is either a premise of TyVBag verbatim or that premise
+           transported along fst.  Nothing is re-sorted and nothing is deduped. *)
+        1:{ lazymatch goal with H: TBag _ = TBag _ |- _ => inversion H; subst end.
+            cbn. constructor.
+            - assumption.
+            - apply StronglySorted_map_fst_bag; assumption.
+            - rewrite Forall_map; assumption. }
       - (* TyEBinop *)
         inversion H; subst.
         16:{ (* OLookup.  The kind occurs only in the premise, never in the

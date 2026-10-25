@@ -60,6 +60,13 @@ Section WithWord.
                      | VDict d => VBag (list_to_bag (List.map snd d))
                      | _ => VUnit
                      end
+    (* No canonicalisation: a well-typed bag already carries each distinct value
+       once, in value order, so its entries' values are the canonical set.
+       Contrast ESetOf, which coerces a list and has to run list_to_set. *)
+    | OSetOfBag => match v with
+                   | VBag l => VSet (List.map fst l)
+                   | _ => VUnit
+                   end
     end.
 
   Definition apply_int_binop (o : Z -> Z -> Z) (a b : value) : value :=

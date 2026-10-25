@@ -57,6 +57,9 @@ Definition unop_py (o:unop) (e:string) : string :=
   | OIntToString => "str(" ++ e ++ ")"
   | OSome => e
   | ODictValues => "list(" ++ e ++ ".values())"
+  (* A bag is a list and a set is a list without duplicates, so this is the
+     dedup ESetOf below also emits *)
+  | OSetOfBag => "(lambda l: [v for i, v in enumerate(l) if v not in l[:i]])(" ++ e ++ ")"
   end.
 
 Definition binop_py (o:binop) (e1 e2:string) : string :=

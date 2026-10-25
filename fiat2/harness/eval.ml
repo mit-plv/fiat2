@@ -99,6 +99,13 @@ let interp_unop (o : unop) (v : value) : value =
   (* list_to_bag (map snd d) *)
   | ODictValues, VDict d ->
       VBag (VMap.fold (fun _ v b -> Count.walk 1; v :: b) d [])
+  (* VSet (map fst l).  In Interpret.v this is a projection, because a
+     well-typed bag is a sorted dedup'd association list already; here a bag is
+     an UNORDERED list (see value.ml), so the order the set needs has to be paid
+     for -- one tree insert per entry, charged to cmps.  That is the same price
+     the source's own ESetOf pays on its survivors, so the coercion is not
+     somewhere a pessimization could hide. *)
+  | OSetOfBag, VBag b -> VSet (set_of_list b)
   | _, _ -> VUnit
 
 (* ---------- binary ---------- *)
