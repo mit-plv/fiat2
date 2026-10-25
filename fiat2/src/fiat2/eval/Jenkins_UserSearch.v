@@ -83,13 +83,15 @@ Import ListNotations.
        else either -- ids are declared unique, so no two rows are equal.
      * The exact-match read is written at BAG level and counted, as in the
        other eval files, because the output channel is a list of strings.
-       This is a real choice and not a neutral one: the same read written as
-       a set is NOT rewritten, because unique_lookup_head's pattern
-       (UniqueIndexUse.v:438) is bag-level only.  Measured, not assumed --
-       the first draft of this file wrote it as a set and got a scan.  The
-       gap is the rule's collection level, not the index: the trigram read
-       below resolves its keys to single rows at SET level, so the machinery
-       exists.
+       This is a real choice and not a neutral one: unique_lookup_head's
+       pattern is bag-level only, so the same read written as a set gets no
+       PROBE.  Measured, not assumed -- the first draft of this file wrote it
+       as a set and got a scan.  What it would get now is unique_scan_head,
+       which serves it from the primary-key member rather than from the list:
+       enough to erase the field, still linear in the table.  So the gap is
+       narrower than it was and has not closed; it is the rule's collection
+       level, not the index, and the trigram read below resolves its keys to
+       single rows at SET level, so the machinery exists.
      * Jenkins's real index is a union of nested SearchIndexes with ranking
        and truncation in Search.java, and four CollectionSearchIndex
        instances sit beside this one in the same method (items, computers,

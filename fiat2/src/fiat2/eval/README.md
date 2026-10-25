@@ -62,7 +62,7 @@ missing is not the operator but the rule -- see the limits table below.
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 | `Kafka_NamedCache.v` | `NamedCache.java:44,49` | a keyed store and a running total over it, both maintained across a delete and a put; the total is corrected by a probe, never recomputed |
 | `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
-| `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and a second configuration erases the list |
+| `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
 
 The seven fall into four groups, and the groups are the argument.
 
@@ -152,9 +152,24 @@ source program and one index choice.
 It is also the only file where a read is GUARDED rather than rewritten outright. The
 search token comes from the request, so its length is not a rewrite-time fact, and a
 pattern shorter than three characters has no trigram at all; the rule emits the test and
-keeps the source query as the other branch. That branch is why the list survives here,
-and `rep_erases_the_list` shows what it takes to remove it: ask for the table's set
-representation too, and the fallback scans that instead.
+keeps the source query as the other branch.
+
+That branch used to be why the list survived. It no longer is. The key is declared, so
+the primary-key dictionary holds every row exactly once, and a scan of its values answers
+the same query as a scan of the list -- which is what `unique_scan_head` does
+(`UniqueIndexUse.v`), gated on the declaration exactly as the point lookup is and resting
+on the same fact about the same member (`idx_entries_values_Permutation`). With the
+fallback served from the member the list has no reader left at all, so the field is erased
+and both writes collapse to two member updates each
+(`the_declared_key_erases_the_list`, `delete_writes_no_list`, `insert_writes_no_list`).
+What the table stores is then the author's own `byName` map plus the postings this file
+exists to add.
+
+The fallback is still a scan, and should be: a substring match has to look at every row.
+What it costs over the source's scan is one extra linear pass, `ODictValues` producing the
+member's values before the filter runs -- measured at 32,180 steps for 20 queries over
+1600 rows, which is exactly one pass per query, and 14% on top of the source. Its
+comparison count stays flat.
 
 The delete is the part to read twice. The write names a key, not a row, so the postings
 cannot be corrected without knowing which text the departing row carried -- and the pair
@@ -207,19 +222,25 @@ is built to avoid comparisons, so both configurations stay pinned side by side.
 
 The other is `TableRep`, which the selector never emits. It is the only choice whose
 justification is a shape the pipeline *leaves behind* rather than one the program
-contains -- the read it serves in `Jenkins_UserSearch` is the else branch of a guarded
-probe, which the rewriting creates by keeping its own input -- so no matcher can ask for
-it. A feedback step that runs the pipeline, finds the surviving read, adds `TableRep` and
-runs again does reach that configuration; it was built and then removed, because the
-goal turned out to be the wrong one. `TableRep` is a copy of the table, so erasing the
-list while adding a rep member removes no structure: measured at
-`rep_delete_filters_the_rep` and `rep_insert_is_a_set_insert`, the delete applies the
-same O(n) filter to the member that it applied to the list, and the insert degrades from
-a cons to a set insert. `Kafka_WindowStore` behaves the same way with a bag.
+contains -- the read it serves is the else branch of a guarded probe, which the rewriting
+creates by keeping its own input -- so no matcher can ask for it. A feedback step that
+runs the pipeline, finds the surviving read, adds `TableRep` and runs again does reach
+that configuration; it was built and then removed, because the goal turned out to be the
+wrong one.
+
+In `Jenkins_UserSearch` that case is now closed from the other end. The declared key
+serves the fallback, so the read `TableRep` was added for is gone before it can be found,
+and the list is erased without it. Both configurations are still pinned, and the pair is
+now one-sided rather than a wash: the first writes nothing to a list because there is no
+list, while the second still pays the source's own O(n) filter on the delete and degrades
+the insert from a cons to a set insert (`rep_delete_filters_the_rep`,
+`rep_insert_is_a_set_insert`) -- and its rep member, measurably, is read by nothing while
+both writes keep maintaining it. `Kafka_WindowStore` behaves the same way with a bag.
 
 So the erasures that are wins are the ones where every read is answered by an index and
 **nothing replaces the list** -- `Kafka_Cluster`, `HA_AreaRegistry`, `Kafka_NamedCache`,
-and `Keycloak_CachedRealm` with its count.
+`Keycloak_CachedRealm` with its count, and now `Jenkins_UserSearch` with its declared
+key. That is every subject: all eight install `aux_tag` alone.
 
 `TableRep` erases by substitution, so what it establishes is a **representation** fact
 rather than a cost one, and that is the right way to read it. The collection phase has
@@ -239,11 +260,15 @@ backend need not build, and a list-typed table may still be hash-backed, since n
 the language observes arbitrary order.
 
 And it is a claim about what remains stored, not that one relaxed collection replaces
-everything. `TableRep` at set level **alone** does not erase `Jenkins_UserSearch`'s list:
-`find` is a counted bag-level filter, so multiplicity is observed and the rep rule, which
-matches only a set coercion, leaves that read scanning the list. At bag level alone the
-list survives too, because the suggestion read is at set level. The erasure in that file's
-second configuration happens only because the trigram pair has already taken `find`.
+everything. `TableRep` at set level **alone** would not have erased
+`Jenkins_UserSearch`'s list: `find` is a counted bag-level filter, so multiplicity is
+observed and the rep rule, which matches only a set coercion, leaves that read scanning
+the list. At bag level alone the list would have survived too, because the suggestion read
+is at set level. Either way the erasure needed the trigram pair to take `find` first --
+which is the reading to keep, because it is about what a relaxed collection can and
+cannot stand in for. What actually erases the list in that file is a different mechanism
+entirely: not a weaker collection standing in for the rows, but a declared key making an
+index a faithful copy of them.
 
 ## What it costs, measured
 
@@ -272,11 +297,12 @@ ratio between two sizes would not settle the question it looks like it settles: 
 
 | | reads and writes measured | source | optimized |
 |---|---|---|---|
-| linear in the table, `a` = 0.92 to 1.05 | | 23 of 25 | 3 of 25 |
-| independent of it, `a` = -0.01 to 0.02 | | 2 of 25 | 22 of 25 |
+| linear in the table, `a` = 0.92 to 1.05 | | 25 of 27 | 3 of 27 |
+| independent of it, `a` = -0.01 to 0.02 | | 2 of 27 | 23 of 27 |
+| sublinear, `a` = 0.19 | | 0 of 27 | 1 of 27 |
 
 The two in the source column that do not grow are the two O(1) writes -- a prepend is a
-prepend whether or not anything is indexed. The twenty-two in the optimized column are
+prepend whether or not anything is indexed. The twenty-three in the optimized column are
 not merely flatter, they are flat: the Lookin membership test, to take one, costs
 **exactly 300 steps at every one of the six sizes**. Their comparison counts are where
 the index shows through, at `a` = 0.08 to 0.31, which is `log n` appearing as the weak
@@ -286,20 +312,33 @@ no comparisons at all (`a` = 0.00): `getRequiredActionProviderList`'s count and
 `sizeInBytes`, which are maintained aggregates and so are field reads, cheaper than a
 probe.
 
-**The three that still grow are the interesting column, and all three were already
-known and pinned.** Their exponents are 0.94, 0.94 and 0.19.
+**The four that still grow are the interesting column, and every one of them is known
+and pinned.** Their exponents are 0.94, 0.98, 0.98 and 0.19 -- and only the first is a
+cost rather than a correct answer.
 
-* `Kafka_WindowStore`'s `fetchAll`, 7.0x. This is `fetch_all_loses_a_bound_split`,
+* `Kafka_WindowStore`'s `fetchAll`, `a` = 0.94. This is `fetch_all_loses_a_bound_split`,
   the cost named in the limits table below: `SplitIf` is a whole-program rewrite, so the
   read that gains nothing from it pays anyway. The measurement turns the pin into a
   number, and into a trade that can be stated: in the same file and the same
-  configuration, `fetch` goes flat (1.0x) and the retention write goes flat (1.0x), so
-  the split buys two scans and sells one.
-* `Jenkins_UserSearch`'s `remove`, 7.2x. This is the list, and this file is the only one
-  of the eight that still has one. The delete filters it; a rule recovering rows from
-  `ODictValues` would erase it and this number with it.
-* `Jenkins_UserSearch`'s `suggest`, 1.5x -- sublinear, and it is the answer growing
+  configuration, `fetch` goes flat and the retention write goes flat, so the split buys
+  two scans and sells one. This is the one remaining entry here that a better rule would
+  remove.
+* `Jenkins_UserSearch`'s `suggestMiss` and `suggestShort`, `a` = 0.98 each. These are the
+  guarded fallback, reached by a token with no trigram and by one shorter than three
+  characters, and they are linear because a substring match **has** to look at every row.
+  What the optimizer changes is not the exponent but what gets scanned: the rows now come
+  from the primary-key member rather than from a list field, which is what lets the field
+  be erased. The price is one extra linear pass per query -- `ODictValues` producing the
+  member's values -- measured at 32,180 steps for 20 queries over 1600 rows, exactly one
+  pass each, or 14% on top of the source's own scan. The comparison counts stay flat.
+* `Jenkins_UserSearch`'s `suggest`, `a` = 0.19 -- sublinear, and it is the answer growing
   rather than the search: a three-character token matches more of a larger table.
+
+`Jenkins_UserSearch`'s `remove` used to be in this list at `a` = 0.94, with the note that
+"a rule recovering rows from `ODictValues` would erase it and this number with it". That
+rule is `UniqueIndexUse.unique_scan_head`, and it did: `remove` is now `a` = 0.01, 318,320
+steps against 4,500 at 1600 rows, and the list it filtered is gone. The build phase went
+with it, from 8,983,202 steps to 270,409.
 
 The seconds agree where they can be read at all, and over the full 32x span they are
 read more easily: the source op phases that resolve grow about 30x, against a counted
@@ -312,7 +351,7 @@ declared key it is where it collects instead. The uniqueness guard the elaborato
 is a scan, so building an n-row table costs O(n^2) in the source; the declared index
 turns the guard into one probe. At 800 rows that is 4.50M steps against 51.2K for
 `Keycloak_CachedRealm`, 5.77M against 58.4K for `Kafka_NamedCache`, 2.25M against 41.6K
-for `HA_AreaRegistry` and 2.25M against 139K for `Jenkins_UserSearch`. For the four
+for `HA_AreaRegistry` and 2.25M against 135K for `Jenkins_UserSearch`. For the four
 subjects whose table arrives already populated the direction reverses, as it should:
 the source does no setup at all and the optimized program spends 3.2K to 19.2K steps
 building its indexes once, before the loop.
@@ -342,7 +381,7 @@ that found it rather than described in prose:
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |
 | `SplitIf` is a whole-program rewrite, so a read that gains nothing from it pays anyway | the same file's two readers: one conjunction is worth splitting, the other is a bare range pair that loses a bound | `fetch_all_loses_a_bound_split`. Separating them needs a per-filter decision, which the basic rewrites do not have |
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
-| a declared-key read at SET level | this file's own first draft; `unique_lookup_head` (`UniqueIndexUse.v:438`) matches bag level only | stated in `Jenkins_UserSearch.v`'s Faithfulness |
+| a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
 | a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |
 | a read that observes row order | none here, by construction | not pinned, and the limit is wider than the write above: **every** index in the development is order-insensitive, so an order-observing read is served by none of them, and such a table keeps its list and gains nothing |
 

@@ -161,3 +161,13 @@ the table is linear in the table however it is indexed, so every bucket in `gen.
 floors, topics, keys -- grows with the table, keeping a bucket's size bounded. That is
 the regime the source programs' own callers are in: `getRequiredActionProviderById`
 returns one row.
+
+Two op kinds break that discipline on purpose, and `gen.ml` says so where it defines
+them. `suggestMiss` and `suggestShort` ask the substring subject for a token that no
+trigram can serve -- one that matches nothing, and one shorter than three characters --
+so that the guarded read's **fallback branch** is the branch measured. Without them the
+fallback was never evaluated at any size, in the measurement or in the differential
+test: every generated token was exactly three characters long, and the guard is
+`2 < length token`. They are the two kinds whose optimized exponent is deliberately
+linear, because a substring match has to look at every row; what they measure is which
+rows it looks at and what that costs over the source's own scan.
