@@ -55,13 +55,21 @@ let sub (a : run) (b : run) : run =
 
 let min_secs = 0.1
 
-(* An op phase is timed as (build + ops) minus (build alone), and when the
-   op phase is a few hundred interpreter steps that difference is two large
-   nearly-equal numbers subtracted -- so below this threshold the seconds
-   are noise and a growth factor computed from them is noise with a decimal
-   point on it.  Those rows say so instead.  They are not a gap in the
-   result: they are the reads the step counts call flat, and the reason
-   those counts are the evidence. *)
+(* An op phase is timed as (build + ops) minus (build alone), so when the op
+   phase is cheap that difference is two large nearly-equal numbers
+   subtracted.  This threshold is where such a difference stops being
+   readable.
+
+   MEASURED 2026-10-25, with the `timing` mode at the end of this file,
+   because it had been asserted and never checked.  At 1600 rows
+   item_deletion/containsHit's optimized op phase is 9us over 20 operations
+   with a 119% spread -- unreadable, as this threshold says.  But the
+   threshold is not a property of the CLOCK, it is a property of using twenty
+   operations: at 320 the same measurement is stable to 6% and at 1280 to
+   3%, and the implied cost per operation agrees across all of them to within
+   2%.  So a flat read is perfectly timeable; it just has to be timed with
+   enough operations.  That is what secs_per_op below does, and the threshold
+   survives only for the kinds it cannot be done for. *)
 let resolvable = 50e-6
 
 let seconds_per_run (f : unit -> unit) : float =
@@ -83,6 +91,49 @@ let op_phase_secs (c : command) (sp : Gen.spec) ~rows ~ops ~only : float =
   and full = time_it (Gen.workload sp ~rows ~ops ~only) in
   Float.max 0. (full -. base)
 
+let ops_per_kind = 20
+
+(* ---- seconds PER OPERATION, timed with enough operations to be readable ----
+
+   The number worth reporting is the cost of one operation, not of a phase of
+   twenty of them: it is comparable across table sizes, and it is the only
+   wall-clock figure that could ever be compared against another
+   implementation.  Getting it means making the op phase big enough that
+   (build+ops) minus (build) is signal.  So the op count DOUBLES until the
+   difference clears [timing_target], which costs nothing for a linear read
+   -- it clears at once -- and a few thousand operations for a flat one,
+   which is the right way round.
+
+   A MUTATING kind is never scaled, and this is the part that would be wrong
+   if it were silent: Gen.workload appends the op queries after the build, so
+   five thousand inserts on a fifty-row table measure a table that grew a
+   hundredfold while being measured.  Those kinds keep the table's own op
+   count and stay unreadable when they are below the floor, which is honest
+   and is what Gen.spec's `mutating` field exists to make possible. *)
+
+let timing_target = 2e-3
+let max_timed_ops = 20480
+
+type per_op = { secs : float; ops_used : int; scaled : bool }
+
+let secs_per_op (c : command) (sp : Gen.spec) ~rows ~(kind : string) : per_op =
+  let only = Some kind in
+  let time_it (w : Gen.workload) =
+    seconds_per_run (fun () ->
+      ignore (Eval.interp_command (Gen.locals_of w.store) (Gen.locals_of w.env) c)) in
+  let base = time_it (Gen.workload sp ~rows ~ops:0 ~only) in
+  let diff ops = Float.max 0. (time_it (Gen.workload sp ~rows ~ops ~only) -. base) in
+  if List.mem kind sp.Gen.mutating then
+    { secs = diff ops_per_kind /. float ops_per_kind;
+      ops_used = ops_per_kind; scaled = false }
+  else
+    let rec go ops =
+      let d = diff ops in
+      if d >= timing_target || ops * 4 > max_timed_ops
+      then { secs = d /. float ops; ops_used = ops; scaled = true }
+      else go (ops * 4) in
+    go ops_per_kind
+
 (* the op phase of one workload, with the build phase subtracted off *)
 let op_phase (c : command) (sp : Gen.spec) ~rows ~ops ~only : run =
   let base = run_one c (Gen.workload sp ~rows ~ops:0 ~only) in
@@ -97,7 +148,6 @@ let op_phase (c : command) (sp : Gen.spec) ~rows ~ops ~only : run =
    elaborated uniqueness guard makes a source build O(n^2), so the top size
    costs sixteen times the 400-row one for those four subjects. *)
 let default_sizes = [ 50; 100; 200; 400; 800; 1600 ]
-let ops_per_kind = 20
 
 let factor (small : int) (large : int) : string =
   if small <= 0 then "    -" else Printf.sprintf "%5.1fx" (float large /. float small)
@@ -189,6 +239,82 @@ let csv (sizes : int list) =
          sp.kinds)
     subjects
 
+(* ---------- a diagnostic, not part of the evidence ----------
+
+   The op phase is timed by DIFFERENCE -- (build + ops) minus (build alone) --
+   and when the op phase is cheap those are two large nearly-equal numbers.
+   So this file declares anything under [resolvable] unreadable and prints
+   "<50us" instead.  That threshold was asserted and never measured, and it
+   decides something real: whether a flat read can be timed at all on this
+   interpreter, or whether comparing seconds against hand-written code needs a
+   compiled backend before it can mean anything.
+
+   This mode measures it instead of assuming it.  For one subject, one kind
+   and one table size it computes the op-phase difference [timing_reps] times
+   at a doubling series of op counts, and prints the mean, the spread and the
+   implied cost per operation.  Two things can then be read off: whether the
+   spread is small against the signal, and whether the per-op cost is STABLE
+   as the op count grows -- if it is, the difference is measuring the
+   operations rather than the noise between two timings.
+
+   One caution, which the output repeats.  Raising the op count is sound only
+   for a READ.  Gen.workload appends the op queries after the build, so five
+   thousand inserts on a fifty-row table are measuring a table that grew a
+   hundredfold on the way.  For a write kind the per-op column is therefore
+   confounded and says so. *)
+
+let timing_reps = 7
+let timing_counts = [ 20; 80; 320; 1280; 5120 ]
+
+let raw_op_secs (c : command) (sp : Gen.spec) ~rows ~ops ~only : float =
+  let time_it (w : Gen.workload) =
+    seconds_per_run (fun () ->
+      ignore (Eval.interp_command (Gen.locals_of w.store) (Gen.locals_of w.env) c)) in
+  let base = time_it (Gen.workload sp ~rows ~ops:0 ~only)
+  and full = time_it (Gen.workload sp ~rows ~ops ~only) in
+  full -. base
+
+let timing (args : string list) =
+  let arg n d = match List.nth_opt args n with Some v -> v | None -> d in
+  let subject = arg 0 "item_deletion" in
+  let kind = arg 1 "containsHit" in
+  let rows = match int_of_string_opt (arg 2 "1600") with Some n -> n | None -> 1600 in
+  match List.find_opt (fun ((n, _), _) -> n = subject) subjects with
+  | None -> Printf.eprintf "unknown subject %s\n" subject; exit 2
+  | Some ((_, src), opt) ->
+      let sp = List.assoc subject Gen.specs in
+      if not (List.mem_assoc kind sp.Gen.kinds) then begin
+        Printf.eprintf "unknown kind %s for %s\n" kind subject; exit 2 end;
+      Printf.printf
+        "How precise is the wall clock, measured rather than declared.\n\
+         %s / %s at %d rows, %d repetitions per point.  The op phase is timed\n\
+         as (build+ops) minus (build), so what matters is whether the spread of\n\
+         that difference is small against the difference itself, and whether the\n\
+         per-op cost stays put as the op count grows.\n\
+         The declared floor this is checking is %.0fus.\n\
+         NOTE: raising the op count is sound only for a READ -- op queries are\n\
+         appended to the build, so a write kind grows the table it measures.\n"
+        subject kind rows timing_reps (resolvable *. 1e6);
+      List.iter
+        (fun (tag, c) ->
+           Printf.printf "\n  program=%s\n" tag;
+           Printf.printf
+             "    ops       mean        min        max   spread    per-op\n";
+           List.iter
+             (fun ops ->
+                let xs =
+                  List.init timing_reps (fun _ ->
+                    raw_op_secs c sp ~rows ~ops ~only:(Some kind)) in
+                let n = float (List.length xs) in
+                let mean = List.fold_left ( +. ) 0. xs /. n in
+                let lo = List.fold_left Float.min infinity xs
+                and hi = List.fold_left Float.max neg_infinity xs in
+                let spread = if mean <= 0. then nan else (hi -. lo) /. mean in
+                Printf.printf "  %5d  %9.6f  %9.6f  %9.6f  %6.1f%%  %.3e\n"
+                  ops mean lo hi (spread *. 100.) (mean /. float ops))
+             timing_counts)
+        [ ("src", src); ("opt", opt) ]
+
 let run (sizes : int list) =
   let sizes = if sizes = [] then default_sizes else sizes in
   let lo = List.hd sizes and hi = List.nth sizes (List.length sizes - 1) in
@@ -264,20 +390,31 @@ let run (sizes : int list) =
                 (exp_str (fit (List.map (fun (n, r) -> (n, r.steps)) os)))
                 (exp_str (fit (List.map (fun (n, r) -> (n, r.cmps)) os)));
               (kind,
-               op_phase_secs src sp ~rows:lo ~ops:ops_per_kind ~only,
-               op_phase_secs src sp ~rows:hi ~ops:ops_per_kind ~only,
-               op_phase_secs opt sp ~rows:lo ~ops:ops_per_kind ~only,
-               op_phase_secs opt sp ~rows:hi ~ops:ops_per_kind ~only))
+               secs_per_op src sp ~rows:lo ~kind,
+               secs_per_op src sp ~rows:hi ~kind,
+               secs_per_op opt sp ~rows:lo ~kind,
+               secs_per_op opt sp ~rows:hi ~kind))
            sp.kinds in
        Printf.printf
-         "  wall-clock seconds at the two end sizes, %d -> %d, for the shape only\n\
-         \  ('<50us' is an op phase too fast to separate from its build phase):\n"
+         "  wall-clock seconds PER OPERATION at the two end sizes, %d -> %d.\n\
+         \  A read is timed with as many operations as it takes for the op phase\n\
+         \  to clear the timer's noise; a WRITE is not, because op queries are\n\
+         \  appended to the build and would grow the table being measured, so a\n\
+         \  write below the floor still reads '<50us'.  'n' is the op count used.\n\
+         \  These are this interpreter on this machine: the SHAPE is the check,\n\
+         \  the constants say nothing about a backend.\n"
          lo hi;
-       Printf.printf "    %-14s %11s %7s %11s %7s\n" "kind" "src secs" "growth"
-         "opt secs" "growth";
+       Printf.printf "    %-14s %11s %7s %7s %11s %7s %7s\n" "kind" "src s/op"
+         "growth" "n" "opt s/op" "growth" "n";
        List.iter
          (fun (kind, sl, sh, ol, oh) ->
-            Printf.printf "    %-14s %11s %7s %11s %7s\n" kind (secs_str sh)
-              (factor_f sl sh) (secs_str oh) (factor_f ol oh))
+            let p x = if x.secs < resolvable /. float x.ops_used then "   <50us"
+                      else Printf.sprintf "%8.3e" x.secs in
+            let g a b =
+              if a.secs < resolvable /. float a.ops_used
+                 || b.secs < resolvable /. float b.ops_used then "    -"
+              else Printf.sprintf "%5.1fx" (b.secs /. a.secs) in
+            Printf.printf "    %-14s %11s %7s %7d %11s %7s %7d\n" kind (p sh)
+              (g sl sh) sh.ops_used (p oh) (g ol oh) oh.ops_used)
          timings)
     subjects

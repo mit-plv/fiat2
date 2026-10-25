@@ -54,6 +54,13 @@ type spec = {
   table : int -> (string * value) list;            (* a preloaded table, or none *)
   build : int -> value list;                       (* queries that grow the table *)
   kinds : (string * (int -> int -> value)) list;   (* name, rows -> index -> query *)
+  (* Which of those kinds WRITE to the table.  Declared rather than detected,
+     because the one consumer that needs it cannot detect it: bench times an op
+     phase by appending op queries to the build, so timing a read with more
+     operations is sound and timing a WRITE with more operations silently
+     measures a table that grew while it was being measured.  A kind named here
+     is never scaled. *)
+  mutating : string list;
 }
 
 (* records must be built in the canonical field order, because that is the
@@ -95,7 +102,8 @@ let keycloak =
     kinds =
       [ ("byId", fun rows j -> q 1 (Printf.sprintf "i%d" (spread rows j)));
         ("byAlias", fun rows j -> q 2 (Printf.sprintf "a%d" (spread rows j)));
-        ("wholeList", fun _ _ -> q 3 "") ] }
+        ("wholeList", fun _ _ -> q 3 "") ];
+    mutating = [] }
 
 (* ---------- named cache: a unique key and a maintained total ---------- *)
 
@@ -109,7 +117,8 @@ let named_cache =
     kinds =
       [ ("get", fun rows j -> q 3 (Printf.sprintf "k%d" (spread rows j)));
         ("sizeInBytes", fun _ _ -> q 2 "");
-        ("delete", fun rows j -> q 0 (Printf.sprintf "k%d" (victim rows j))) ] }
+        ("delete", fun rows j -> q 0 (Printf.sprintf "k%d" (victim rows j))) ];
+    mutating = [ "delete" ] }
 
 (* ---------- area registry: bucketed on floor, keyed on id ---------- *)
 
@@ -126,7 +135,8 @@ let area_registry =
     kinds =
       [ ("byId", fun rows j -> q rows 2 (Printf.sprintf "i%d" (spread rows j)) "");
         ("byFloor", fun rows j -> q rows 3 "" (Printf.sprintf "f%d" (j mod buckets rows)));
-        ("remove", fun rows j -> q rows 1 (Printf.sprintf "i%d" (victim rows j)) "") ] }
+        ("remove", fun rows j -> q rows 1 (Printf.sprintf "i%d" (victim rows j)) "") ];
+    mutating = [ "remove" ] }
 
 (* ---------- lookin: a membership test over a preloaded table ----------
 
@@ -149,7 +159,8 @@ let lookin =
     build = no_build;
     kinds =
       [ ("varyingKey", fun rows j -> q 0 (Printf.sprintf "f%d" (spread rows j)));
-        ("literalKey", fun _ _ -> q 1 "") ] }
+        ("literalKey", fun _ _ -> q 1 "") ];
+    mutating = [] }
 
 (* ---------- user search: a unique key and a trigram index ----------
 
@@ -187,7 +198,8 @@ let user_search =
            drawn from the names also pays for the answer. *)
         ("suggestMiss", fun _ _ -> q 3 "zz");
         ("suggestShort", fun _ j -> q 3 (Printf.sprintf "%02d" (spread 100 j)));
-        ("remove", fun rows j -> q 1 (Printf.sprintf "u%d" (victim rows j))) ] }
+        ("remove", fun rows j -> q 1 (Printf.sprintf "u%d" (victim rows j))) ];
+    mutating = [ "remove" ] }
 
 (* ---------- cluster: conjunctive reads over a preloaded table ----------
 
@@ -210,7 +222,8 @@ let cluster =
         ("onePartition", fun rows j ->
            let p = spread rows j in
            q 2 (Printf.sprintf "t%d" (p mod buckets rows)) p 0);
-        ("available", fun rows j -> q 3 (Printf.sprintf "t%d" (j mod buckets rows)) 0 0) ] }
+        ("available", fun rows j -> q 3 (Printf.sprintf "t%d" (j mod buckets rows)) 0 0) ];
+    mutating = [] }
 
 (* ---------- window store: a range, a key, and an expiry ---------- *)
 
@@ -235,7 +248,8 @@ let window_store =
            rcd [ ("kind", i 2); ("lo", i 0); ("hi", i 0); ("key", s "");
                  ("new_rec", row rows (rows + j)) ]);
         (* removeExpiredSegments(): advances the live bound by one *)
-        ("expire", fun rows j -> q rows 3 j 0 "") ] }
+        ("expire", fun rows j -> q rows 3 j 0 "") ];
+    mutating = [ "put"; "expire" ] }
 
 (* ---------- range delete: a band read and a band delete ---------- *)
 
@@ -250,7 +264,8 @@ let range_delete =
       [ ("countBand", fun rows j ->
            let lo = spread rows j in q 1 lo (lo + bucket_size) (row 0));
         ("insert", fun rows j -> q 0 0 0 (row (rows + j)));
-        ("deleteBand", fun _ j -> q 2 j (j + 1) (row 0)) ] }
+        ("deleteBand", fun _ j -> q 2 j (j + 1) (row 0)) ];
+    mutating = [ "insert"; "deleteBand" ] }
 
 (* ---------- item deletion: whole-row membership over a preloaded table ----------
 
@@ -291,7 +306,8 @@ let item_deletion =
       [ ("containsHit", fun rows j -> q 0 (row (spread rows j)));
         ("containsMiss", fun rows j -> q 0 (row (rows + j)));
         ("register", fun rows j -> q 1 (row (rows + j)));
-        ("deregister", fun rows j -> q 2 (row (victim rows j))) ] }
+        ("deregister", fun rows j -> q 2 (row (victim rows j))) ];
+    mutating = [ "register"; "deregister" ] }
 
 (* ---------- the table ---------- *)
 

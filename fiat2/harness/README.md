@@ -121,16 +121,42 @@ phase is **exactly 300 steps at every one of the six sizes** while its compariso
 goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling for twenty queries.
 That is `log n`, stated by the data rather than by a curve fit.
 
-Wall-clock seconds are printed too, per op kind, as a check that the counters have the
-right shape and not as the result. They are weak evidence on purpose: they time a
+Wall-clock seconds are printed too, **per operation**, as a check that the counters have
+the right shape and not as the result. They are weak evidence on purpose: they time a
 tree-walking OCaml interpreter over an extracted AST, so the constants belong to this
 harness rather than to anything a backend would produce, and the only thing worth
-reading off them is whether a curve the counters call flat is flat in seconds too. An
-op phase is timed as (build + ops) less (build alone), each side repeated until it has
-accumulated 0.1s; where that difference falls under 50us the table prints `<50us`
-rather than a ratio, because two nearly-equal timings subtracted do not have a
-meaningful quotient. That happens for most of the optimized column, which is the point
-being made rather than a gap in it: those op phases are a few hundred interpreter steps.
+reading off them is whether a curve the counters call flat is flat in seconds too.
+
+An op phase is timed as (build + ops) less (build alone), each side repeated until it
+has accumulated 0.1s. Two nearly-equal timings subtracted have no meaningful quotient,
+so the op count **doubles until the difference clears 2ms** — which costs nothing for a
+linear read and takes a few thousand operations for a flat one. A **write** is never
+scaled: `Gen.workload` appends the op queries after the build, so five thousand inserts
+on a fifty-row table would measure a table that grew a hundredfold while being measured.
+`Gen.spec`'s `mutating` field names those kinds, and they keep the table's own op count
+and print `<50us` when they fall below the floor.
+
+That floor was asserted for a long time and is now measured. `main.exe timing <subject>
+<kind> <rows>` reports the spread of the difference directly: at 1600 rows
+`item_deletion/containsHit`'s optimized op phase is 9us over 20 operations with a **119%
+spread**, which is indeed unreadable — but at 320 operations it is stable to 6%, at 1280
+to 3%, and the implied per-operation cost agrees across all of them to within 2%. So the
+floor was never a property of the clock; it was a property of using twenty operations.
+With the scaling above, 25 of the 31 optimized entries that used to print `<50us` now
+report a number, and the six that remain are all writes.
+
+What the diagnostic also settled, which matters for anything built on top of these
+numbers: **the interpreter is not where the time goes.** `containsHit`'s optimized cost
+is 0.293us per operation at 50 rows and 0.460us at 1600, while the tree descent inside
+`VSet.mem` goes from about 5.6 levels to 10.6 — so fitting `cost = fixed + k * levels`
+puts the fixed part at roughly 0.11us and the structural part at 0.35us. The
+interpreter's own dispatch and environment lookups are about **a quarter** of the cost at
+1600 rows, and the rest is `Value.compare` walking records inside a balanced tree, which
+is work any implementation using an ordered structure also does. Generating OCaml from
+the interpreter would therefore buy a factor of roughly 1.3 here, not an order of
+magnitude: what separates these seconds from hand-written code is the **representation**
+(boxed dynamic values compared structurally) and the **structure choice** (tree where the
+original used a hash), not the evaluation strategy.
 
 ## The two checks that come free
 
