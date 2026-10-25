@@ -575,27 +575,41 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
    configuration.
 
    It was removed again, because "the list was erased" is not a proxy for
-   "this paid".  TableRep IS a copy of the table, so erasing the list
-   while adding a rep member removes no structure.  Measured on the two
-   subjects where a list survives:
+   "this paid".  TableRep IS a copy of the table, so it SUBSTITUTES the
+   structure the remaining readers and writers walk rather than removing
+   one.  Measured on eval/Jenkins_UserSearch, the one eval subject that
+   carries a TableRep configuration, and the comparison is one-sided:
 
-     Jenkins_UserSearch -- the delete applies the SAME filter either way,
-       at list level over the list or at set level over the rep member
-       (rep_delete_filters_the_rep), so the O(n) scan moves rather than
-       going away; and the insert degrades from a cons to a set insert
-       (rep_insert_is_a_set_insert).
-     Kafka_WindowStore -- the expiry stays an O(n) filter, over a bag
-       member instead of the list, and the put degrades from a cons to a
-       bag insert.
+     the configuration WITHOUT it writes nothing to a list, because the
+       declared key has already erased the list (delete_writes_no_list,
+       insert_writes_no_list);
+     the configuration WITH it still pays the source's own row-by-row
+       filter on the delete, now over the rep member
+       (rep_delete_filters_the_rep), and degrades the insert from a cons
+       to a set insert (rep_insert_is_a_set_insert);
+     and its rep member is read by no query at all
+       (rep_suggest_also_uses_the_key_member, rep_find_is_still_a_probe).
+       The scan rule runs after TableRep's, so where both could serve the
+       fallback the declared key wins -- the right way round, since the key
+       member is one the source already maintains and the rep member is a
+       copy.
+
+   So on the only subject where the two can be compared, TableRep is
+   dominated.  Nothing here measures a surviving list with NO declared key,
+   where the choice would be lateral rather than dominated: the same scan,
+   one structure either way, and a cons degraded to a collection insert.
 
    Erasing the list is a real win where another index already answers
    every read and NOTHING replaces the list -- Kafka_Cluster,
-   HA_AreaRegistry, Kafka_NamedCache, Keycloak with its count.  TableRep
-   erases by substitution, which is an expressiveness result (a table can
-   BE its index) and not a performance one, so it is not selected.  If a
-   rewrite ever makes a rep member cheaper to maintain than the list it
-   replaces, the feedback step is the way to ask for it, and the test it
-   needs is a cost comparison rather than a boolean. *)
+   HA_AreaRegistry, Kafka_NamedCache, Keycloak with its count, and now
+   Jenkins_UserSearch through its declared key.  TableRep erases by
+   substitution, which is an expressiveness result (a table can BE its
+   index) and not a performance one, so it is not selected.  The mechanism
+   that would make it pay is nameable and does not exist: a rule that
+   maintains a rep member AT ITS OWN LEVEL -- a set-level removal rather
+   than a filter over the set -- would make the member cheaper than the
+   list it replaces.  The feedback step is the way to ask for that, and the
+   test it needs is a cost comparison rather than a boolean. *)
 
 (* MinAgg.  Emitted when the program asks for it, but no eval subject does.
    The corpus witnesses for a minimum are per-key counters held in a

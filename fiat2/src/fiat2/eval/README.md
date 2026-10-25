@@ -235,7 +235,9 @@ now one-sided rather than a wash: the first writes nothing to a list because the
 list, while the second still pays the source's own O(n) filter on the delete and degrades
 the insert from a cons to a set insert (`rep_delete_filters_the_rep`,
 `rep_insert_is_a_set_insert`) -- and its rep member, measurably, is read by nothing while
-both writes keep maintaining it. `Kafka_WindowStore` behaves the same way with a bag.
+both writes keep maintaining it. That is the only subject where the comparison can be
+made: no other eval file carries a `TableRep` configuration, so a surviving list with no
+declared key -- where the choice would be lateral rather than dominated -- is unmeasured.
 
 So the erasures that are wins are the ones where every read is answered by an index and
 **nothing replaces the list** -- `Kafka_Cluster`, `HA_AreaRegistry`, `Kafka_NamedCache`,

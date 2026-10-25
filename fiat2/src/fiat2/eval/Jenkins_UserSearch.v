@@ -125,16 +125,20 @@ Import ListNotations.
      row's id from each bucket its own text names, dropping a bucket that
      empties -- it does not rebuild the postings.
 
-     The list survives, for one reason only: the fallback branch scans it.  A
-     second configuration asks for the table's set representation as well,
-     and then the fallback scans THAT -- so nothing reads the list and the
-     list is erased.  Both are pinned.
+     The list does not survive, and the reason is worth stating precisely.
+     The fallback branch is the only thing that would read it, and because
+     ids are declared unique the primary-key member is a faithful copy of
+     the table, so the fallback reads THAT instead (unique_scan_head) and
+     the field is erased.  A second configuration asks for the table's set
+     representation as well and reaches the same erasure by a different
+     route -- give the fallback a rep member to scan.  Both are pinned.
 
      Which to prefer is settled below rather than left to the reader, and
      the answer is the FIRST.  The erasure substitutes the structure the
-     remaining readers and writers walk instead of removing one: the delete
-     applies the same filter to the rep member that it applied to the list,
-     and the insert degrades from a cons to a set insert.
+     remaining readers and writers walk instead of removing one: the second
+     configuration still applies the source's own filter, to the rep member,
+     where the first applies it to nothing, and its insert degrades from a
+     cons to a set insert.  Its rep member ends up read by no query at all.
 
      The second configuration is therefore not a faster program, and that
      is not what it is for.  What it establishes is a REPRESENTATION fact.
