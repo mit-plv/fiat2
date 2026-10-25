@@ -562,23 +562,29 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
 
 
 
-(* TableRep.  Not emitted, and the reason is measured rather than assumed.
+(* TableRep.  Not emitted -- but the reason is narrower than it looks, and
+   one half of what used to be written here has been measured false.
 
-   It could not be demanded by a shape in any case: the read it serves is
-   one the REWRITING leaves behind -- trigram_lookup_guarded_head rewrites
-   e into EIf (pattern_has_trigram p) (probe) e, keeping its own input as
-   the else branch -- so there is no second read in the program to map to a
-   choice.  A feedback step closes that gap easily: run the pipeline, look
-   for a surviving coercion of the table's list member, add TableRep at
-   that level and run again, keeping it if the list is now erased.  That
-   was built, and it does reach eval/Jenkins_UserSearch's second
-   configuration.
+   TWO KINDS OF READ have to be separated, because they answer "could a
+   shape demand this?" differently.
 
-   It was removed again, because "the list was erased" is not a proxy for
-   "this paid".  TableRep IS a copy of the table, so it SUBSTITUTES the
-   structure the remaining readers and writers walk rather than removing
-   one.  Measured on eval/Jenkins_UserSearch, the one eval subject that
-   carries a TableRep configuration, and the comparison is one-sided:
+     A read the REWRITING leaves behind.  trigram_lookup_guarded_head
+     rewrites e into EIf (pattern_has_trigram p) (probe) e, keeping its own
+     input as the else branch, so the surviving coercion is nowhere in the
+     source and no matcher here can see it.  A feedback step -- run the
+     pipeline, look for a surviving coercion of the table's list member, add
+     TableRep at that level, run again -- does reach
+     eval/Jenkins_UserSearch's second configuration.  It was built and then
+     removed, because "the list was erased" is not a proxy for "this paid".
+
+     A read the PROGRAMMER wrote.  eval/Jenkins_ItemDeletion's membership
+     test is EBinop OSetMem (ESetOf (ELoc tbl)) row IN THE SOURCE, which is
+     an ordinary matchable shape -- so a demand for TableRep could be
+     derived there exactly as every other demand is.  None is.  That is a
+     gap, not an impossibility, and it is the one thing this note used to
+     get wrong.
+
+   WHERE IT IS DOMINATED, measured on eval/Jenkins_UserSearch:
 
      the configuration WITHOUT it writes nothing to a list, because the
        declared key has already erased the list (delete_writes_no_list,
@@ -589,27 +595,27 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
        to a set insert (rep_insert_is_a_set_insert);
      and its rep member is read by no query at all
        (rep_suggest_also_uses_the_key_member, rep_find_is_still_a_probe).
-       The scan rule runs after TableRep's, so where both could serve the
-       fallback the declared key wins -- the right way round, since the key
-       member is one the source already maintains and the rep member is a
-       copy.
 
-   So on the only subject where the two can be compared, TableRep is
-   dominated.  Nothing here measures a surviving list with NO declared key,
-   where the choice would be lateral rather than dominated: the same scan,
-   one structure either way, and a cons degraded to a collection insert.
+   WHERE IT PAYS, measured on eval/Jenkins_ItemDeletion: a WHOLE-ROW
+   membership test.  There is no key -- the question is about a row and not
+   about an attribute -- so no dictionary can serve it, and the unindexed
+   form coerces the whole table on every evaluation.  764,164 comparisons
+   against 444 at 1600 rows, and wall-clock growth across a 32x span from
+   69.5x to unmeasurable.  The write side gives a log factor back (a cons
+   becomes a set insert, 40 comparisons to 578) and the filter-shaped delete
+   is 11.7x worse at set level, because rebuilding a set costs n log n where
+   filtering a list costs n.
 
-   Erasing the list is a real win where another index already answers
-   every read and NOTHING replaces the list -- Kafka_Cluster,
-   HA_AreaRegistry, Kafka_NamedCache, Keycloak with its count, and now
-   Jenkins_UserSearch through its declared key.  TableRep erases by
-   substitution, which is an expressiveness result (a table can BE its
-   index) and not a performance one, so it is not selected.  The mechanism
-   that would make it pay is nameable and does not exist: a rule that
-   maintains a rep member AT ITS OWN LEVEL -- a set-level removal rather
-   than a filter over the set -- would make the member cheaper than the
-   list it replaces.  The feedback step is the way to ask for that, and the
-   test it needs is a cost comparison rather than a boolean. *)
+   So what decides it is whether a DICTIONARY is available for the read that
+   keeps the list alive.  Where one is, TableRep is a copy and is dominated:
+   erasing the list by substitution is an expressiveness result (a table can
+   BE its index), not a performance one.  Where the read is whole-row,
+   nothing else can serve it and the saving is asymptotic.  The choice
+   therefore stays available and unselected, and the two things that would
+   change that are both nameable: a demand derived from a programmer-written
+   coercion of a table read, and a rule maintaining a rep member AT ITS OWN
+   LEVEL -- a set-level removal rather than a rebuild -- which would take
+   that delete column from 744,280 to the size of a probe. *)
 
 (* MinAgg.  Emitted when the program asks for it, but no eval subject does.
    The corpus witnesses for a minimum are per-key counters held in a

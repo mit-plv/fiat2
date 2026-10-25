@@ -252,13 +252,55 @@ let range_delete =
         ("insert", fun rows j -> q 0 0 0 (row (rows + j)));
         ("deleteBand", fun _ j -> q 2 j (j + 1) (row 0)) ] }
 
+(* ---------- item deletion: whole-row membership over a preloaded table ----------
+
+   ItemDeletion.registrations is a Set<Item> asked contains(item), so the
+   question is about a WHOLE ROW and there is no key to probe with.  The table
+   is preloaded, as lookin's and cluster's are: registrations is handed the
+   items that are in flight, and the ops then test, add and remove.
+
+   Rows carry two fields because the read is whole-row equality.  With one
+   field the test would be a membership test on a key, which a dictionary
+   could serve -- and the subject exists precisely to isolate the read that
+   no dictionary can serve.
+
+   Four kinds, because the two configurations differ on reads in one
+   direction and on writes in the other, and a single blended figure would
+   hide both:
+
+     containsHit / containsMiss  the read.  Hit and miss are separated
+       because the unindexed form coerces the whole table either way while
+       the probe does not, so a miss is the cleanest view of the fixed cost;
+       and because OCaml's Set.mem returns early on a hit, which a
+       hit-only measurement would read as a smaller saving than there is.
+     register     the cons that becomes a set insert -- what the choice costs.
+     deregister   the filter, which is linear over the list and linear over
+       the member, and is therefore the write the choice does not touch.  It
+       is here so that the write side is not represented only by its worst
+       case. *)
+
+let item_deletion =
+  let row j =
+    rcd [ ("name", s (Printf.sprintf "n%d" j));
+          ("parent", s (Printf.sprintf "p%d" (j / 4))) ] in
+  let q kind item = rcd [ ("kind", i kind); ("item", item) ] in
+  { queries_var = "queries"; store = outputs_only;
+    table = (fun rows -> [ ("items_tbl", VList (List.init rows row)) ]);
+    build = no_build;
+    kinds =
+      [ ("containsHit", fun rows j -> q 0 (row (spread rows j)));
+        ("containsMiss", fun rows j -> q 0 (row (rows + j)));
+        ("register", fun rows j -> q 1 (row (rows + j)));
+        ("deregister", fun rows j -> q 2 (row (victim rows j))) ] }
+
 (* ---------- the table ---------- *)
 
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
-    ("window_store", window_store); ("range_delete", range_delete) ]
+    ("window_store", window_store); ("range_delete", range_delete);
+    ("item_deletion", item_deletion) ]
 
 let workload (sp : spec) ~(rows : int) ~(ops : int) ~(only : string option) : workload =
   let kinds =

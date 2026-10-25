@@ -3,7 +3,8 @@ Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
-  fiat2.eval.Jenkins_UserSearch fiat2.Ex_RangeDelete.
+  fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
+  fiat2.Ex_RangeDelete.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
   extraction.ExtrOcamlNativeString.
@@ -81,6 +82,7 @@ Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
 Module KCl := Kafka_Cluster.
 Module KWS := Kafka_WindowStore.
+Module JID := Jenkins_ItemDeletion.
 Module ERD := Ex_RangeDelete.
 
 (* ---- the scan form each subject starts from ---- *)
@@ -93,6 +95,17 @@ Definition user_search_src : command := Eval vm_compute in JU.elaborated JU.decl
 Definition cluster_src : command := Eval vm_compute in KCl.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
 Definition range_delete_src : command := Eval vm_compute in ERD.prog.
+
+(* item_deletion is the one subject whose two columns are NOT source and
+   optimized.  Its question is what TableRep alone is worth, so the left
+   column is configuration 0 -- the same program with the same basic
+   rewrites and NO index -- and the right column adds TableRep and nothing
+   else.  Pairing it against the raw source instead would fold the basics'
+   record wrapping into the difference and measure a slightly different
+   thing.  Both columns are sound against the elaborated source
+   (optimized_scan_sound, optimized_rep_sound), so the store comparison bench
+   performs on every pair still means what it means. *)
+Definition item_deletion_src : command := Eval vm_compute in JID.optimized_scan.
 
 (* ---- what the optimizer produces under the configuration the
        deterministic selector picks (eval/SelectorTests.v) ---- *)
@@ -108,6 +121,7 @@ Definition window_store_opt : command :=
   Eval vm_compute in nth 1 KWS.prog_transformed CSkip.
 Definition range_delete_opt : command :=
   Eval vm_compute in nth 0 ERD.prog_transformed CSkip.
+Definition item_deletion_opt : command := Eval vm_compute in JID.optimized_rep.
 
 (* ---- the alternatives worth measuring against, each one a
        configuration its own file pins and argues about ---- *)
@@ -139,7 +153,8 @@ Definition subjects : list (string * command * command) :=
   ; ("user_search", user_search_src, user_search_opt)
   ; ("cluster", cluster_src, cluster_opt)
   ; ("window_store", window_store_src, window_store_opt)
-  ; ("range_delete", range_delete_src, range_delete_opt) ].
+  ; ("range_delete", range_delete_src, range_delete_opt)
+  ; ("item_deletion", item_deletion_src, item_deletion_opt) ].
 
 Definition alternatives : list (string * command) :=
   [ ("keycloak/uncounted", keycloak_opt_uncounted)

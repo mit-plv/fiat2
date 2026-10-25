@@ -235,9 +235,40 @@ now one-sided rather than a wash: the first writes nothing to a list because the
 list, while the second still pays the source's own O(n) filter on the delete and degrades
 the insert from a cons to a set insert (`rep_delete_filters_the_rep`,
 `rep_insert_is_a_set_insert`) -- and its rep member, measurably, is read by nothing while
-both writes keep maintaining it. That is the only subject where the comparison can be
-made: no other eval file carries a `TableRep` configuration, so a surviving list with no
-declared key -- where the choice would be lateral rather than dominated -- is unmeasured.
+both writes keep maintaining it.
+
+**But that is the dominated case, not the whole story**, and `Jenkins_ItemDeletion` is the
+other half. Its read is a **whole-row** membership test -- `registrations.contains(item)`
+in the source, where `registrations` is a `Set<Item>` and there is no key, because the
+question is about a row and not about an attribute. No dictionary can serve it, so
+`TableRep` is the only index in the development that applies, and the unindexed form
+coerces the whole table on every evaluation. Comparisons for twenty reads:
+
+| kind | 50 rows | 1600 rows | across 32x |
+|---|---|---|---|
+| `containsHit` without | 10,872 | 764,164 | 70.3x |
+| `containsHit` with | 232 | **444** | 1.9x |
+| `register` without (a cons) | 40 | 40 | 1.0x |
+| `register` with (a set insert) | 340 | 578 | 1.7x |
+| `deregister` without (filter a list) | 1,680 | 63,680 | 37.9x |
+| `deregister` with (filter a set) | 9,952 | 744,280 | 74.8x |
+
+So the read goes from 764,164 comparisons to 444, and wall-clock growth across that span
+from 69.5x to unmeasurable. The step counts are equal in both columns and that is the
+correct reading, not a blind spot: `count.ml` puts a tree operation's cost in comparisons,
+and neither configuration walks the table at the AST level for this read.
+
+The same table names a missing rule with a number on it. Filtering a **set** costs
+`n log n` where filtering a list costs `n`, because every survivor is inserted into a
+growing tree -- but this delete removes **one row**, which on a set is one tree deletion
+(`OSetDiff` against the singleton) rather than a rebuild. A rule rewriting
+`flatmap_filter_set s x (not (x = v)) x` to a removal would take that last row from
+744,280 to the size of a probe. That is the rule meant by *maintain a rep member at its
+own level*.
+
+What decides between the two subjects is therefore whether a **dictionary is available**
+for the read that keeps the list alive. Where one is, `TableRep` is a copy and is
+dominated. Where the read is whole-row, nothing else can serve it.
 
 So the erasures that are wins are the ones where every read is answered by an index and
 **nothing replaces the list** -- `Kafka_Cluster`, `HA_AreaRegistry`, `Kafka_NamedCache`,
