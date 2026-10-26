@@ -564,8 +564,26 @@ the authors' own structures and operations transcribed into OCaml, each citing t
 and line it came from, run over the same workloads. **Parity is the positive result**: the
 compiler is supposed to arrive back at what the author built.
 
-All thirty-two kinds agree with the optimized program on every workload -- the check that
-a transcription computes the same answers, which caught a wrong one on its first run --
+All thirty-two kinds agree with the optimized program on every workload, **at every one
+of the six sizes** -- the check that a transcription computes the same answers, which
+caught a wrong one on its first run.
+
+That check used to be made at the largest size only, which is thinner than it reads: a
+transcription that agreed on 1600 rows and differed on 50 would have passed. It is now
+made at all six and names any size that differs, and the widening was verified the only
+way such a thing can be -- by breaking a transcription ON SMALL TABLES ONLY, exactly the
+case the old check would have let through, and confirming it reports `NO@50,100,200`. A
+check that has only ever printed `yes` is indistinguishable from one that cannot fail.
+
+What the baselines are NOT covered by is worth saying in the same breath. `check` runs
+the source and optimized programs against the Gallina interpreter over 330
+configurations; the hand-written transcriptions are not in that loop and cannot be, since
+they are not fiat2 programs. So each author column is validated by agreeing with the
+optimized column on six inputs, where the other two columns are validated against the
+formal semantics on 330. That asymmetry is defensible -- the transcriptions are evidence
+about COST, and their correctness matters only insofar as they compute the right answer --
+but it is an asymmetry, and the two checks should not be quoted as if they were the same
+strength.
 and every optimized exponent matches the author's except the two cases where the author
 built no structure at all.
 

@@ -465,7 +465,8 @@ let baseline (sizes : int list) =
      cmps undercounts a hash map (one key equality per probe, no hashing) and\n\
      s/op is ~25%% inflated on the opt side by the interpreter: both biases run\n\
      in the author's favour and are stated rather than corrected.\n\
-     'agree' is the real check -- the two computed the same answer.\n"
+     'agree' is the real check -- the two computed the same answer, at EVERY\n\
+     size and not just the largest; a size that differed is named.\n"
     (List.length sizes) hi;
   List.iter
     (fun (name, brun) ->
@@ -484,16 +485,41 @@ let baseline (sizes : int list) =
            List.iter
              (fun (kind, _) ->
                 let only = Some kind in
-                let series_s f = List.map (fun r ->
-                  (r, f (op_phase src sp ~rows:r ~ops:ops_per_kind ~only))) sizes
-                and series_o f = List.map (fun r ->
-                  (r, f (op_phase opt sp ~rows:r ~ops:ops_per_kind ~only))) sizes
-                and series_b f = List.map (fun r ->
-                  (r, f (baseline_phase brun sp ~rows:r ~ops:ops_per_kind ~only)))
+                (* Run each column once per size and KEEP the records, rather
+                   than re-running per projection.  That is what lets the
+                   agreement below be checked at every size instead of only
+                   at the largest, and it also removes three duplicate runs
+                   at `hi`, which the previous shape paid for. *)
+                let runs_s = List.map (fun r ->
+                  (r, op_phase src sp ~rows:r ~ops:ops_per_kind ~only)) sizes
+                and runs_o = List.map (fun r ->
+                  (r, op_phase opt sp ~rows:r ~ops:ops_per_kind ~only)) sizes
+                and runs_b = List.map (fun r ->
+                  (r, baseline_phase brun sp ~rows:r ~ops:ops_per_kind ~only))
                   sizes in
-                let s_hi = op_phase src sp ~rows:hi ~ops:ops_per_kind ~only
-                and o_hi = op_phase opt sp ~rows:hi ~ops:ops_per_kind ~only
-                and b_hi = baseline_phase brun sp ~rows:hi ~ops:ops_per_kind ~only in
+                let series l f = List.map (fun (r, x) -> (r, f x)) l in
+                let series_s f = series runs_s f
+                and series_o f = series runs_o f
+                and series_b f = series runs_b f in
+                let last l = snd (List.nth l (List.length l - 1)) in
+                let s_hi = last runs_s
+                and o_hi = last runs_o
+                and b_hi = last runs_b in
+                (* THE AGREEMENT IS THE POINT OF THIS TABLE, so it is checked
+                   at every size.  A transcription that agreed at the largest
+                   table and differed at the smallest would have passed the
+                   old single-point check -- and a wrong transcription was in
+                   fact caught here once, which is the reason not to leave
+                   this at one input. *)
+                let disagreed =
+                  List.filter_map
+                    (fun ((r, o), (_, b)) ->
+                       if o.out = b.b_out then None else Some r)
+                    (List.combine runs_o runs_b) in
+                let agree_str = match disagreed with
+                  | [] -> "yes"
+                  | rs -> "NO@" ^ String.concat ","
+                                    (List.map string_of_int rs) in
                 let os = secs_per_op opt sp ~rows:hi ~kind
                 and bs =
                   secs_per_op_of (fun w -> ignore (brun w)) sp ~rows:hi ~kind in
@@ -506,8 +532,7 @@ let baseline (sizes : int list) =
                   (exp_str (fit (series_o (fun r -> r.rows))))
                   (exp_str (fit (series_b (fun r -> r.b_rows))))
                   s_hi.rows o_hi.rows b_hi.b_rows
-                  o_hi.cmps b_hi.b_cmps (p os) (p bs)
-                  (if o_hi.out = b_hi.b_out then "yes" else "NO"))
+                  o_hi.cmps b_hi.b_cmps (p os) (p bs) agree_str)
              sp.kinds)
     Baseline.runners
 
