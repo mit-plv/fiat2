@@ -65,11 +65,13 @@ Import ListNotations.
      phase than the one that would have to do the promoting.
 
      That limit was identified while adding SwapFlatmapIf to the selector and
-     recorded as having NO witness in the corpus.  It has one now, and this
-     file is it.  What the selector actually does with this program is
-     computed below rather than asserted, and the configuration that would
-     serve it is pinned beside it so the gap is the difference between two
-     terms rather than a sentence.
+     recorded as having NO witness in the corpus.  This file was that witness,
+     and finding it is what prompted the fix: the selector used to ask for no
+     index on this program at all.  It now asks for the right one, because
+     `PromoteGuard` (PromoteGuard.v) moves the equality to the head of its
+     chain and the demand that emits it is about guard POSITION rather than
+     about any attribute.  What it reaches is pinned below, beside the two
+     hand-written configurations it beats.
 
    Faithfulness -- what this translation changes, and why
      * A DEPENDENCY LIST IS A COLLECTION INSIDE A ROW, which this development
@@ -179,12 +181,18 @@ Section WithConcreteMaps.
      index forced but the guards left alone, one of the two reads becomes a
      probe and the other does not.
 
-     The rule that reaches both is `SwapIfNil`, which transposes two adjacent
-     nil-guards and so can bring the equality to the front -- ONCE is enough
-     here.  It is UNCONDITIONAL, which is why `basics_of` does not emit it at
-     all: applied twice it undoes itself, so there is no normal form to
-     iterate to and the right number of applications is found by hand.  That
-     is the whole of the gap, on this program. *)
+     `SwapIfNil` can bring the equality to the front -- ONCE is enough here --
+     and that is what `anno_swapped` does.  But it is UNCONDITIONAL, which is
+     why `basics_of` does not emit it: applied twice it undoes itself, so
+     there is no normal form to iterate to and the right count is found by
+     hand.  Measured on this program, the counts that work are 1, 2 and 4 and
+     the counts that fail are 0, 3 and 5 -- not monotone, because
+     `fold_command` rotates every chain in the program at once.
+
+     Both are kept as the comparison, because the selector's own
+     configuration now beats them: `PromoteGuard` is AIMED, so it needs no
+     count, and the demand that emits it is about guard position rather than
+     about this program. *)
 
   Definition anno_hoist : anno_command :=
     AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SwapFlatmapIf;
@@ -277,15 +285,34 @@ Section WithConcreteMaps.
   (* THE LIMIT, on real code.  The demand analysis finds NOTHING on this
      program -- not the equality, not a shape to normalise -- so the selector
      asks for no index and the join stays two nested scans. *)
-  Lemma selector_finds_no_demand :
-    Selector.demands_of "deps" elaborated = [].
+  (* WHAT THE SELECTOR REACHES.  It sees that this loop's indexable guard is
+     not its outermost one, asks for the promotion by position, and the
+     second analysis -- which always handled a head-position equality -- then
+     finds the key. *)
+  Lemma selector_demands_the_promotion :
+    Selector.demands_of "deps" elaborated = [DPromote "dependency"].
   Proof. vm_compute; reflexivity. Qed.
 
-  Lemma selector_asks_for_no_index : sel_choices = [].
+  Lemma selector_emits_the_promotion :
+    sel_basics = [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap;
+                  PromoteGuard "dependency"].
   Proof. vm_compute; reflexivity. Qed.
 
-  Lemma selector_reaches_no_probe : probes selected = 0%nat.
+  Lemma selector_asks_for_the_key : sel_choices = [DictIdx "dependency"].
   Proof. vm_compute; reflexivity. Qed.
+
+  (* and it beats both hand-written configurations below: three probes where
+     they reach one and two, and it ERASES the list, which neither does *)
+  Lemma selector_reaches_three_probes : probes selected = 3%nat.
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma selector_erases_the_list : installed_fields selected = ["aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma hand_written_keep_the_list :
+    installed_fields optimized_hoist = ["id_tag"; "aux_tag"]
+    /\ installed_fields optimized_swapped = ["id_tag"; "aux_tag"].
+  Proof. split; vm_compute; reflexivity. Qed.
 
   (* with the index supplied by hand but the guards left in source order, one
      of the two reads is served *)

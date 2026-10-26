@@ -163,8 +163,24 @@ Proof. reflexivity. Qed.
    `without_the_hoist_it_reaches_two` for what this demand changed). *)
 Lemma ex_triangle_basics :
   select_basics [] "edges" Ex_Triangle.prog
-  = [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SwapFlatmapIf].
+  = [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap;
+     PromoteGuard "src"; SwapFlatmapIf].
 Proof. vm_compute; reflexivity. Qed.
+
+(* PromoteGuard appeared in that list when it was added for
+   eval/Jenkins_DependentPlugins, and on THIS subject it is redundant: the
+   indexable guard of the inner loop is second in its chain, so the promotion
+   moves it to the head -- and SwapFlatmapIf was already putting it there by
+   hoisting the guard in front of it out of the loop.  Two rules, the same
+   resulting head guard.
+
+   Redundant is not harmless, so it is measured rather than assumed: the
+   probe count is UNCHANGED at four
+   (Ex_Triangle.selector_matches_the_best_single_index_chain), so the extra
+   rule costs a pass over the term and buys nothing here.  It is kept because
+   the demand that emits it is a general one about guard position, and
+   suppressing it on the subjects where SwapFlatmapIf happens to suffice
+   would be the selector knowing about particular programs. *)
 
 Lemma ex_triangle :
   select_choices [] "edges" Ex_Triangle.prog = [DictIdx "src"].

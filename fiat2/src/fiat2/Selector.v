@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Utils fiat2.Surface fiat2.FlatmapForms
-  fiat2.OptimizeAnno fiat2.SplitFilterProj.
+  fiat2.OptimizeAnno fiat2.SplitFilterProj fiat2.PromoteGuard.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
@@ -88,6 +88,14 @@ Variant demand :=
                                 loop variable.  SwapFlatmapIf moves it out.
                                 This is what a JOIN looks like when its
                                 conditions were written in the wrong loop *)
+  | DPromote (attr : string) (* a loop whose indexable guard is NOT the
+                                outermost one, so the rules are offered a
+                                condition no index serves.  PromoteGuard
+                                moves it to the front.  Unlike the hoist and
+                                conjunction-split demands, this one is STABLE
+                                under its own rule -- promotion reorders the
+                                chain and does not consume the guard -- which
+                                is why it needs no extra pass *)
   | DFilterProj.             (* a bag-level flatmap that filters AND projects
                                 at once, which no index rule matches;
                                 SplitFilterProj splits it into the two forms
@@ -341,8 +349,24 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
      consulted, because the condition is about the loop and not about any one
      table -- a join's inner loop has this shape whichever relation it is
      over. *)
-  | EFlatmap LikeList _ x (EIf p _ (EAtom (ANil _))) =>
-      if negb (free_immut_in x p) then [DHoist] else []
+  | EFlatmap LikeList _ x body =>
+      (* the hoist, as above *)
+      (match body with
+       | EIf p _ (EAtom (ANil _)) =>
+           if negb (free_immut_in x p) then [DHoist] else []
+       | _ => []
+       end
+       ++
+       (* and the promotion: this loop's first key-equality is NOT its
+          outermost guard, so the rules are offered a condition no index
+          serves.  Asked for by POSITION, not by attribute -- whichever
+          attribute that guard names is the one to promote -- so this says
+          nothing about any particular program.  Both demands come from one
+          clause because they share a head pattern. *)
+       match first_key_attr_for x (fst (guard_chain body)) with
+       | Some (S _, a) => [DPromote a]
+       | _ => []
+       end)%list
   (* a key-equality filter over the table whose body is NOT the bound row but
      a projection of it: the shape SplitFilterProj exists for.  The guard is
      the same one the rewrite uses -- a body that IS the bound row is already
@@ -460,6 +484,25 @@ Definition demands_of (tbl : string) (c : command) : list demand :=
    unique_lookup no longer matches, so the guard stops being a probe.  A
    table with a declared key has that guard; a table without one cannot.
 
+   PromoteGuard sits BETWEEN IfNilIntoFlatmap and SplitIf in the list, and
+   both sides of that are forced rather than chosen.  It must run BEFORE
+   IfNilIntoFlatmap -- so it is later in the list -- because what it produces
+   is an indexable guard at the head of a chain and IfNilIntoFlatmap is what
+   splits the loop on that head guard; put it the other way and the split has
+   already happened on the wrong guard, which is what the first attempt did
+   and the selector then still found no index.  It must run AFTER SplitIf --
+   so it is earlier in the list -- because a conjunctive guard has to be
+   split into separate guards before one of its conjuncts can be promoted.
+   That is a SEVENTH rule-ordering hazard, and unlike the others it is
+   two-sided: there is exactly one position in this list that works.
+
+   It is also the one rule here that can be REDUNDANT rather than wrong.  On
+   Ex_Triangle the promotion and SwapFlatmapIf put the same guard at the head
+   by different routes, and the probe count is unchanged, so the extra pass
+   buys nothing there (SelectorTests.ex_triangle_basics says so).  Suppressing
+   it on the subjects where the hoist happens to suffice would mean the
+   selector knowing about particular programs, so it is not suppressed.
+
    SplitIf goes LAST and therefore runs FIRST, and is the one real decision
    here.  It is emitted when some conjunctive filter over the table is
    matched by NO rule as it stands while the conjunct the splitter peels IS
@@ -500,6 +543,16 @@ Definition basics_of (keys : list string) (ds : list demand) : list basic_transf
        && match keys with [] => true | _ :: _ => false end)%bool
    then [FilterEmptyToSetMem] else [])
   ++ [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
+  (* PromoteGuard is placed AFTER IfNilIntoFlatmap in the list and so runs
+     BEFORE it, which is the whole point: what it produces is an indexable
+     guard at the head of the chain, and IfNilIntoFlatmap is what then splits
+     the loop on that guard.  It is placed before SplitIf in the list and so
+     runs after it, because a conjunctive guard has to be split before one of
+     its conjuncts can be promoted.  One PromoteGuard per demanded attribute,
+     in the order the demands were collected. *)
+  ++ (omap (fun d => match d with
+                     | DPromote a => Some (PromoteGuard a)
+                     | _ => None end) ds)
   ++ (if demand_mem DHoist ds then [SwapFlatmapIf] else [])
   ++ (if demand_mem DConjSplit ds then [SplitIf] else [])
   ++ (if existsb (fun d => match d with DFlag _ => true | _ => false end) ds
