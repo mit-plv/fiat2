@@ -191,6 +191,32 @@ choice costs 752x on the delete and takes the build from linear to quadratic —
 therefore be run at **both** settings, and the table must say which. Reporting only the
 default would be the easy win and the dishonest one.
 
+So, run at both (`-t 30` for `named_cache`, whose `-t 60` wedges; `-t 60` for the others):
+
+| subject | default (mode 2) | `--cost-model 3` | did it close? |
+|---|---|---|---|
+| `named_cache` `delete` | 866 lines, **33** full passes, total **recomputed** | 529 lines, **24** full passes, total **still recomputed** | no |
+| `area_registry` `remove` | 978 lines, **38** passes, 6 fields | 844 lines, **35** passes, 3 fields | no |
+| `window_store` `fetch` | bucket lookup then linear scan of the range | **unchanged** | no |
+
+Mode 3 does what its description says: it cuts the write cost by roughly a quarter and
+removes the redundant state (`area_registry` goes from six fields to three; `named_cache`
+from six to four). It does not change the shape of the answer. `sizeInBytes` stays O(1)
+off a maintained `Integer` under both modes — real parity with our `SumAgg` — but the
+`delete` that keeps it correct is a **full recomputation of the sum** under both
+(`_var1007 = _sum1626`), where ours is one probe. Likewise the time range is scanned
+under both, never indexed.
+
+Mode 3 also pays for itself in search: at the same `-t` it completed 56 improvements
+against the default's 98 on `named_cache`, 38 against 125 on `area_registry`. So these
+runs were repeated at **six times the budget** (`-t 180`) before anything was concluded
+about what mode 3 cannot find; that result is recorded with the others.
+
+The reads, then, are parity under both cost models, and the write gap is qualitative
+rather than a matter of tuning: no setting of Cozy's cost model made it *correct* a
+maintained aggregate instead of recomputing it. That is the claim the subject was chosen
+to test, and it is the one worth putting in the paper — not a ratio.
+
 ## Direction 2: their benchmarks in our language
 
 Cozy ships 20 example specifications, five of them derived from real applications. What
