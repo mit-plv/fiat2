@@ -24,10 +24,13 @@
    storage as Cozy's benchmark suite states it, not SAT4J's own source, so
    there is nothing here to transcribe and inventing a plausible structure
    would be the one thing this file exists to avoid.  Its author comparison
-   is of a different kind and lives elsewhere: Cozy runs on that same
-   specification, and what Cozy derives is recorded beside what we derive in
-   comparison/cozy/README.md.  Adding a guessed `Sat4jStorage` module here
-   would read as a transcription and would not be one.
+   is of a different kind and is run rather than described: Cozy on that same
+   unmodified specification, head to head with what we derive, under
+   *Direction 1b* in comparison/cozy/README.md.  Both answer every read in
+   O(1); Cozy gets there with NINE stored fields, including one map per
+   projected attribute, against our one index, and its updateLevel is 168
+   lines.  Adding a guessed `Sat4jStorage` module here would read as a
+   transcription and would not be one.
 
    THE EXPECTED RESULT IS PARITY.  The compiler is supposed to arrive back at
    the structure the author built, so matching asymptotics is the positive
