@@ -684,21 +684,39 @@ of two implementations of one algorithm. Over the nineteen kinds where that hold
 interpreted form costs **a median 2.7x** the author's compiled OCaml, between 1.3x and
 3.7x -- with two exceptions at 7.7x and 7.6x.
 
-Those two are not noise and they say what the gap is made of. `cluster/available` and
-`cluster/onePartition` are the two kinds whose derived form is a probe FOLLOWED BY A
-RESIDUAL FILTER, where every 2-4x kind is a bare probe. The row counter shows it
-directly: `available` enumerates 288 rows where the author enumerates 128, and
-288 = 160 + 128 -- the topic bucket, then the survivors of the leader test. The author's
-loop (`Cluster.java:176-179`) fuses the test into the single traversal; ours materialises
-the bucket and then walks it again.
+Those two are not noise, and they are not an implementation penalty at all -- which is
+worth saying plainly because the first reading of them here was wrong. `cluster/available`
+and `cluster/onePartition` are exactly the two kinds where **the author has an index this
+development cannot build**:
 
-So the penalty is not a flat interpretation tax: it is roughly **2.5-3.5x per pipeline
-stage**, and it compounds where our derived form has one stage more than hand-written code
-would. That is worth stating because it changes what a backend would have to do. A backend
-that compiled each stage faithfully would keep the 7.7x; what collapses it is FUSING a
-residual filter into the traversal that feeds it. Fusion, not compilation, is the feature
--- and the earlier measurement that interpretation dispatch alone is only ~25% of the cost
-says the same thing from the other side. The build phase is never
+* `availablePartitionsForTopic` (`Cluster.java:317`) is a `.get` into a SECOND,
+  PRE-FILTERED map, `availablePartitionsByTopic`, maintained beside the first. The loop at
+  `:176-179` is the constructor that builds it, not the read. Our derived form is a probe
+  into `partitionsByTopic` and then a residual filter -- 288 rows against the author's 128,
+  because 288 = 160 + 128, the topic bucket and then the survivors of the leader test.
+  The author pays that filter ONCE per Cluster and we pay it per read. That is the
+  materialised-derived-view gap, i.e. the dict-of-aggregates combinator this development
+  does not build.
+* `partition(tp)` (`:289`) is a `.get` on a COMPOSITE key, which `Surface.decl` cannot
+  state. Ours probes on the partition and filters on the topic.
+
+So the two outliers are algorithmic, not implementational: both are already in the limits
+table, and both are cases where the exponent cannot see the difference because the author's
+lookup and our probe-plus-filter are each O(bucket). Reading them as an interpretation tax
+would hide two known index gaps inside a wall-clock constant.
+
+**What that leaves is a cleaner claim.** Across the seventeen kinds where the optimizer
+derives the SAME structure the author built, the implementation penalty is 1.3x to 3.7x
+with a median of 2.7x, and it is flat -- no outliers. Where the author has a structure we
+do not derive, the cost of not deriving it shows up here rather than in an exponent.
+
+Fusion is a separate matter and this measurement does not isolate it. Our derived
+`available` would go from 288 rows to 160 if the residual filter were fused into the
+aggregate that consumes it, so the lack of fusion is real and costs about 1.8x on that
+read -- but the author is not fused either; the author is pre-filtered. And because a
+missing fusion adds the SAME absolute row count to the source and optimized columns alike,
+it makes the reported `src -> opt` ratio SMALLER than a fused implementation would show:
+111x here against 200x. The bias runs against the optimizer, not for it. The build phase is never
 compared at all -- the source's is O(n^2) because the declared-key subjects elaborate a
 uniqueness guard into a scan while the originals check nothing, which is a claim about
 constraint checking and not about a missing index. `harness/README.md` has the table.
