@@ -64,8 +64,9 @@ missing is not the operator but the rule -- see the limits table below.
 | `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
 | `Jenkins_ItemDeletion.v` | `ItemDeletion.java:74,129,149,165` | the only WHOLE-ROW read: a `Set<Item>` asked `contains(item)`, so the question is about a row and not an attribute, no dictionary can be keyed for it, and `TableRep` is the only index that applies |
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
+| `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and leaves five FILTERING PROJECTIONS as scans, which is a pattern gap this subject found |
 
-The eight fall into five groups, and the groups are the argument.
+The nine fall into six groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
 `HA_LookinFunctions`. The first two are a pair and should be read as one: they put
@@ -183,6 +184,33 @@ source stores whole rows in a `Set<Item>` and asks `contains(item)`, so there is
 to probe with and the only index in the development that applies is the one that
 represents the table itself. It is the file that makes `TableRep` a measurement rather
 than a listing, and it is argued where the numbers are, under *What it costs* below.
+
+**A subject we did not choose** -- `Sat4j_LiteralStorage`. Every file above was found
+by us, in a corpus we picked, by a search we designed, and no amount of care inside that
+process answers the objection to it. This one comes from outside: it is one of the five
+application-derived specifications in the benchmark suite of Cozy (ICSE'18), written by
+other people for another paper before this system existed. Two of their five are
+expressible here; this is the one needing no capability we lack. The audit of all twenty
+of their examples is in `comparison/cozy/README.md`.
+
+It earns its place twice over, because it found something. The selector, given only the
+program and the declaration, chooses `[UniqueDictIdx "var"; CountAgg]` on its own
+(`selector_chooses`), and declines `FilterEmptyToSetMem` because the table has a declared
+key -- the first time that rule-ordering decision is forced by a program we did not write
+(`selector_declines_set_mem`). The declared key then answers both the row read and the
+**existence** read with no `SetAgg` and no emptiness rewrite at all
+(`exists_read_is_a_probe`), which is a thing no file we wrote had shown.
+
+And five of its eight reads are **not served**. `getLevel(varId)` is
+`[ r.level | r <- records, r.var == varId ]`: it filters and projects in one flatmap.
+`unique_lookup_head` matches `flatmap_filter_bag`, whose then-branch the notation fixes
+as the bound row itself, and a projection is the separate form `flatmap_proj_bag`; a read
+that does both is neither, so nothing claims it and it stays a full scan
+(`projection_read_is_left_alone`). The consequence is pinned too: those five scans still
+read the list, so `CountAgg` cannot erase it (`counted_keeps_the_list`) -- the same two
+index choices that erase Keycloak's list leave this one alive. It is listed under
+*Limits* below, and it was found by taking someone else's example rather than by
+inspecting our own.
 
 ## Who chooses the heuristics
 
@@ -511,11 +539,17 @@ that found it rather than described in prose:
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
 | a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |
+| a read that FILTERS AND PROJECTS in one flatmap | five of the eight reads in `Sat4j_LiteralStorage`, i.e. `the [ r.level \| r <- records, r.var == varId ]` -- a third-party spec, which is how this was found | `projection_read_is_left_alone`, and its consequence `counted_keeps_the_list`. `unique_lookup_head` matches `flatmap_filter_bag`, whose then-branch the notation fixes as the bound ROW (`FlatmapForms.v:17`); a projection is the separate form `flatmap_proj_bag` (`:26`). A flatmap doing both is neither, so no rule claims it and the read stays a scan. What would close it is a normalisation splitting one into the other two, which does not exist |
 | a read that observes row order | none here, by construction | not pinned, and the limit is wider than the write above: **every** index in the development is order-insensitive, so an order-observing read is served by none of them, and such a table keeps its list and gains nothing |
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
 `counted_erases_the_list`.
+
+The filtering-projection row is the only entry on this list that was found from outside
+our own corpus, and it is the argument for keeping `Sat4j_LiteralStorage`: a subject
+chosen by someone else exposed a pattern gap that eight subjects chosen by us did not,
+because every read we had happened to ask for the row or for the whole table.
 
 The range-shaped delete was on this list, first as a missing operator and then as
 a missing rule, and both are now built. A one-sided delete is a restriction to
