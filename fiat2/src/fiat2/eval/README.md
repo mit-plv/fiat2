@@ -64,7 +64,7 @@ missing is not the operator but the rule -- see the limits table below.
 | `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
 | `Jenkins_ItemDeletion.v` | `ItemDeletion.java:74,129,149,165` | the only WHOLE-ROW read: a `Set<Item>` asked `contains(item)`, so the question is about a row and not an attribute, no dictionary can be keyed for it, and `TableRep` is the only index that applies |
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
-| `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and leaves five FILTERING PROJECTIONS as scans, which is a pattern gap this subject found |
+| `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and the five FILTERING PROJECTIONS it leaves as scans found a missing rule -- the bag-level counterpart of a list-level split -- now built and pinned in a third configuration |
 
 The nine fall into six groups, and the groups are the argument.
 
@@ -197,7 +197,7 @@ It earns its place twice over, because it found something. The selector, given o
 program and the declaration, chooses `[UniqueDictIdx "var"; CountAgg]` on its own
 (`selector_chooses`), and declines `FilterEmptyToSetMem` because the table has a declared
 key -- the first time that rule-ordering decision is forced by a program we did not write
-(`selector_declines_set_mem`). The declared key then answers both the row read and the
+(`selector_emits_the_split_and_declines_set_mem`). The declared key then answers both the row read and the
 **existence** read with no `SetAgg` and no emptiness rewrite at all
 (`exists_read_is_a_probe`), which is a thing no file we wrote had shown.
 
@@ -208,9 +208,17 @@ as the bound row itself, and a projection is the separate form `flatmap_proj_bag
 that does both is neither, so nothing claims it and it stays a full scan
 (`projection_read_is_left_alone`). The consequence is pinned too: those five scans still
 read the list, so `CountAgg` cannot erase it (`counted_keeps_the_list`) -- the same two
-index choices that erase Keycloak's list leave this one alive. It is listed under
-*Limits* below, and it was found by taking someone else's example rather than by
-inspecting our own.
+index choices that erase Keycloak's list leave this one alive.
+
+That gap is now closed, and the shape of the fix is the point: the development already
+split exactly this shape at LIST level (`if_nil_into_flatmap_head`,
+`FlatmapTransf.v:231`), and what was missing was the BAG-level counterpart, which these
+reads reach because their aggregate coerces through `EBagOf`. `SplitFilterProj` is that
+counterpart; a third configuration here turns all five reads into probes and erases the
+list after all (`split_projection_read_is_a_probe`, `split_erases_the_list`). The
+un-split configuration is kept beside it rather than deleted, because the pair is the
+evidence. A subject chosen by someone else found a missing rule; none of the eight we
+chose did.
 
 ## Who chooses the heuristics
 
@@ -539,17 +547,33 @@ that found it rather than described in prose:
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
 | a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |
-| a read that FILTERS AND PROJECTS in one flatmap | five of the eight reads in `Sat4j_LiteralStorage`, i.e. `the [ r.level \| r <- records, r.var == varId ]` -- a third-party spec, which is how this was found | `projection_read_is_left_alone`, and its consequence `counted_keeps_the_list`. `unique_lookup_head` matches `flatmap_filter_bag`, whose then-branch the notation fixes as the bound ROW (`FlatmapForms.v:17`); a projection is the separate form `flatmap_proj_bag` (`:26`). A flatmap doing both is neither, so no rule claims it and the read stays a scan. What would close it is a normalisation splitting one into the other two, which does not exist |
 | a read that observes row order | none here, by construction | not pinned, and the limit is wider than the write above: **every** index in the development is order-insensitive, so an order-observing read is served by none of them, and such a table keeps its list and gains nothing |
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
 `counted_erases_the_list`.
 
-The filtering-projection row is the only entry on this list that was found from outside
-our own corpus, and it is the argument for keeping `Sat4j_LiteralStorage`: a subject
-chosen by someone else exposed a pattern gap that eight subjects chosen by us did not,
-because every read we had happened to ask for the row or for the whole table.
+A read that FILTERS AND PROJECTS in one flatmap was on this list and is now built:
+`SplitFilterProj`, the bag-level counterpart of `if_nil_into_flatmap_head`
+(`FlatmapTransf.v:231`), which performed the same split at list level all along. It is
+pinned in `Sat4j_LiteralStorage.v` at `split_projection_read_is_a_probe` and
+`split_erases_the_list`, with the un-split configuration kept beside it
+(`projection_read_is_left_alone`, `counted_keeps_the_list`) so the difference is
+readable.
+
+That gap is the only one on this list that was found from outside our own corpus, and it
+is the argument for keeping `Sat4j_LiteralStorage`: a subject chosen by someone else
+exposed a missing rule that eight subjects chosen by us did not, because every read we
+had happened to ask for the row or for the whole table, and the list-level rule covered
+everything else.
+
+What the rule does NOT fix, stated because it is the thing a reader will assume it does:
+joins were never blocked by this. A join written as a list comprehension is already
+indexed by the list-level rule, which `Ex_Join.v` now pins
+(`inner_loop_is_a_probe`, and `both_configurations_agree` pinning that the new rule
+changes that program not at all). The join limit is elsewhere -- the ORDER of the join
+conditions, witnessed by `Ex_Triangle`, whose four nested ifs are hoisted only by a
+hand-ordered chain of `SwapIfNil`/`SwapFlatmapIf` that the selector does not emit.
 
 The range-shaped delete was on this list, first as a missing operator and then as
 a missing rule, and both are now built. A one-sided delete is a restriction to

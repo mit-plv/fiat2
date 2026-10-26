@@ -3,7 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.Surface fiat2.UniqueDictIndexImpl fiat2.UniqueIndexGate fiat2.UniqueIndexUse
   fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
   fiat2.EraseField fiat2.RepIdx fiat2.SetRemoveTransf
-  fiat2.FlagFilter fiat2.UnpushCollection.
+  fiat2.FlagFilter fiat2.SplitFilterProj fiat2.UnpushCollection.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -30,7 +30,12 @@ Variant basic_transf :=
   | FilterEmptyToSetMem
   (* a filter on a boolean field is an equality filter against the flag, which
      is the shape the index rules read; see FlagFilter *)
-  | FlagFilterToEq.
+  | FlagFilterToEq
+  (* a flatmap that filters AND projects at once is matched by no index rule,
+     because the rules read a filter whose body is the bound row.  This splits
+     it into the filter and the projection the rules already match, which is
+     also what makes a JOIN's inner loop indexable; see SplitFilterProj *)
+  | SplitFilterProj.
 
 Variant index_choice :=
   | SumAgg (attr : string)
@@ -116,6 +121,9 @@ Definition filter_eq_empty_to_set_mem_transf :=
 Definition flag_filter_to_eq_transf :=
   fold_command id flag_filter_to_eq_head.
 
+Definition split_filter_proj_transf :=
+  fold_command id split_filter_proj_head.
+
 Definition mk_basic_transf (f : basic_transf) : command -> command :=
   match f with
   | SwapIfNil => swap_if_nil_transf
@@ -133,6 +141,7 @@ Definition mk_basic_transf (f : basic_transf) : command -> command :=
   | SwapBagFlatmaps => swap_flatmap_likebag_transf
   | FilterEmptyToSetMem => filter_eq_empty_to_set_mem_transf
   | FlagFilterToEq => flag_filter_to_eq_transf
+  | SplitFilterProj => split_filter_proj_transf
   end.
 
 Definition compose_basic_transfs : list (command -> command) -> command -> command :=
@@ -772,7 +781,8 @@ end.
         annotate_collection_transf, push_down_collection_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
         flatmap_if_transf, swap_flatmap_likebag_transf,
-        filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf;
+        filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf,
+        split_filter_proj_transf;
       eapply expr_transf_sound__preserve_parameterized_wf;
       eauto with transf_hints.
   Qed.
@@ -1636,7 +1646,8 @@ end.
         annotate_collection_transf, push_down_collection_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
         flatmap_if_transf, swap_flatmap_likebag_transf,
-        filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf;
+        filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf,
+        split_filter_proj_transf;
       eapply (expr_transf_sound__preserve_cenv_respected (tenv := ctenv) (locals := clocals));
       eauto with transf_hints.
   Qed.
@@ -1745,7 +1756,8 @@ end.
         if_nil_into_flatmap_transf, swap_conjuncts_transf, split_if_transf,
         flatmap_assoc_transf, flatmap_singleton_transf, flatmap_identity_transf,
         flatmap_if_transf, annotate_collection_transf, push_down_collection_transf,
-        swap_flatmap_likebag_transf, filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf;
+        swap_flatmap_likebag_transf, filter_eq_empty_to_set_mem_transf, flag_filter_to_eq_transf,
+        split_filter_proj_transf;
       cbn [fold_command]; unfold id;
       eexists; split; try reflexivity;
       intros t H_t; eapply fold_expr_preserve_ty;

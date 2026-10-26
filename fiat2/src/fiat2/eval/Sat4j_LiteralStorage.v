@@ -259,6 +259,20 @@ Section WithConcreteMaps.
   Definition optimized_counted : command :=
     apply_optimize_anno_constrained anno_counted init_Gstore init_Genv.
 
+  (* A third configuration, added after this subject found the gap: the
+     bag-level split that lets a filtering projection reach the index rules
+     (SplitFilterProj.v).  It goes FIRST in the list and so runs LAST, after
+     the collection phase has left the bag-level flatmap its pattern reads. *)
+  Definition basics_split : list basic_transf :=
+    [SplitFilterProj; PushdownCollection; AnnotateCollection; IfNilIntoFlatmap].
+
+  Definition anno_split : canno_command :=
+    CAC (("records", (row_ty, decls)) :: cenv_rm "records" []) O
+      basics_split [UniqueDictIdx "var"; CountAgg] [] (elaborated decls).
+
+  Definition optimized_split : command :=
+    apply_optimize_anno_constrained anno_split init_Gstore init_Genv.
+
   Definition installed_fields (c : command) : list string :=
     match c with
     | CLetMut (ERecord l) _ _ => List.map fst l
@@ -293,14 +307,22 @@ Section WithConcreteMaps.
     = [UniqueDictIdx "var"; CountAgg].
   Proof. vm_compute; reflexivity. Qed.
 
-  (* And FilterEmptyToSetMem is absent, although this program HAS an
-     emptiness test of an equality filter -- the demand that rewrite exists
-     for.  It is declined because the table carries a declared key, which is
-     the third rule-ordering hazard in Selector.v:405.  Until now that
-     decision was exercised only by programs we wrote. *)
-  Lemma selector_declines_set_mem :
+  (* The basics it emits say two things at once.
+
+     FilterEmptyToSetMem is ABSENT, although this program has an emptiness
+     test of an equality filter -- the demand that rewrite exists for.  It is
+     declined because the table carries a declared key, which is the third
+     rule-ordering hazard in Selector.v.  Until this subject arrived, that
+     decision was exercised only by programs we wrote.
+
+     SplitFilterProj is PRESENT, demanded by the five filtering projections
+     below.  That rule was added because this subject found it missing, and
+     the selector reaches it from the program alone -- so the configuration
+     measured here is still nobody's hand-written choice. *)
+  Lemma selector_emits_the_split_and_declines_set_mem :
     select_basics ce "records" (elaborated decls)
-    = [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap].
+    = [SplitFilterProj; PushdownCollection; AnnotateCollection;
+       IfNilIntoFlatmap].
   Proof. vm_compute; reflexivity. Qed.
 
   (* ---- the reads the index serves ---- *)
@@ -370,6 +392,26 @@ Section WithConcreteMaps.
     installed_fields optimized_counted = ["id_tag"; "aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 
+  (* ---- and what closing the gap does ----
+
+     SplitFilterProj splits each filtering projection into the filter and the
+     projection the index rules already match.  The five scans become five
+     probes, and with the list's last reader gone CountAgg erases the field
+     after all -- the Keycloak ending, reached only once the rule exists. *)
+
+  Lemma split_projection_read_is_a_probe :
+    nth_arm 6 optimized_split
+    = Some (reported
+              (EACFold AGSum
+                 (EFlatmap LikeBag probe "r"
+                    (EBinop OBagInsert (EAtom (AEmptyBag None))
+                       (EAccess (EVar "r") "level"))))).
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma split_erases_the_list :
+    installed_fields optimized_split = ["aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
   (* ---- soundness: the whole point, and it is one lemma ---- *)
 
   Lemma row_ty_wf : type_wf row_ty.
@@ -433,6 +475,19 @@ Section WithConcreteMaps.
         = interp_command store env (elaborated decls).
   Proof.
     unfold optimized_counted, anno_counted, elaborated, prog_s.
+    apply elab_apply_optimize_anno_constrained_sound;
+      [ apply init_Gstore_wf | apply init_Genv_wf | apply row_ty_wf
+      | apply incl_refl | apply decls_wf | apply elaborated_well_typed ].
+  Qed.
+
+  Theorem optimized_split_sound :
+    well_typed init_Gstore init_Genv optimized_split /\
+      forall (store env : clocals),
+        locals_wf init_Gstore store -> locals_wf init_Genv env ->
+        interp_command store env optimized_split
+        = interp_command store env (elaborated decls).
+  Proof.
+    unfold optimized_split, anno_split, elaborated, prog_s.
     apply elab_apply_optimize_anno_constrained_sound;
       [ apply init_Gstore_wf | apply init_Genv_wf | apply row_ty_wf
       | apply incl_refl | apply decls_wf | apply elaborated_well_typed ].

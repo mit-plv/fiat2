@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Utils fiat2.Surface fiat2.FlatmapForms
-  fiat2.OptimizeAnno.
+  fiat2.OptimizeAnno fiat2.SplitFilterProj.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
@@ -81,7 +81,12 @@ Variant demand :=
   | DEmptyEqFilter           (* FilterEmptyToSetMem applies *)
   | DConjSplit               (* SplitIf would expose an indexable conjunct
                                 of a filter no rule matches as it stands *)
-  | DFlag (attr : string).   (* FlagFilterToEq applies *)
+  | DFlag (attr : string)    (* FlagFilterToEq applies *)
+  | DFilterProj.             (* a bag-level flatmap that filters AND projects
+                                at once, which no index rule matches;
+                                SplitFilterProj splits it into the two forms
+                                they do.  The list-level case needs nothing:
+                                if_nil_into_flatmap_head always runs *)
 
 Scheme Boolean Equality for collection_tag. (* creates collection_tag_beq *)
 Scheme Boolean Equality for demand.         (* creates demand_beq *)
@@ -312,6 +317,17 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
       if (String.eqb tbl t && String.eqb x x1 && String.eqb x y
           && negb (free_immut_in x k))%bool
       then [DEmptyEqFilter] else []
+  (* a key-equality filter over the table whose body is NOT the bound row but
+     a projection of it: the shape SplitFilterProj exists for.  The guard is
+     the same one the rewrite uses -- a body that IS the bound row is already
+     a filter and needs no split. *)
+  | EFlatmap LikeBag (EBagOf (ELoc t)) x
+      (EIf (EBinop OEq (EAccess (EVar x1) _) k)
+         (EBinop OBagInsert (EAtom (AEmptyBag _)) r) (EAtom (AEmptyBag _))) =>
+      if (String.eqb tbl t && String.eqb x x1
+          && negb (is_the_bound_row x r)
+          && negb (free_immut_in x k))%bool
+      then [DFilterProj] else []
   (* the whole table handed to an operator that consumes a collection whole:
      rep_lookup.  Last of the EBinop branches, so the two specific ones
      above keep their shapes; see whole_collection_binop for why these
@@ -398,7 +414,15 @@ Definition demands_of (tbl : string) (c : command) : list demand :=
    every index rule's pattern is written against -- and IfNilIntoFlatmap,
    which keeps a filter in the one shape those rules match.
 
-   FilterEmptyToSetMem goes FIRST in the list and therefore runs LAST
+   SplitFilterProj goes FIRST of all and therefore runs LAST, after every
+   other normalisation has settled: its job is only to put a flatmap that
+   filters and projects at once into the two shapes the index rules read, and
+   it should see the final form of the body.  It is demanded rather than
+   always run because it is a no-op on a program without that shape, and
+   because its list-level sibling, if_nil_into_flatmap_head, IS always run --
+   a list comprehension never needs this one.
+
+   FilterEmptyToSetMem goes next in the list and therefore runs second-to-last
    (compose_basic_transfs is a fold_right), because it has to see the
    bag-level filter the push-down leaves behind.
 
@@ -445,7 +469,8 @@ Definition demands_of (tbl : string) (c : command) : list demand :=
    predicate's leaf and the other its conjunction -- so it is placed after
    by convention. *)
 Definition basics_of (keys : list string) (ds : list demand) : list basic_transf :=
-  (if (demand_mem DEmptyEqFilter ds
+  (if demand_mem DFilterProj ds then [SplitFilterProj] else [])
+  ++ (if (demand_mem DEmptyEqFilter ds
        && match keys with [] => true | _ :: _ => false end)%bool
    then [FilterEmptyToSetMem] else [])
   ++ [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
