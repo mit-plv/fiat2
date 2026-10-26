@@ -51,6 +51,75 @@ Three notes on that command line, all three found by running it:
   wrapped in an external wall-clock cap, `probes/cap.sh`, and any spec that needed the cap
   is marked as capped rather than reported as a result.
 
+## Direction 1: our subjects, as Cozy specifications
+
+Every run below is `-t 60 --no-deduplicate-subqueries` at the default cost model, under
+the external cap, on one laptop core-set. **Cozy's paper reports runs of hours on 96
+cores, so these are not Cozy at full strength**; where a longer budget was tried it is
+said so explicitly.
+
+"Ours" is the configuration `Selector.v` computes, not one written by hand.
+
+| subject | ours | Cozy's state | the reads | the writes |
+|---|---|---|---|---|
+| `keycloak` | `UniqueDictIdx id`, `UniqueDictIdx alias`, `CountAgg` | `Integer` + 2 × `HashMap<String,Action>`, **no list** | O(1) each | — |
+| `lookin` | `SetAgg name` | 1 × `HashMap<String,Boolean>`, **no list** | `containsKey` | spec has no ops |
+| `item_deletion` | `TableRep LikeSet` | 1 × `HashMap<Item,Boolean>`, **no list** | `containsKey` | both O(1) |
+| `user_search_find` | (`TrigramIdx` serves it) | `ArrayList` + `HashMap<String,User>` + `HashMap<User,Boolean>` + `ArrayList<String>` | O(1) by id | not inspected |
+| `cluster` | `DictIdx topic`, `DictIdx leader` | 4 maps: 2 × `<String,List>`, 2 × `<Integer,List>` | bucket lookup | spec has no ops |
+| `cluster_declared` | — (we cannot declare this) | **the same four maps** | `onePartition` = bucket lookup **then scan for the topic** | spec has no ops |
+| `area_registry` | `KeyedDictIdx floor id` | 6 fields, incl. 2 × `<String,List<Area>>` and a `<Area,Boolean>` | `byId` O(1), `byFloor` bucket | `remove` = **978 lines, 38 full passes** over the list |
+| `named_cache` | `UniqueDictIdx k`, `SumAgg size` | `ArrayList` + `Integer` + `<String,Node>` + `<Node,Boolean>` + 2 more | `sizeInBytes()` returns the maintained `Integer` | `delete` = **866 lines, 33 full passes**, and the total is **recomputed** (`_var335 = _sum2960`), not corrected |
+| `window_store` | `RangedDictIdx time` | `ArrayList` + `<String,List<Record>>` + `<String,Boolean>` + `ArrayList<String>` | `fetch` = bucket lookup then **linear scan** of the time range; `fetchAll` = **full scan** | not inspected |
+| `user_search_suggest` | `TrigramIdx fullName id` | 1 × `ArrayList<User>` | **"Number of improvements done: 0"** — the author's own `for` loop with `.contains(token)` | — |
+
+What this says, in the order it matters:
+
+**1. On reads, Cozy reaches our choice, and twice reaches it exactly.** `lookin` and
+`item_deletion` come out as a single hash set with the list erased and the read a
+`containsKey` — the same representation `SetAgg` and `TableRep LikeSet` produce, derived
+independently. `keycloak` comes out as our `optimized_counted` including the maintained
+count. These are the strongest *parity* results in the comparison and they should be
+reported as parity, not spun: an independent system agreeing is evidence the selector's
+heuristics are not arbitrary, which is the thing a reviewer doubted.
+
+**2. The one subject that cannot be expressed is the one we win by 66x.** Cozy's language
+has no string operations, so `suggest`'s substring predicate enters only as an opaque
+`extern`, and with one Cozy reports zero improvements and emits the author's scan.
+
+**3. Writes are where the two systems part, and the cause is identified, not guessed.**
+`named_cache` is the clean case: Cozy maintains the total and answers `sizeInBytes` in
+O(1), exactly as we do — then *recomputes the whole sum* in `delete` across 33 passes,
+where our `delete_corrects_by_a_probe` pins a single probe. `area_registry/remove` is 38
+passes. The cause is the default cost model, which has no maintenance term (below); this
+is the prediction `--cost-model 3` tests, and a comparison that stopped here would be
+unfair.
+
+**4. The composite-key gap is narrower than claimed, and the honest version is better for
+us anyway.** Cozy *can* declare `invariant unique [(p.topic, p.partition) | ...]`, which
+`Surface.decl` cannot express. But declaring it changed Cozy's chosen state **not at all**
+— `cluster.ds` and `cluster_declared.ds` produce the same four maps — and `onePartition`
+is bucket-then-scan in both, which is what ours does. The invariant bought Cozy the
+*query type* (a single row via `the`, instead of a stream), not a better representation.
+So the limits table should say: we cannot state a composite key, and on this subject
+stating it bought the state of the art nothing.
+
+**5. Cozy derives redundant state.** Four maps for two bucketed reads on `cluster`, six
+fields on `area_registry`, two identical `<String,List<Area>>` maps. We emit one record
+with one field per index. Not measured, and storage is in its default cost model, so this
+is an observation rather than a result.
+
+Two asymmetries that run against this table, stated rather than netted out:
+
+* **`cluster`, `cluster_declared` and `lookin` have no ops.** Cozy had no maintenance to
+  pay for, so their parity is read-only parity. The subjects they came from do have a
+  build phase.
+* **Budget.** 60 seconds on a laptop against a tool whose paper used hours on a cluster.
+  `window_store` was therefore re-run at `-t 600` specifically to test whether the ordered
+  structure ever appears — Cozy registers a `TreeMultiset` by default
+  (`structures/__init__.py:12`), so the scan in `fetch` is a choice its search did not
+  revisit, not a missing capability.
+
 ## What Cozy does with a spec whose constraint can break
 
 This is worth stating carefully, because it is the one place where Cozy's design is
