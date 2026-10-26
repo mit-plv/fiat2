@@ -20,7 +20,7 @@ Import ListNotations.
    does not.  `inner_loop_is_a_probe` pins the inner loop as ONE PROBE of the
    declared-key member, so the join is linear in the orders and not
    quadratic, and the customer list is erased.  The reason is
-   `if_nil_into_flatmap_head` (FlatmapTransf.v:231), which splits exactly
+   `if_nil_into_flatmap_head` (FlatmapTransf.v), which splits exactly
    this shape at LikeList and is already in the standard basics list: by the
    time the index rules look, the filter and the projection are two flatmaps
    and the filter is in the shape they read.
@@ -44,8 +44,8 @@ Import ListNotations.
    SelectorTests.v -- the join examples' configurations are hand-written, and
    this file's is the only one the selector's own basics list would produce.
 
-   The shape is also the one gap in the Cozy comparison that our own subjects
-   do not cover: their `select-flatmap` and `listcomp-flatmap` examples are
+   The shape is also the one gap in the Cozy comparison that the selected
+   subjects do not cover: their `select-flatmap` and `listcomp-flatmap` examples are
    value-typed multi-collection joins (comparison/cozy/README.md), and this is
    that shape with a declared key on the inner relation.
 

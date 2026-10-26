@@ -12,7 +12,7 @@ Import ListNotations.
      flatmap_proj_bag   e x r     =  flatmap e x [r]
 
    and the notation for the first fixes its then-branch as a VARIABLE -- the
-   bound row itself.  So `unique_lookup_head` (UniqueIndexUse.v:432) and its
+   bound row itself.  So `unique_lookup_head` (UniqueIndexUse.v) and its
    siblings see a filter only when the filter hands back the whole row.
 
    A source query that asks for one FIELD of the matching row,
@@ -26,7 +26,7 @@ Import ListNotations.
    is a third-party specification, which is how the gap was found.
 
    WHAT THIS IS, EXACTLY: the BAG-LEVEL COUNTERPART OF AN EXISTING RULE.
-   `if_nil_into_flatmap_head` (FlatmapTransf.v:231) performs this same split
+   `if_nil_into_flatmap_head` (FlatmapTransf.v) performs this same split
    at LikeList, with the same guard and for the same stated reason, and it is
    in the standard basics list -- which is why a join written as a LIST
    comprehension is already indexed today (Ex_Join.v pins that).  What was

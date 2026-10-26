@@ -28,20 +28,19 @@ Import ListNotations.
        query getNegWatches(varId)   the [ r.val.negWatches | ... == varId ]
 
    WHY THIS SUBJECT IS HERE, AND IT IS NOT THE USUAL REASON
-     Every other subject in this directory was found by us, in a corpus we
-     chose, by a search we designed.  That is the standing objection to an
-     evaluation like this one and it cannot be answered from inside our own
-     selection.  This subject is not ours: it is one of the five
-     application-derived specifications in the benchmark suite of Cozy
-     (Loncaract et al., ICSE'18), chosen by other people, for other people's
-     paper, before this system existed.  Two of their five turned out to be
-     expressible in our language; this is the one of the two that needs no
-     capability we lack.  See comparison/cozy/README.md for the audit of all
-     twenty of their examples and why the other three are out of reach.
+     Every other subject in this directory was selected for this evaluation:
+     a corpus was chosen and a search was designed.  No selection can answer
+     the objection to itself.  This subject was selected by someone else --
+     it is one of the five application-derived specifications in the
+     benchmark suite of Cozy (Loncaric et al., ICSE'18), written for another
+     paper before this system existed.  Two of those five are expressible
+     here; this is the one of the two needing no capability this development
+     lacks.  comparison/cozy/README.md audits all twenty of their examples
+     and says why the other three are out of reach.
 
-     The claim it supports is therefore about representativeness and nothing
-     else.  It is not evidence that we beat Cozy -- Cozy runs on it too, and
-     what it derives is recorded beside what we derive.
+     What it supports is therefore a claim about representativeness and
+     nothing else.  It is not evidence of beating Cozy: Cozy runs on it too,
+     and what Cozy derives is recorded beside what the optimizer derives.
 
    Pattern
      A1a with a declared key, at an extreme: EIGHT reads over one table, of
@@ -49,7 +48,7 @@ Import ListNotations.
      one asks for the row, five project one field each, and one asks only
      whether the row is there.  The eighth is a whole-table count.
 
-     That shape is the reason the subject is worth having.  Our other
+     That shape is the reason the subject is worth having.  The other
      declared-key subject (Keycloak) has two keys and three reads; this one
      has one key and eight, so it is the case where a single index either
      serves everything or is exposed as serving only the shape it was
@@ -70,8 +69,8 @@ Import ListNotations.
        this subject as well.
      * `handletype` gives Cozy reference semantics: a Record is a mutable
        object with identity, and `updateLevel(rec, level)` mutates through
-       the caller's handle.  We have value rows.  So the two update ops are
-       written here as the delete-then-insert pair they are under value
+       the caller's handle.  The rows here are values, so the two update ops
+       are written here as the delete-then-insert pair they are under value
        semantics, keyed on `var` -- which is also what the caller must do,
        since it reached the record by findRecord(var) in the first place.
        This is a translation decision, not a simplification: it is the one
@@ -85,19 +84,19 @@ Import ListNotations.
        projection read is reported as the sum of the projected field over
        the matching rows, which under uniqueness is that row's field.
 
-   What happened -- and HALF OF IT IS A GAP WE DID NOT KNOW WE HAD
+   What happened -- and HALF OF IT IS A PREVIOUSLY UNRECORDED GAP
      The selector, given nothing but the program and the declaration, chooses
      [UniqueDictIdx "var"; CountAgg] by itself: pinned as `selector_chooses`.
      It also declines FilterEmptyToSetMem, because the table has a declared
-     key (Selector.v:405, the third rule-ordering hazard) -- so this is the
-     first subject where that decision is forced by a program we did not
-     write.  Pinned as `selector_declines_set_mem`.
+     key (Selector.v, the third rule-ordering hazard) -- and this is the
+     first subject where that decision is forced by a program written
+     elsewhere.  Pinned as `selector_declines_set_mem`.
 
      Served by the one index, as probes:
        * findRecord      -- `find_read_is_a_probe`
        * belongsToPool   -- `exists_read_is_a_probe`.  This is the good
          surprise: with FilterEmptyToSetMem unavailable, the DECLARED KEY
-         answers the existence test by itself.  Our other existence subject
+         answers the existence test by itself.  The other existence subject
          (Lookin) needs SetAgg and that rewrite; a declared key needs
          neither, because the filter becomes a probe and the emptiness test
          then reads the probe's result.
@@ -108,12 +107,12 @@ Import ListNotations.
      SCAN of the list.  Pinned as `projection_read_is_left_alone`.
 
      The cause is a pattern gap, not a soundness obstacle, and it is exact.
-     `unique_lookup_head` (UniqueIndexUse.v:432) matches
+     `unique_lookup_head` (UniqueIndexUse.v) matches
      `flatmap_filter_bag`, whose then-branch the notation fixes as
-     `OBagInsert (AEmptyBag _) (EVar y)` (FlatmapForms.v:17) -- the row
+     `OBagInsert (AEmptyBag _) (EVar y)` (FlatmapForms.v) -- the row
      ITSELF -- and the rule further requires that variable to be the bound
      row.  A projection is the separate form `flatmap_proj_bag`
-     (FlatmapForms.v:26).  A read that FILTERS AND PROJECTS IN ONE FLATMAP,
+     (FlatmapForms.v).  A read that FILTERS AND PROJECTS IN ONE FLATMAP,
      i.e. `[ r.attr | r <- rows, r.key == k ]`, is neither form, so no rule
      claims it.  Five of the eight queries in this third-party specification
      are written exactly that way.
@@ -313,7 +312,7 @@ Section WithConcreteMaps.
      test of an equality filter -- the demand that rewrite exists for.  It is
      declined because the table carries a declared key, which is the third
      rule-ordering hazard in Selector.v.  Until this subject arrived, that
-     decision was exercised only by programs we wrote.
+     decision was exercised only by programs written for this evaluation.
 
      SplitFilterProj is PRESENT, demanded by the five filtering projections
      below.  That rule was added because this subject found it missing, and

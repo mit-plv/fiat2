@@ -35,7 +35,7 @@ Import ListNotations.
         demand read off the source would be read off the wrong program.
      3. CHOICES.  Map each demand to the index that answers it, prune the
         ones another choice subsumes, and order the result by the ordering
-        spec the five rule-ordering hazards impose.
+        spec the rule-ordering hazards impose.
 
    The demands are read off the program's SHAPES, not off its row type: an
    index is asked for where the program contains a read or a write that
@@ -673,8 +673,8 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    TableRep comes first of all, which by that same reading makes it the LAST
    to run: every other index gets first refusal on every read, and TableRep
    picks up only what is left.  That is what makes co-installing it safe,
-   and it is hazard 1 of the six.  It is emitted for one kind of read only;
-   see the note at the end of this file. *)
+   and it is the first of the rule-ordering hazards.  It is emitted for one
+   kind of read only; see the note at the end of this file. *)
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in

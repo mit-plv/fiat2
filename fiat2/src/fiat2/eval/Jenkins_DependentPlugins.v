@@ -67,7 +67,7 @@ Import ListNotations.
      hand-built.  What the optimizer offers is the dictionary that turns the
      inner loop into a probe.
 
-   THE GUARD ORDER IS THE POINT, AND IT IS NOT IN OUR FAVOUR
+   THE GUARD ORDER IS THE POINT, AND IT FAVOURS NOTHING HERE
      Read the three conditions in the order the source evaluates them.  The
      indexable one -- an equality between a dependency's name and the outer
      plugin's name -- is THIRD.  In front of it sit a NOT-equality (not
@@ -108,8 +108,8 @@ Import ListNotations.
        so at most one row matches per pair and the break has no effect on the
        answer.  It is dropped.
      * The source WRITES its answer back onto the plugin row
-       (`setDependents`).  Our output channel is a list of strings, as in
-       every other subject here, so each plugin's two answers are reported as
+       (`setDependents`).  The output channel here is a list of strings, as in
+       every other subject, so each plugin's two answers are reported as
        counts.  Under the source's `Set<String>` semantics those counts are
        the sizes of the two sets.
      * `plugins` arrives as an input list rather than a second table, because
@@ -308,10 +308,11 @@ Section WithConcreteMaps.
      here installs the same index, so every one carries exactly one build
      probe, and comparing raw counts across them overstates each by one.
 
-     This cost me a wrong claim: a pin here used to be called
-     `one_transposition_reaches_both`, on a raw count of two.  One of those
-     two is the build, so one transposition reaches ONE of the two reads.  The
-     counts were right and the reading was wrong. *)
+     The distinction is load-bearing, not pedantic.  On a raw count of two,
+     `optimized_swapped` reads as though it served both of this program's two
+     reads; one of those two is the build, so it serves ONE.  The raw counts
+     are pinned below beside the read counts so that the two metrics cannot
+     be confused again. *)
   Definition is_member_probe (e : expr) : bool :=
     match e with
     | EBinop OLookup (EAccess (EAccess (ELoc _) _) _) _ => true
