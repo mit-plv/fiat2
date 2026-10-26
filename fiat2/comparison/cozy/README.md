@@ -115,10 +115,41 @@ Two asymmetries that run against this table, stated rather than netted out:
   pay for, so their parity is read-only parity. The subjects they came from do have a
   build phase.
 * **Budget.** 60 seconds on a laptop against a tool whose paper used hours on a cluster.
-  `window_store` was therefore re-run at `-t 600` specifically to test whether the ordered
-  structure ever appears — Cozy registers a `TreeMultiset` by default
-  (`structures/__init__.py:12`), so the scan in `fetch` is a choice its search did not
-  revisit, not a missing capability.
+  Where a claim depended on it, the run was repeated at six to ten times the budget; see
+  the range axis below and the cost-model section.
+
+## The range axis: a missing capability, not a missing search
+
+`window_store`'s two reads are a time window, and `fetch`/`fetchAll` came out as plain
+scans. The first explanation to try is the budget, so it was re-run at **`-t 600`** — ten
+times the default, 175 improvements against 112. The result is identical: the same four
+fields, `fetchAll` still a full linear scan over the `ArrayList`, and zero occurrences of
+any ordered type in the emitted Java.
+
+The reason is not the budget, and it is better stated from their source than from a
+timing. Cozy *does* register an ordered structure by default
+(`structures/__init__.py:12`, `Ordereds`) and its search *can* introduce one —
+`treemultiset.py:123` yields `EMakeMinTreeMultiset` / `EMakeMaxTreeMultiset` over any
+collection in the state pool. But the structure offers exactly two observations
+(`treemultiset.py:30-31`):
+
+* `ETreeMultisetElems(e)` — every element, in sorted order, as a list;
+* `ETreeMultisetPeek(e, index)` — the element at one index.
+
+There is **no range operation at all**: no bounded sub-view, no lower- or upper-bound
+lookup. So "the elements with `lo <= time < hi`" cannot be answered by Cozy's ordered
+structure in less than a scan — the only uses it enables are a min/max peek and a sorted
+enumeration, which is what `argmin`/`argmax` queries want. A `-t 600` run found no ordered
+structure because there was nothing for it to find.
+
+That makes the range axis a **language-and-library** difference rather than a
+search-effort one, which is the version worth putting in the paper because a reviewer can
+check it without re-running anything: our `ODictRange` is precisely the operation their
+library lacks, `RangedDictIdx` is the index built on it, and two of our subjects rest on
+it — `window_store`'s window reads and `range_delete`'s band delete, the latter having no
+Cozy counterpart to write at all. (Their own `ztopo-cache`, in Direction 2 below, wants
+sums over enum-filtered subsets rather than ranges, so none of their examples needs this
+either.)
 
 ## What Cozy does with a spec whose constraint can break
 
@@ -208,14 +239,29 @@ off a maintained `Integer` under both modes — real parity with our `SumAgg` �
 under both, never indexed.
 
 Mode 3 also pays for itself in search: at the same `-t` it completed 56 improvements
-against the default's 98 on `named_cache`, 38 against 125 on `area_registry`. So these
-runs were repeated at **six times the budget** (`-t 180`) before anything was concluded
-about what mode 3 cannot find; that result is recorded with the others.
+against the default's 98 on `named_cache`, 38 against 125 on `area_registry`. So it was
+repeated at **six times the budget** before anything was concluded about what it cannot
+find — and at `-t 180` it reaches 128 improvements, deeper than any default-mode run
+here. `named_cache`'s `delete` across all three:
+
+| run | improvements | `delete` | the maintained total |
+|---|---|---|---|
+| default, `-t 30` | 98 | 866 lines, 33 passes | recomputed (`_var335 = _sum2960`) |
+| mode 3, `-t 30` | 56 | 529 lines, 24 passes | recomputed (`_var1007 = _sum1626`) |
+| mode 3, `-t 180` | 128 | 602 lines, 26 passes | recomputed (`_var454 = _sum2983`) |
+
+The deepest search is not the best write: at `-t 180` mode 3 keeps **seven** state fields
+against mode 3's four at `-t 30`, and pays two more passes to maintain them. More search
+bought more state, and the aggregate is recomputed in every one of the three. Over two
+cost models and three budgets, nothing made Cozy correct it.
 
 The reads, then, are parity under both cost models, and the write gap is qualitative
-rather than a matter of tuning: no setting of Cozy's cost model made it *correct* a
-maintained aggregate instead of recomputing it. That is the claim the subject was chosen
-to test, and it is the one worth putting in the paper — not a ratio.
+rather than a matter of tuning: **no setting of Cozy's cost model, at any budget tried,
+made it *correct* a maintained aggregate instead of recomputing it.** That is the claim
+the subject was chosen to test, and it is the one worth putting in the paper — not a
+ratio. `window_store` under mode 3 at `-t 180` likewise still scans the time range, with
+zero ordered structures emitted, which the range-axis section above explains from their
+library rather than from a budget.
 
 ## Direction 2: their benchmarks in our language
 
