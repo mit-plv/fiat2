@@ -67,6 +67,46 @@ missing is not the operator but the rule -- see the limits table below.
 | `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and the five FILTERING PROJECTIONS it leaves as scans found a missing rule -- the bag-level counterpart of a list-level split -- now built and pinned in a third configuration |
 | `Jenkins_DependentPlugins.v` | `PluginManager.java:1042` | the only subject whose SOURCE IS QUADRATIC: a nested-loop join over a maintained field, `plugins` inside `plugins`. Its indexable guard is THIRD in its chain, which is why the selector found nothing on it until `PromoteGuard` existed -- and the one subject found by searching the corpora for a shape rather than by reading a class |
 
+## Which pattern each subject covers
+
+The per-file `Pattern` headers name codes from the external pattern catalogue the paper
+cites. **Those codes are not defined anywhere in this repository**, so this table is the
+index a reader needs to resolve them, and it is also the answer to "are ten examples
+representative" -- not a count of how often each pattern occurs in a corpus, which is
+deliberately not claimed, but a statement of WHICH distinct patterns the set covers and
+which subject is the witness for each.
+
+| subject | codes claimed | the pattern, in plain terms |
+|---|---|---|
+| `Keycloak_CachedRealm` | A1a | one collection, several unique-key maps built over it once |
+| `Kafka_Cluster` | A1a | the same, with NON-unique keys, so each bucket is a bag |
+| `HA_AreaRegistry` | A1a, A2 | a primary-key dict plus a secondary index, both MAINTAINED across insert and delete |
+| `Kafka_NamedCache` | A1b, A2, A3 | a keyed store plus a maintained AGGREGATE, corrected by a probe rather than recomputed |
+| `Kafka_WindowStore` | A1a, A2, B7, D4 | the only ORDERED index: a range read out of a sorted dict, maintained across a range-shaped delete; and a composite key we cannot declare |
+| `HA_LookinFunctions` | B3, B5, D1 | a membership test inside a loop, licensed by multiplicity being unobserved -- so a set, not a dict |
+| `Jenkins_ItemDeletion` | B3, D1 | the same two, at ROW level: the set's elements are whole rows, so no key can serve it |
+| `Jenkins_UserSearch` | A1a, A2, B8 | a SUBSTRING read beside a hand-built exact-match map, in one class over one collection |
+| `Sat4j_LiteralStorage` | A1a | A1a at an extreme: eight reads over one declared key, seven of them the same probe in different clothes |
+| `Jenkins_DependentPlugins` | **none claimed** | a nested-loop EQUIJOIN: a collection iterated inside itself, with an equality relating the two |
+
+Two things the table is meant to make checkable rather than assertable.
+
+**Where the set is thin.** Eight of the ten subjects claim `A1a` or `A1b` -- a keyed
+lookup over a collection -- so that pattern is covered many times over and the others
+once or twice each. `B7` (ordered/range), `B8` (substring) and the join have exactly ONE
+witness apiece, and a reviewer should read the corresponding claim as resting on one
+program. `A3` (maintained aggregate) likewise.
+
+**Where a code is missing.** `Jenkins_DependentPlugins` claims none, because the
+catalogue's codes are not reproduced here and assigning one from memory would be a guess
+dressed as a citation. Its pattern is stated in prose in its own header and in the row
+above; if the catalogue has a code for a nested-loop join, that is the one place in this
+directory where one should be added by hand.
+
+Patterns the development HANDLES but no subject here witnesses are a different list and
+live under *Limits* below -- `MinAgg` has no third-party witness, and neither does an
+order-observing read or an `OConcat` append.
+
 The ten fall into seven groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
@@ -636,7 +676,29 @@ factor on every point lookup (a backend freedom the type system records, not a d
 the rewriting -- and `Kafka_NamedCache` is the exception, since its author chose a
 `TreeMap`); wall-clock seconds are about 25% inflated on our side by the tree-walking
 interpreter, measured; and the row counter charges each pipeline stage, so its constant is
-not comparable factor for factor against code that has no stages. The build phase is never
+not comparable factor for factor against code that has no stages.
+
+**How large that implementation gap actually is, measured.** Where the optimizer and the
+author reach the SAME exponent, the ratio of their seconds per operation is a comparison
+of two implementations of one algorithm. Over the nineteen kinds where that holds, our
+interpreted form costs **a median 2.7x** the author's compiled OCaml, between 1.3x and
+3.7x -- with two exceptions at 7.7x and 7.6x.
+
+Those two are not noise and they say what the gap is made of. `cluster/available` and
+`cluster/onePartition` are the two kinds whose derived form is a probe FOLLOWED BY A
+RESIDUAL FILTER, where every 2-4x kind is a bare probe. The row counter shows it
+directly: `available` enumerates 288 rows where the author enumerates 128, and
+288 = 160 + 128 -- the topic bucket, then the survivors of the leader test. The author's
+loop (`Cluster.java:176-179`) fuses the test into the single traversal; ours materialises
+the bucket and then walks it again.
+
+So the penalty is not a flat interpretation tax: it is roughly **2.5-3.5x per pipeline
+stage**, and it compounds where our derived form has one stage more than hand-written code
+would. That is worth stating because it changes what a backend would have to do. A backend
+that compiled each stage faithfully would keep the 7.7x; what collapses it is FUSING a
+residual filter into the traversal that feeds it. Fusion, not compilation, is the feature
+-- and the earlier measurement that interpretation dispatch alone is only ~25% of the cost
+says the same thing from the other side. The build phase is never
 compared at all -- the source's is O(n^2) because the declared-key subjects elaborate a
 uniqueness guard into a scan while the originals check nothing, which is a claim about
 constraint checking and not about a missing index. `harness/README.md` has the table.

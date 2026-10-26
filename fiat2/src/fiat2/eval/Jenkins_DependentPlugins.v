@@ -40,10 +40,26 @@ Import ListNotations.
    field, not a request-scoped list.
 
    Pattern
-     A nested-loop equijoin, which the corpus search in corpus/joins found by
-     looking for exactly this shape and then reading every candidate.  Of the
-     survivors this is the one whose cost is most clearly quadratic in state
-     the program keeps, which is why it is the one written up.
+     A nested-loop EQUIJOIN: one collection iterated inside itself, with an
+     equality relating the outer row to the inner one.  Found by searching
+     the corpora for exactly this shape (corpus/joins) and then reading every
+     candidate; of the survivors this is the one whose cost is most clearly
+     quadratic in state the program keeps, which is why it is the one written
+     up.
+
+     NO CODE FROM THE PATTERN CATALOGUE IS CLAIMED HERE, and that is
+     deliberate.  Every other file in this directory names codes -- A1a, B7,
+     D1 and so on -- from the catalogue the paper cites, but those codes are
+     not reproduced anywhere in this repository, so assigning one from memory
+     would be a guess dressed as a citation.  If the catalogue has a code for
+     a nested-loop join, this is the one header in this directory where it
+     should be filled in by hand.  The eval README's pattern table says the
+     same thing in the one place a reader would look for it.
+
+     What the join adds to the set is coverage rather than another instance:
+     every other subject reads its table once per read, and this one reads it
+     once per ROW.  It is the only quadratic source here, and the only
+     subject whose two collections are the same collection.
 
    Claim
      C4, and more sharply than elsewhere: the author wrote the join as two
