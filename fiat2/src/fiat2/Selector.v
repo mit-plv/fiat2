@@ -125,20 +125,33 @@ Definition omap {A B} (f : A -> option B) (l : list A) : list B :=
    the ONE attribute the index is already built on.  Here the attribute is
    what we are looking for, so the same three shapes are matched and the
    attribute read out of them.  A two-sided range is a conjunction of the
-   two one-sided ones and must be tried first. *)
+   two one-sided ones and must be tried first.
+
+   THE BOUNDS MUST NOT MENTION THE ROW, and this detector used to omit that
+   while range_filter_to_dict_range_head enforces it
+   (`negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi)`).  Out of sync
+   that way, the selector could demand a RangedDictIdx for a predicate like
+   `row.a < row.b`, which compares two attributes of the same row: the rule
+   declines it, so the index is installed, maintained by every write, and read
+   by nothing -- the pessimization user_search/table-rep measures at 72x.  No
+   subject reached that shape until the shape-only rules were run further, so
+   it was latent rather than observed. *)
 Definition range_attr (x : string) (p : expr) : option string :=
   match p with
   (* !(row.attr < lo) && row.attr < hi *)
-  | EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) a1) _))
-      (EBinop OLess (EAccess (EVar x2) a2) _) =>
-      if (String.eqb x x1 && String.eqb x x2 && String.eqb a1 a2)%bool
+  | EBinop OAnd (EUnop ONot (EBinop OLess (EAccess (EVar x1) a1) lo))
+      (EBinop OLess (EAccess (EVar x2) a2) hi) =>
+      if (String.eqb x x1 && String.eqb x x2 && String.eqb a1 a2
+          && negb (free_immut_in x lo) && negb (free_immut_in x hi))%bool
       then Some a1 else None
   (* !(row.attr < lo) *)
-  | EUnop ONot (EBinop OLess (EAccess (EVar x1) a1) _) =>
-      if String.eqb x x1 then Some a1 else None
+  | EUnop ONot (EBinop OLess (EAccess (EVar x1) a1) lo) =>
+      if (String.eqb x x1 && negb (free_immut_in x lo))%bool
+      then Some a1 else None
   (* row.attr < hi *)
-  | EBinop OLess (EAccess (EVar x1) a1) _ =>
-      if String.eqb x x1 then Some a1 else None
+  | EBinop OLess (EAccess (EVar x1) a1) hi =>
+      if (String.eqb x x1 && negb (free_immut_in x hi))%bool
+      then Some a1 else None
   | _ => None
   end.
 

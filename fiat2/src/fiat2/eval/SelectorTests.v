@@ -108,6 +108,38 @@ Definition unconstrained (tbl : string) (c : command) : anno_command :=
 Definition nth_heu (l : list (command -> anno_command)) (n : nat) (c : command) :=
   nth n l (fun c => AC [] [] c) c.
 
+(* ---------- the range detector, against its own rule ----------
+
+   `range_attr` reads the attribute out of a range predicate so the selector
+   can ask for a RangedDictIdx on it.  It must decline a predicate whose
+   BOUND mentions the row, because `range_filter_to_dict_range_head` declines
+   it too (`negb (free_immut_in x0 lo) && negb (free_immut_in x0 hi)`), and a
+   demand the rule will not serve installs an index that every write
+   maintains and no read uses -- the pessimization `user_search/table-rep`
+   measures at 72x.
+
+   These two are a unit pin rather than a subject, because the bug was
+   LATENT: no subject reached a self-comparison range filter through the
+   selector, so nothing in the corpus would have caught it. *)
+Lemma range_attr_declines_a_bound_that_mentions_the_row :
+  range_attr "r" (EBinop OLess (EAccess (EVar "r") "a")
+                    (EAccess (EVar "r") "b")) = None.
+Proof. reflexivity. Qed.
+
+Lemma range_attr_declines_a_two_sided_pair_with_a_row_bound :
+  range_attr "r"
+    (EBinop OAnd
+       (EUnop ONot (EBinop OLess (EAccess (EVar "r") "a") (EAtom (AInt 0))))
+       (EBinop OLess (EAccess (EVar "r") "a") (EAccess (EVar "r") "b")))
+  = None.
+Proof. reflexivity. Qed.
+
+(* and it still reads the attribute when the bounds are the query's *)
+Lemma range_attr_accepts_a_query_bound :
+  range_attr "r" (EBinop OLess (EAccess (EVar "r") "a")
+                    (EAccess (EVar "q") "hi")) = Some "a".
+Proof. reflexivity. Qed.
+
 (* ---------- the join ----------
 
    The first JOIN the selector handles.  Every other subject in this file has
