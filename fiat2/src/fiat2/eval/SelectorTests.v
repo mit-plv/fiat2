@@ -1,4 +1,5 @@
 Require Import fiat2.Selector fiat2.OptimizeAnno fiat2.Surface fiat2.Language.
+Require fiat2.Ex_Triangle.
 Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
@@ -106,6 +107,36 @@ Definition unconstrained (tbl : string) (c : command) : anno_command :=
 
 Definition nth_heu (l : list (command -> anno_command)) (n : nat) (c : command) :=
   nth n l (fun c => AC [] [] c) c.
+
+(* ---------- the join ----------
+
+   The first JOIN the selector handles.  Every other subject in this file has
+   one loop over the table; a join has several, and its conditions are a chain
+   of nil-guards at the innermost body, each belonging to the innermost loop
+   that binds its variables.  A condition written above the useful one does
+   not mention the inner loop's variable, so what the index rules read is
+   constant in that loop.
+
+   `swap_flatmap_if_head` is the rewrite for it and was always directed -- it
+   fires only on a guard that does not mention the loop variable, and firing
+   removes the guard, so it cannot undo itself.  What was missing is that
+   `basics_of` never emitted it.  The DHoist demand, whose detection is the
+   rule's own guard, is what emits it, and with it the selector reaches this
+   three-way self-join with no hand-written chain: Ex_Triangle's four
+   configurations each list a sequence of SwapIfNil and SwapFlatmapIf found by
+   hand, and this list is uniform.
+
+   What that is worth is counted in Ex_Triangle itself
+   (`selector_matches_the_best_single_index_chain`, and
+   `without_the_hoist_it_reaches_two` for what this demand changed). *)
+Lemma ex_triangle_basics :
+  select_basics [] "edges" Ex_Triangle.prog
+  = [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SwapFlatmapIf].
+Proof. vm_compute; reflexivity. Qed.
+
+Lemma ex_triangle :
+  select_choices [] "edges" Ex_Triangle.prog = [DictIdx "src"].
+Proof. vm_compute; reflexivity. Qed.
 
 (* The file's configuration 0, the one with SplitIf: both conjunctive reads
    become a probe followed by a filter, where configuration 1 leaves them

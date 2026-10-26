@@ -82,6 +82,12 @@ Variant demand :=
   | DConjSplit               (* SplitIf would expose an indexable conjunct
                                 of a filter no rule matches as it stands *)
   | DFlag (attr : string)    (* FlagFilterToEq applies *)
+  | DHoist                   (* a loop-invariant guard sits at the head of a
+                                list flatmap's body, so the index rules are
+                                reading a condition that does not mention the
+                                loop variable.  SwapFlatmapIf moves it out.
+                                This is what a JOIN looks like when its
+                                conditions were written in the wrong loop *)
   | DFilterProj.             (* a bag-level flatmap that filters AND projects
                                 at once, which no index rule matches;
                                 SplitFilterProj splits it into the two forms
@@ -317,6 +323,13 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
       if (String.eqb tbl t && String.eqb x x1 && String.eqb x y
           && negb (free_immut_in x k))%bool
       then [DEmptyEqFilter] else []
+  (* a list flatmap whose body's OUTERMOST guard does not mention the loop
+     variable: exactly where swap_flatmap_if_head fires.  The table is not
+     consulted, because the condition is about the loop and not about any one
+     table -- a join's inner loop has this shape whichever relation it is
+     over. *)
+  | EFlatmap LikeList _ x (EIf p _ (EAtom (ANil _))) =>
+      if negb (free_immut_in x p) then [DHoist] else []
   (* a key-equality filter over the table whose body is NOT the bound row but
      a projection of it: the shape SplitFilterProj exists for.  The guard is
      the same one the rewrite uses -- a body that IS the bound row is already
@@ -474,6 +487,7 @@ Definition basics_of (keys : list string) (ds : list demand) : list basic_transf
        && match keys with [] => true | _ :: _ => false end)%bool
    then [FilterEmptyToSetMem] else [])
   ++ [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
+  ++ (if demand_mem DHoist ds then [SwapFlatmapIf] else [])
   ++ (if demand_mem DConjSplit ds then [SplitIf] else [])
   ++ (if existsb (fun d => match d with DFlag _ => true | _ => false end) ds
       then [FlagFilterToEq] else []).
