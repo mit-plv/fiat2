@@ -118,6 +118,43 @@ Two asymmetries that run against this table, stated rather than netted out:
   Where a claim depended on it, the run was repeated at six to ten times the budget; see
   the range axis below and the cost-model section.
 
+## Direction 1b: THEIR spec, both systems -- the sat4j subject
+
+`eval/Sat4j_LiteralStorage.v` came out of this suite, so the comparison that stands in
+for the absent "author's own structure" baseline is Cozy on its own specification,
+`examples/sat4j-literal-storage.ds`, unmodified. Run at `-t 60` under the cap: **314
+improvements**, the most of anything here, and it finishes.
+
+| | ours | Cozy |
+|---|---|---|
+| state | **one** `UniqueDictIdx "var"` + `CountAgg` | **nine** fields |
+| | | `ArrayList<Record>`, `Integer`, `HashMap<Integer,Record>`, `HashMap<Integer,Boolean>`, and **five** `HashMap<Integer,X>`, one per projected field |
+| `size()` | maintained count, a field read | `return _var3642` -- same |
+| `findRecord(v)` | probe | `_var5633.getOrDefault(v, null)` -- same |
+| `belongsToPool(v)` | probe, then an emptiness test | `_var6853.containsKey(v)` -- same |
+| `getLevel(v)` and the other four | probe, then read the field off the row | `_var7870.getOrDefault(v, 0)` -- a **dedicated map per field** |
+| `updateLevel` / `updateReason` | two recognized writes, member updates | **168 lines each** |
+| `add` / `remove` | guard is a probe; member insert/delete | 49 / 28 lines |
+
+**Every read is O(1) on both sides. That is the result, and it is parity.** The difference
+is what the two systems pay for it. Cozy materialises one map per projection, so the same
+five fields are stored twice over -- once in the record map, once each in their own map --
+and every write maintains nine structures, which is where its 168-line `updateLevel`
+comes from. Our single index serves all seven key reads because a projection is a READ on
+the probe's result rather than a structure of its own; `split_projection_read_is_a_probe`
+is that, pinned.
+
+Neither direction of that is free. Cozy's five maps make `getLevel` one hash lookup where
+ours is a hash lookup plus a field access -- a constant, and theirs is the smaller one.
+Ours stores the rows once. Whose default is right depends on the read/write mix, which is
+exactly the comparison Cozy's default cost model does not make (it ranks query asymptotics
+first and storage second, with no maintenance term -- see below), and it is why this table
+reports storage and write size rather than declaring a winner.
+
+What our side of that table costs is measured, over six sizes, in `eval/README.md`: all
+ten of this subject's kinds go from linear to flat, and the build from quadratic to
+linear. Cozy's side is not measured here; it is read off the emitted Java.
+
 ## The range axis: a missing capability, not a missing search
 
 `window_store`'s two reads are a time window, and `fetch`/`fetchAll` came out as plain
