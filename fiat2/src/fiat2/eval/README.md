@@ -373,11 +373,17 @@ each pair, against the configuration the selector picks:
 | `user_search/table-rep` | the table's set representation added beside the trigram pair, which no read needs | `remove` 4,500 -> 322,640 steps, `a` 0.01 -> 0.94, and 154x the comparisons -- a member maintained by both writes and read by nothing |
 | `cluster/unsplit` | no `SplitIf`, so both conjunctive accessors stay scans | `onePartition` 1,700 -> 416,480 steps, `a` -0.01 -> 0.99 |
 | `window_store/unsplit` | no `SplitIf`, so the keyed read scans and the list it keeps alive is rewritten by every retention call | `expire` 440 -> 318,752 steps, `a` 0.00 -> 1.03; `fetch` 317x |
+| `sat4j/unsplit` | no `SplitFilterProj`, so the five reads that project one field of the row at a declared key stay scans -- the ONLY pair here that measures a RULE rather than an index choice | `remove` 700 -> 318,820 steps, `a` 0.00 -> 1.03, and 455x; the five projections 184x to 229x, each `a` 0.00 -> 0.97 |
 
-Two things in that table are worth more than the ratios. The `named_cache` build going
+Three things in that table are worth more than the ratios. The `named_cache` build going
 **quadratic** is the clearest case of why the order is not a preference: both
 configurations install the same two members, and listing them the other way round leaves
-a scan inside a write, which the uniqueness guard then runs once per row. And
+a scan inside a write, which the uniqueness guard then runs once per row. `sat4j/unsplit` is worth reading for its `remove`, which is 455x and the largest ratio in
+the table although `remove` is not one of the reads the rule applies to: without the
+split the five projections keep the list alive, and a row-removing write must then
+rewrite the list it could otherwise have erased. The rule's direct effect is 184x to
+229x; its knock-on effect on an unrelated write is larger than any of them, which is the
+argument for erasure being worth more than it looks. And
 `user_search/table-rep` is the only pair whose alternative is not slower by a missing
 rule but by a *present* one -- an index nothing reads, maintained forever -- which is the
 pessimization a naive "emit everything applicable" selector produces by construction.
@@ -389,7 +395,7 @@ running the produced programs, which happens outside this directory: `Extract.v`
 the terms to OCaml and the harness beside them evaluates them over generated workloads.
 How the evaluator is built, and what it assumes, is documented where it lives; the two
 things worth repeating here are that the evaluator is checked against the Gallina
-interpreter on all sixteen programs over 240 configurations, and that every run compares
+interpreter on all eighteen programs over 300 configurations, and that every run compares
 the source program's final store against the optimized one's, so each measurement is
 also a concrete witness of that subject's soundness theorem on that input.
 
@@ -407,14 +413,21 @@ reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the 
 ratio between two sizes would not settle the question it looks like it settles: over an
 8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
-Thirty-one reads and writes across the eight subjects, by the exponent of their STEP
-count:
+Forty-one reads and writes across the ten programs the harness runs -- the nine files
+above plus `Ex_RangeDelete` -- by the exponent of their STEP count:
 
 | | source | optimized |
 |---|---|---|
-| linear in the table, `a` = 0.92 to 1.05 | 26 of 31 | 2 of 31 |
-| independent of it, `a` = -0.01 to 0.02 | 5 of 31 | 28 of 31 |
-| sublinear, `a` = 0.19 | 0 of 31 | 1 of 31 |
+| linear in the table, `a` = 0.87 to 1.05 | 36 of 41 | 2 of 41 |
+| independent of it, `a` = -0.01 to 0.02 | 5 of 41 | 38 of 41 |
+| sublinear, `a` = 0.19 | 0 of 41 | 1 of 41 |
+
+Ten of those forty-one are `Sat4j_LiteralStorage`, added last and the only subject whose
+query mix is not ours. **All ten go from linear to flat** -- the seven key reads, the
+whole-table count, and both writes -- which is the cleanest column in the table and is
+the reason to report the subject rather than only the rule it found. The low end of the
+source band, `a` = 0.87, is its `size()`, a whole-table count whose per-row cost carries
+a constant offset.
 
 Five in the source column do not grow in steps, and they are two different things.
 Three are genuinely O(1) writes -- `window_store/put`, `range_delete/insert` and
@@ -425,14 +438,14 @@ therefore entirely in COMPARISONS, at `a` = 1.22. That is not a blind spot in th
 instrument but where `count.ml` puts a tree operation's cost, and it is why the table
 below that subject reports comparisons.
 
-The twenty-eight in the optimized column are not merely flatter, they are flat: the
+The thirty-eight in the optimized column are not merely flatter, they are flat: the
 Lookin membership test, to take one, costs **exactly 300 steps at every one of the six
 sizes**. Their comparison counts are where the index shows through, at `a` = 0.08 to
 0.31, which is `log n` appearing as the weak power law it is -- the same subject's
 comparison count goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling
-across twenty queries. Two of the twenty-eight do no comparisons at all (`a` = 0.00):
-`getRequiredActionProviderList`'s count and `sizeInBytes`, which are maintained
-aggregates and so are field reads, cheaper than a probe.
+across twenty queries. Three of the thirty-eight do no comparisons at all (`a` = 0.00):
+`getRequiredActionProviderList`'s count, `sizeInBytes` and `sat4j/size`, which are
+maintained aggregates and so are field reads, cheaper than a probe.
 
 **The three that still grow are the interesting column, and every one of them is a correct
 answer rather than a cost.** Their exponents are 0.98, 0.98 and 0.19.

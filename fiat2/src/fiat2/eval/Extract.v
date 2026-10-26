@@ -4,6 +4,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
+  fiat2.eval.Sat4j_LiteralStorage
   fiat2.Ex_RangeDelete.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
@@ -84,6 +85,7 @@ Module KCl := Kafka_Cluster.
 Module KWS := Kafka_WindowStore.
 Module JID := Jenkins_ItemDeletion.
 Module ERD := Ex_RangeDelete.
+Module S4J := Sat4j_LiteralStorage.
 
 (* ---- the scan form each subject starts from ---- *)
 
@@ -95,6 +97,7 @@ Definition user_search_src : command := Eval vm_compute in JU.elaborated JU.decl
 Definition cluster_src : command := Eval vm_compute in KCl.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
 Definition range_delete_src : command := Eval vm_compute in ERD.prog.
+Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
 
 (* item_deletion is the one subject whose two columns are NOT source and
    optimized.  Its question is what TableRep alone is worth, so the left
@@ -122,6 +125,9 @@ Definition window_store_opt : command :=
 Definition range_delete_opt : command :=
   Eval vm_compute in nth 0 ERD.prog_transformed CSkip.
 Definition item_deletion_opt : command := Eval vm_compute in JID.optimized_rep.
+(* the selector's own configuration for this one, which now includes the
+   bag-level split (selector_emits_the_split_and_declines_set_mem) *)
+Definition sat4j_opt : command := Eval vm_compute in S4J.optimized_split.
 
 (* ---- the alternatives worth measuring against, each one a
        configuration its own file pins and argues about ---- *)
@@ -142,6 +148,11 @@ Definition cluster_opt_unsplit : command :=
    rewrites in full on every call *)
 Definition window_store_opt_unsplit : command :=
   Eval vm_compute in nth 0 KWS.prog_transformed CSkip.
+(* without the bag-level split: the five reads that project one field of the
+   row at a declared key stay FULL SCANS, and the list they scan therefore
+   survives.  This is the only alternative here that measures a rule rather
+   than an index choice. *)
+Definition sat4j_opt_unsplit : command := Eval vm_compute in S4J.optimized_counted.
 
 (* ---- one value for the harness to iterate over ---- *)
 
@@ -154,13 +165,15 @@ Definition subjects : list (string * command * command) :=
   ; ("cluster", cluster_src, cluster_opt)
   ; ("window_store", window_store_src, window_store_opt)
   ; ("range_delete", range_delete_src, range_delete_opt)
-  ; ("item_deletion", item_deletion_src, item_deletion_opt) ].
+  ; ("item_deletion", item_deletion_src, item_deletion_opt)
+  ; ("sat4j", sat4j_src, sat4j_opt) ].
 
 Definition alternatives : list (string * command) :=
   [ ("keycloak/uncounted", keycloak_opt_uncounted)
   ; ("named_cache/swapped", named_cache_opt_swapped)
   ; ("user_search/table-rep", user_search_opt_rep)
   ; ("cluster/unsplit", cluster_opt_unsplit)
-  ; ("window_store/unsplit", window_store_opt_unsplit) ].
+  ; ("window_store/unsplit", window_store_opt_unsplit)
+  ; ("sat4j/unsplit", sat4j_opt_unsplit) ].
 
 Extraction "extracted.ml" subjects alternatives ref_run.

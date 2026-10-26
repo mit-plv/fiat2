@@ -322,12 +322,59 @@ let item_deletion =
 
 (* ---------- the table ---------- *)
 
+(* ---------- sat4j literal storage: one declared key, eight reads ----------
+
+   The only subject taken from someone else's benchmark suite, so its query
+   mix is theirs and not ours: eight reads over one table, of which seven ask
+   about one variable's record and one counts the table.
+
+   Two things the writes have to get right, and both bite if they do not.
+
+   `updateLevel` is a delete-then-insert pair under value semantics, so the
+   row it inserts must carry THE SAME var as the row it removes.  A new_rec
+   at a different key would leave two rows with one var, the declared-key
+   guard the elaboration inserted would reject the write, and the op would
+   silently do nothing -- measuring the guard rather than the update.  Hence
+   `row_at v`, which varies the level and holds the key.
+
+   Selectivity needs no arrangement here: `var` is declared unique, so every
+   one of the seven key reads answers exactly one row however the table
+   grows.  That is the regime SAT4J's own callers are in -- they reach these
+   fields by variable number. *)
+
+let sat4j =
+  let row_at v lvl =
+    rcd [ ("var", i v); ("level", i lvl); ("reason", i (v * 3));
+          ("pos_watches", i (v * 5)); ("neg_watches", i (v * 7));
+          ("undos", i (v mod 11)) ] in
+  let row j = row_at j (1 + (j mod 31)) in
+  let q kind v = rcd [ ("kind", i kind); ("v", i v); ("new_rec", row 0) ] in
+  { queries_var = "queries"; store = outputs_only; table = no_table;
+    build = (fun rows ->
+      List.init rows (fun j ->
+        rcd [ ("kind", i 0); ("v", i 0); ("new_rec", row j) ]));
+    kinds =
+      [ ("findRecord", fun rows j -> q 3 (spread rows j));
+        ("belongsToPool", fun rows j -> q 4 (spread rows j));
+        ("size", fun _ _ -> q 5 0);
+        ("getLevel", fun rows j -> q 6 (spread rows j));
+        ("getReason", fun rows j -> q 7 (spread rows j));
+        ("getUndos", fun rows j -> q 8 (spread rows j));
+        ("getPosWatches", fun rows j -> q 9 (spread rows j));
+        ("getNegWatches", fun rows j -> q 10 (spread rows j));
+        ("remove", fun rows j -> q 1 (victim rows j));
+        (* the key is held; only the level changes *)
+        ("updateLevel", fun rows j ->
+           let v = spread rows j in
+           rcd [ ("kind", i 2); ("v", i v); ("new_rec", row_at v 99) ]) ];
+    mutating = [ "remove"; "updateLevel" ] }
+
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("window_store", window_store); ("range_delete", range_delete);
-    ("item_deletion", item_deletion) ]
+    ("item_deletion", item_deletion); ("sat4j", sat4j) ]
 
 let workload (sp : spec) ~(rows : int) ~(ops : int) ~(only : string option) : workload =
   let kinds =

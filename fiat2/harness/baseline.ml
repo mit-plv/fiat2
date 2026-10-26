@@ -13,11 +13,21 @@
    module cites the file and line it came from, and transcribes what is there
    rather than what would be fastest.
 
-   Eight of the nine subjects have an author.  The ninth, Ex_RangeDelete, is
-   our own example -- there is nobody to transcribe -- so what stands in for
-   an author there is the implementation its structure asks for, and it is
-   named in `hand_written` so the report marks it rather than letting it pass
-   as a transcription.
+   Eight of the nine subjects here have an author.  The ninth, Ex_RangeDelete,
+   is our own example -- there is nobody to transcribe -- so what stands in
+   for an author there is the implementation its structure asks for, and it
+   is named in `hand_written` so the report marks it rather than letting it
+   pass as a transcription.
+
+   THE TENTH SUBJECT, `sat4j`, IS DELIBERATELY ABSENT FROM THIS FILE.  It has
+   an author -- SAT4J -- but what we have is the SPECIFICATION of its literal
+   storage as Cozy's benchmark suite states it, not SAT4J's own source, so
+   there is nothing here to transcribe and inventing a plausible structure
+   would be the one thing this file exists to avoid.  Its author comparison
+   is of a different kind and lives elsewhere: Cozy runs on that same
+   specification, and what Cozy derives is recorded beside what we derive in
+   comparison/cozy/README.md.  Adding a guessed `Sat4jStorage` module here
+   would read as a transcription and would not be one.
 
    THE EXPECTED RESULT IS PARITY.  The compiler is supposed to arrive back at
    the structure the author built, so matching asymptotics is the positive
