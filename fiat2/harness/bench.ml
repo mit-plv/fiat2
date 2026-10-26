@@ -510,3 +510,95 @@ let baseline (sizes : int list) =
                   (if o_hi.out = b_hi.b_out then "yes" else "NO"))
              sp.kinds)
     Baseline.runners
+
+(* ============================================================
+   WHAT THE SELECTOR'S CHOICE IS WORTH -- a side note, deliberately kept
+   out of every table above.
+
+   Everything above compares programs: a declarative source against what
+   the pipeline derives from it, and that derived form against the
+   structure the original author built by hand.  Those are the claims.
+
+   This is a different question and a smaller one.  Every program below is
+   SOUND -- each is the output of the same verified pipeline on the same
+   source, and each file's own soundness theorem covers both -- and the only
+   difference between a pair is which indexes were listed and in what order.
+   So nothing here bears on whether the rewriting works.  What it says is
+   what a program would have paid if the selector had picked the other
+   configuration, which is the quantitative half of a claim the development
+   otherwise makes with term equalities: that the ORDER a configuration is
+   written in changes the cost, and silently, because both configurations
+   are correct.
+
+   The pairs are the rule-ordering hazards catalogued in Selector.v, one
+   file each, every one of them already pinned as an equality of terms in
+   the file it belongs to.  This puts numbers on those pins.  `chosen` is
+   the configuration eval/SelectorTests.v pins as the selector's own pick,
+   so a row where the alternative wins would be a bug in the selector and
+   not a caveat -- which is the other reason to run it.
+
+   The build phase is reported here, unlike in the baseline comparison,
+   because a hazard can land on a write rather than on a read: the
+   table-representation pair degrades an insert, and the subjects whose
+   inserts are their build would otherwise show nothing at all. *)
+
+let subject_of (name : string) : string =
+  match String.index_opt name '/' with
+  | Some i -> String.sub name 0 i
+  | None -> name
+
+let build_only (c : command) (sp : Gen.spec) ~rows : run =
+  run_one c (Gen.workload sp ~rows ~ops:0 ~only:None)
+
+let alternatives_cost (sizes : int list) =
+  let sizes = if sizes = [] then default_sizes else sizes in
+  let hi = List.nth sizes (List.length sizes - 1) in
+  Printf.printf
+    "What the SELECTOR's choice is worth -- a side note, not the claim.\n\
+     Every program here is sound and every one is this pipeline's own output;\n\
+     the only difference within a pair is which indexes were listed, and in\n\
+     what order.  So this says nothing about whether the rewriting works.  It\n\
+     says what a program would have paid had the selector picked the other\n\
+     configuration its file also pins -- the rule-ordering hazards of\n\
+     Selector.v, with a number instead of a term equality.\n\
+     'chosen' is what eval/SelectorTests.v pins as the selector's pick, so the\n\
+     alternative winning a row would be a selector bug, not a caveat.\n\
+     'a' is the fitted exponent over %d sizes; counts are at %d rows.\n"
+    (List.length sizes) hi;
+  List.iter
+    (fun (name, alt) ->
+       let subj = subject_of name in
+       match List.find_opt (fun ((n, _), _) -> n = subj) subjects with
+       | None -> Printf.eprintf "  (no extracted subject named %s)\n" subj
+       | Some ((_, _), chosen) ->
+           let sp = List.assoc subj Gen.specs in
+           Printf.printf "\n=== %s ===\n" name;
+           Printf.printf
+             "    %-13s %11s %11s %7s %6s %6s %11s %11s %7s %6s\n"
+             "phase/kind" "chosen stp" "alt stp" "x" "a ch" "a alt"
+             "chosen cmp" "alt cmp" "x" "agree";
+           (* one row: two series over the sizes, and the pair at hi *)
+           let row (label : string) (f : int -> run * run) =
+             let series = List.map (fun r -> (r, f r)) sizes in
+             let ch_hi, alt_hi = f hi in
+             let fit_of pick =
+               fit (List.map (fun (r, p) -> (r, pick p)) series) in
+             Printf.printf
+               "    %-13s %11d %11d %7s %6s %6s %11d %11d %7s %6s\n"
+               label ch_hi.steps alt_hi.steps
+               (factor ch_hi.steps alt_hi.steps)
+               (exp_str (fit_of (fun (c, _) -> c.steps)))
+               (exp_str (fit_of (fun (_, a) -> a.steps)))
+               ch_hi.cmps alt_hi.cmps
+               (factor ch_hi.cmps alt_hi.cmps)
+               (if ch_hi.out = alt_hi.out then "yes" else "NO") in
+           row "build" (fun r ->
+             (build_only chosen sp ~rows:r, build_only alt sp ~rows:r));
+           List.iter
+             (fun (kind, _) ->
+                let only = Some kind in
+                row kind (fun r ->
+                  (op_phase chosen sp ~rows:r ~ops:ops_per_kind ~only,
+                   op_phase alt sp ~rows:r ~ops:ops_per_kind ~only)))
+             sp.kinds)
+    alternatives

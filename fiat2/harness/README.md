@@ -25,6 +25,9 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe report  # what is in the terms
     ./_build/default/main.exe check   # the differential test
     ./_build/default/main.exe bench   # the measurement; takes table sizes
+    ./_build/default/main.exe baseline      # against the originals' own code
+    ./_build/default/main.exe alternatives  # a side note: what the selector's
+                                            # own choice is worth
 
 The extraction is part of the ordinary Rocq build, so `generated/` is derived and
 gitignored. `dune build` before a `make` fails with a missing module, which is the
@@ -222,6 +225,27 @@ same way the subject's is, so a transcription that computes something else is ca
 any of its numbers are read. It earned its place on the first run — `item_deletion`'s table
 arrives in the environment rather than through build queries, the transcription started
 empty, and every `containsHit` disagreed.
+
+## A side note: what the selector's choice is worth
+
+`main.exe alternatives` is kept out of both tables above, and the reason is the point of
+it. Every program it runs is **sound**, and every one is this pipeline's own output on the
+same source; the only difference within a pair is which indexes were listed and in what
+order. So nothing in it says whether the rewriting works — it says what a program would
+have paid had the selector picked the other configuration its file also pins. The five
+pairs are the rule-ordering hazards catalogued in `Selector.v`, each already pinned as an
+equality of terms in the file it belongs to; this puts a cost on those pins, and `chosen`
+is what `eval/SelectorTests.v` pins as the selector's own pick, so a row where the
+alternative won would be a selector **bug** rather than a caveat. None does.
+
+It reports the build phase, unlike the baseline comparison, because a hazard can land on
+a write: the table-representation pair degrades an insert, and for the subjects whose
+inserts *are* their build that is the only place it would show. The result worth naming is
+`named_cache/swapped`, whose build exponent goes 1.00 to **1.97** — both configurations
+install the same two members, and listing them the other way round leaves a scan inside a
+write that the uniqueness guard then runs once per row. The table is in
+`src/fiat2/eval/README.md`, under *Who chooses the heuristics*, which is where the
+question belongs.
 
 ## The two checks that come free
 

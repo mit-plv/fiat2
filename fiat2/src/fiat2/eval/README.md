@@ -321,6 +321,31 @@ cannot stand in for. What actually erases the list in that file is a different m
 entirely: not a weaker collection standing in for the rows, but a declared key making an
 index a faithful copy of them.
 
+### What the choice is worth -- a side note
+
+Every file that pins two configurations pins them because both are SOUND and one is
+worse, which is a statement about selection and not about the rewriting. `main.exe
+alternatives` runs each pair, kept out of the performance tables on purpose: nothing in
+it bears on what the optimizer buys, and a row where the alternative won would be a
+selector bug rather than a caveat. None does. Steps at 1600 rows, the worst column of
+each pair, against the configuration the selector picks:
+
+| pair | what the alternative does | the worst column |
+|---|---|---|
+| `keycloak/uncounted` | no maintained row count, so the whole-table read stays a fold | `wholeList` 380 -> 32,400 steps, `a` 0.00 -> 0.91 |
+| `named_cache/swapped` | the aggregate listed before its dictionary, so the delete's correction term is left scanning | `delete` 720 -> 541,430 steps, `a` -0.00 -> 1.04; and the BUILD goes 1.00 -> **1.97**, quadratic |
+| `user_search/table-rep` | the table's set representation added beside the trigram pair, which no read needs | `remove` 4,500 -> 322,640 steps, `a` 0.01 -> 0.94, and 154x the comparisons -- a member maintained by both writes and read by nothing |
+| `cluster/unsplit` | no `SplitIf`, so both conjunctive accessors stay scans | `onePartition` 1,700 -> 416,480 steps, `a` -0.01 -> 0.99 |
+| `window_store/unsplit` | no `SplitIf`, so the keyed read scans and the list it keeps alive is rewritten by every retention call | `expire` 440 -> 318,752 steps, `a` 0.00 -> 1.03; `fetch` 317x |
+
+Two things in that table are worth more than the ratios. The `named_cache` build going
+**quadratic** is the clearest case of why the order is not a preference: both
+configurations install the same two members, and listing them the other way round leaves
+a scan inside a write, which the uniqueness guard then runs once per row. And
+`user_search/table-rep` is the only pair whose alternative is not slower by a missing
+rule but by a *present* one -- an index nothing reads, maintained forever -- which is the
+pessimization a naive "emit everything applicable" selector produces by construction.
+
 ## What it costs, measured
 
 The claims above are about what the optimizer *produces*. What it *buys* is measured by
