@@ -564,10 +564,43 @@ the authors' own structures and operations transcribed into OCaml, each citing t
 and line it came from, run over the same workloads. **Parity is the positive result**: the
 compiler is supposed to arrive back at what the author built.
 
-All thirty-one kinds agree with the optimized program on every workload -- the check that
+All thirty-two kinds agree with the optimized program on every workload -- the check that
 a transcription computes the same answers, which caught a wrong one on its first run --
-and every optimized exponent matches the author's except `Jenkins_UserSearch`'s `suggest`,
-at 0.52 against the author's 1.00, because that index is the one the author did not build.
+and every optimized exponent matches the author's except the two cases where the author
+built no structure at all.
+
+**`Jenkins_UserSearch`'s `suggest`** is the first: 0.52 against the author's 1.00,
+because the trigram index is the one the author did not build.
+
+**`Jenkins_DependentPlugins` is the second, and it inverts what this section is for.**
+`resolveDependentPlugins()` is a raw nested loop -- no map, no index, no cache -- so
+there is no hand-built structure to arrive back at, and parity with the author is NOT
+the positive result here. Parity with the SOURCE is what is expected, and it is what
+happens:
+
+| | rows at 1600 | exponent |
+|---|---|---|
+| `src`, our scan form | 102,447,960 | 2.00 |
+| `base`, the author's code | 102,368,000 | 2.00 |
+| `opt` | 111,960 | 1.00 |
+
+The author's column and the source column are **0.08% apart**, which retires an
+objection rather than raising one: it says the left-hand column of this subject's
+speedup is not a strawman we built, because the author's own code does the same work.
+Against it the optimizer is 914x fewer rows and 800x fewer comparisons, and the exponent
+goes 2.00 to 1.00. **That is a speedup over code as shipped.**
+
+Two things the transcription does that the subject cannot, both so that this column is
+the Java rather than our translation of it: the dependency list stays NESTED inside the
+plugin, which the development cannot express, and the `break` is kept. Neither changes
+the exponent. The author's column does half the comparisons of `src` -- 102,368,000
+against 204,736,000 -- which is not the break (each plugin declares one dependency on
+this workload, so there is nothing to break out of) but the `continue` on a self-match
+skipping a guard that `src` still evaluates.
+
+Wall clock is not quoted for this row. The author's column is compiled OCaml with
+hashtables and the optimized column runs in our interpreter, so the ~10x between them
+mixes the algorithm with the implementation; the row and comparison counts do not.
 
 Two places run the other way, and both are a composite key the author indexed and this
 development has no index for: `Cluster.partition(new TopicPartition(topic, partition))`

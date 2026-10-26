@@ -34,9 +34,15 @@
 
    THE EXPECTED RESULT IS PARITY.  The compiler is supposed to arrive back at
    the structure the author built, so matching asymptotics is the positive
-   result and a win would mean one of the two is not what it claims to be.  The
-   one subject to expect a better exponent from is Jenkins's `suggest`, which is
-   the author's own linear `contains` scan.
+   result and a win would mean one of the two is not what it claims to be.
+
+   TWO SUBJECTS ARE THE EXCEPTION, and for the same reason: their author
+   built no structure, so there is nothing to arrive back at.  Jenkins's
+   `suggest` is the author's own linear `contains` scan.  And
+   DependentPlugins is a raw nested loop, where parity is expected with the
+   SOURCE column rather than with the optimized one -- see that module's own
+   note, which spells out why its row reads backwards compared with every
+   other row here.
 
    Two places go the other way and are measured rather than argued with, both
    of them a composite key the author indexed and this development cannot:
@@ -817,6 +823,136 @@ module RangeDelete = struct
     [ ("outputs", Value.VList !outputs) ]
 end
 
+(* ---------- dependent plugins: the author built NOTHING ---------- *)
+
+module DependentPlugins = struct
+  let name = "dependent_plugins"
+
+  (* jenkins, core/src/main/java/hudson/PluginManager.java:1042,
+     resolveDependentPlugins(), over the field `plugins` at :325:
+
+       for (PluginWrapper plugin : plugins) {
+           Set<String> optionalDependents = new HashSet<>();
+           Set<String> dependents = new HashSet<>();
+           for (PluginWrapper possibleDependent : plugins) {
+               if (possibleDependent.getShortName().equals(plugin.getShortName()))
+                   continue;
+               if (possibleDependent.isDeleted())
+                   continue;
+               for (Dependency dependency : possibleDependent.getDependencies())
+                   if (dependency.shortName.equals(plugin.getShortName())) {
+                       dependents.add(possibleDependent.getShortName());
+                       if (dependency.optional)
+                           optionalDependents.add(possibleDependent.getShortName());
+                       break;   // <- the early exit, which the subject drops
+                   }
+           }
+           plugin.setDependents(dependents);
+           plugin.setOptionalDependents(optionalDependents);
+       }
+
+     THIS ROW IS THE OPPOSITE OF EVERY OTHER ROW IN THIS TABLE, and that is
+     not a bug in it.  Everywhere else the author built a structure, we took
+     it away to make the `src` column, and the question is whether the
+     optimizer puts it back -- so parity with `opt` is the result.  Here the
+     author built NOTHING: resolveDependentPlugins is a raw nested loop with
+     no map, no index and no cache.  So the expected result is parity with
+     `src`, and a large gap to `opt`, and what that gap measures is a
+     speedup over code as shipped rather than over a form we constructed.
+
+     Transcribed as written, in two places where the subject could not be.
+     The dependency list is kept NESTED inside the plugin, which is what
+     Jenkins has and what the development cannot express (hence the subject's
+     side table); and the `break` is kept, which the subject drops because
+     after flattening at most one row can match.  Both are here so that this
+     column is the Java and not the translation.
+
+     Reading the two together: on the measured workload each plugin declares
+     exactly ONE dependency, so the inner list has length one and the break
+     can save nothing -- the subject's `src` and this transcription do the
+     same work.  At higher fan-out the break would make this column up to 2x
+     cheaper than `src` while leaving the exponent at 2, which is the one
+     respect in which the subject's numbers flatter the optimizer. *)
+
+  type dependency = { dep_name : string; optional : bool }
+  type plugin = { short_name : string; deleted : bool; deps : dependency list }
+
+  let run (w : Gen.workload) : (string * Value.t) list =
+    (* the author's own state: a list of plugins, each carrying its own
+       dependency list.  Built from the generated edges, which is the shape
+       the flattening took them out of. *)
+    let edges =
+      match List.assoc_opt "deps_tbl" w.Gen.env with
+      | Some (Value.VList l) -> l
+      | _ -> [] in
+    (* Group the edges ONCE.  Filtering the edge list per plugin would be
+       quadratic before the method even starts, and Jenkins pays no such
+       cost: a PluginWrapper already owns its dependency list, parsed from
+       the manifest.  Reconstructing the nested shape in one pass is what
+       keeps this column the author's algorithm rather than the author's
+       algorithm plus our own setup. *)
+    let by_dependent : (string, dependency list) Hashtbl.t =
+      Hashtbl.create 4096 in
+    List.iter
+      (fun e ->
+         let k = str (field "dependent" e) in
+         let d = { dep_name = str (field "dependency" e);
+                   optional = (match field "optional" e with
+                               | Value.VBool b -> b | _ -> false) } in
+         Hashtbl.replace by_dependent k
+           (d :: (try Hashtbl.find by_dependent k with Not_found -> [])))
+      edges;
+    let deps_of (nm : string) : dependency list =
+      try Hashtbl.find by_dependent nm with Not_found -> [] in
+    let plugins =
+      match List.assoc_opt "plugins_tbl" w.Gen.env with
+      | Some (Value.VList l) ->
+          List.map
+            (fun r ->
+               let nm = str (field "name" r) in
+               { short_name = nm; deleted = false; deps = deps_of nm })
+            l
+      | _ -> [] in
+    let outputs = ref [] in
+    let say (n : int) = outputs := Value.VString (string_of_int n) :: !outputs in
+    let resolve () =
+      List.iter
+        (fun plugin ->
+           let dependents = Hashtbl.create 64 in
+           let optional_dependents = Hashtbl.create 64 in
+           List.iter
+             (fun possible ->
+                (* this inner iteration INSPECTS a stored plugin, which is
+                   what the row column counts *)
+                Count.visit 1;
+                incr Count.comparisons;
+                if possible.short_name = plugin.short_name then ()
+                else if possible.deleted then ()
+                else
+                  (* the inner loop, with the break *)
+                  let rec scan = function
+                    | [] -> ()
+                    | d :: rest ->
+                        Count.visit 1;
+                        incr Count.comparisons;
+                        if d.dep_name = plugin.short_name then begin
+                          Hashtbl.replace dependents possible.short_name ();
+                          if d.optional then
+                            Hashtbl.replace optional_dependents
+                              possible.short_name ()
+                        end else scan rest
+                  in
+                  scan possible.deps)
+             plugins;
+           (* setDependents / setOptionalDependents, reported as the two
+              counts the subject reports *)
+           say (Hashtbl.length dependents);
+           say (Hashtbl.length optional_dependents))
+        plugins in
+    List.iter (fun _ -> resolve ()) (queries_of w "queries");
+    [ ("outputs", Value.VList !outputs) ]
+end
+
 (* ---------- the table ---------- *)
 
 let runners : (string * runner) list =
@@ -828,7 +964,8 @@ let runners : (string * runner) list =
     (WindowStore.name, WindowStore.run);
     (ItemDeletion.name, ItemDeletion.run);
     (UserSearch.name, UserSearch.run);
-    (RangeDelete.name, RangeDelete.run) ]
+    (RangeDelete.name, RangeDelete.run);
+    (DependentPlugins.name, DependentPlugins.run) ]
 
 (* The subjects above that no third party wrote, so that the report can say so
    next to them instead of leaving a reader to assume an author. *)
