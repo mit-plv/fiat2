@@ -1,0 +1,18 @@
+// PROBE: what does Cozy do with an input that may violate its own declared
+// constraint?  This is `named_cache.ds` with the eviction removed from `put`,
+// so `put` can add a second row with an existing key and the declared
+// uniqueness invariant becomes false.  Everything else is unchanged.
+//
+// Result (cozy d7b2c0e, default --collection-depth 4):
+//   Checking that put preserves (unique Map {n -> (n).k} (cache))...
+//   Error: 'put' may not preserve invariant (unique Map {n -> (n).k} (cache))
+// and it REFUSES to synthesize.  See README "What Cozy does with a spec whose
+// constraint can break".
+NamedCacheViolating:
+    type Node = { k : String, size : Int }
+    state cache : Bag<Node>
+    invariant unique [n.k | n <- cache];
+    query get(key : String)
+        the [n | n <- cache, n.k == key]
+    op put(node : Node)
+        cache.add(node);

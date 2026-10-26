@@ -1,0 +1,41 @@
+// Conquord subject: src/fiat2/eval/Kafka_Cluster.v
+//
+// WHERE COZY SHOULD WIN, and the reason this spec is here.  `onePartition`
+// asks about a COMPOSITE key -- Kafka built a map on
+// `new TopicPartition(topic, partition)` by hand -- and Conquord has no
+// composite-key index, so it probes on topic and filters the bucket
+// (one_partition_probes_then_filters).  Cozy builds maps keyed on tuples,
+// so it should find the map Kafka wrote and we do not.
+//
+// FOUND BY RUNNING IT: written with `the [...]`, as Kafka's accessor returns
+// one row, Cozy REJECTS the spec -- "`the` is illegal since its argument may
+// not be singleton" -- until the composite uniqueness is declared as an
+// invariant.  That is a capability Conquord does not have: `DUnique` names one
+// attribute, so a two-attribute key cannot be declared at all.  The spec below
+// therefore returns the filtered collection, which is the same information the
+// subject is given (Kafka_Cluster declares nothing), and cluster_declared.ds
+// is the same spec WITH the composite invariant, to see what that buys.
+//
+// Encoding decisions:
+//   * `leader` is a nullable Node in Java and TOption TInt in the subject.
+//     Cozy has no option type, so an absent leader is -1 and the
+//     availability read asks for leader != -1.
+//   * Cluster is immutable (withPartitions builds a new one), so there is
+//     no op here either.
+Cluster:
+
+    type Partition = { topic : String, partition : Int, leader : Int }
+
+    state partitions : Bag<Partition>
+
+    query forTopic(t : String)
+        [p | p <- partitions, p.topic == t]
+
+    query forNode(n : Int)
+        [p | p <- partitions, p.leader == n]
+
+    query onePartition(t : String, part : Int)
+        [p | p <- partitions, p.topic == t, p.partition == part]
+
+    query available(t : String)
+        [p | p <- partitions, p.topic == t, p.leader != -1]

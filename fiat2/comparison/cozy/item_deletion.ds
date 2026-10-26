@@ -1,0 +1,36 @@
+// Conquord subject: src/fiat2/eval/Jenkins_ItemDeletion.v
+//
+// The whole-row membership test.  There is no key -- the question is about a
+// row -- so no dictionary can be keyed for it, and TableRep (the table
+// represented AS a set) is the only index in Conquord that applies.  Cozy
+// should pick a hash set, which is the same answer; this spec is here as a
+// parity check on the one read whose index is a representation choice rather
+// than a key choice.
+//
+// Encoding decision, found by running it: Cozy's `Set` carries a uniqueness
+// invariant and rejected `register` as possibly breaking it, so the
+// precondition is declared.  Jenkins's `HashSet.add` is idempotent and needs
+// no precondition, and `ItemDeletion.register` is in fact only called for
+// items not yet in flight, so the assume is faithful -- but it is an
+// obligation the spec writer has to discover and discharge, which is the
+// kind of thing differentiator 1 is about.
+//
+// Encoding decision: rows carry two fields because the read is whole-row
+// equality.  With one field the test would be a membership test on a key,
+// which a dictionary could serve, and the subject exists to isolate the read
+// that no dictionary can serve.
+ItemDeletion:
+
+    type Item = { name : String, parent : String }
+
+    state registrations : Set<Item>
+
+    query contains(i : Item)
+        i in registrations
+
+    op register(i : Item)
+        assume not (i in registrations);
+        registrations.add(i);
+
+    op deregister(i : Item)
+        registrations.remove(i);

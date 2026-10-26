@@ -1,0 +1,45 @@
+// Conquord subject: src/fiat2/eval/Kafka_NamedCache.v
+//
+// THIS IS THE SHARPEST OF THE EIGHT, because this subject's whole difficulty
+// is in a write: `sizeInBytes` is a sum over the collection, and what the
+// optimizer derives is a maintained total corrected BY A PROBE on the
+// delete rather than recomputed.  Cozy's DEFAULT cost model (`--cost-model
+// 2`, cost_model.py:21) ranks query asymptotics, then storage size, then
+// exact query runtime -- no maintenance term at all; `--cost-model 3` adds
+// one `maintenance_cost` per op (:209-212), but UNDER asymptotic query
+// runtime and unprioritized among the ops.  So this subject must be run at
+// BOTH settings, and the earlier claim that Cozy simply ignores maintenance
+// cost was wrong: it ignores it by default and can be asked to weigh it.
+//
+// Conquord's own two configurations differ only in the order the two choices
+// are listed, and the wrong order costs 752x on the delete and takes the
+// build from linear to quadratic.  So the question to ask of the output is
+// not "is there a map" but "what does delete do to the total".
+//
+// Encoding decisions:
+//   * delete is BY KEY in the source (`cache.remove(key)` at :273), and
+//     Cozy's remove takes an element, so it is written as removing
+//     `the [...]` at that key -- which is the same operation and, as it
+//     happens, the same shape the subject's rewritten delete has.
+//   * `put` in the source evicts then inserts (:174-192).  Kept as the two
+//     statements it is.
+NamedCache:
+
+    type Node = { k : String, size : Int }
+
+    state cache : Bag<Node>
+
+    invariant unique [n.k | n <- cache];
+
+    query get(key : String)
+        the [n | n <- cache, n.k == key]
+
+    query sizeInBytes()
+        sum [n.size | n <- cache]
+
+    op delete(key : String)
+        cache.remove(the [n | n <- cache, n.k == key]);
+
+    op put(node : Node)
+        cache.remove(the [n | n <- cache, n.k == node.k]);
+        cache.add(node);

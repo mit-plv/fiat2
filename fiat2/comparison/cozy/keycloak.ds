@@ -1,0 +1,43 @@
+// Conquord subject: src/fiat2/eval/Keycloak_CachedRealm.v
+//
+// Faithful in: the row, both uniqueness declarations, all three reads, the
+// one write.
+//
+// Encoding decisions, all of them forced by the spec language and none of
+// them chosen to flatter either side:
+//   * the subject's reads are COUNTS, because its output channel is a list
+//     of strings and a count is what fits through it.  Here each read is the
+//     query itself -- `the [...]` for the two unique lookups and `len` for
+//     the whole-collection read -- which is the same work asked for in the
+//     language's own idiom.
+//   * `DUnique "id"` and `DUnique "alias"` become two `invariant unique`
+//     clauses.  This is the one place the two systems line up exactly:
+//     both take uniqueness as a DECLARATION about the state.
+//   * the subject's write is the one the translation adds (the original
+//     builds once); `assume` carries the uniqueness precondition Cozy needs,
+//     where the subject's elaborator EMITS a check and then the declared
+//     index turns it into a probe.  So the write is not comparable and is
+//     not compared -- it is here because a spec with no op has nothing to
+//     maintain.
+Keycloak:
+
+    type Action = { id : String, alias : String, name : String }
+
+    state actions : Bag<Action>
+
+    invariant unique [a.id | a <- actions];
+    invariant unique [a.alias | a <- actions];
+
+    query byId(i : String)
+        the [a | a <- actions, a.id == i]
+
+    query byAlias(al : String)
+        the [a | a <- actions, a.alias == al]
+
+    query count()
+        len actions
+
+    op add(a : Action)
+        assume not (a.id in [x.id | x <- actions]);
+        assume not (a.alias in [x.alias | x <- actions]);
+        actions.add(a);

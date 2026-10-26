@@ -1,0 +1,35 @@
+// Conquord subject: src/fiat2/eval/Kafka_WindowStore.v
+//
+// Two questions at once.  (1) Does Cozy answer a RANGE out of an ordered
+// structure?  It ships a tree multiset and heaps, so it may; Kafka chose a
+// ConcurrentSkipListMap by hand and Conquord derives a Ranged dictionary.
+// (2) Is a RANGE-SHAPED DELETE expressible at all?  `removeExpiredSegments`
+// drops every segment below a bound -- `headMap(lo, false).clear()` -- and
+// Cozy's update language removes one element at a time, so the retention
+// policy is written below as an assignment to the state variable, which is
+// the only form the grammar offers.  If that is rejected, the finding is
+// that the operation is not expressible, which is worth as much as a number.
+//
+// Encoding decisions:
+//   * Kafka's ranges are closed and the subject's rule shape is half-open;
+//     half-open here, as in the subject.
+//   * the two-level map (time -> key -> value) is flattened to one
+//     collection of rows, as in the subject, so that both systems are handed
+//     the same thing and choose the nesting themselves.
+WindowStore:
+
+    type Record = { time : Int, k : String, val : String }
+
+    state segments : Bag<Record>
+
+    query fetchAll(lo : Int, hi : Int)
+        [r | r <- segments, r.time >= lo, r.time < hi]
+
+    query fetch(key : String, lo : Int, hi : Int)
+        [r | r <- segments, r.time >= lo, r.time < hi, r.k == key]
+
+    op put(r : Record)
+        segments.add(r);
+
+    op expire(lo : Int)
+        segments = [r | r <- segments, r.time >= lo];

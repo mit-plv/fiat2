@@ -1,0 +1,32 @@
+// Conquord subject: src/fiat2/eval/Kafka_Cluster.v -- WITH A DECLARATION
+// CONQUORD CANNOT MAKE.
+//
+// cluster.ds gives Cozy exactly what Kafka_Cluster.v gives Conquord: a
+// collection and four reads, nothing declared.  This file adds the one thing
+// Kafka's own code relies on and our constraint language cannot state -- that
+// (topic, partition) is unique, which is why `partitionsByTopicPartition`
+// holds one row per key -- and asks `onePartition` in the form that
+// declaration licenses.
+//
+// `DUnique` takes a single attribute name, so there is no way to write this
+// in a Conquord cenv.  It is the clearest capability gap found in either
+// direction and it is reported as one.
+ClusterDeclared:
+
+    type Partition = { topic : String, partition : Int, leader : Int }
+
+    state partitions : Bag<Partition>
+
+    invariant unique [(p.topic, p.partition) | p <- partitions];
+
+    query forTopic(t : String)
+        [p | p <- partitions, p.topic == t]
+
+    query forNode(n : Int)
+        [p | p <- partitions, p.leader == n]
+
+    query onePartition(t : String, part : Int)
+        the [p | p <- partitions, p.topic == t, p.partition == part]
+
+    query available(t : String)
+        [p | p <- partitions, p.topic == t, p.leader != -1]

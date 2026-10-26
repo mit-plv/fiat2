@@ -1,0 +1,35 @@
+// Conquord subject: src/fiat2/eval/Jenkins_UserSearch.v -- THE OTHER HALF
+//
+// `suggest(token)` returns every user whose name CONTAINS the token.  Cozy's
+// specification language has no string operation at all, so the predicate
+// can only enter as an `extern`: a function declared with a body in the
+// target language, which the synthesizer treats as opaque.
+//
+// That is the finding, and it is a statement about the input language rather
+// than about the search.  An opaque predicate cannot be indexed by anything:
+// nothing in the spec says that `contains` is a substring relation, so no
+// derived key can be justified, and the only implementation of this query is
+// the scan the author already wrote.  Conquord's trigram rule is licensed by
+// the structure of the predicate itself -- OStrContains with the pattern
+// decomposed into trigrams -- which is exactly the information an extern
+// erases.
+//
+// Run it to see what comes out.  The expected answer is "the scan", and the
+// point of running it is that the expectation is checked rather than
+// asserted.
+UserSearchSuggest:
+
+    type User = { id : String, fullName : String }
+
+    extern contains(s : String, p : String) : Bool = "{s}.contains({p})"
+
+    state users : Bag<User>
+
+    invariant unique [u.id | u <- users];
+
+    query suggest(token : String)
+        [u | u <- users, contains(u.fullName, token)]
+
+    op add(u : User)
+        assume not (u.id in [x.id | x <- users]);
+        users.add(u);

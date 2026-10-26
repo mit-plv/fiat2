@@ -1,0 +1,31 @@
+// Conquord subject: src/fiat2/eval/Jenkins_UserSearch.v -- THE EXPRESSIBLE HALF
+//
+// The subject has two reads on one collection: `find(id)`, which is the
+// author's own ConcurrentHashMap lookup, and `suggest(token)`, which is the
+// author's own linear substring scan and which Conquord replaces with a
+// trigram index.  Only the first is expressible here, because Cozy's
+// expression language has NO string operations: its operator table is
+// arithmetic, comparison and boolean, and its unary operators are sum, not,
+// distinct, unique, all, any, exists, len, empty, the and reversed
+// (cozy/parse.py `_OPERATORS`, cozy/syntax.py `UOps`).  There is no
+// substring, prefix or contains.
+//
+// So this file asks what Cozy does with the half it can state, and
+// user_search_suggest.ds asks what happens to the other half.
+UserSearchFind:
+
+    type User = { id : String, fullName : String }
+
+    state users : Bag<User>
+
+    invariant unique [u.id | u <- users];
+
+    query find(i : String)
+        the [u | u <- users, u.id == i]
+
+    op add(u : User)
+        assume not (u.id in [x.id | x <- users]);
+        users.add(u);
+
+    op remove(i : String)
+        users.remove(the [u | u <- users, u.id == i]);

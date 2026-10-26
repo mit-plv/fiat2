@@ -1,0 +1,13 @@
+// PROBE: the same violating `put` as probes/violate.ds, with the precondition
+// that makes it sound.  Cozy then PROVES preservation (up to the bound) and
+// proceeds: "Done!", then synthesis.  This is the control for violate.ds --
+// the two differ by one `assume` line.
+NamedCacheAssumed:
+    type Node = { k : String, size : Int }
+    state cache : Bag<Node>
+    invariant unique [n.k | n <- cache];
+    query get(key : String)
+        the [n | n <- cache, n.k == key]
+    op put(node : Node)
+        assume not (node.k in [x.k | x <- cache]);
+        cache.add(node);

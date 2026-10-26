@@ -1,0 +1,35 @@
+// Conquord subject: src/fiat2/eval/HA_AreaRegistry.v
+//
+// The only subject whose writes are its own: Home Assistant maintains the
+// floor index by hand on every insert and every delete, and the question is
+// whether a synthesizer arrives at the same pair.
+//
+// Encoding decisions:
+//   * `floor` is `str | None` in the source and TOption TString in the
+//     subject.  Cozy has no option type, so None is the empty string and
+//     the floor read asks for a non-empty one.  The subject's index is
+//     keyed by the option and the None rows sit in a bucket no query
+//     probes; here they sit under "".  Same answers, and nothing in either
+//     measurement turns on it.
+//   * the delete is BY KEY (`__delitem__`), written as removing `the [...]`
+//     at that id, as in named_cache.
+AreaRegistry:
+
+    type Area = { id : String, name : String, floor : String }
+
+    state areas : Bag<Area>
+
+    invariant unique [a.id | a <- areas];
+
+    query byId(i : String)
+        the [a | a <- areas, a.id == i]
+
+    query byFloor(f : String)
+        [a | a <- areas, a.floor == f]
+
+    op add(a : Area)
+        assume not (a.id in [x.id | x <- areas]);
+        areas.add(a);
+
+    op remove(i : String)
+        areas.remove(the [a | a <- areas, a.id == i]);

@@ -1,0 +1,20 @@
+// Conquord subject: src/fiat2/eval/HA_LookinFunctions.v
+//
+// The list is an INPUT -- the component is handed its device at
+// construction and only reads it -- so there is no op, which in Cozy's
+// terms is a spec with queries and no updates.  That is the whole subject:
+// two membership tests and nothing else, and what the programmer wrote by
+// hand is a set of the names.
+//
+// Encoding decision: the subject's two reads differ only in whether the
+// probed name is a literal, which matters to the rewriting (one is an N+1
+// inside a loop over constants) and not to a synthesizer, so both appear
+// here as the one parameterised query.
+Lookin:
+
+    type Func = { name : String }
+
+    state functions : Bag<Func>
+
+    query hasFunction(n : String)
+        exists [f | f <- functions, f.name == n]
