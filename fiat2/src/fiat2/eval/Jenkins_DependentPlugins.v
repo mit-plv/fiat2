@@ -285,6 +285,56 @@ Section WithConcreteMaps.
   (* THE LIMIT, on real code.  The demand analysis finds NOTHING on this
      program -- not the equality, not a shape to normalise -- so the selector
      asks for no index and the join stays two nested scans. *)
+  (* COUNTING PROBES HONESTLY.  A plain count of OLookup conflates two
+     different things: a probe of the installed MEMBER, which is a read made
+     cheap, and a probe of a fold's own ACCUMULATOR, which is the bucketed
+     dictionary being BUILT and is not a read at all.  Every configuration
+     here installs the same index, so every one carries exactly one build
+     probe, and comparing raw counts across them overstates each by one.
+
+     This cost me a wrong claim: a pin here used to be called
+     `one_transposition_reaches_both`, on a raw count of two.  One of those
+     two is the build, so one transposition reaches ONE of the two reads.  The
+     counts were right and the reading was wrong. *)
+  Definition is_member_probe (e : expr) : bool :=
+    match e with
+    | EBinop OLookup (EAccess (EAccess (ELoc _) _) _) _ => true
+    | _ => false
+    end.
+
+  Fixpoint read_probes_e (e : expr) : nat :=
+    Nat.add (if is_member_probe e then 1 else 0)
+      (match e with
+       | EBinop _ a b => Nat.add (read_probes_e a) (read_probes_e b)
+       | EUnop _ a => read_probes_e a
+       | ETernop _ a b c =>
+           Nat.add (read_probes_e a) (Nat.add (read_probes_e b) (read_probes_e c))
+       | EIf a b c =>
+           Nat.add (read_probes_e a) (Nat.add (read_probes_e b) (read_probes_e c))
+       | ELet a _ b => Nat.add (read_probes_e a) (read_probes_e b)
+       | EFlatmap _ a _ b => Nat.add (read_probes_e a) (read_probes_e b)
+       | EFold a b _ _ c =>
+           Nat.add (read_probes_e a) (Nat.add (read_probes_e b) (read_probes_e c))
+       | EACFold _ a | EACIFold _ a => read_probes_e a
+       | EAccess a _ => read_probes_e a
+       | EOptMatch a b _ c =>
+           Nat.add (read_probes_e a) (Nat.add (read_probes_e b) (read_probes_e c))
+       | ESort _ a | EBagOf a | ESetOf a => read_probes_e a
+       | ERecord l =>
+           fold_right (fun q acc => Nat.add (read_probes_e (snd q)) acc) O l
+       | _ => O
+       end).
+
+  Fixpoint read_probes (c : command) : nat :=
+    match c with
+    | CSkip => O
+    | CSeq a b => Nat.add (read_probes a) (read_probes b)
+    | CLet e _ c | CLetMut e _ c => Nat.add (read_probes_e e) (read_probes c)
+    | CAssign _ e => read_probes_e e
+    | CIf e a b => Nat.add (read_probes_e e) (Nat.add (read_probes a) (read_probes b))
+    | CForeach e _ c => Nat.add (read_probes_e e) (read_probes c)
+    end.
+
   (* WHAT THE SELECTOR REACHES.  It sees that this loop's indexable guard is
      not its outermost one, asks for the promotion by position, and the
      second analysis -- which always handled a head-position equality -- then
@@ -301,10 +351,25 @@ Section WithConcreteMaps.
   Lemma selector_asks_for_the_key : sel_choices = [DictIdx "dependency"].
   Proof. vm_compute; reflexivity. Qed.
 
-  (* and it beats both hand-written configurations below: three probes where
-     they reach one and two, and it ERASES the list, which neither does *)
-  Lemma selector_reaches_three_probes : probes selected = 3%nat.
+  (* This program has TWO reads.  The selector serves both of them; the two
+     hand-written configurations serve one and none.  And it erases the list,
+     which neither of them does. *)
+  Lemma selector_serves_both_reads : read_probes selected = 2%nat.
   Proof. vm_compute; reflexivity. Qed.
+
+  Lemma transposition_serves_one_read : read_probes optimized_swapped = 1%nat.
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma hoisting_serves_neither_read : read_probes optimized_hoist = 0%nat.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* and the raw counts, so the difference between the two metrics is on the
+     record rather than in a commit message: each is one higher, and the one
+     is the index build *)
+  Lemma raw_counts_are_one_higher :
+    probes selected = 3%nat /\ probes optimized_swapped = 2%nat
+    /\ probes optimized_hoist = 1%nat.
+  Proof. repeat split; vm_compute; reflexivity. Qed.
 
   Lemma selector_erases_the_list : installed_fields selected = ["aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
@@ -314,14 +379,7 @@ Section WithConcreteMaps.
     /\ installed_fields optimized_swapped = ["id_tag"; "aux_tag"].
   Proof. split; vm_compute; reflexivity. Qed.
 
-  (* with the index supplied by hand but the guards left in source order, one
-     of the two reads is served *)
-  Lemma hoisting_alone_reaches_one_probe : probes optimized_hoist = 1%nat.
-  Proof. vm_compute; reflexivity. Qed.
 
-  (* and one transposition reaches both *)
-  Lemma one_transposition_reaches_both : probes optimized_swapped = 2%nat.
-  Proof. vm_compute; reflexivity. Qed.
 
   Theorem optimized_hoist_sound : forall (store env : clocals),
       locals_wf init_Gstore store -> locals_wf init_Genv env ->

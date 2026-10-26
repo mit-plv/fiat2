@@ -4,7 +4,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
-  fiat2.eval.Sat4j_LiteralStorage
+  fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
   fiat2.Ex_RangeDelete.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
@@ -86,6 +86,7 @@ Module KWS := Kafka_WindowStore.
 Module JID := Jenkins_ItemDeletion.
 Module ERD := Ex_RangeDelete.
 Module S4J := Sat4j_LiteralStorage.
+Module JDP := Jenkins_DependentPlugins.
 
 (* ---- the scan form each subject starts from ---- *)
 
@@ -98,6 +99,8 @@ Definition cluster_src : command := Eval vm_compute in KCl.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
 Definition range_delete_src : command := Eval vm_compute in ERD.prog.
 Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
+(* the nested-loop join: the one subject whose SOURCE is quadratic *)
+Definition dependent_plugins_src : command := Eval vm_compute in JDP.elaborated.
 
 (* item_deletion is the one subject whose two columns are NOT source and
    optimized.  Its question is what TableRep alone is worth, so the left
@@ -128,6 +131,9 @@ Definition item_deletion_opt : command := Eval vm_compute in JID.optimized_rep.
 (* the selector's own configuration for this one, which now includes the
    bag-level split (selector_emits_the_split_and_declines_set_mem) *)
 Definition sat4j_opt : command := Eval vm_compute in S4J.optimized_split.
+(* the selector's own configuration, which serves BOTH reads and erases the
+   list -- see JDP.selector_serves_both_reads *)
+Definition dependent_plugins_opt : command := Eval vm_compute in JDP.selected.
 
 (* ---- the alternatives worth measuring against, each one a
        configuration its own file pins and argues about ---- *)
@@ -153,6 +159,13 @@ Definition window_store_opt_unsplit : command :=
    survives.  This is the only alternative here that measures a rule rather
    than an index choice. *)
 Definition sat4j_opt_unsplit : command := Eval vm_compute in S4J.optimized_counted.
+(* the same index, with the join guard left where the source put it: behind a
+   not-equality and a flag test, so no read can use it *)
+Definition dependent_plugins_unpromoted : command :=
+  Eval vm_compute in JDP.optimized_hoist.
+(* and with one unconditional transposition, which reaches one read of two *)
+Definition dependent_plugins_transposed : command :=
+  Eval vm_compute in JDP.optimized_swapped.
 
 (* ---- one value for the harness to iterate over ---- *)
 
@@ -166,7 +179,8 @@ Definition subjects : list (string * command * command) :=
   ; ("window_store", window_store_src, window_store_opt)
   ; ("range_delete", range_delete_src, range_delete_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
-  ; ("sat4j", sat4j_src, sat4j_opt) ].
+  ; ("sat4j", sat4j_src, sat4j_opt)
+  ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].
 
 Definition alternatives : list (string * command) :=
   [ ("keycloak/uncounted", keycloak_opt_uncounted)
@@ -174,6 +188,11 @@ Definition alternatives : list (string * command) :=
   ; ("user_search/table-rep", user_search_opt_rep)
   ; ("cluster/unsplit", cluster_opt_unsplit)
   ; ("window_store/unsplit", window_store_opt_unsplit)
-  ; ("sat4j/unsplit", sat4j_opt_unsplit) ].
+  ; ("sat4j/unsplit", sat4j_opt_unsplit)
+  (* the guard left in source order: the index is installed and NEITHER read
+     can use it, so this measures what PromoteGuard is worth *)
+  ; ("dependent_plugins/unpromoted", dependent_plugins_unpromoted)
+  (* and one unconditional transposition, which reaches one read of the two *)
+  ; ("dependent_plugins/transposed", dependent_plugins_transposed) ].
 
 Extraction "extracted.ml" subjects alternatives ref_run.

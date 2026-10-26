@@ -65,8 +65,9 @@ missing is not the operator but the rule -- see the limits table below.
 | `Jenkins_ItemDeletion.v` | `ItemDeletion.java:74,129,149,165` | the only WHOLE-ROW read: a `Set<Item>` asked `contains(item)`, so the question is about a row and not an attribute, no dictionary can be keyed for it, and `TableRep` is the only index that applies |
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
 | `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and the five FILTERING PROJECTIONS it leaves as scans found a missing rule -- the bag-level counterpart of a list-level split -- now built and pinned in a third configuration |
+| `Jenkins_DependentPlugins.v` | `PluginManager.java:1042` | the only subject whose SOURCE IS QUADRATIC: a nested-loop join over a maintained field, `plugins` inside `plugins`. Its indexable guard is THIRD in its chain, which is why the selector found nothing on it until `PromoteGuard` existed -- and the one subject found by searching the corpora for a shape rather than by reading a class |
 
-The nine fall into six groups, and the groups are the argument.
+The ten fall into seven groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
 `HA_LookinFunctions`. The first two are a pair and should be read as one: they put
@@ -184,6 +185,23 @@ source stores whole rows in a `Set<Item>` and asks `contains(item)`, so there is
 to probe with and the only index in the development that applies is the one that
 represents the table itself. It is the file that makes `TableRep` a measurement rather
 than a listing, and it is argued where the numbers are, under *What it costs* below.
+
+**A join, and the guard that hid from the selector** -- `Jenkins_DependentPlugins`.
+Every other subject here reads a table once per read. This one reads it once per row:
+`resolveDependentPlugins()` loops over `plugins` inside `plugins`, so its cost is
+quadratic in a field the program keeps. It was found by searching the corpora for the
+SHAPE (`corpus/joins/`) rather than by reading a class, which is the only subject here
+that is true of.
+
+What it contributed is a limit and then its removal. The three conditions the source
+evaluates are, in order, not-itself, not-deleted, and only THIRD the equality a
+dictionary could be keyed by -- and `if_nil_into_flatmap_head` splits a loop on its
+OUTERMOST guard, so the index rules were being offered a not-equality. The selector
+asked for no index at all. `PromoteGuard` (`PromoteGuard.v`) is the rule that fixed it,
+and the demand that emits it asks by guard POSITION rather than by attribute, so nothing
+in the selector mentions this program. Pinned at `selector_asks_for_the_key` and
+`selector_serves_both_reads`; what it is worth is `a` = 2.00 to 1.00, 968x at 1600 rows,
+under *What it costs* below.
 
 **A subject we did not choose** -- `Sat4j_LiteralStorage`. Every file above was found
 by us, in a corpus we picked, by a search we designed, and no amount of care inside that
@@ -374,8 +392,20 @@ each pair, against the configuration the selector picks:
 | `cluster/unsplit` | no `SplitIf`, so both conjunctive accessors stay scans | `onePartition` 1,700 -> 416,480 steps, `a` -0.01 -> 0.99 |
 | `window_store/unsplit` | no `SplitIf`, so the keyed read scans and the list it keeps alive is rewritten by every retention call | `expire` 440 -> 318,752 steps, `a` 0.00 -> 1.03; `fetch` 317x |
 | `sat4j/unsplit` | no `SplitFilterProj`, so the five reads that project one field of the row at a declared key stay scans -- the ONLY pair here that measures a RULE rather than an index choice | `remove` 700 -> 318,820 steps, `a` 0.00 -> 1.03, and 455x; the five projections 184x to 229x, each `a` 0.00 -> 0.97 |
+| `dependent_plugins/unpromoted` | no `PromoteGuard`, so the join guard stays third in its chain and NEITHER read can use the index that is nonetheless installed | `resolveAll` 1,903,680 -> 2,150,447,840 steps, **1129x**, `a` 1.00 -> **2.00**; 1599x the comparisons. Worse than the source's own 1,843,247,840, because the index is built and maintained for nothing |
+| `dependent_plugins/transposed` | one unconditional `SwapIfNil` instead, which reaches ONE of the two reads | `resolveAll` 377x, `a` 1.00 -> **1.99** -- still quadratic |
 
-Three things in that table are worth more than the ratios. The `named_cache` build going
+The `dependent_plugins` pair is the most informative entry in this table, and it is the
+transposed one rather than the unpromoted one. Serving ONE of a join's two reads leaves
+the exponent at 1.99: partial indexing of a join buys a constant -- 2,150,447,840 steps
+down to 717,935,820, under 3x -- and not an exponent. The asymptotics only move when
+every read is served, which is what `selector_serves_both_reads` pins and what
+`/unpromoted` shows the cost of missing. And `/unpromoted` is the sharpest instance of
+the index-nobody-reads pessimization in this whole evaluation: it is SLOWER than the
+unoptimized source, because the dictionary is built and maintained and then no read can
+match against it.
+
+Three more things in that table are worth more than the ratios. The `named_cache` build going
 **quadratic** is the clearest case of why the order is not a preference: both
 configurations install the same two members, and listing them the other way round leaves
 a scan inside a write, which the uniqueness guard then runs once per row. `sat4j/unsplit` is worth reading for its `remove`, which is 455x and the largest ratio in
@@ -413,14 +443,31 @@ reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the 
 ratio between two sizes would not settle the question it looks like it settles: over an
 8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
-Forty-one reads and writes across the ten programs the harness runs -- the nine files
+Forty-two reads and writes across the eleven programs the harness runs -- the ten files
 above plus `Ex_RangeDelete` -- by the exponent of their STEP count:
 
 | | source | optimized |
 |---|---|---|
-| linear in the table, `a` = 0.87 to 1.05 | 36 of 41 | 2 of 41 |
-| independent of it, `a` = -0.01 to 0.02 | 5 of 41 | 38 of 41 |
-| sublinear, `a` = 0.19 | 0 of 41 | 1 of 41 |
+| **quadratic**, `a` = 2.00 | **1 of 42** | 0 of 42 |
+| linear in the table, `a` = 0.87 to 1.05 | 36 of 42 | 3 of 42 |
+| independent of it, `a` = -0.01 to 0.02 | 5 of 42 | 38 of 42 |
+| sublinear, `a` = 0.19 | 0 of 42 | 1 of 42 |
+
+The quadratic row is new and is the only one of its kind:
+`Jenkins_DependentPlugins`'s `resolveAll`, which is
+`resolveDependentPlugins()` -- a loop over `plugins` inside a loop over
+`plugins`. Every other source read here scans the table once per read; this
+one scans it once per ROW. Measured over the six sizes it is
+`a` = 2.00 exactly, in steps and in comparisons alike, and the optimized
+column is `a` = 1.00: **1,843,247,840 steps to 1,903,680 at 1600 rows, 968x,
+and the ratio grows linearly with the table.** Comparisons go 204,736,000 to
+128,000.
+
+That is quadratic to LINEAR, not to constant, and the distinction is the
+subject's own: the method answers one question per plugin, so an
+implementation that answers all of them is linear however the inner lookup is
+done. What the optimizer removes is the inner scan, and the exponent it
+removes is the one that came from the nesting.
 
 Ten of those forty-one are `Sat4j_LiteralStorage`, added last and the only subject whose
 query mix is not ours. **All ten go from linear to flat** -- the seven key reads, the
@@ -438,7 +485,8 @@ therefore entirely in COMPARISONS, at `a` = 1.22. That is not a blind spot in th
 instrument but where `count.ml` puts a tree operation's cost, and it is why the table
 below that subject reports comparisons.
 
-The thirty-eight in the optimized column are not merely flatter, they are flat: the
+The thirty-eight independent ones in the optimized column are not merely flatter, they
+are flat: the
 Lookin membership test, to take one, costs **exactly 300 steps at every one of the six
 sizes**. Their comparison counts are where the index shows through, at `a` = 0.08 to
 0.31, which is `log n` appearing as the weak power law it is -- the same subject's

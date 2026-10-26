@@ -369,12 +369,50 @@ let sat4j =
            rcd [ ("kind", i 2); ("v", i v); ("new_rec", row_at v 99) ]) ];
     mutating = [ "remove"; "updateLevel" ] }
 
+(* ---------- dependent plugins: a nested-loop join over real state ----------
+
+   PluginManager.resolveDependentPlugins() loops over `plugins` inside
+   `plugins`, so its cost is quadratic in a field the program KEEPS.  Here
+   the edges are their own table (see the subject's Faithfulness note), so
+   one operation is the whole resolve: for every plugin, how many other
+   plugins declare a dependency on it, and how many of those declarations
+   are optional.
+
+   Both collections grow together, which is what makes the measurement mean
+   anything: `rows` plugins and `rows` dependency edges, each plugin
+   declaring one dependency on a pseudo-random other plugin.  A plugin's
+   DEPENDENTS are then bounded on average however large the table grows --
+   the selectivity every other subject here is also arranged to have, because
+   a read whose answer is a constant fraction of the table is linear whatever
+   is installed.
+
+   `deleted` is false throughout and `optional` alternates.  Neither varies
+   with the table, because they are residual filters on the bucket rather
+   than keys, and what is being measured is the bucket lookup. *)
+
+let dependent_plugins =
+  let edge j =
+    rcd [ ("dependent", s (Printf.sprintf "p%d" j));
+          ("dependency", s (Printf.sprintf "p%d" (spread (max 1 j) j)));
+          ("optional", VBool (j mod 2 = 0));
+          ("deleted", VBool false) ] in
+  let plugin j = rcd [ ("name", s (Printf.sprintf "p%d" j)) ] in
+  { queries_var = "queries"; store = outputs_only;
+    table = (fun rows ->
+      [ ("deps_tbl", VList (List.init rows edge));
+        ("plugins_tbl", VList (List.init rows plugin)) ]);
+    build = no_build;
+    (* one query is one resolveDependentPlugins() *)
+    kinds = [ ("resolveAll", fun _ _ -> i 0) ];
+    mutating = [] }
+
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("window_store", window_store); ("range_delete", range_delete);
-    ("item_deletion", item_deletion); ("sat4j", sat4j) ]
+    ("item_deletion", item_deletion); ("sat4j", sat4j);
+    ("dependent_plugins", dependent_plugins) ]
 
 let workload (sp : spec) ~(rows : int) ~(ops : int) ~(only : string option) : workload =
   let kinds =
