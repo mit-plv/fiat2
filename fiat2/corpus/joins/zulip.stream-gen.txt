@@ -1,0 +1,12 @@
+# files scanned: 2031
+# candidates (stream/generator inner loop): 2
+
+zerver/data_import/mattermost.py:914
+    outer user       <- user_data_list
+    inner team       (gen over user["teams"]))
+    return any(team["name"] == team_name for team in user["teams"])
+
+zerver/lib/test_classes.py:1050
+    outer message    <- reversed(outbox)
+    inner addr       (gen over message.to)
+    addr == email_address or addr.endswith(f" <{email_address}>") for addr in message.to

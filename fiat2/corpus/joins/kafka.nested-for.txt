@@ -1,0 +1,32 @@
+# files scanned: 6384
+# candidate nested-loop equijoins: 6
+
+clients/src/main/java/org/apache/kafka/clients/NodeApiVersions.java:74
+    outer  apiKey       <- ApiKeys.clientApis(
+    inner  apiVersion   <- apiVersions
+    cond   if (apiVersion.apiKey() == apiKey.id) {
+
+streams/integration-tests/src/test/java/org/apache/kafka/streams/integration/EosIntegrationTest.java:341
+    outer  key          <- allKeys
+    inner  record       <- records
+    cond   if (record.key.equals(key)) {
+
+streams/src/test/java/org/apache/kafka/streams/processor/internals/StreamsPartitionAssignorTest.java:1036
+    outer  entry        <- topicGroups.entrySet(
+    inner  id           <- tasks
+    cond   if (id.subtopology() == entry.getKey().nodeGroupId) {
+
+streams/src/test/java/org/apache/kafka/streams/processor/internals/assignment/CustomStickyTaskAssignorTest.java:668
+    outer  client1      <- streamStates.values(
+    inner  client2      <- streamStates.values(
+    cond   if (!client1.processId().equals(client2.processId())) {
+
+streams/src/test/java/org/apache/kafka/streams/processor/internals/assignment/CustomStickyTaskAssignorTest.java:703
+    outer  client1      <- streamStates.values(
+    inner  client2      <- streamStates.values(
+    cond   if (!client1.processId().equals(client2.processId())) {
+
+server/src/test/java/org/apache/kafka/server/CordonedLogDirsIntegrationTest.java:512
+    outer  logDescriptions <- logDescriptionsPerBroker.entrySet(
+    inner  logDescription <- logDescriptions.getValue(
+    cond   if (logDescriptions.getKey().equals(0) && expectedCordoned.contains(logDescription.getKey())) {

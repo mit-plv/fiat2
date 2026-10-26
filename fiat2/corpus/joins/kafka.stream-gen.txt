@@ -1,0 +1,42 @@
+# files scanned: 6384
+# candidates (stream/generator inner loop): 8
+
+clients/clients-integration-tests/src/test/java/org/apache/kafka/clients/CreateTopicsRequestTest.java:272
+    outer topic      <- request.data(
+    inner t          (lambda)
+    .filter(t -> topic.name().equals(t.topic())).findFirst().orElse(null);
+
+clients/clients-integration-tests/src/test/java/org/apache/kafka/clients/CreateTopicsRequestTest.java:309
+    outer assignment <- topic.assignments(
+    inner metadata   (lambda)
+    .filter(metadata -> metadata.partition() == assignment.partitionIndex())
+
+clients/src/test/java/org/apache/kafka/clients/consumer/internals/AbstractPartitionAssignorTest.java:208
+    outer tp         <- partitions
+    inner p          (lambda)
+    .filter(p -> p.topic().equals(tp.topic()) && p.partition() == tp.partition())
+
+server-common/src/main/java/org/apache/kafka/server/share/persister/PersisterStateManager.java:589
+    outer initializeStateResult <- combinedResponse.data(
+    inner partitionResult (lambda)
+    initializeStateResult.partitions().stream().filter(partitionResult -> partitionResult.partition() == partition
+
+server-common/src/main/java/org/apache/kafka/server/share/persister/PersisterStateManager.java:790
+    outer writeStateResult <- combinedResponse.data(
+    inner partitionResult (lambda)
+    writeStateResult.partitions().stream().filter(partitionResult -> partitionResult.partition() == partitionKey()
+
+server-common/src/main/java/org/apache/kafka/server/share/persister/PersisterStateManager.java:971
+    outer readStateResult <- combinedResponse.data(
+    inner partitionResult (lambda)
+    readStateResult.partitions().stream().filter(partitionResult -> partitionResult.partition() == partitionKey().
+
+server-common/src/main/java/org/apache/kafka/server/share/persister/PersisterStateManager.java:1152
+    outer readStateSummaryResult <- combinedResponse.data(
+    inner partitionResult (lambda)
+    readStateSummaryResult.partitions().stream().filter(partitionResult -> partitionResult.partition() == partitio
+
+metadata/src/test/java/org/apache/kafka/image/ClientQuotasImageTest.java:216
+    outer entry      <- response.entries(
+    inner e          (lambda)
+    assertTrue(entry.entity().stream().anyMatch(e -> e.entityType().equals(ClientQuotaEntity.USER)));

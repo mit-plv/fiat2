@@ -1,0 +1,2 @@
+# files scanned: 1947
+# candidates (stream/generator inner loop): 0

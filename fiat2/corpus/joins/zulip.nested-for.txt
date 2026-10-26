@@ -1,0 +1,12 @@
+# files scanned: 2031
+# candidate nested-loop equijoins: 2
+
+zerver/data_import/slack.py:448
+    outer  field        <- customprofilefield
+    inner  field_value  <- customprofilefield_value
+    cond   if field_value["field"] == field["id"] and len(field_value["value"]) > 50:
+
+zerver/actions/message_send.py:1818
+    outer  recipient_user <- guest_recipients
+    inner  user         <- user_profiles
+    cond   if user.id == recipient_user.id or user.is_bot:

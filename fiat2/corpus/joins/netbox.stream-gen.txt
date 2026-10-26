@@ -1,0 +1,7 @@
+# files scanned: 1289
+# candidates (stream/generator inner loop): 1
+
+netbox/dcim/svg/cables.py:265
+    outer parent     <- parent_object_nodes
+    inner term       (gen over terminations)
+    parent_terms = [term for term in terminations if term.parent_object == parent.object]

@@ -1,0 +1,7 @@
+# files scanned: 1947
+# candidate nested-loop equijoins: 1
+
+core/src/main/java/hudson/PluginManager.java:1043
+    outer  plugin       <- plugins
+    inner  possibleDependent <- plugins
+    cond   if (possibleDependent.getShortName().equals(plugin.getShortName())) {

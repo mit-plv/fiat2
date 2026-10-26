@@ -1,0 +1,12 @@
+# files scanned: 1324
+# candidate nested-loop equijoins: 2
+
+wagtail/images/models.py:790
+    outer  existing     <- self.renditions.filter(lookup_q)
+    inner  new          <- list(to_create)
+    cond   new.filter_spec == existing.filter_spec
+
+wagtail/images/models.py:790
+    outer  existing     <- self.renditions.filter(lookup_q)
+    inner  new          <- list(to_create)
+    cond   and new.focal_point_key == existing.focal_point_key

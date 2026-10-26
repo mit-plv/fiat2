@@ -1,0 +1,57 @@
+# files scanned: 18948
+# candidates (stream/generator inner loop): 11
+
+pylint/plugins/pylint_home_assistant/checkers/exception_translations.py:62
+    outer inferred   <- call.func.infer()
+    inner a          (gen over inferred.ancestors())
+    a.qname() == _HA_ERROR_QNAME for a in inferred.ancestors()
+
+homeassistant/components/iotty/cover.py:63
+    outer device     <- devices
+    inner d          (gen over known_devices))
+    any(d.device_id == device.device_id for d in known_devices)
+
+homeassistant/components/iotty/switch.py:98
+    outer device     <- devices
+    inner d          (gen over known_devices))
+    if any(d.device_id == device.device_id for d in known_devices) or (
+
+homeassistant/components/freedompro/coordinator.py:56
+    outer device     <- self._devices
+    inner dev        (gen over result)
+    (dev for dev in result if dev["uid"] == device["uid"]),
+
+homeassistant/components/kulersky/__init__.py:66
+    outer device     <- devices[1
+    inner i          (gen over device.identifiers)
+    domain_identifiers = [i for i in device.identifiers if i[0] == DOMAIN]
+
+homeassistant/components/vistapool/__init__.py:156
+    outer device     <- dr.async_entries_for_config_entry(device_registry, entry.e
+    inner i          (gen over device.identifiers)
+    pool_id = next((i[1] for i in device.identifiers if i[0] == DOMAIN), None)
+
+homeassistant/components/shelly/utils.py:921
+    outer device     <- devices
+    inner connection (gen over device.connections)
+    connection[0] == CONNECTION_BLUETOOTH for connection in device.connections
+
+homeassistant/components/shelly/utils.py:950
+    outer device     <- devices
+    inner identifier (gen over device.identifiers))
+    if any(identifier[0] == DOMAIN for identifier in device.identifiers):
+
+tests/components/rainmachine/conftest.py:147
+    outer zone       <- raw_data
+    inner z          (gen over zone_details)
+    [extra] = [z for z in zone_details if z["uid"] == zone["uid"]]
+
+tests/components/gree/common.py:42
+    outer info       <- mock_infos
+    inner i          (gen over self.last_mock_infos)
+    if not [i for i in self.last_mock_infos if info.mac == i.mac]:
+
+tests/components/gree/common.py:42
+    outer info       <- mock_infos
+    inner i          (gen over self.last_mock_infos)
+    last_info = next(i for i in self.last_mock_infos if info.mac == i.mac)

@@ -1,0 +1,67 @@
+# files scanned: 18948
+# candidate nested-loop equijoins: 13
+
+pylint/plugins/pylint_home_assistant/checkers/type_hints/__init__.py:121
+    outer  class_matcher <- self._class_matchers
+    inner  ancestor     <- ancestors
+    cond   if ancestor.name == class_matcher.base_class:
+
+homeassistant/components/firmata/__init__.py:133
+    outer  entry        <- hass.config_entries.async_entries(DOMAIN)
+    inner  board        <- config[DOMAIN]
+    cond   if entry.data[CONF_SERIAL_PORT] == board[CONF_SERIAL_PORT]:
+
+homeassistant/components/firmata/__init__.py:133
+    outer  entry        <- hass.config_entries.async_entries(DOMAIN)
+    inner  board        <- config[DOMAIN]
+    cond   if board[CONF_SERIAL_PORT] == entry.data[CONF_SERIAL_PORT]:
+
+homeassistant/components/firmata/__init__.py:143
+    outer  board        <- config[DOMAIN]
+    inner  entry        <- hass.config_entries.async_entries(DOMAIN)
+    cond   if board[CONF_SERIAL_PORT] == entry.data[CONF_SERIAL_PORT]:
+
+homeassistant/components/bang_olufsen/media_player.py:466
+    outer  beolink_listener <- beolink_listeners
+    inner  peer         <- peers
+    cond   if peer.jid == beolink_listener.jid:
+
+homeassistant/components/yale_smart_alarm/coordinator.py:138
+    outer  device       <- data.cycle["data"]["device_status"]
+    inner  lock         <- self.locks
+    cond   if lock.name == device["name"]:
+
+homeassistant/components/recorder/migration.py:778
+    outer  alter        <- alters
+    inner  fkc          <- states_key_constraints
+    cond   if fkc.column_keys == alter["columns"]:
+
+homeassistant/components/homee/light.py:65
+    outer  a            <- on_off_attributes
+    inner  attribute    <- node.attributes
+    cond   if attribute.instance == a.instance and attribute.type in LIGHT_ATTRIBUTES:
+
+homeassistant/components/opensensemap/coordinator.py:72
+    outer  title        <- (*_TITLES.get(title_key, ()), title_key)
+    inner  sensor       <- api.data.get("sensors", [])
+    cond   sensor.get("title", "").casefold() == title.casefold()
+
+homeassistant/components/nextbus/coordinator.py:113
+    outer  route_stop   <- route_stops
+    inner  prediction_result <- prediction_results
+    cond   prediction_result["stop"]["id"] == route_stop.stop_id
+
+homeassistant/components/nextbus/coordinator.py:113
+    outer  route_stop   <- route_stops
+    inner  prediction_result <- prediction_results
+    cond   and prediction_result["route"]["id"] == route_stop.route_id
+
+tests/components/light/test_reproduce_state.py:112
+    outer  call         <- turn_on_calls
+    inner  expected     <- expected_calls
+    cond   if call.data["entity_id"] == expected["entity_id"]:
+
+script/hassfest/config_schema.py:20
+    outer  item         <- module.body
+    inner  target       <- item.targets
+    cond   if item.target.id == name:

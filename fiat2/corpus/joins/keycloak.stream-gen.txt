@@ -1,0 +1,32 @@
+# files scanned: 8469
+# candidates (stream/generator inner loop): 6
+
+misc/test-stability/src/main/java/org/keycloak/test/logparser/TestReport.java:47
+    outer logFailure <- logParser.get(
+    inner f          (lambda)
+    TestFailure failedTest = failedTests.stream().filter(f -> f.test().equals(logFailure.test())).findFirst().or((
+
+misc/test-stability/src/main/java/org/keycloak/test/logparser/TestReport.java:47
+    outer logFailure <- logParser.get(
+    inner j          (lambda)
+    GitHubRun.GitHubRunJob job = run.jobs().stream().filter(j -> j.name().equals(logFailure.job())).findFirst().ge
+
+scim/tests/base/src/test/java/org/keycloak/tests/scim/tck/UserTest.java:2804
+    outer email      <- expected.getEmails(
+    inner e          (lambda)
+    .filter((e) -> email.getValue() != null && email.getValue().equals(e.getValue()))
+
+scim/model/src/main/java/org/keycloak/scim/model/user/UserCoreModelSchema.java:173
+    outer membership <- GroupUtils.getAllMemberships(session, model.getGroupsStrea
+    inner m          (lambda)
+    if (values.stream().noneMatch(m -> m.getValue().equals(membership.group().getId()))) {
+
+tests/base/src/test/java/org/keycloak/tests/organization/member/OrganizationMemberTest.java:279
+    outer expectedRep <- expected
+    inner member     (lambda)
+    UserRepresentation existingRep = existing.stream().filter(member -> member.getId().equals(expectedRep.getId())
+
+test-framework/core/src/main/java/org/keycloak/testframework/injection/ReflectionUtils.java:36
+    outer m          <- c.getDeclaredMethods(
+    inner e          (lambda)
+    if (methods.stream().noneMatch(e -> e.getName().equals(m.getName()) && Arrays.equals(e.getParameterTypes(), m.

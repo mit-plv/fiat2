@@ -1,0 +1,2 @@
+# files scanned: 1289
+# candidate nested-loop equijoins: 0
