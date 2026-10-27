@@ -29,12 +29,12 @@ Open Scope string_scope.
 Definition filter_eq_empty_to_set_mem_head (e : expr) : expr :=
   match e with
   | EBinop OEq
-      (flatmap_filter_bag (EBagOf e1) x0 (EBinop OEq (EAccess (EVar x1) attr) k) x2 _ _)
+      (flatmap_filter_bag (EUnop OBagOfList e1) x0 (EBinop OEq (EAccess (EVar x1) attr) k) x2 _ _)
       (EAtom (AEmptyBag _)) =>
       if (all_eqb [(x0, [x1; x2])] && negb (free_immut_in x0 k))%bool
       then EUnop ONot
              (EBinop OSetMem
-                (flatmap_proj_set (ESetOf e1) x0 (EAccess (EVar x0) attr) None) k)
+                (flatmap_proj_set (EUnop OSetOfList e1) x0 (EAccess (EVar x0) attr) None) k)
       else e
   | _ => e
   end.
@@ -131,7 +131,7 @@ Section WithWord.
        is built from the outside in *)
     econstructor; [ constructor | ].
     econstructor; [ constructor | | eassumption ].
-    econstructor; [ econstructor; eassumption | ].
+    econstructor; [ econstructor; [ constructor | eassumption ] | ].
     econstructor; [ constructor | | ].
     1:{ econstructor. econstructor.
         (* the key expression's typing comes first: it is what pins the two

@@ -22,7 +22,7 @@ let rec expr_nodes (e : expr) : int =
   1 + match e with
   | EVar _ | ELoc _ | EAtom _ -> 0
   | EUnop (_, a) | EACFold (_, a) | EACIFold (_, a) | EAccess (a, _)
-  | ESort (_, a) | EBagOf a | ESetOf a -> expr_nodes a
+  | ESort (_, a) -> expr_nodes a
   | EBinop (_, a, b) | ELet (a, _, b) -> expr_nodes a + expr_nodes b
   | EFlatmap (_, a, _, b) -> expr_nodes a + expr_nodes b
   | ETernop (_, a, b, c) | EIf (a, b, c) | EOptMatch (a, b, _, c) ->
@@ -47,7 +47,8 @@ let operators (c : command) : string list =
     | ONeg -> "ONeg" | ONot -> "ONot" | OLength -> "OLength"
     | OLengthString -> "OLengthString" | OStringOfInt -> "OStringOfInt"
     | OSome -> "OSome" | ODictValues -> "ODictValues"
-    | OSetOfBag -> "OSetOfBag" in
+    | OSetOfBag -> "OSetOfBag"
+    | OBagOfList -> "OBagOfList" | OSetOfList -> "OSetOfList" in
   let binop = function
     | OPlus -> "OPlus" | OMinus -> "OMinus" | OTimes -> "OTimes"
     | ODiv -> "ODiv" | OMod -> "OMod" | OAnd -> "OAnd" | OOr -> "OOr"
@@ -74,9 +75,7 @@ let operators (c : command) : string list =
     | EACIFold (_, a) -> add "EACIFold"; ex a
     | ERecord l -> List.iter (fun (_, a) -> ex a) l
     | EAccess (a, _) -> ex a
-    | ESort (_, a) -> add "ESort"; ex a
-    | EBagOf a -> add "EBagOf"; ex a
-    | ESetOf a -> add "ESetOf"; ex a in
+    | ESort (_, a) -> add "ESort"; ex a in
   let rec cm (c : command) = match c with
     | CSkip -> ()
     | CSeq (a, b) -> cm a; cm b

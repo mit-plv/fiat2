@@ -183,14 +183,14 @@ Section WithConcreteMaps.
      language offers no index.  Counted, as in the other eval files. *)
   Definition by_id : expr :=
     EACFold AGCount
-      (flatmap_filter_bag (EBagOf (ELoc "users")) "r"
+      (flatmap_filter_bag (EUnop OBagOfList (ELoc "users")) "r"
          (EBinop OEq (EAccess (EVar "r") "id") (EAccess (EVar "q") "k"))
          "r" None None).
 
   (* suggest(token): name.contains(token) over the same collection, which is
      how Jenkins itself writes it. *)
   Definition by_substring : expr :=
-    ESetOf (flatmap_filter_list (ELoc "users") "r"
+    EUnop OSetOfList (flatmap_filter_list (ELoc "users") "r"
               (EBinop OStrContains (EAccess (EVar "r") "fullName")
                  (EAccess (EVar "q") "k"))
               "r" (Some row_ty) (Some row_ty)).

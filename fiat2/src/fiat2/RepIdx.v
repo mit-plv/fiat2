@@ -12,7 +12,7 @@ Open Scope string_scope.
    bag or a set.  What makes it worth installing is where the collection
    push-down stops.
 
-   push_down_collection drives EBagOf and ESetOf inward through a query, and
+   push_down_collection drives OBagOfList and OSetOfList inward through a query, and
    where it reaches a read of the table it can go no further, so it leaves the
    coercion sitting on that read (CollectionTransf.bag_of, set_of).  That
    residue is a demand: the query wants the table as a bag or a set, and
@@ -20,8 +20,8 @@ Open Scope string_scope.
    IS that coercion turns the residue into a field read.
 
    Maintenance needs no rule of its own, for the same reason.  A write stores
-   to_idx of the new table, so the installation leaves EBagOf (row :: tbl) or
-   ESetOf (filter p tbl) behind -- exactly the shapes push_down_collection
+   to_idx of the new table, so the installation leaves OBagOfList (row :: tbl) or
+   OSetOfList (filter p tbl) behind -- exactly the shapes push_down_collection
    rewrites, into an insert or a filter at the weaker level, over the coercion
    of the OLD table, which the rule below then reads off the record.  So this
    index is one use rule plus a basic transformation the pipeline already runs.
@@ -39,8 +39,8 @@ Section WithHole.
 
   Definition to_idx (tag : collection_tag) : expr :=
     match tag with
-    | LikeSet => ESetOf (EVar hole)
-    | LikeBag => EBagOf (EVar hole)
+    | LikeSet => EUnop OSetOfList (EVar hole)
+    | LikeBag => EUnop OBagOfList (EVar hole)
     | LikeList => EVar hole
     end.
 
@@ -112,11 +112,11 @@ Section WithHole.
          the member the installation stored. *)
       Definition rep_to_lookup_head (tag : collection_tag) (e : expr) : expr :=
         match tag, e with
-        | LikeSet, ESetOf (EAccess (ELoc tbl0) id_tag0) =>
+        | LikeSet, EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0) =>
             if (String.eqb tbl tbl0 && String.eqb id_tag id_tag0)%bool
             then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
             else e
-        | LikeBag, EBagOf (EAccess (ELoc tbl0) id_tag0) =>
+        | LikeBag, EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0) =>
             if (String.eqb tbl tbl0 && String.eqb id_tag id_tag0)%bool
             then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
             else e
@@ -138,6 +138,7 @@ Section WithHole.
         all: rewrite Bool.andb_true_iff in *; intuition idtac;
              rewrite eqb_eq in *; subst;
              repeat invert_type_of_clear;
+             repeat invert_type_of_op_clear;
              repeat rewrite_map_get_put_hyp;
              repeat (clear_refl; repeat do_injection2);
              repeat (rewrite_l_to_r; do_injection2);

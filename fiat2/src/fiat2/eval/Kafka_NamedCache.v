@@ -287,7 +287,7 @@ Section WithConcreteMaps.
 
   (* the rows with a given key, found by looking at all of them *)
   Definition key_scan (key_e : expr) : expr :=
-    flatmap_filter_bag (EBagOf the_list) "r"
+    flatmap_filter_bag (EUnop OBagOfList the_list) "r"
       (EBinop OEq (EAccess (EVar "r") "k") key_e) "r" None None.
 
   Definition build_by_key (src : expr) : expr :=
@@ -303,7 +303,7 @@ Section WithConcreteMaps.
     ERecord
       [("aux_tag",
          ERecord [("0", build_by_key empty_rows);
-                  ("1", sum_size (EBagOf empty_rows))])].
+                  ("1", sum_size (EUnop OBagOfList empty_rows))])].
 
   Lemma installs_the_map_and_the_total :
     install_of optimized = Some install_expected.

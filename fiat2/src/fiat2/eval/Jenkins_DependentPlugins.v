@@ -283,7 +283,7 @@ Section WithConcreteMaps.
     | EACFold _ a | EACIFold _ a => probes_e a
     | EAccess a _ => probes_e a
     | EOptMatch a b _ c => Nat.add (probes_e a) (Nat.add (probes_e b) (probes_e c))
-    | ESort _ a | EBagOf a | ESetOf a => probes_e a
+    | ESort _ a => probes_e a
     | ERecord l => fold_right (fun q acc => Nat.add (probes_e (snd q)) acc) O l
     | _ => O
     end.
@@ -336,7 +336,7 @@ Section WithConcreteMaps.
        | EAccess a _ => read_probes_e a
        | EOptMatch a b _ c =>
            Nat.add (read_probes_e a) (Nat.add (read_probes_e b) (read_probes_e c))
-       | ESort _ a | EBagOf a | ESetOf a => read_probes_e a
+       | ESort _ a => read_probes_e a
        | ERecord l =>
            fold_right (fun q acc => Nat.add (read_probes_e (snd q)) acc) O l
        | _ => O

@@ -164,7 +164,7 @@ Section WithConcreteMaps.
      over at most one row, so it IS that row's field. *)
   Definition q_project (attr : string) : expr :=
     EACFold AGSum
-      (EFlatmap LikeBag (EBagOf (ELoc "records")) "r"
+      (EFlatmap LikeBag (EUnop OBagOfList (ELoc "records")) "r"
          (EIf at_var
             (EBinop OBagInsert (EAtom (AEmptyBag None)) (EAccess (EVar "r") attr))
             (EAtom (AEmptyBag None)))).
@@ -173,7 +173,7 @@ Section WithConcreteMaps.
   Definition q_exists : expr :=
     EUnop ONot
       (EBinop OEq
-         (EFlatmap LikeBag (EBagOf (ELoc "records")) "r"
+         (EFlatmap LikeBag (EUnop OBagOfList (ELoc "records")) "r"
             (EIf at_var (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "r"))
                (EAtom (AEmptyBag None))))
          (EAtom (AEmptyBag None))).
@@ -181,7 +181,7 @@ Section WithConcreteMaps.
   (* size(): the whole table, counted.  This is the read that decides
      whether the list survives. *)
   Definition q_size : expr :=
-    EACFold AGCount (EBagOf (ELoc "records")).
+    EACFold AGCount (EUnop OBagOfList (ELoc "records")).
 
   (* remove(rec), and the first half of an update: drop the row at this key. *)
   Definition without_var : expr :=
@@ -368,7 +368,7 @@ Section WithConcreteMaps.
      term with a different attribute. *)
   Definition projection_scan (attr : string) : expr :=
     EACFold AGSum
-      (EFlatmap LikeBag (EBagOf (EAccess (ELoc "records") "id_tag")) "r"
+      (EFlatmap LikeBag (EUnop OBagOfList (EAccess (ELoc "records") "id_tag")) "r"
          (EIf (EBinop OEq (EAccess (EVar "r") "var") (EAccess (EVar "q") "v"))
             (EBinop OBagInsert (EAtom (AEmptyBag None))
                (EAccess (EVar "r") attr))

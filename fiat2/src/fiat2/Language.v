@@ -93,11 +93,13 @@ Inductive unop : Type :=
 (* The set form of a dictionary's values.
 
    The constructs that are generic in the collection come at every level the
-   rules need: AEmptyBag/AEmptySet, OBagInsert/OSetInsert, EBagOf/ESetOf,
+   rules need: AEmptyBag/AEmptySet, OBagInsert/OSetInsert, OBagOfList/OSetOfList,
    EFlatmap LikeBag/LikeSet, EACFold over a bag beside EACIFold over a set.
    ODictValues was the one such construct available at the bag level only, so
    an order-insensitive read served from a dictionary could not deliver a set. *)
-| OSetOfBag.
+| OSetOfBag
+| OBagOfList
+| OSetOfList.
 
 (* Binary operators *)
 Inductive binop : Type :=
@@ -157,10 +159,7 @@ Inductive expr : Type :=
 | ERecord (l : list (string * expr))
 | EAccess (r : expr) (s : string)
 | EOptMatch (e : expr) (e_none : expr) (x : string) (e_some : expr)
-| ESort (tag : collection_tag) (l : expr) (* by value order *)
-(* conversion to different collections *)
-| EBagOf (l : expr)
-| ESetOf (l : expr).
+| ESort (tag : collection_tag) (l : expr) (* by value order *).
 
 Section ExprIH.
   Context (P : expr -> Prop).
@@ -177,9 +176,7 @@ Section ExprIH.
     (f_record : forall l, Forall (fun p => P (snd p)) l -> P (ERecord l))
     (f_access : forall r s, P r -> P (EAccess r s))
     (f_optmatch : forall e e_none x e_some, P e -> P e_none -> P e_some -> P (EOptMatch e e_none x e_some))
-    (f_sort : forall tag l, P l -> P (ESort tag l))
-    (f_bagof : forall l, P l -> P (EBagOf l))
-    (f_setof : forall l, P l -> P (ESetOf l)).
+    (f_sort : forall tag l, P l -> P (ESort tag l)).
 
     Section __.
       Context (expr_IH : forall e, P e).
@@ -208,8 +205,6 @@ Section ExprIH.
       | EAccess r s => f_access r s (expr_IH r)
       | EOptMatch e e_none x e_some => f_optmatch e e_none x e_some (expr_IH e) (expr_IH e_none) (expr_IH e_some)
       | ESort tag l => f_sort tag l (expr_IH l)
-      | EBagOf l => f_bagof l (expr_IH l)
-      | ESetOf l => f_setof l (expr_IH l)
       end.
 End ExprIH.
 

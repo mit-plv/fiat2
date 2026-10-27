@@ -14,7 +14,7 @@ Section WithHole.
     Context (x : string).
 
     Definition to_idx : expr :=
-      EACIFold AGMin (flatmap_proj_set (ESetOf (EVar hole)) x (EAccess (EVar x) attr) None).
+      EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList (EVar hole)) x (EAccess (EVar x) attr) None).
 
     Definition is_tbl_ty (t : type) : bool :=
       match t with
@@ -134,7 +134,7 @@ Section WithHole.
           Forall (fun v => type_of_value v (TRecord tl)) l ->
           access_record tl attr = Success TInt ->
           interp_expr store env
-            (EACIFold AGMin (flatmap_proj_set (ESetOf e) x (EAccess (EVar x) attr) t))
+            (EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList e) x (EAccess (EVar x) attr) t))
           = match list_to_set (List.map proj_attr l) with
             | nil => VOption None
             | v :: _ => VOption (Some v)
@@ -167,7 +167,7 @@ Section WithHole.
 
           Definition min_to_agg_lookup_head (e : expr) :=
             match e with
-            | EACIFold AGMin (flatmap_proj_set (ESetOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _) =>
+            | EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _) =>
                 if all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1]); (id_tag, [id_tag0]); (x0, [x1])]
                 then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
                 else e
@@ -235,12 +235,12 @@ Section WithHole.
 
           Definition cons_to_min_head (e : expr) :=
             match e with
-            | EACIFold AGMin (flatmap_proj_set (ESetOf (EBinop OCons e1 e2)) x0 e3 t) =>
+            | EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList (EBinop OCons e1 e2)) x0 e3 t) =>
                 if (negb (y =? x0) && negb (free_immut_in y e2)
                    && negb (free_immut_in y e3))%bool
                 then
                 ELet (ELet e1 x0 e3) y
-                  (EOptMatch (EACIFold AGMin (flatmap_proj_set (ESetOf e2) x0 e3 t)) (EUnop OSome (EVar y))
+                  (EOptMatch (EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList e2) x0 e3 t)) (EUnop OSome (EVar y))
                      x0 (EIf (EBinop OLess (EVar y) (EVar x0)) (EUnop OSome (EVar y)) (EUnop OSome (EVar x0))))
                 else e
             | _ => e
@@ -347,7 +347,7 @@ Section WithHole.
             match e with
             | EACIFold AGMin
                 (flatmap_proj_set
-                   (ESetOf (flatmap_filter_list e' y
+                   (EUnop OSetOfList (flatmap_filter_list e' y
                               (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr1) k)) y1 t1 t2))
                    x0 (EAccess (EVar x1) attr0) t) =>
                 if (all_eqb [(attr, [attr0; attr1]); (x0, [x1]); (y, [y0; y1])] &&
@@ -356,12 +356,12 @@ Section WithHole.
                 then
                   EOptMatch
                     (EACIFold AGMin
-                       (flatmap_proj_set (ESetOf e') x0 (EAccess (EVar x0) attr) t))
+                       (flatmap_proj_set (EUnop OSetOfList e') x0 (EAccess (EVar x0) attr) t))
                     (EAtom (ANone (Some TInt))) m
                     (EIf (EBinop OEq (EVar m) k)
                        (EACIFold AGMin
                           (flatmap_proj_set
-                             (ESetOf (flatmap_filter_list e' y
+                             (EUnop OSetOfList (flatmap_filter_list e' y
                                         (EUnop ONot (EBinop OEq (EAccess (EVar y) attr) k)) y t1 t2))
                              x0 (EAccess (EVar x0) attr) t))
                        (EUnop OSome (EVar m)))

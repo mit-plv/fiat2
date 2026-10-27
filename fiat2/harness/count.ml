@@ -35,7 +35,7 @@
                   The linear primitives are OLength, ODictValues, OConcat,
                   ORange and the two aggregate folds.  Everything else is a
                   tree operation, whose cost is comparisons, or genuinely
-                  constant: EBagOf is free here because a bag is its
+                  constant: OBagOfList is free here because a bag is its
                   elements in any order, so a list already IS one.
 
      rows         the stored elements an operation ITERATES, counted once

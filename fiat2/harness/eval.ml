@@ -103,9 +103,16 @@ let interp_unop (o : unop) (v : value) : value =
      well-typed bag is a sorted dedup'd association list already; here a bag is
      an UNORDERED list (see value.ml), so the order the set needs has to be paid
      for -- one tree insert per entry, charged to cmps.  That is the same price
-     the source's own ESetOf pays on its survivors, so the coercion is not
+     the source's own OSetOfList pays on its survivors, so the coercion is not
      somewhere a pessimization could hide. *)
   | OSetOfBag, VBag b -> VSet (set_of_list b)
+  (* A coercion READS every row: bag_of_list and set_of_list walk the list, and
+     set_of_list inserts each element into a tree.  Counting these is what keeps
+     the row counter honest about the source programs, whose whole cost on a
+     membership test is the coercion -- eval/Jenkins_ItemDeletion's source does
+     nothing else, and would otherwise be reported as touching no rows at all. *)
+  | OBagOfList, VList l -> Count.visit (List.length l); VBag (bag_of_list l)
+  | OSetOfList, VList l -> Count.visit (List.length l); VSet (set_of_list l)
   | _, _ -> VUnit
 
 (* ---------- binary ---------- *)
@@ -298,19 +305,6 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
        | LikeBag, VBag b -> Count.visit (List.length b); VList (bag_canonical b)
        | LikeSet, VSet s -> Count.visit (VSet.cardinal s); VList (VSet.elements s)
        | _, _ -> VUnit)
-  (* A coercion READS every row: bag_of_list and set_of_list walk the list, and
-     set_of_list inserts each element into a tree.  Counting these is what keeps
-     the row counter honest about the source programs, whose whole cost on a
-     membership test is the coercion -- eval/Jenkins_ItemDeletion's source does
-     nothing else, and would otherwise be reported as touching no rows at all. *)
-  | EBagOf e ->
-      (match interp_expr store env e with
-       | VList l -> Count.visit (List.length l); VBag (bag_of_list l)
-       | _ -> VUnit)
-  | ESetOf e ->
-      (match interp_expr store env e with
-       | VList l -> Count.visit (List.length l); VSet (set_of_list l)
-       | _ -> VUnit)
 
 (* EFlatmap, one case per tag.
 

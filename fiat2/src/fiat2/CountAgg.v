@@ -22,7 +22,7 @@ Open Scope string_scope.
 Section WithHole.
   Context (hole : string).
 
-  Definition to_idx : expr := EACFold AGCount (EBagOf (EVar hole)).
+  Definition to_idx : expr := EACFold AGCount (EUnop OBagOfList (EVar hole)).
 
   Definition is_tbl_ty (t : type) : bool :=
     match t with
@@ -117,7 +117,7 @@ Section WithHole.
     (* the count of a list of rows *)
     Lemma interp_count_list : forall (store env : locals) e l,
         interp_expr store env e = VList l ->
-        interp_expr store env (EACFold AGCount (EBagOf e)) = VInt (Zcount l).
+        interp_expr store env (EACFold AGCount (EUnop OBagOfList e)) = VInt (Zcount l).
     Proof.
       intros * H_e.
       erewrite interp_count_bag; [ | rewrite interp_EBagOf, H_e; reflexivity ].
@@ -127,7 +127,7 @@ Section WithHole.
     (* the count of the rows a predicate keeps *)
     Lemma interp_count_filter_bag : forall (store env : locals) e l y p t1 t2,
         interp_expr store env e = VList l ->
-        interp_expr store env (EACFold AGCount (flatmap_filter_bag (EBagOf e) y p y t1 t2))
+        interp_expr store env (EACFold AGCount (flatmap_filter_bag (EUnop OBagOfList e) y p y t1 t2))
         = VInt (Zcount (filter (fun v => match interp_expr store (map.put env y v) p with
                                          | VBool b => b
                                          | _ => false
@@ -159,7 +159,7 @@ Section WithHole.
         (* the whole-table count is the member itself *)
         Definition count_to_agg_lookup_head (e : expr) :=
           match e with
-          | EACFold AGCount (EBagOf (EAccess (ELoc tbl0) id_tag0)) =>
+          | EACFold AGCount (EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0)) =>
               if all_eqb [(tbl, [tbl0]); (id_tag, [id_tag0])]
               then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
               else e
@@ -225,8 +225,8 @@ Section WithHole.
         (* an insert adds one, and never looks at the row it adds *)
         Definition cons_to_incr_head (e : expr) :=
           match e with
-          | EACFold AGCount (EBagOf (EBinop OCons e1 e2)) =>
-              EBinop OPlus (EAtom (AInt 1)) (EACFold AGCount (EBagOf e2))
+          | EACFold AGCount (EUnop OBagOfList (EBinop OCons e1 e2)) =>
+              EBinop OPlus (EAtom (AInt 1)) (EACFold AGCount (EUnop OBagOfList e2))
           | _ => e
           end.
 
@@ -273,13 +273,13 @@ Section WithHole.
         Definition filter_neq_to_count_sub_head (e : expr) :=
           match e with
           | EACFold AGCount
-              (EBagOf (flatmap_filter_list e' y
+              (EUnop OBagOfList (flatmap_filter_list e' y
                          (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr0) k)) y1 t1 t2)) =>
               if all_eqb [(y, [y0; y1])]
               then EBinop OMinus
-                     (EACFold AGCount (EBagOf e'))
+                     (EACFold AGCount (EUnop OBagOfList e'))
                      (EACFold AGCount
-                        (flatmap_filter_bag (EBagOf e') y
+                        (flatmap_filter_bag (EUnop OBagOfList e') y
                            (EBinop OEq (EAccess (EVar y) attr0) k) y None None))
               else e
           | _ => e
@@ -299,8 +299,13 @@ Section WithHole.
           econstructor.
           1: constructor.
           (* the count over the whole table *)
-          1:{ repeat (econstructor; eauto);
-              repeat rewrite_map_get_put_goal; auto; congruence. }
+          1:{ econstructor; [ eassumption | ].
+              econstructor; [ constructor | ].
+              lazymatch goal with
+                H : Some ?a = Some ?b |- type_of _ _ _ (TList ?b) =>
+                  injection H as H; subst
+              end.
+              eassumption. }
           (* the count over the rows that carry the key; the bag's element type
              comes from the table, so the empty-bag annotations are determined *)
           1:{ econstructor; [ constructor | ].

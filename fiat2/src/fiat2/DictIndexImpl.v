@@ -673,7 +673,7 @@ Section WithHole.
                match (lookup idx e') with none => emptybag | some b => b *)
             match e with
             | flatmap_filter_bag
-                (EBagOf (EAccess (ELoc tbl0) id_tag0))
+                (EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0))
                 x0 (EBinop OEq (EAccess (EVar x1) attr0) e') x2 _ _ =>
                 if (all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1; x2]); (id_tag, [id_tag0])] &&
                       negb (free_immut_in x0 e'))%bool
@@ -763,7 +763,10 @@ Section WithHole.
                   eauto with fiat2_hints.
                 1: constructor; eauto with fiat2_hints.
                 1:{ constructor; auto. rewrite_l_to_r; do_injection.
-                    unfold get_attr_type in *. rewrite_l_to_r. auto. } }
+                    unfold get_attr_type in *. rewrite_l_to_r.
+                    lazymatch goal with
+                      H: type_of_binop OEq _ _ _ |- _ => inversion H; subst
+                    end. auto. } }
             invert_type_of_value_clear.
             1:{ lazymatch goal with
                 H: _ = dict_lookup _ _ |- _ =>
@@ -842,7 +845,7 @@ Section WithHole.
                --> the concatenated buckets of range(idx, lo, hi) *)
             match e with
             | flatmap_filter_bag
-                (EBagOf (EAccess (ELoc tbl0) id_tag0)) x0 p x3 _ _ =>
+                (EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0)) x0 p x3 _ _ =>
                 match range_bounds x0 p with
                 | Some (lo, hi) =>
                     (* The kind is one of the rule's own guards.  ODictRange is the
@@ -1099,7 +1102,7 @@ Section WithHole.
             lazymatch goal with H: VDict _ = interp_expr _ _ to_idx |- _ =>
               erewrite fiat2_gallina_to_idx in H; eauto end.
             (* the right side filters the table's rows *)
-            cbn [interp_expr]. unfold get_local. rewrite E. unfold record_proj. rewrite E1.
+            cbn [interp_expr interp_unop]. unfold get_local. rewrite E. unfold record_proj. rewrite E1.
             rewrite list_to_bag_filter_list_to_bag.
             f_equal. apply Permutation_list_to_bag_eq, Permutation_sym.
             erewrite In_filter_ext; [ apply gallina_to_idx_range | ].

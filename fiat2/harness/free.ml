@@ -18,7 +18,7 @@ let rec expr (bound : S.t) (e : expr) : S.t * S.t =
   | ELoc x -> (S.empty, S.singleton x)
   | EAtom _ -> none
   | EUnop (_, a) | EACFold (_, a) | EACIFold (_, a) | EAccess (a, _)
-  | ESort (_, a) | EBagOf a | ESetOf a -> expr bound a
+  | ESort (_, a) -> expr bound a
   | EBinop (_, a, b) -> union2 (expr bound a) (expr bound b)
   | ETernop (_, a, b, c) | EIf (a, b, c) ->
       union2 (expr bound a) (union2 (expr bound b) (expr bound c))

@@ -165,7 +165,9 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyOIntToString : type_of_unop OStringOfInt TInt TString
 | TyOSome t : type_of_unop OSome t (TOption t)
 | TyODictValues dk kt vt : type_of_unop ODictValues (TDict dk kt vt) (TBag vt)
-| TyOSetOfBag t : type_of_unop OSetOfBag (TBag t) (TSet t).
+| TyOSetOfBag t : type_of_unop OSetOfBag (TBag t) (TSet t)
+| TyOBagOfList t : type_of_unop OBagOfList (TList t) (TBag t)
+| TyOSetOfList t : type_of_unop OSetOfList (TList t) (TSet t).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOPlus : type_of_binop OPlus TInt TInt TInt
@@ -277,11 +279,7 @@ Section WithMap.
   | TyESort_Bag l t : type_of Gstore Genv l (TBag t) ->
                   type_of Gstore Genv (ESort LikeBag l) (TList t)
   | TyESort_Set l t : type_of Gstore Genv l (TSet t) ->
-                  type_of Gstore Genv (ESort LikeSet l) (TList t)
-  | TyEBagOf e t : type_of Gstore Genv e (TList t) ->
-                   type_of Gstore Genv (EBagOf e) (TBag t)
-  | TyESetOf e t : type_of Gstore Genv e (TList t) ->
-                   type_of Gstore Genv (ESetOf e) (TSet t).
+                  type_of Gstore Genv (ESort LikeSet l) (TList t).
 
   Inductive well_typed (Gstore Genv : tenv) : command -> Prop :=
   | WTCSkip : well_typed Gstore Genv CSkip
@@ -369,10 +367,6 @@ Section WithMap.
                                           P Genv (ESort LikeBag l) (TList t)).
     Hypothesis (f_sort_set : forall Genv l t, type_of Gstore Genv l (TSet t) -> P Genv l (TSet t) ->
                                           P Genv (ESort LikeSet l) (TList t)).
-    Hypothesis (f_bagof : forall Genv e t, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
-                                           P Genv (EBagOf e) (TBag t)).
-    Hypothesis (f_setof : forall Genv e t, type_of Gstore Genv e (TList t) -> P Genv e (TList t) ->
-                                           P Genv (ESetOf e) (TSet t)).
 
     Section __.
       Context (type_of_IH : forall Genv e t, type_of Gstore Genv e t -> P Genv e t).
@@ -408,8 +402,6 @@ Section WithMap.
       | TyESort_List _ _ l t Hl => f_sort_list Genv l t Hl (type_of_IH Genv l (TList t) Hl)
       | TyESort_Bag _ _ l t Hl => f_sort_bag Genv l t Hl (type_of_IH Genv l (TBag t) Hl)
       | TyESort_Set _ _ l t Hl => f_sort_set Genv l t Hl (type_of_IH Genv l (TSet t) Hl)
-      | TyEBagOf _ _ e t He => f_bagof Genv e t He (type_of_IH Genv e (TList t) He)
-      | TyESetOf _ _ e t He => f_setof Genv e t He (type_of_IH Genv e (TList t) He)
       end.
     End TypeOfIH.
 
@@ -650,6 +642,16 @@ Section WithMap.
                                                 else error:(e "has type" (TSet vt) "but expected" expected)
                                    | _ => error:(e1 "has type" t "but expected a bag")
                                    end
+                    | OBagOfList => match expected with
+                                    | TBag t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;;
+                                                Success (EUnop o e1')
+                                    | t => error:(e "is a bag but expected" t)
+                                    end
+                    | OSetOfList => match expected with
+                                    | TSet t => e1' <- analyze_expr Gstore Genv (TList t) e1 ;;
+                                                Success (EUnop o e1')
+                                    | t => error:(e "is a set but expected" t)
+                                    end
                     | o => let '(t1, t2) := unop_types o in
                            if type_eqb expected t2
                            then e1' <- analyze_expr Gstore Genv t1 e1 ;;
@@ -885,16 +887,6 @@ Section WithMap.
                 end
             | _ => error:(e "is a list but expected" expected)
             end
-    | EBagOf l => match expected with
-                  | TBag t => l' <- analyze_expr Gstore Genv (TList t) l ;;
-                              Success (EBagOf l')
-                  | t => error:(e "is a bag but expected" t)
-                  end
-    | ESetOf l => match expected with
-                  | TSet t => l' <- analyze_expr Gstore Genv (TList t) l ;;
-                              Success (ESetOf l')
-                  | t => error:(e "is a set but expected" t)
-                  end
     end
   with synthesize_expr (Gstore Genv : tenv) (e : expr) : result (type * expr) :=
          match e with
@@ -924,6 +916,16 @@ Section WithMap.
                                        | TBag vt => Success (TSet vt, EUnop o e')
                                        | _ => error:(e "has type" t "but expected a bag")
                                        end
+                        | OBagOfList => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                                        match t with
+                                        | TList t1 => Success (TBag t1, EUnop o e')
+                                        | t => error:(e "has type" t "but expected a list")
+                                        end
+                        | OSetOfList => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                                        match t with
+                                        | TList t1 => Success (TSet t1, EUnop o e')
+                                        | t => error:(e "has type" t "but expected a list")
+                                        end
                         | o => let '(t1, t2) := unop_types o in
                                e' <- analyze_expr Gstore Genv t1 e ;; Success (t2, EUnop o e')
                         end
@@ -1135,16 +1137,6 @@ Section WithMap.
                  | t => error:(l "has type" t "but expected a set")
                  end
              end
-         | EBagOf l => '(t1, l') <- synthesize_expr Gstore Genv l ;;
-                       match t1 with
-                       | TList t1 => Success (TBag t1, EBagOf l')
-                       | t => error:(l "has type" t "but expected a list")
-                       end
-         | ESetOf l => '(t1, l') <- synthesize_expr Gstore Genv l ;;
-                       match t1 with
-                       | TList t1 => Success (TSet t1, ESetOf l')
-                       | t => error:(l "has type" t "but expected a list")
-                       end
          end.
 
   Fixpoint typecheck (Gstore Genv : tenv) (c : command) : result command :=

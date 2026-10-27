@@ -7,7 +7,7 @@ Import ListNotations.
 (* ====================================================================
    Taking a collection coercion back out of a filter.
 
-   push_down_collection drives EBagOf and ESetOf inward, and that is what
+   push_down_collection drives OBagOfList and OSetOfList inward, and that is what
    makes the index rules applicable at all: they are stated at bag and at
    set level, so a read the collection phase left at LIST level demands no
    index, and the coercion the push-down leaves on a table's read IS the
@@ -15,9 +15,9 @@ Import ListNotations.
    indexes, so that is not what this file does.
 
    But a demand no index answers is a cost, and through a FILTER it is a
-   cost that grows with the table.  The source writes ESetOf (filter p
+   cost that grows with the table.  The source writes OSetOfList (filter p
    tbl), which coerces the rows the filter KEPT; the push-down rewrites it
-   to filter_set p (ESetOf tbl), which coerces the rows the filter READS.
+   to filter_set p (OSetOfList tbl), which coerces the rows the filter READS.
    Where an index absorbs the inner coercion -- RepIdx turns it into a
    field read -- the move pays.  Where nothing absorbs it, the program
    builds a set of the whole table on every evaluation and discards most of
@@ -32,7 +32,7 @@ Import ListNotations.
    the rule cannot disagree with the index phase about what happened.
 
    Soundness is not new reasoning.  set_of_sem already proves that set_of
-   agrees with ESetOf on every list-typed expression, and the term matched
+   agrees with OSetOfList on every list-typed expression, and the term matched
    below IS set_of of the term emitted, so the proof reads that theorem
    from right to left.
    ==================================================================== *)
@@ -49,7 +49,7 @@ Definition set_of_stops (e : expr) : bool :=
   | _ => true
   end.
 
-Lemma set_of_stops_eq : forall e, set_of_stops e = true -> set_of e = ESetOf e.
+Lemma set_of_stops_eq : forall e, set_of_stops e = true -> set_of e = EUnop OSetOfList e.
 Proof.
   intros e H; destruct e; cbn in H |- *; try reflexivity.
   1: destruct a; cbn in H |- *; try reflexivity; discriminate.
@@ -65,9 +65,9 @@ Qed.
    AEmptySet it replaces it with. *)
 Definition unpush_set_filter_head (e : expr) : expr :=
   match e with
-  | flatmap_filter_set (ESetOf src) x p y t1 t2 =>
+  | flatmap_filter_set (EUnop OSetOfList src) x p y t1 t2 =>
       if (String.eqb x y && set_of_stops src)%bool
-      then ESetOf (flatmap_filter_list src x p y t1 t2)
+      then EUnop OSetOfList (flatmap_filter_list src x p y t1 t2)
       else e
   | _ => e
   end.
@@ -77,7 +77,7 @@ Definition unpush_set_filter_head (e : expr) : expr :=
 Lemma unpush_is_set_of : forall src x p t1 t2,
     set_of_stops src = true ->
     set_of (flatmap_filter_list src x p x t1 t2)
-    = flatmap_filter_set (ESetOf src) x p x t1 t2.
+    = flatmap_filter_set (EUnop OSetOfList src) x p x t1 t2.
 Proof.
   intros * H. cbn [set_of]. rewrite set_of_stops_eq by assumption. reflexivity.
 Qed.
@@ -97,7 +97,7 @@ Section WithMap.
      rule for the list level asks for exactly what the atom rule for the set
      level supplied. *)
   Lemma unpush_inner_ty : forall (Gstore Genv : tenv) src x p t1 t2 t,
-      type_of Gstore Genv (flatmap_filter_set (ESetOf src) x p x t1 t2) (TSet t) ->
+      type_of Gstore Genv (flatmap_filter_set (EUnop OSetOfList src) x p x t1 t2) (TSet t) ->
       type_of Gstore Genv (flatmap_filter_list src x p x t1 t2) (TList t).
   Proof.
     intros * H.
@@ -125,7 +125,7 @@ Section WithMap.
     rewrite eqb_eq in *; subst.
     assert (H_shape : exists t', t = TSet t') by (inversion H_ty; eauto).
     destruct H_shape as [t' ->].
-    constructor. apply unpush_inner_ty. assumption.
+    econstructor; [ constructor | ]. apply unpush_inner_ty. assumption.
   Qed.
 
   Lemma unpush_set_filter_head_preserve_sem :

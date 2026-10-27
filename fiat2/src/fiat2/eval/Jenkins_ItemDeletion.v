@@ -130,7 +130,7 @@ Section WithConcreteMaps.
      PROGRAMMER's -- it is not something the collection phase inferred -- and
      with no index it is paid on every evaluation. *)
   Definition is_registered : expr :=
-    EBinop OSetMem (ESetOf (ELoc "registrations"))
+    EBinop OSetMem (EUnop OSetOfList (ELoc "registrations"))
       (EAccess (EVar "q") "item").
 
   (* registrations.remove(item): the row leaves, identified by nothing but
@@ -233,7 +233,7 @@ Section WithConcreteMaps.
      ON EVERY EVALUATION.  That is the cost the next configuration moves. *)
   Lemma scan_coerces_the_table :
     read_of optimized_scan
-    = Some (EBinop OSetMem (ESetOf the_list) the_item).
+    = Some (EBinop OSetMem (EUnop OSetOfList the_list) the_item).
   Proof. vm_compute; reflexivity. Qed.
 
   Lemma scan_insert_is_a_cons :

@@ -66,7 +66,7 @@ Section WithConcreteMaps.
       (CIf (EBinop OAnd
               (ELet (EVar "u") "_pk_row"
                  (EBinop OEq
-                    (EFlatmap LikeBag (EBagOf (ELoc "users")) "_pk_scan"
+                    (EFlatmap LikeBag (EUnop OBagOfList (ELoc "users")) "_pk_scan"
                        (EIf (EBinop OEq (EAccess (EVar "_pk_scan") "id")
                                (EAccess (EVar "_pk_row") "id"))
                           (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "_pk_scan"))
@@ -245,7 +245,7 @@ Section WithConcreteMaps.
     SLetConstrained "users" prow_ty ds
       (SSeq (SAssign "users" (EBinop OCons (EVar "u") (ELoc "users")) SSkip)
          (SAssign "out"
-            (EBagOf (flatmap_filter_list (ELoc "users") "r"
+            (EUnop OBagOfList (flatmap_filter_list (ELoc "users") "r"
                        (EBinop OEq (EAccess (EVar "r") "id") (EVar "k")) "r"
                        (Some prow_ty) (Some prow_ty)))
             SSkip)).
@@ -345,7 +345,7 @@ Section WithConcreteMaps.
 
   (* the set of the table's keys, which is what SetAgg maintains *)
   Definition mkeys (tbl : expr) : expr :=
-    flatmap_proj_set (ESetOf tbl) "x" (EAccess (EVar "x") "id") None.
+    flatmap_proj_set (EUnop OSetOfList tbl) "x" (EAccess (EVar "x") "id") None.
 
   (* The list is erased here too, though no declared index is involved: what
      made it dead is that the set index answers the only question asked. *)
@@ -660,7 +660,7 @@ Section WithConcreteMaps.
     SLetConstrained "users" prow_ty ds
       (SSeq (SAssign "users" (EBinop OCons (EVar "u") (ELoc "users")) SSkip)
          (SAssign "out"
-            (ESetOf (flatmap_filter_list (ELoc "users") "r"
+            (EUnop OSetOfList (flatmap_filter_list (ELoc "users") "r"
                        (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
                        (Some prow_ty) (Some prow_ty)))
             SSkip)).
@@ -817,14 +817,14 @@ Section WithConcreteMaps.
   Proof. do 4 eexists; reflexivity. Qed.
 
   (* And the member costs one insert to maintain.  No rule of its own was
-     written for this: the installation stored ESetOf of the extended table,
-     and push_down_collection turned that into an insert over ESetOf of the
+     written for this: the installation stored OSetOfList of the extended table,
+     and push_down_collection turned that into an insert over OSetOfList of the
      old one, which the use rule then read off the record. *)
   Lemma vset_member_is_incremental : exists i1 i2 w1 w2 grd out_e,
       voptimized (EVar "p") [DUnique "id"]
       = CLetMut
           (ERecord [("aux_tag",
-                      ERecord [("0", ESetOf (EAtom (ANil (Some prow_ty))));
+                      ERecord [("0", EUnop OSetOfList (EAtom (ANil (Some prow_ty))));
                                ("1", i1); ("2", i2)])])
           "users"
           (CSeq

@@ -279,8 +279,8 @@ Definition whole_collection_binop (o : binop) : bool :=
 
 Definition coerced_read (tbl : string) (ctag : collection_tag) (e : expr) : bool :=
   match ctag, e with
-  | LikeSet, ESetOf (ELoc t) => String.eqb tbl t
-  | LikeBag, EBagOf (ELoc t) => String.eqb tbl t
+  | LikeSet, EUnop OSetOfList (ELoc t) => String.eqb tbl t
+  | LikeBag, EUnop OBagOfList (ELoc t) => String.eqb tbl t
   | _, _ => false
   end.
 
@@ -311,12 +311,12 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
   match e with
   (* a filter over a bag read: eq_filter_to_lookup, unique_lookup,
      range_filter_to_dict_range *)
-  | flatmap_filter_bag (EBagOf (ELoc t)) x p y _ _ =>
+  | flatmap_filter_bag (EUnop OBagOfList (ELoc t)) x p y _ _ =>
       if (String.eqb tbl t && String.eqb x y)%bool
       then opt_list (pred_demand x p) ++ conj_evidence x p ++ flag_evidence x p
       else []
   (* a filter over a set read: trigram_lookup_guarded *)
-  | flatmap_filter_set (ESetOf (ELoc t)) x p y _ _ =>
+  | flatmap_filter_set (EUnop OSetOfList (ELoc t)) x p y _ _ =>
       if (String.eqb tbl t && String.eqb x y)%bool
       then opt_list (pred_demand x p) ++ conj_evidence x p ++ flag_evidence x p
       else []
@@ -325,21 +325,21 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
       if (String.eqb tbl t && String.eqb x y)%bool
       then conj_evidence x p ++ flag_evidence x p else []
   (* the set of an attribute's values: set_to_lookup *)
-  | flatmap_proj_set (ESetOf (ELoc t)) x (EAccess (EVar x1) a) _ =>
+  | flatmap_proj_set (EUnop OSetOfList (ELoc t)) x (EAccess (EVar x1) a) _ =>
       if (String.eqb tbl t && String.eqb x x1)%bool then [DSetOf a] else []
   (* sum_to_agg_lookup *)
-  | EACFold AGSum (flatmap_proj_bag (EBagOf (ELoc t)) x (EAccess (EVar x1) a) _) =>
+  | EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList (ELoc t)) x (EAccess (EVar x1) a) _) =>
       if (String.eqb tbl t && String.eqb x x1)%bool then [DSum a] else []
   (* min_to_agg_lookup *)
-  | EACIFold AGMin (flatmap_proj_set (ESetOf (ELoc t)) x (EAccess (EVar x1) a) _) =>
+  | EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList (ELoc t)) x (EAccess (EVar x1) a) _) =>
       if (String.eqb tbl t && String.eqb x x1)%bool then [DMin a] else []
   (* count_to_agg_lookup: the whole table, counted *)
-  | EACFold AGCount (EBagOf (ELoc t)) =>
+  | EACFold AGCount (EUnop OBagOfList (ELoc t)) =>
       if String.eqb tbl t then [DCount] else []
   (* the emptiness test of an equality filter, which FilterEmptyToSetMem
      turns into a membership test in the set of the keys (ExistsTransf) *)
   | EBinop OEq
-      (flatmap_filter_bag (EBagOf (ELoc t)) x (EBinop OEq (EAccess (EVar x1) _) k) y _ _)
+      (flatmap_filter_bag (EUnop OBagOfList (ELoc t)) x (EBinop OEq (EAccess (EVar x1) _) k) y _ _)
       (EAtom (AEmptyBag _)) =>
       if (String.eqb tbl t && String.eqb x x1 && String.eqb x y
           && negb (free_immut_in x k))%bool
@@ -371,7 +371,7 @@ Definition node_demands (tbl : string) (e : expr) : list demand :=
      a projection of it: the shape SplitFilterProj exists for.  The guard is
      the same one the rewrite uses -- a body that IS the bound row is already
      a filter and needs no split. *)
-  | EFlatmap LikeBag (EBagOf (ELoc t)) x
+  | EFlatmap LikeBag (EUnop OBagOfList (ELoc t)) x
       (EIf (EBinop OEq (EAccess (EVar x1) _) k)
          (EBinop OBagInsert (EAtom (AEmptyBag _)) r) (EAtom (AEmptyBag _))) =>
       if (String.eqb tbl t && String.eqb x x1
@@ -396,10 +396,10 @@ Definition write_demands (tbl : string) (e : expr) : list demand :=
   | flatmap_filter_list (ELoc t) x p y _ _ =>
       if (String.eqb tbl t && String.eqb x y)%bool
       then opt_list (write_pred_demand x p) else []
-  | flatmap_filter_bag (EBagOf (ELoc t)) x p y _ _ =>
+  | flatmap_filter_bag (EUnop OBagOfList (ELoc t)) x p y _ _ =>
       if (String.eqb tbl t && String.eqb x y)%bool
       then opt_list (write_pred_demand x p) else []
-  | flatmap_filter_set (ESetOf (ELoc t)) x p y _ _ =>
+  | flatmap_filter_set (EUnop OSetOfList (ELoc t)) x p y _ _ =>
       if (String.eqb tbl t && String.eqb x y)%bool
       then opt_list (write_pred_demand x p) else []
   | _ => []
@@ -425,7 +425,7 @@ Fixpoint collect_expr (tbl : string) (e : expr) : list demand :=
     (* The argument of a cached minimum IS the set-of-attribute read, and it
        is the minimum's input rather than a second reader of that set.
        Descending would ask for a set index the program never reads. *)
-    | EACIFold AGMin (flatmap_proj_set (ESetOf (ELoc _)) _ (EAccess (EVar _) _) _) => []
+    | EACIFold AGMin (flatmap_proj_set (EUnop OSetOfList (ELoc _)) _ (EAccess (EVar _) _) _) => []
     | EACIFold _ e1 => collect_expr tbl e1
     | ERecord l =>
         (fix go (l : list (string * expr)) : list demand :=
@@ -437,8 +437,6 @@ Fixpoint collect_expr (tbl : string) (e : expr) : list demand :=
     | EOptMatch e1 e2 _ e3 =>
         collect_expr tbl e1 ++ collect_expr tbl e2 ++ collect_expr tbl e3
     | ESort _ e1 => collect_expr tbl e1
-    | EBagOf e1 => collect_expr tbl e1
-    | ESetOf e1 => collect_expr tbl e1
     end.
 
 Fixpoint collect_command (tbl : string) (c : command) : list demand :=

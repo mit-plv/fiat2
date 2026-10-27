@@ -93,7 +93,7 @@ Section WithConcreteMaps.
      writes when the language offers no index. *)
   Definition lookup_by (attr : string) : expr :=
     EACFold AGCount
-      (EFlatmap LikeBag (EBagOf (ELoc "actions")) "a"
+      (EFlatmap LikeBag (EUnop OBagOfList (ELoc "actions")) "a"
          (EIf (EBinop OEq (EAccess (EVar "a") attr) (EAccess (EVar "q") "k"))
             (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "a"))
             (EAtom (AEmptyBag None)))).
@@ -116,7 +116,7 @@ Section WithConcreteMaps.
                   (report (lookup_by "alias"))
                   (* getRequiredActionProviderList(): the whole list, which is
                      why Keycloak keeps it beside both maps *)
-                  (report (EACFold AGCount (EBagOf (ELoc "actions")))))))).
+                  (report (EACFold AGCount (EUnop OBagOfList (ELoc "actions")))))))).
 
   Definition init_Gstore : ctenv :=
     map.put map.empty "outputs" (TList TString).
@@ -245,7 +245,7 @@ Section WithConcreteMaps.
   (* getRequiredActionProviderList: untouched, and the reason the list lives. *)
   Lemma list_read_is_the_list :
     read_list optimized
-    = Some (EACFold AGCount (EBagOf (EAccess (ELoc "actions") "id_tag"))).
+    = Some (EACFold AGCount (EUnop OBagOfList (EAccess (ELoc "actions") "id_tag"))).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ---- and the same program with the count maintained ---- *)

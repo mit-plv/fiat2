@@ -32,7 +32,7 @@ Import ListNotations.
    still inside, so the list-level rule claims it first.  The two rules
    overlap in intent and not in reach; the witness that needs the bag-level
    one is eval/Sat4j_LiteralStorage.v, whose five projection reads arrive at
-   bag level through an aggregate over `EBagOf`.
+   bag level through an aggregate over `OBagOfList`.
 
    So the limit worth stating about joins is NOT the filtering projection.
    It is the ORDER OF THE CONDITIONS, and Ex_Triangle is the witness: a
@@ -81,7 +81,7 @@ Section WithConcreteMaps.
      free to relax both levels to bags. *)
   Definition join_count : expr :=
     EACFold AGCount
-      (EBagOf
+      (EUnop OBagOfList
          (EFlatmap LikeList (EVar "orders_tbl") "o"
          (EFlatmap LikeList (ELoc "custs") "c"
             (EIf (EBinop OEq (EAccess (EVar "c") "cid") (EAccess (EVar "o") "cust"))
@@ -169,7 +169,7 @@ Section WithConcreteMaps.
      one probe the customers.  The inner collection is no longer the table. *)
   Definition join_expected : expr :=
     EACFold AGCount
-      (EFlatmap LikeBag (EBagOf (EVar "orders_tbl")) "o"
+      (EFlatmap LikeBag (EUnop OBagOfList (EVar "orders_tbl")) "o"
          (EFlatmap LikeBag (probe (EAccess (EVar "o") "cust")) "c"
             (EBinop OBagInsert (EAtom (AEmptyBag None))
                (ERecord [("oid", EAccess (EVar "o") "oid");

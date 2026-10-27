@@ -87,7 +87,7 @@ Section WithConcreteMaps.
      over the table's list. *)
   Definition range_scan : expr :=
     EACFold AGCount
-      (EFlatmap LikeBag (EBagOf (EAccess (ELoc "orders") "id_tag")) "o"
+      (EFlatmap LikeBag (EUnop OBagOfList (EAccess (ELoc "orders") "id_tag")) "o"
          (EIf
             (EBinop OAnd
                (EUnop ONot (EBinop OLess (EAccess (EVar "o") "price")

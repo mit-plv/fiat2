@@ -315,7 +315,7 @@ Section WithConcreteMaps.
       (EIf pred (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "r"))
          (EAtom (AEmptyBag None))).
 
-  Definition scan (pred : expr) : expr := refine (EBagOf the_list) pred.
+  Definition scan (pred : expr) : expr := refine (EUnop OBagOfList the_list) pred.
 
   (* the surviving rows, as a list -- the retention filter, unrewritten *)
   Definition survivors : expr :=

@@ -122,7 +122,7 @@ Section WithConcreteMaps.
   Definition has_function (k : expr) : expr :=
     EUnop ONot
       (EBinop OEq
-         (EFlatmap LikeBag (EBagOf (ELoc "functions")) "f"
+         (EFlatmap LikeBag (EUnop OBagOfList (ELoc "functions")) "f"
             (EIf (EBinop OEq (EAccess (EVar "f") "name") k)
                (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "f"))
                (EAtom (AEmptyBag None))))
@@ -195,7 +195,7 @@ Section WithConcreteMaps.
 
   (* the index: the set of the values `name` takes over the table *)
   Definition name_set (src : expr) : expr :=
-    flatmap_proj_set (ESetOf src) "x" (EAccess (EVar "x") "name") None.
+    flatmap_proj_set (EUnop OSetOfList src) "x" (EAccess (EVar "x") "name") None.
 
   Definition install_expected : expr :=
     ERecord [("aux_tag", ERecord [("0", name_set (EVar "functions_tbl"))])].

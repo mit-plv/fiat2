@@ -82,7 +82,7 @@ Section WithConcreteMaps.
      index rule matches a bare field access as a predicate. *)
   Definition flag_scan : expr :=
     EACFold AGCount
-      (EFlatmap LikeBag (EBagOf (EAccess (ELoc "users") "id_tag")) "u"
+      (EFlatmap LikeBag (EUnop OBagOfList (EAccess (ELoc "users") "id_tag")) "u"
          (EIf (EAccess (EVar "u") "is_active")
             (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "u"))
             (EAtom (AEmptyBag None)))).

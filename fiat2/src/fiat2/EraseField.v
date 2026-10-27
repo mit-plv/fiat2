@@ -127,7 +127,7 @@ Section WithField.
     | EAccess (ELoc x) s =>
         if String.eqb x tbl then negb (String.eqb s f) else true
     | EAccess r _ => expr_reads_no_field r
-    | EUnop _ e | EACFold _ e | EACIFold _ e | ESort _ e | EBagOf e | ESetOf e =>
+    | EUnop _ e | EACFold _ e | EACIFold _ e | ESort _ e =>
         expr_reads_no_field e
     | EBinop _ e1 e2 | ELet e1 _ e2 | EFlatmap _ e1 _ e2 =>
         (expr_reads_no_field e1 && expr_reads_no_field e2)%bool
@@ -869,7 +869,7 @@ Section WithMap.
         (ERecord (rm_field f l)) (TRecord (rm_field f tl)).
   Proof.
     intros * H_ty H_rd.
-    inversion H_ty as [| | | | | | | | | | | | | | l0 tl0 tl1 E_fst H_all2 H_perm H_nd H_ss | | | | | | | ];
+    inversion H_ty as [| | | | | | | | | | | | | | l0 tl0 tl1 E_fst H_all2 H_perm H_nd H_ss | | | | | ];
       subst.
     cbn [expr_reads_no_field] in H_rd; rewrite forallb_forall in H_rd.
     econstructor.
@@ -972,7 +972,7 @@ Section WithMap.
       type_of Gstore Genv (ERecord (rm_field f l)) (TRecord (rm_field f tl)).
   Proof.
     intros * H_ty.
-    inversion H_ty as [| | | | | | | | | | | | | | l0 tl0 tl1 E_fst H_all2 H_perm H_nd H_ss | | | | | | | ];
+    inversion H_ty as [| | | | | | | | | | | | | | l0 tl0 tl1 E_fst H_all2 H_perm H_nd H_ss | | | | | ];
       subst.
     econstructor.
     1:{ unfold rm_field.
@@ -1006,7 +1006,7 @@ Section WithMap.
     destruct E as [ [ E_init E_writes ] E_reads ].
     (* the initializer is a record literal, so the table's type is a record
        type and the erasure shortens both together *)
-    destruct e as [ | | | | | | | | | | | | l | | | | | ];
+    destruct e as [ | | | | | | | | | | | | l | | | ];
       cbn [erasable_record] in E_init; try discriminate.
     invert_well_typed.
     lazymatch goal with

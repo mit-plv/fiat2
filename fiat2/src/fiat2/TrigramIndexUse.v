@@ -646,7 +646,7 @@ Section WithIndexUse.
                     /\ g = EAtom (AString (String.substring 0 3 s)).
       Proof.
         unfold literal_trigram; intros p g H.
-        destruct p as [ | | a | | | | | | | | | | | | | | | ]; try discriminate.
+        destruct p as [ | | a | | | | | | | | | | | | | ]; try discriminate.
         destruct a as [ | | str | | | | | | ]; try discriminate.
         destruct (Nat.leb 3 (String.length str)) eqn:E_len; [ | discriminate ].
         injection H as H; subst.
@@ -662,7 +662,7 @@ Section WithIndexUse.
       Definition trigram_lookup_head (e : expr) : expr :=
         match e with
         | flatmap_filter_set
-            (ESetOf (EAccess (ELoc tbl0) id_tag0))
+            (EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0))
             x0 (EBinop OStrContains (EAccess (EVar x1) attr0) p) x2 _ _ =>
             if all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1; x2]);
                         (id_tag, [id_tag0])]
@@ -854,7 +854,7 @@ Section WithIndexUse.
       Definition trigram_lookup_guarded_head (e : expr) : expr :=
         match e with
         | flatmap_filter_set
-            (ESetOf (EAccess (ELoc tbl0) id_tag0))
+            (EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0))
             x0 (EBinop OStrContains (EAccess (EVar x1) attr0) p) x2 _ _ =>
             if (all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1; x2]);
                          (id_tag, [id_tag0])]

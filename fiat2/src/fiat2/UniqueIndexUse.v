@@ -432,7 +432,7 @@ Section WithIndexUse.
       Definition unique_lookup_head (e : expr) : expr :=
         match e with
         | flatmap_filter_bag
-            (EBagOf (EAccess (ELoc tbl0) id_tag0))
+            (EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0))
             x0 (EBinop OEq (EAccess (EVar x1) attr0) e') x2 _ _ =>
             if (all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1; x2]); (id_tag, [id_tag0])] &&
                   negb (free_immut_in x0 e'))%bool
@@ -505,7 +505,7 @@ Section WithIndexUse.
         repeat rewrite Bool.andb_true_iff in *; intuition idtac.
         rewrite Bool.negb_true_iff, eqb_eq in *; subst. repeat clear_refl.
         rewrite interp_flatmap_filter_bag.
-        cbn [interp_expr interp_binop interp_atom].
+        cbn [interp_expr interp_unop interp_binop interp_atom].
         unfold get_local, record_proj.
         repeat rewrite_l_to_r.
         rewrite list_to_bag_filter_list_to_bag.
@@ -580,7 +580,7 @@ Section WithIndexUse.
       Definition unique_scan_head (e : expr) : expr :=
         match e with
         | flatmap_filter_set
-            (ESetOf (EAccess (ELoc tbl0) id_tag0)) x0 p y0 t1 t2 =>
+            (EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0)) x0 p y0 t1 t2 =>
             if all_eqb [(tbl, [tbl0]); (id_tag, [id_tag0]); (x0, [y0])]
             then EUnop OSetOfBag
                    (flatmap_filter_bag

@@ -15,7 +15,7 @@ Section WithHole.
     Context (H_NoDup : is_NoDup_opaque [tup; acc; x]).
 
     Definition to_idx : expr :=
-      EACFold AGSum (flatmap_proj_bag (EBagOf (EVar hole)) x (EAccess (EVar x) attr) None).
+      EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList (EVar hole)) x (EAccess (EVar x) attr) None).
 
     Definition is_tbl_ty (t : type) : bool :=
       match t with
@@ -135,7 +135,7 @@ Section WithHole.
           Forall (fun v => type_of_value v (TRecord tl)) l ->
           access_record tl attr = Success TInt ->
           interp_expr store env
-            (EACFold AGSum (flatmap_proj_bag (EBagOf e) x (EAccess (EVar x) attr) t))
+            (EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList e) x (EAccess (EVar x) attr) t))
           = VInt (fold_right Z.add 0%Z (List.map (fun v => int_of (proj_attr v)) l)).
       Proof.
         intros * H_e H_l H_attr.
@@ -154,7 +154,7 @@ Section WithHole.
           access_record tl attr = Success TInt ->
           interp_expr store env
             (EACFold AGSum
-               (flatmap_proj_bag (flatmap_filter_bag (EBagOf e) y p y t1 t2)
+               (flatmap_proj_bag (flatmap_filter_bag (EUnop OBagOfList e) y p y t1 t2)
                   x (EAccess (EVar x) attr) t))
           = VInt (fold_right Z.add 0%Z
                     (List.map (fun v => int_of (proj_attr v))
@@ -203,7 +203,7 @@ Section WithHole.
 
           Definition sum_to_agg_lookup_head (e : expr) :=
             match e with
-            | EACFold AGSum (flatmap_proj_bag (EBagOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _) =>
+            | EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _) =>
                 if all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1]); (id_tag, [id_tag0]); (x0, [x1])]
                 then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
                 else e
@@ -270,8 +270,8 @@ Section WithHole.
         Section cons_to_add.
           Definition cons_to_add_head (e : expr) :=
             match e with
-            | EACFold AGSum (flatmap_proj_bag (EBagOf (EBinop OCons e1 e2)) x0 e3 t) =>
-                EBinop OPlus (ELet e1 x0 e3) (EACFold AGSum (flatmap_proj_bag (EBagOf e2) x0 e3 t))
+            | EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList (EBinop OCons e1 e2)) x0 e3 t) =>
+                EBinop OPlus (ELet e1 x0 e3) (EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList e2) x0 e3 t))
             | _ => e
             end.
 
@@ -326,16 +326,16 @@ Section WithHole.
             match e with
             | EACFold AGSum
                 (flatmap_proj_bag
-                   (EBagOf (flatmap_filter_list e' y
+                   (EUnop OBagOfList (flatmap_filter_list e' y
                               (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr1) k)) y1 t1 t2))
                    x0 (EAccess (EVar x1) attr0) t) =>
                 (* the delete's attribute need not be the one being summed *)
                 if all_eqb [(attr, [attr0]); (x0, [x1]); (y, [y0; y1])]
                 then EBinop OMinus
-                       (EACFold AGSum (flatmap_proj_bag (EBagOf e') x0 (EAccess (EVar x0) attr) t))
+                       (EACFold AGSum (flatmap_proj_bag (EUnop OBagOfList e') x0 (EAccess (EVar x0) attr) t))
                        (EACFold AGSum
                           (flatmap_proj_bag
-                             (flatmap_filter_bag (EBagOf e') y
+                             (flatmap_filter_bag (EUnop OBagOfList e') y
                                 (EBinop OEq (EAccess (EVar y) attr1) k) y None None)
                              x0 (EAccess (EVar x0) attr) t))
                 else e

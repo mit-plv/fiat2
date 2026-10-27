@@ -33,6 +33,17 @@ Section WithWord.
   Definition bag_to_list : list (value * nat) -> list value :=
     flat_map (fun p => repeat (fst p) (snd p)).
 
+  Fixpoint set_insert (v : value) (l : list value) :=
+    match l with
+    | nil => v :: nil
+    | v' :: l' => if value_ltb v v' then v :: v' :: l'
+                  else if value_eqb v v' then l
+                       else v' :: set_insert v l'
+    end.
+
+  Definition list_to_set : list value -> list value :=
+    fold_right set_insert nil.
+
   Definition interp_unop (o : unop) (v : value) : value :=
     match o with
     | ONeg => match v with
@@ -62,11 +73,19 @@ Section WithWord.
                      end
     (* No canonicalisation: a well-typed bag already carries each distinct value
        once, in value order, so its entries' values are the canonical set.
-       Contrast ESetOf, which coerces a list and has to run list_to_set. *)
+       Contrast OSetOfList, which coerces a list and has to run list_to_set. *)
     | OSetOfBag => match v with
                    | VBag l => VSet (List.map fst l)
                    | _ => VUnit
                    end
+    | OBagOfList => match v with
+                    | VList l => VBag (list_to_bag l)
+                    | _ => VUnit
+                    end
+    | OSetOfList => match v with
+                    | VList l => VSet (list_to_set l)
+                    | _ => VUnit
+                    end
     end.
 
   Definition apply_int_binop (o : Z -> Z -> Z) (a b : value) : value :=
@@ -106,17 +125,6 @@ Section WithWord.
     | nil => None
     | (k', v) :: l => if value_eqb k k' then Some v else dict_lookup k l
     end.
-
-  Fixpoint set_insert (v : value) (l : list value) :=
-    match l with
-    | nil => v :: nil
-    | v' :: l' => if value_ltb v v' then v :: v' :: l'
-                  else if value_eqb v v' then l
-                       else v' :: set_insert v l'
-    end.
-
-  Definition list_to_set : list value -> list value :=
-    fold_right set_insert nil.
 
   Definition set_mem (v : value) (l : list value) : bool :=
     existsb (value_eqb v) l.
@@ -387,14 +395,6 @@ Section WithWord.
               | _ => VUnit
               end
           end
-      | EBagOf l => match interp_expr store env l with
-                    | VList l => VBag (list_to_bag l)
-                    | _ => VUnit
-                    end
-      | ESetOf l => match interp_expr store env l with
-                    | VList l => VSet (list_to_set l)
-                    | _ => VUnit
-                    end
       end.
 
     Fixpoint interp_command (store env : locals) (c : command) : locals :=

@@ -42,7 +42,7 @@ Section WithWord.
 
     (* the rows of tbl carrying u's key, as a bag *)
     Definition key_filter (u : expr) : expr :=
-      flatmap_filter_bag (EBagOf (ELoc tbl)) x
+      flatmap_filter_bag (EUnop OBagOfList (ELoc tbl)) x
         (EBinop OEq (EAccess (EVar x) attr) (EAccess u attr)) x None None.
 
     (* ... and the test that there are none *)
@@ -65,7 +65,7 @@ Section WithWord.
           constructor. apply TyAEmptyBag'. exact H_rt. }
       econstructor.
       1:{ (* the table, read as a bag *)
-          constructor. constructor. exact H_tbl. }
+          econstructor; [ constructor | ]. constructor. exact H_tbl. }
       econstructor.
       1:{ (* the key test *)
           econstructor.
@@ -103,7 +103,7 @@ Section WithWord.
                      (bag_to_list (list_to_bag l)))).
     Proof.
       intros * H_fr E_tbl.
-      assert (E_bag : interp_expr store env (EBagOf (ELoc tbl)) = VBag (list_to_bag l)).
+      assert (E_bag : interp_expr store env (EUnop OBagOfList (ELoc tbl)) = VBag (list_to_bag l)).
       { cbn [interp_expr]; unfold get_local; rewrite E_tbl; reflexivity. }
       unfold key_filter.
       rewrite interp_flatmap_filter_bag, E_bag.

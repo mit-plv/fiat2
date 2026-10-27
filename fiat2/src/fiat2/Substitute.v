@@ -73,8 +73,6 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
       EOptMatch (substitute sub free_vars e1) (substitute sub free_vars e2) x'
         (substitute ((x, EVar x') :: sub) (x' :: free_vars) e3)
   | ESort tag e => ESort tag (substitute sub free_vars e)
-  | EBagOf l => EBagOf (substitute sub free_vars l)
-  | ESetOf l => ESetOf (substitute sub free_vars l)
   end.
 
 Definition get_free_vars {A} {tenv : map.map string A} : tenv -> list string :=
@@ -415,7 +413,6 @@ Fixpoint free_immuts_in (e : expr) : list string :=
   | EOptMatch e1 e2 x e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x (free_immuts_in e3)
   | ESort _ e => free_immuts_in e
-  | EBagOf l | ESetOf l => free_immuts_in l
   end.
 
 Ltac apply_in_app_or :=

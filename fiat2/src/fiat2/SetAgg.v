@@ -22,7 +22,7 @@ Section WithHole.
     Context (x : string).
 
     Definition to_idx : expr :=
-      flatmap_proj_set (ESetOf (EVar hole)) x (EAccess (EVar x) attr) None.
+      flatmap_proj_set (EUnop OSetOfList (EVar hole)) x (EAccess (EVar x) attr) None.
 
     (* Any attribute, not just an integer one.  A set needs equality and
        nothing else -- OSetInsert and OSetMem are both generic in the element
@@ -124,7 +124,7 @@ Section WithHole.
 
           Definition set_to_lookup_head (e : expr) :=
             match e with
-            | flatmap_proj_set (ESetOf (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _ =>
+            | flatmap_proj_set (EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0)) x0 (EAccess (EVar x1) attr0) _ =>
                 if all_eqb [(tbl, [tbl0]); (attr, [attr0]); (x0, [x1]); (id_tag, [id_tag0])]
                 then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
                 else e
@@ -198,10 +198,10 @@ Section WithHole.
 
           Definition cons_to_set_insert_head (e : expr) :=
             match e with
-            | flatmap_proj_set (ESetOf (EBinop OCons e1 e2)) x0 (EAccess (EVar x1) attr0) t =>
+            | flatmap_proj_set (EUnop OSetOfList (EBinop OCons e1 e2)) x0 (EAccess (EVar x1) attr0) t =>
                 if all_eqb [(attr, [attr0]); (x0, [x1])]
                 then EBinop OSetInsert
-                       (flatmap_proj_set (ESetOf e2) x0 (EAccess (EVar x0) attr0) t)
+                       (flatmap_proj_set (EUnop OSetOfList e2) x0 (EAccess (EVar x0) attr0) t)
                        (EAccess e1 attr)
                 else e
             | _ => e
@@ -247,13 +247,13 @@ Section WithHole.
           Definition filter_neq_to_set_diff_head (e : expr) :=
             match e with
             | flatmap_proj_set
-                (ESetOf (flatmap_filter_list e' y
+                (EUnop OSetOfList (flatmap_filter_list e' y
                            (EUnop ONot (EBinop OEq (EAccess (EVar y0) attr1) k)) y1 _ _))
                 x0 (EAccess (EVar x1) attr0) t =>
                 if (all_eqb [(attr, [attr0; attr1]); (x0, [x1]); (y, [y0; y1])] &&
                       negb (free_immut_in y k))%bool
                 then EBinop OSetDiff
-                       (flatmap_proj_set (ESetOf e') x0 (EAccess (EVar x0) attr0) t)
+                       (flatmap_proj_set (EUnop OSetOfList e') x0 (EAccess (EVar x0) attr0) t)
                        (EBinop OSetInsert (EAtom (AEmptySet None)) k)
                 else e
             | _ => e

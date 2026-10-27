@@ -5,19 +5,19 @@ Import ListNotations.
 
 Definition annotate_collection (e : expr) : expr :=
   match e with
-  | ESort LikeList l => ESort LikeBag (EBagOf l)
+  | ESort LikeList l => ESort LikeBag (EUnop OBagOfList l)
   | EFold l (EAtom (AInt 0)) v acc (EBinop OPlus (EVar v') (EVar acc')) =>
-      if (negb (v =? acc) && (v =? v') && (acc =? acc'))%bool then EACFold AGSum (EBagOf l)
+      if (negb (v =? acc) && (v =? v') && (acc =? acc'))%bool then EACFold AGSum (EUnop OBagOfList l)
       else e
-  | EUnop OLength l => EACFold AGCount (EBagOf l)
+  | EUnop OLength l => EACFold AGCount (EUnop OBagOfList l)
   | EFold l (EAtom (ANone _)) v0 acc0
       (EOptMatch (EVar acc1) (EUnop OSome (EVar v1))
          x0 (EIf (EBinop OLess (EVar v2) (EVar x1)) (EUnop OSome (EVar v3)) (EVar acc2))) =>
       if (all_neqb [v0; acc0; x0] && all_eqb [(v0, [v1; v2; v3]); (acc0, [acc1; acc2]); (x0, [x1])])%bool
-      then EACIFold AGMin (ESetOf l)
+      then EACIFold AGMin (EUnop OSetOfList l)
       else e
   | EBinop OEq e (EAtom (ANil t)) =>
-      EBinop OEq (EBagOf e) (EAtom (AEmptyBag t))
+      EBinop OEq (EUnop OBagOfList e) (EAtom (AEmptyBag t))
   | _ => e
   end.
 
@@ -27,7 +27,7 @@ Fixpoint bag_of (e : expr) : expr :=
   | EBinop OCons e1 e2 => EBinop OBagInsert (bag_of e2) e1
   | EIf e1 e2 e3 => EIf e1 (bag_of e2) (bag_of e3)
   | EAtom (ANil t) => EAtom (AEmptyBag t)
-  | _ => EBagOf e
+  | _ => EUnop OBagOfList e
   end.
 
 Fixpoint set_of (e : expr) : expr :=
@@ -36,13 +36,13 @@ Fixpoint set_of (e : expr) : expr :=
   | EBinop OCons e1 e2 => EBinop OSetInsert (set_of e2) e1
   | EIf e1 e2 e3 => EIf e1 (set_of e2) (set_of e3)
   | EAtom (ANil t) => EAtom (AEmptySet t)
-  | _ => ESetOf e
+  | _ => EUnop OSetOfList e
   end.
 
 Definition push_down_collection (e : expr) : expr :=
   match e with
-  | EBagOf e => bag_of e
-  | ESetOf e => set_of e
+  | EUnop OBagOfList e => bag_of e
+  | EUnop OSetOfList e => set_of e
   | _ => e
   end.
 
@@ -150,7 +150,7 @@ Section WithWord.
      A bag's values are the set of the same elements.
 
      Read at the level of expressions, map_fst_list_to_bag says that
-     OSetOfBag after EBagOf is ESetOf: the new operator does not add a way
+     OSetOfBag after OBagOfList is OSetOfList: the new operator does not add a way
      of building a set, it just lets an existing one start from a bag.
 
      No sortedness is needed, because the two insert functions agree
@@ -436,7 +436,7 @@ Section WithWord.
     Proof.
       induction e using expr_IH; cbn; intros.
       all: try now (invert_type_of; econstructor; eauto).
-      all: case_match; invert_type_of; try invert_type_of_op;
+      all: try case_match; invert_type_of; try invert_type_of_op;
                     repeat (econstructor; eauto).
       all: (* EAtom (ANil _) *)
         invert_type_of_atom; constructor; auto.
@@ -482,7 +482,7 @@ Section WithWord.
       (* the EIf case: its branches are the lists, so the source typing has to
          be taken apart before the branches' IHs apply *)
       all: try now (invert_type_of; econstructor; eauto).
-      all: case_match; invert_type_of; try invert_type_of_op;
+      all: try case_match; invert_type_of; try invert_type_of_op;
         repeat (econstructor; eauto).
       all: (* EAtom (ANil _) *)
         invert_type_of_atom; constructor; auto.
@@ -732,7 +732,9 @@ Section WithWord.
     Proof.
       destruct 1.
       all: try now (econstructor; eauto).
-      all: cbn; auto using bag_of_ty, set_of_ty.
+      destruct o; cbn; try now (econstructor; eauto).
+      1: invert_type_of_op; auto using bag_of_ty.
+      1: invert_type_of_op; auto using set_of_ty.
     Qed.
 
     Theorem push_down_collection_preserve_sem : forall e (Gstore Genv : tenv) t (store env : locals),
@@ -742,8 +744,9 @@ Section WithWord.
         interp_expr store env (push_down_collection e) = interp_expr store env e.
     Proof.
       destruct 1; auto; cbn; intros.
-      1: erewrite bag_of_sem; eauto.
-      1: erewrite set_of_sem; eauto.
+      destruct o; cbn; auto.
+      1: invert_type_of_op; erewrite bag_of_sem; eauto.
+      1: invert_type_of_op; erewrite set_of_sem; eauto.
     Qed.
 
     Theorem push_down_collection_sound : expr_transf_sound (locals:=locals) push_down_collection.

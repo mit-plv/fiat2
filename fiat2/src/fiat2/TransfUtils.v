@@ -72,8 +72,6 @@ Section fold_expr.
       | EAccess e x => EAccess (fold_expr e) x
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
       | ESort tag l => ESort tag (fold_expr l)
-      | EBagOf e => EBagOf (fold_expr e)
-      | ESetOf e => ESetOf (fold_expr e)
       end.
 End fold_expr.
 

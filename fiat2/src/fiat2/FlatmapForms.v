@@ -135,7 +135,7 @@ Section WithWord.
       reflexivity.
     Qed.
     Lemma interp_EBagOf : forall (store env : locals) e,
-        interp_expr store env (EBagOf e) =
+        interp_expr store env (EUnop OBagOfList e) =
           match interp_expr store env e with
           | VList l => VBag (list_to_bag l)
           | _ => VUnit
@@ -161,7 +161,7 @@ Section WithWord.
     Qed.
 
     Lemma interp_ESetOf : forall (store env : locals) e,
-        interp_expr store env (ESetOf e) =
+        interp_expr store env (EUnop OSetOfList e) =
           match interp_expr store env e with
           | VList l => VSet (list_to_set l)
           | _ => VUnit

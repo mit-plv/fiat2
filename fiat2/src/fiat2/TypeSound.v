@@ -97,7 +97,6 @@ Section WithWord.
       1: apply IHtype_of in H_env as H_wf; inversion H_wf; subst;
       eapply Forall_access_record; eauto.
       1,2: apply_type_of__type_wf_IH_hyp; constructor; invert_type_wf; auto.
-      1,2: constructor; apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
     Qed.
 
     Inductive type_of_value : value -> type -> Prop :=
@@ -505,16 +504,6 @@ Section WithWord.
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
                   try apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* EBagOf *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* ESetOf *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
     Qed.
 (*  Show Ltac Profile. *)
@@ -1449,15 +1438,24 @@ Section WithWord.
             end; intuition auto. }
         (* OSetOfBag: a canonical bag's values are already a canonical set, so
            every premise is either a premise of TyVBag verbatim or that premise
-           transported along fst *)
-        (* OSetOfBag: a canonical bag's values are already a canonical set, so
-           every premise is either a premise of TyVBag verbatim or that premise
            transported along fst.  Nothing is re-sorted and nothing is deduped. *)
         1:{ lazymatch goal with H: TBag _ = TBag _ |- _ => inversion H; subst end.
             cbn. constructor.
             - assumption.
             - apply StronglySorted_map_fst_bag; assumption.
             - rewrite Forall_map; assumption. }
+         1:{ lazymatch goal with H: TList _ = TList _ |- _ => inversion H; subst end.
+             cbn. constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
+             rewrite Forall_forall; intros ? H_in.
+             lazymatch goal with
+               H: Forall _ _ |- _ =>
+                 eapply incl_Forall in H; [ | apply list_to_bag_incl ]
+             end.
+             apply in_map with (f:=fst) in H_in.
+             apply_Forall_In. }
+         1:{ lazymatch goal with H: TList _ = TList _ |- _ => inversion H; subst end.
+             cbn. constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
+             eapply incl_Forall; [ apply list_to_set_incl | ]; auto. }
       - (* TyEBinop *)
         inversion H; subst.
         16:{ (* OLookup.  The kind occurs only in the premise, never in the
@@ -1661,20 +1659,6 @@ Section WithWord.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
       - (* TyESort_Set *)
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros. apply_Forall_In.
-      - (* TyEBagOf *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
-        rewrite Forall_forall; intros ? H_in.
-        lazymatch goal with
-          H: Forall _ _ |- _ =>
-            eapply incl_Forall in H; [ | apply list_to_bag_incl ]
-        end.
-        apply in_map with (f:=fst) in H_in.
-        apply_Forall_In.
-      - (* TyESetOf *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
-        eapply incl_Forall; [ apply list_to_set_incl | ]; auto.
     Qed.
 
     Ltac apply_cmd_tc_sound_IH :=

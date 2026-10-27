@@ -1965,7 +1965,6 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
   | EAccess e _ => free_immut_in x e
   | EOptMatch e e_none y e_some => free_immut_in x e || free_immut_in x e_none || (negb (String.eqb x y) && free_immut_in x e_some)
   | ESort _ l => free_immut_in x l
-  | EBagOf e | ESetOf e => free_immut_in x e
   end.
 
 Section WithMap.

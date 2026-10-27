@@ -58,8 +58,10 @@ Definition unop_py (o:unop) (e:string) : string :=
   | OSome => e
   | ODictValues => "list(" ++ e ++ ".values())"
   (* A bag is a list and a set is a list without duplicates, so this is the
-     dedup ESetOf below also emits *)
+     dedup OSetOfList below also emits *)
   | OSetOfBag => "(lambda l: [v for i, v in enumerate(l) if v not in l[:i]])(" ++ e ++ ")"
+  | OBagOfList => "list(" ++ e ++ ")"
+  | OSetOfList => "(lambda l: [v for i, v in enumerate(l) if v not in l[:i]])(" ++ e ++ ")"
   end.
 
 Definition binop_py (o:binop) (e1 e2:string) : string :=
@@ -156,12 +158,6 @@ Fixpoint expr_py (e:expr) : string :=
              " is None else (lambda " ++ x ++ ": " ++
              expr_py e_some ++ ")(" ++
              expr_py e ++ ")")
-  | EBagOf l =>
-      "list(" ++ expr_py l ++ ")"
-  | ESetOf l =>
-      (* Python can't have a set of dicts, so a set is a list with the
-         duplicates removed; the first occurrence of each element is kept *)
-      "(lambda l: [v for i, v in enumerate(l) if v not in l[:i]])(" ++ expr_py l ++ ")"
   | ESort _ l =>
       "sorted(" ++ expr_py l ++ ")"
   | EACFold AGSum e =>

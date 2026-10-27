@@ -208,7 +208,7 @@ Section WithConcreteMaps.
          (EAtom (AEmptyBag None))).
 
   Definition scan (pred : expr) : expr :=
-    refine (EBagOf (EAccess (ELoc "partitions") "id_tag")) pred.
+    refine (EUnop OBagOfList (EAccess (ELoc "partitions") "id_tag")) pred.
 
   Definition topic_key : expr := EAccess (EVar "q") "topic".
 

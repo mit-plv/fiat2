@@ -32,7 +32,7 @@ Import ListNotations.
    comprehension is already indexed today (Ex_Join.v pins that).  What was
    missing is the LikeBag case, and it is reachable: a read that the
    collection phase relaxes to bag level before any splitting -- an aggregate
-   over `EBagOf` of a filtering projection -- arrives in this shape and
+   over `OBagOfList` of a filtering projection -- arrives in this shape and
    `if_nil_into_flatmap_head`, matching LikeList and ANil, never sees it.
 
    This rule is narrower than its list-level sibling in one way, on purpose:

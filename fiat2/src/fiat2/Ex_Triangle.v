@@ -163,7 +163,7 @@ Section WithConcreteMaps.
     | EAccess a _ => probes_e a
     | EOptMatch a b _ c =>
         Nat.add (probes_e a) (Nat.add (probes_e b) (probes_e c))
-    | ESort _ a | EBagOf a | ESetOf a => probes_e a
+    | ESort _ a => probes_e a
     | ERecord l => fold_right (fun p acc => Nat.add (probes_e (snd p)) acc) O l
     | _ => O
     end.
