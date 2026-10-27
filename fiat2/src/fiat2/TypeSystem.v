@@ -162,7 +162,7 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyONot : type_of_unop ONot TBool TBool
 | TyOLength t : type_of_unop OLength (TList t) TInt
 | TyOLengthString : type_of_unop OLengthString TString TInt
-| TyOIntToString : type_of_unop OIntToString TInt TString
+| TyOIntToString : type_of_unop OStringOfInt TInt TString
 | TyOSome t : type_of_unop OSome t (TOption t)
 | TyODictValues dk kt vt : type_of_unop ODictValues (TDict dk kt vt) (TBag vt)
 | TyOSetOfBag t : type_of_unop OSetOfBag (TBag t) (TSet t).
@@ -556,7 +556,7 @@ Definition unop_types (o : unop) : (type * type) :=
   | ONeg => (TInt, TInt)
   | ONot => (TBool, TBool)
   | OLengthString => (TString, TInt)
-  | OIntToString => (TInt, TString)
+  | OStringOfInt => (TInt, TString)
   | _ => (TUnit, TUnit) (* unused *)
   end.
 

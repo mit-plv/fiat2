@@ -50,7 +50,7 @@ Definition prog :=
                 (CAssign "outputs"
                    (EBinop OCons
                       (EBinop OConcatString (EAtom (AString "Total: "))
-                         (EBinop OConcatString (EUnop OIntToString (EVar "total"))
+                         (EBinop OConcatString (EUnop OStringOfInt (EVar "total"))
                             (EAtom (AString "\n"))))
                       (ELoc "outputs"))))))).
 

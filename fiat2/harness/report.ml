@@ -45,7 +45,7 @@ let operators (c : command) : string list =
   let add s = acc := s :: !acc in
   let unop = function
     | ONeg -> "ONeg" | ONot -> "ONot" | OLength -> "OLength"
-    | OLengthString -> "OLengthString" | OIntToString -> "OIntToString"
+    | OLengthString -> "OLengthString" | OStringOfInt -> "OStringOfInt"
     | OSome -> "OSome" | ODictValues -> "ODictValues"
     | OSetOfBag -> "OSetOfBag" in
   let binop = function

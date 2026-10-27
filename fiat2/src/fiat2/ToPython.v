@@ -54,7 +54,7 @@ Definition unop_py (o:unop) (e:string) : string :=
   | ONot => paren ("not " ++ e)
   | OLength => "len(" ++ e ++ ")"
   | OLengthString => "len(" ++ e ++ ")"
-  | OIntToString => "str(" ++ e ++ ")"
+  | OStringOfInt => "str(" ++ e ++ ")"
   | OSome => e
   | ODictValues => "list(" ++ e ++ ".values())"
   (* A bag is a list and a set is a list without duplicates, so this is the

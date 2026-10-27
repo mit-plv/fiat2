@@ -71,7 +71,7 @@ Notation "- x" := (EUnop ONeg x) (in custom fiat2_expr at level 10).
 Notation "! x" := (EUnop ONot x) (in custom fiat2_expr at level 10).
 Notation "'len(' x ')'"   := (EUnop OLength x) (in custom fiat2_expr at level 10).
 Notation "'strLen(' x ')'" := (EUnop OLengthString x) (in custom fiat2_expr at level 10).
-Notation "'toStr(' n ')'" := (EUnop OIntToString n) (in custom fiat2_expr at level 10).
+Notation "'toStr(' n ')'" := (EUnop OStringOfInt n) (in custom fiat2_expr at level 10).
 Notation "'some(' x ')'" := (EUnop OSome x) (in custom fiat2_expr at level 10).
 
 (* Binary operators *)

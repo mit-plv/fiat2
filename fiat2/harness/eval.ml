@@ -94,7 +94,7 @@ let interp_unop (o : unop) (v : value) : value =
   | ONot, VBool b -> VBool (not b)
   | OLength, VList l -> let n = List.length l in Count.walk n; VInt n
   | OLengthString, VString s -> VInt (String.length s)
-  | OIntToString, VInt z -> VString (string_of_int z)
+  | OStringOfInt, VInt z -> VString (string_of_int z)
   | OSome, v -> VOption (Some v)
   (* list_to_bag (map snd d) *)
   | ODictValues, VDict d ->

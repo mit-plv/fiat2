@@ -57,7 +57,7 @@ Definition prog :=
                    (EOptMatch (EVar "min_price_opt")
                       (EAtom (AString "No orders\n")) "min_price"
                       (EBinop OConcatString (EAtom (AString "Minimum price: "))
-                         (EBinop OConcatString (EUnop OIntToString (EVar "min_price"))
+                         (EBinop OConcatString (EUnop OStringOfInt (EVar "min_price"))
                             (EAtom (AString "\n")))))
                    (ELoc "outputs"))))))).
 

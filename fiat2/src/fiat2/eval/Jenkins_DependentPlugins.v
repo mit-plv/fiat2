@@ -158,7 +158,7 @@ Section WithConcreteMaps.
   Definition report (e : expr) : scommand :=
     SLet e "n"
       (SAssign "outputs"
-         (EBinop OCons (EUnop OIntToString (EVar "n")) (ELoc "outputs")) SSkip).
+         (EBinop OCons (EUnop OStringOfInt (EVar "n")) (ELoc "outputs")) SSkip).
 
   (* One query is one resolveDependentPlugins(): the whole loop over every
      plugin, which is what the source's one public method does. *)

@@ -73,7 +73,7 @@ Section WithConcreteMaps.
             (CIf (EBinop OEq (EAccess (EVar "q") "type") (EAtom (AInt 1)))
                (CLet (EUnop OLength (keep in_band)) "n"
                   (CAssign "outputs"
-                     (EBinop OCons (EUnop OIntToString (EVar "n"))
+                     (EBinop OCons (EUnop OStringOfInt (EVar "n"))
                         (ELoc "outputs"))))
                (CAssign "orders" (keep (EUnop ONot in_band)))))).
 

@@ -51,7 +51,7 @@ Section WithWord.
                        | VString s => VInt (Z.of_nat (String.length s))
                        | _ => VUnit
                        end
-    | OIntToString => match v with
+    | OStringOfInt => match v with
                       | VInt z => VString (DecimalString.NilZero.string_of_int (BinInt.Z.to_int z))
                       | _ => VUnit
                       end

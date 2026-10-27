@@ -1,11 +1,8 @@
 From Stdlib Require Import String ZArith List.
 
-(* Which questions a dictionary answers, and so which structure may represent
-   it.  Both kinds hold the same values -- every well-typed dictionary is
-   key-sorted and duplicate-free either way -- so this is not a relaxation of
-   what is observable.  It records a capability: only a Ranged dictionary may
-   be given to ODictRange, so a backend owes an ordered structure for those
-   and may use a hash table for the rest. *)
+(* Which questions a dictionary may answer, and so which structure may represent
+   it. Only a Ranged dictionary may be used to answer a range query, and dict_kind
+   can inform its backend implementation. *)
 Inductive dict_kind : Type := Ranged | Unranged.
 
 (* Fiat2 types *)
@@ -61,10 +58,6 @@ Proof. destruct dk; reflexivity. Qed.
 Lemma dict_kind_beq_eq : forall dk dk', dict_kind_beq dk dk' = true <-> dk = dk'.
 Proof. destruct dk, dk'; cbn; intuition congruence. Qed.
 
-(* A rule that needs a ranged dictionary states it with this rather than with
-   an equation.  A hypothesis dk = Ranged is eliminated by any stray subst,
-   which takes the section variable dk with it and leaves every definition
-   mentioning dk unusable; a boolean test survives. *)
 Definition is_ranged (dk : dict_kind) : bool :=
   match dk with Ranged => true | Unranged => false end.
 
@@ -83,9 +76,6 @@ Inductive atom : Type :=
 | AString (s : string)
 | ANil (t : option type)
 | ANone (t : option type)
-(* The kind is given, not annotated: nothing else in a dictionary-building
-   fold determines it, since every other dictionary operator is kind-generic.
-   The key and value types stay optional, as for the other empty literals. *)
 | AEmptyDict (dk : dict_kind) (t : option (type * type))
 | AEmptyBag (t : option type)
 | AEmptySet (t : option type)
@@ -97,7 +87,7 @@ Inductive unop : Type :=
 | ONot
 | OLength
 | OLengthString
-| OIntToString
+| OStringOfInt
 | OSome
 | ODictValues
 (* The set form of a dictionary's values.
@@ -106,14 +96,7 @@ Inductive unop : Type :=
    rules need: AEmptyBag/AEmptySet, OBagInsert/OSetInsert, EBagOf/ESetOf,
    EFlatmap LikeBag/LikeSet, EACFold over a bag beside EACIFold over a set.
    ODictValues was the one such construct available at the bag level only, so
-   an order-insensitive read served from a dictionary could not deliver a set.
-   (The set-specific operators -- OSetUnion, OSetIntersect, OSetDiff, OSetMem
-   -- have no bag counterpart and want none; the pairing is a response to what
-   the rules need at both levels, not a law about the language.)
-
-   Converting is not a coercion.  No typing rule is relaxed, no type_le is
-   introduced, and type_eqb stays exact equality: this is an explicit, one-way
-   computation, which is why it is an operator. *)
+   an order-insensitive read served from a dictionary could not deliver a set. *)
 | OSetOfBag.
 
 (* Binary operators *)
@@ -146,10 +129,8 @@ Inductive ternop : Set :=
 | OInsert
 | OSubstring
 | ODictRange
-(* The exact COMPLEMENT of ODictRange: the entries whose keys the range does
-   NOT cover.  The two therefore partition a dictionary, which is what makes a
-   range-shaped delete one operator rather than a union of two ranges -- a
-   union no dictionary operator provides. *)
+(* The complement of ODictRange: the entries whose keys the range does
+   NOT cover. *)
 | ODictRangeDelete.
 
 (* What an expr with a list type can be interpreted to *)

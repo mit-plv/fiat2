@@ -192,7 +192,7 @@ Section WithConcreteMaps.
   Definition report (e : expr) : scommand :=
     SLet e "n"
       (SAssign "outputs"
-         (EBinop OCons (EUnop OIntToString (EVar "n")) (ELoc "outputs")) SSkip).
+         (EBinop OCons (EUnop OStringOfInt (EVar "n")) (ELoc "outputs")) SSkip).
 
   Definition say (s : string) : scommand :=
     SAssign "outputs" (EBinop OCons (EAtom (AString s)) (ELoc "outputs")) SSkip.
@@ -338,7 +338,7 @@ Section WithConcreteMaps.
   Definition reported (e : expr) : command :=
     CLet e "n"
       (CAssign "outputs"
-         (EBinop OCons (EUnop OIntToString (EVar "n")) (ELoc "outputs"))).
+         (EBinop OCons (EUnop OStringOfInt (EVar "n")) (ELoc "outputs"))).
 
   (* findRecord(varId): the scan is gone. *)
   Lemma find_read_is_a_probe :

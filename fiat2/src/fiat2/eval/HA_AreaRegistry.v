@@ -118,7 +118,7 @@ Section WithConcreteMaps.
   Definition report (e : expr) : scommand :=
     SLet e "n"
       (SAssign "outputs"
-         (EBinop OCons (EUnop OIntToString (EVar "n")) (ELoc "outputs")) SSkip).
+         (EBinop OCons (EUnop OStringOfInt (EVar "n")) (ELoc "outputs")) SSkip).
 
   Definition dispatch (k : Z) (thn els : scommand) : scommand :=
     SIf (EBinop OEq (EAccess (EVar "q") "kind") (EAtom (AInt k))) thn els.
