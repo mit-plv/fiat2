@@ -26,8 +26,26 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe check   # the differential test
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
+    ./_build/default/main.exe matched       # both sides, under each of the three
+                                            # structure settings
     ./_build/default/main.exe alternatives  # a side note: what the selector's
                                             # own choice is worth
+
+Any command takes a **structure setting** -- `typed`, `trees` or `hashes` -- which says
+what every point-access collection is charged as, **on both sides at once**:
+
+    ./_build/default/main.exe check hashes
+    ./_build/default/main.exe csv trees 1600
+
+| setting | our side | the originals |
+|---|---|---|
+| `typed` (default) | `Unranged` dicts hash (`dict_kind` licenses it); sets are trees (no `set_kind`) | as the author wrote them |
+| `trees` | everything a tree | everything a tree |
+| `hashes` | everything a tree may not be | every map whose order the modelled operations never read |
+
+No setting hashes a structure whose operations **read** the key order -- our `Ranged`
+dictionaries, and the ordered maps `window_store` and `range_delete` range-query. A row
+whose three columns agree is a row with no structure choice in it.
 
 The extraction is part of the ordinary Rocq build, so `generated/` is derived and
 gitignored. `dune build` before a `make` fails with a missing module, which is the
@@ -71,6 +89,19 @@ canonical form. What the semantics observes is narrow: `OEq` on two collections,
 | set | balanced tree | a set rejects duplicates on insert, so it needs the order anyway, and `OSetMem` is a probe |
 | bag | unordered list | a bag rejects nothing and probes nothing; every operation on one in these programs is an insert, a concatenation or a fold |
 
+**Representation and charge are separate questions, deliberately.** The table above is
+the *storage*, and it is a balanced tree for every point-access collection on **both**
+sides, under every setting -- because OCaml's standard library has no persistent hash
+map and a hand-written one would put this harness's own HAMT into the numbers instead of
+a backend's. What the structure setting changes is the *charge*: `Value.key_access` is
+the one function that prices a point access, `eval.ml` calls it for the optimizer's
+output and `baseline.ml` calls it for the originals, and under a hash charge the tree
+descent it still performs is credited to neither counter (`Count.quiet`) while the key's
+hash is charged instead.
+
+The consequence, which the tables repeat wherever they print it: **wall-clock seconds do
+not follow the charge.** They time a tree in every column and are a check on shape only.
+
 The deferred cost is counted rather than assumed away: `canonicalisations` says how often
 a bag's canonical order actually had to be produced. Across all eight subjects it happens
 in two places, both an `OEq` against the empty bag, and the interesting one is that the
@@ -89,13 +120,40 @@ other observer never fires.
             rows evaluates its body n times and shows up here; so does a fold over an
             n-element bag, which evaluates nothing but is no cheaper for it.  An index
             probe shows up in neither counter.
-    cmps    entries into the value comparison, recursive ones included.  This is where
-            the cost of a dictionary or set operation lives: a probe is logarithmically
-            many, a scan linearly many.
+    cmps    entries into the value comparison, recursive ones included.  A tree descent
+            is logarithmically many, a scan linearly many.
+    hashing value nodes walked in order to HASH a key, one per node, by exactly the rule
+            cmps uses for the nodes walked in order to compare one.  Charged on BOTH
+            sides, so `cmps + hashing` is one figure for the work a structure does on
+            keys, comparable across a tree and a hash table.
+    rows    the stored elements an operation ITERATES -- a scan of n is n, a probe that
+            yields a row is 1, a membership test is 0 because it yields nothing, a write
+            is 0 because it writes -- counted once per NESTING LEVEL that iterates them.
+    canonicalisations
+            every time a bag's canonical order had to be produced, which is the only
+            cost the unordered bag defers.
 
-Both are machine-independent, which is why they and not wall-clock time are the
-evidence. A string comparison counts as one, which is honest only because the
-generators keep keys short.
+All four are machine-independent, which is why they and not wall-clock time are the
+evidence. A string comparison counts as one, and so does a string hash, which is honest
+only because the generators keep keys short.
+
+**"Once per nesting level" is not "once",** and it has nothing to do with the phases of
+the optimizer -- this harness never runs the optimizer, it runs the extracted terms. It
+means once per iterating construct in the term. `window_store`'s optimized `fetchAll`
+answers a window of 8 rows and reports 24, because it is
+
+    EACFold (AGCount,            <- walk n      = 8
+      EFlatmap (LikeBag,         <- visit n     = 8
+        EUnop (ODictValues,      <- walk 1 each = 8
+          ETernop (ODictRange,   <- 0: a split, charged to cmps
+            ...))))
+
+where `cluster`'s `forTopic` is an `EACFold` over one `OLookup` -- one iterating
+construct, a probe that charges no rows, so 8. Both are **flat** in the table size (480
+and 160 per 20 queries at 400, 800 and 1600), because the depth is a constant of the
+term. So the exponent is unaffected; the constant is comparable between two forms of the
+same subject at the same depth, and **not** against hand-written code, which has no
+nesting levels to count.
 
 Neither is a count of AST nodes. `report` prints those -- they say how big a program
 the optimizer wrote -- and nothing below uses them. `bench` runs the programs.
@@ -124,9 +182,25 @@ series, all optimized, all twenty queries:
 
 | structure | series | `a key` |
 |---|---|---|
-| `Unranged` dict (`keycloak/byId`, charged as a hash) | `40+20` at **every one of the six sizes** | 0.00 |
+| `Unranged` dict (`keycloak/byId`, charged as a hash) | `60+20` at **every one of the six sizes** | 0.00 |
 | set (`lookin/varyingKey`, no `set_kind`, charged as a tree) | 114, 134, 157, 177, 191, 211 | 0.18 |
 | `Ranged` dict (`window_store/fetchAll`, which needs the order) | 272, 316, 357, 398, 453, 508 | 0.18 |
+
+Those are the **`typed`** column, and the structure setting moves exactly the two rows
+it should. Same three reads, same six sizes, key work **summed** (`cmps + hashing`,
+where the table above splits it):
+
+| | `typed` | `trees` | `hashes` |
+|---|---|---|---|
+| `keycloak/byId` | `80` flat | 136, 157, 187, 200, 216, 242 | `80` flat |
+| `lookin/varyingKey` | 114 … 211 | 114 … 211 | `60` flat |
+| `window_store/fetchAll` | 272 … 508 | 272 … 508 | 272 … 508 |
+
+The `Unranged` dictionary is flat wherever anything is allowed to hash and a descent on
+the floor. The set is a descent until `hashes` licenses what a `set_kind` would, and
+then it is flat. The `Ranged` dictionary is **the same series in all three**, because a
+range restriction reads the key order and no setting can hash it — which is the clearest
+statement available that the parameter is not a dial for making numbers smaller.
 
 The middle and bottom rows are `log n`, stated by the data rather than by a curve fit --
 about twenty more comparisons per doubling across twenty queries. The top row is not a
@@ -195,25 +269,38 @@ Three instruments, because no one of them crosses the boundary cleanly:
 | | crosses? | bias |
 |---|---|---|
 | `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
-| `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per pipeline stage**, so a derived read can count the same rows more than once. See below |
-| `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one rule on both: a comparison per value node walked, a hash per value node of the key. Printed as `cmp+hash` |
-| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed — and it does **not** follow the `cmp+hash` charge, since the Unranged dictionaries are still stored in trees |
+| `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per nesting level**, so a derived read can count the same rows more than once. See below |
+| `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one **function** on both — `Value.key_access` — at the structure the run's setting says, with the key's cost computed by `Value.key_work` rather than declared. Printed as `cmp+hash` |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed — and it does **not** follow the `cmp+hash` charge, because the storage is a tree in every column on both sides |
 
 `rows` is the instrument the other two cannot replace: the key counters are blind to a
 traversal that compares nothing, which is how Keycloak's whole-list **count** came out at
 exponent 0.00 on the source side when its step count is linear.
 
-**What `cmp+hash` fixed, and what it did not.** `cmps` alone was charged by two different
-rules on the two sides: a tree descent paid a comparison per level per node of the key,
-while `baseline.ml`'s hash probe paid one flat unit however large the key. On a whole-row
-key that gap read as 22x and was almost all convention. Both sides are now charged for
-hashing by key size (`Count.hash`), and a dictionary the type system marks `Unranged` is
-charged as a hash table on our side too — which is what `dict_kind` exists to license, and
-`Ex_Range`'s two pins are the evidence that the annotation is load-bearing. What remains
-uncorrected is stated rather than hidden: **sets have no such annotation**, so `TableRep`'s
-set and the set indexes are still charged as trees, and `Jenkins_ItemDeletion`'s whole-row
-membership test is the one place that shows. Closing it would need a `set_kind`, which the
-language does not have.
+**The structure choice is a parameter, the same one on both sides.** It used to be an
+assumption buried in the instrument: ours was charged as a hash because its type said
+`Unranged`, while the originals' was charged as whatever the author happened to write. So
+Kafka's `NamedCache`, whose author chose a `NavigableMap`, compared our hash against their
+tree — and the number flattered us for a reason that had nothing to do with the optimizer.
+`matched` prints the three settings side by side, and within a column both sides were
+charged by the same function at the same structure, so the ratio compares two *programs*.
+
+What that shows, at 1600 rows, `cmp+hash` as ours/theirs:
+
+| | `typed` | `trees` | `hashes` | what the spread is |
+|---|---|---|---|---|
+| `named_cache/get` | **0.50** | 1.30 | 2.50 | the confound. Matched, we are behind; the 0.50 was their tree against our hash |
+| `item_deletion/containsHit` | 5.55 | **1.05** | 1.25 | almost all of it was the set charging gap, not the algorithm |
+| `lookin/varyingKey` | 5.28 | 1.09 | **1.50** | what a `set_kind` is worth: 5.28 → 1.50 |
+| `window_store/fetchAll` | 1.25 | 1.25 | 1.25 | a `Ranged` dict: no structure choice in it at all |
+| `cluster/onePartition` | 3.25 | **0.76** | 3.25 | their composite-key descent costs more than ours when both are trees |
+| `dependent_plugins/resolveAll` | 0.0019 | **0.0013** | 0.0019 | hashing is *dearer* than a shallow descent here, which is why the model is not rigged toward hashes |
+
+So the remaining asymmetry is named and now also **priced**: sets have no `set_kind`, so
+under `typed` — the only column every charge of which the type system backs —
+`TableRep`'s set and the set indexes are charged as the trees they are stored in.
+`hashes` is the measurement of what the annotation would buy, and `item_deletion` and
+`lookin` are where it lands.
 
 The build phase is never compared, and that exclusion is the one asymmetry running in
 **our** favour rather than the author's: our source build is O(n²) because the declared-key

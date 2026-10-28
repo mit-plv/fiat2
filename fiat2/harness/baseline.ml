@@ -88,11 +88,12 @@
      composite keys -- the claim is also stated structurally, as which
      structure each side descends, so that it does not rest on the ratio.
      See count.ml, which says the same thing where the counter lives.
-   * `cmps + hashing` can, and is charged by ONE RULE on both sides: a
-     comparison per value node walked (Count.comparisons, incremented inside
-     Value.compare) and a hash per value node of a key (Count.hash, charged
-     here by the ~kw parameter on hash_probe/hash_find/hash_put).  The
-     transcriptions use the same two refs the evaluator uses.
+   * `cmps + hashing` can, and is charged by ONE FUNCTION on both sides:
+     Value.key_access, which eval.ml calls for the optimizer's output and the
+     [keyed] structures below call for the originals.  A comparison per value
+     node walked on a tree descent, a hash per value node of the key on a hash
+     probe, and the key's cost COMPUTED by Value.key_work rather than declared
+     at the site.
 
      THIS REPLACES AN EARLIER ASYMMETRY, and it is worth naming because every
      number in this file moved when it was fixed.  `cmps` alone charged a tree
@@ -101,14 +102,21 @@
      were close; on ItemDeletion's whole-row key the gap read as 22x and was
      almost entirely the rule rather than the algorithm.
 
-     AND OUR SIDE NOW PAYS THE HASH WHERE THE TYPE SYSTEM SAYS IT MAY.  A
-     dictionary whose AEmptyDict carries Unranged is charged as a hash table
-     (eval.ml's [keyed]); one carrying Ranged is charged as the tree it has to
-     be, because a range restriction reads the key order.  So the old
-     disclaimer -- ours is Map.Make(Value) at O(log n) where the originals are
-     hash maps at O(1) -- is no longer a disclaimer about the counters; it is
-     a fact about the STORAGE this harness happens to use, which the counters
-     no longer charge for.  Seconds still do; see the next bullet.
+     AND THE STRUCTURE CHOICE IS NOW A PARAMETER OF THE RUN, THE SAME ONE ON
+     BOTH SIDES.  Count.structures says whether every point-access collection
+     in this file and in the evaluator is charged as a balanced tree or as a
+     hash table, with the structures whose operations READ the key order --
+     our Ranged dictionaries, the ordered maps WindowStore and RangeDelete
+     range-query -- left as trees under all of them.  That is what makes a
+     ratio between the two columns mean something: before it, ours was charged
+     as a hash because its type said Unranged while the originals' was charged
+     as whatever the author happened to write, so Kafka's NamedCache compared
+     our hash against their tree and the number flattered us for a reason that
+     had nothing to do with the optimizer.  So the old disclaimer -- ours is
+     Map.Make(Value) at O(log n) where the originals are hash maps at O(1) --
+     is no longer a disclaimer about the counters at all; it is a fact about
+     the STORAGE this harness uses on BOTH sides, which the counters no longer
+     charge for.  Seconds still do; see the next bullet.
 
      WHAT IS STILL ASYMMETRIC: sets.  There is no set_kind, so TableRep's set
      and the set indexes are charged as trees while a Java HashSet is charged
@@ -159,42 +167,98 @@ let int_of (v : Value.t) : int = match v with VInt n -> n | _ -> min_int
 let queries_of (w : Gen.workload) (var : string) : Value.t list =
   match List.assoc_opt var w.Gen.env with Some (Value.VList l) -> l | _ -> []
 
-(* A hash lookup, instrumented under the conventions in the header: one key
-   equality into `cmps`, the key's hash into `hashing`, and, on a hit, one row
-   ENUMERATED into `rows`, because the row comes out and is looked at.
+(* ---------- the originals' point-access structures ----------
 
-   `~kw` IS THE KEY'S SIZE IN VALUE NODES, by count.ml's rule -- one per node,
-   a string counting as one.  It defaults to 1, which is right for the scalar
-   keys (a string, an int) and wrong for the two keys here that are not
-   scalars, which pass it: Cluster's (topic, partition) pair and
-   ItemDeletion's whole row.  Before this parameter existed a hash probe was
-   charged one flat unit however large its key, while our own tree descent was
-   charged a comparison per level PER NODE OF THE KEY -- so the whole-row key
-   read as 22x when most of that was the charging rule.  The hashing a real
-   HashMap does is linear in the key, and this is that. *)
-let hash_probe ?(kw = 1) (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
-  Count.hash kw;
-  incr Count.comparisons;
-  match Hashtbl.find_opt h k with
-  | Some v -> Count.visit 1; Some v
-  | None -> None
+   Every map and set in this file is one of these.  Two properties matter and
+   neither is an accident:
 
-(* A probe whose RESULT IS NOT A STORED ROW: a posting list, a bucket, a
-   segment.  It costs the same key equality and no row, because nothing has
-   been enumerated yet -- whatever walks the thing it returns is what pays
-   for the rows in it. *)
-let hash_find ?(kw = 1) (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
-  Count.hash kw;
-  incr Count.comparisons;
-  Hashtbl.find_opt h k
+   1. THE CHARGE COMES FROM Value.key_access, the same function eval.ml calls
+      for the optimizer's output.  Not the same convention, carefully applied
+      twice -- the same function.  That is the only reason a ratio between the
+      two columns of the author comparison means anything, and it is why this
+      file no longer has arithmetic of its own on Count.hash or
+      Count.comparisons for a key access.
 
-(* A put reads no stored row -- it writes one -- so it costs a key equality and
+   2. THE KEY IS A Value.t, so its cost is COMPUTED by Value.key_work rather
+      than declared.  This replaces the `~kw` annotation the three helpers
+      here used to carry, which defaulted to 1 and had to be overridden by
+      hand at the two sites whose keys are not scalars -- Cluster's (topic,
+      partition) and ItemDeletion's whole row.  A declared cost is a cost
+      someone has to remember to declare; a computed one cannot drift from
+      the key it charges for.  The numbers are unchanged where the old
+      annotations were right: a string key is 1 node as before, Cluster's pair
+      is 3 as its ~kw:3 said, and ItemDeletion's row is key_work of the row
+      exactly as it was charged explicitly.
+
+   The storage is a balanced tree under every setting, on this side as on the
+   other, for the reason value.ml gives: representation and charge are
+   separate questions, and OCaml has no persistent hash map whose constants
+   would not be the harness's own.  Mutable, so the transcriptions keep the
+   imperative shape the originals have.
+
+   [situation] is what the structure's creator CLAIMS about its key order, and
+   it is the one thing written by hand at each site, because it is the one
+   thing that is a judgement rather than a measurement.  See count.ml for what
+   the three mean.  The kind is resolved per access rather than stored, so a
+   structure built before the setting was read cannot capture a stale one. *)
+
+type situation =
+  | Licensed    (* the author wrote a hash map, and nothing reads the order *)
+  | Unlicensed  (* the author wrote an ordered map, but the operations this *)
+                (* subject models never read that order *)
+  | NeedsOrder  (* the operations DO read it: subMap, headMap, firstKey *)
+
+let kind_of = function
+  | Licensed -> Count.licensed ()
+  | Unlicensed -> Count.unlicensed ()
+  | NeedsOrder -> Count.ordered
+
+type 'v keyed = { mutable m : 'v Value.VMap.t; sit : situation }
+
+let kmake (sit : situation) : 'v keyed = { m = Value.VMap.empty; sit }
+
+(* A probe whose RESULT IS A STORED ROW: one key access, and one row
+   ENUMERATED into `rows` on a hit, because the row comes out and is looked
+   at. *)
+let kprobe (t : 'v keyed) (k : Value.t) : 'v option =
+  Value.key_access (kind_of t.sit) k
+    (fun () ->
+       match Value.VMap.find_opt k t.m with
+       | Some v -> Count.visit 1; Some v
+       | None -> None)
+
+(* A probe whose result IS NOT a stored row: a posting list, a bucket, a
+   segment.  The same key access and no row, because nothing has been
+   enumerated yet -- whatever walks the thing it returns pays for the rows in
+   it. *)
+let kfind (t : 'v keyed) (k : Value.t) : 'v option =
+  Value.key_access (kind_of t.sit) k (fun () -> Value.VMap.find_opt k t.m)
+
+let kmem (t : 'v keyed) (k : Value.t) : bool =
+  Value.key_access (kind_of t.sit) k (fun () -> Value.VMap.mem k t.m)
+
+(* A put reads no stored row -- it writes one -- so it costs the key access and
    no row.  The same is true of the optimizer's output, whose OInsert is a map
    add: the convention is the same on both sides, which is the point of it. *)
-let hash_put ?(kw = 1) (h : ('k, 'v) Hashtbl.t) (k : 'k) (v : 'v) : unit =
-  Count.hash kw;
-  incr Count.comparisons;
-  Hashtbl.replace h k v
+let kput (t : 'v keyed) (k : Value.t) (v : 'v) : unit =
+  Value.key_access (kind_of t.sit) k (fun () -> t.m <- Value.VMap.add k v t.m)
+
+let kremove (t : 'v keyed) (k : Value.t) : unit =
+  Value.key_access (kind_of t.sit) k (fun () -> t.m <- Value.VMap.remove k t.m)
+
+(* Size, and the two whole-structure walks.  None of these is a key access and
+   none is charged as one: java.util.HashMap keeps its own size, and a walk
+   charges the rows its caller looks at.  The callers below do that. *)
+let klen (t : 'v keyed) : int = Value.VMap.cardinal t.m
+let kiter (f : Value.t -> 'v -> unit) (t : 'v keyed) : unit = Value.VMap.iter f t.m
+let kfold (f : Value.t -> 'v -> 'a -> 'a) (t : 'v keyed) (init : 'a) : 'a =
+  Value.VMap.fold f t.m init
+
+(* A composite key, built so that Value.key_work charges its parts: the pair
+   Kafka's cache is keyed on costs 3 nodes -- the record and its two fields --
+   which is what the ~kw:3 annotation it replaces said by hand. *)
+let key2 (a : string) (va : Value.t) (b : string) (vb : Value.t) : Value.t =
+  Value.VRecord [ (a, va); (b, vb) ]
 
 (* ---------- keycloak: one list, two maps on two unique keys ---------- *)
 
@@ -222,13 +286,13 @@ module Keycloak = struct
   type state = {
     mutable rows : Value.t list;                   (* requiredActionProviderList *)
     mutable size : int;                            (* ArrayList's own size field *)
-    by_id : (string, Value.t) Hashtbl.t;           (* requiredActionProviders *)
-    by_alias : (string, Value.t) Hashtbl.t;        (* ...ByAlias *)
+    by_id : Value.t keyed;                         (* requiredActionProviders *)
+    by_alias : Value.t keyed;                      (* ...ByAlias *)
   }
 
   let run (w : Gen.workload) : (string * Value.t) list =
     let st = { rows = []; size = 0;
-               by_id = Hashtbl.create 1024; by_alias = Hashtbl.create 1024 } in
+               by_id = kmake Licensed; by_alias = kmake Licensed } in
     let outputs = ref [] in
     let say (n : int) = outputs := Value.VString (string_of_int n) :: !outputs in
     List.iter
@@ -241,15 +305,15 @@ module Keycloak = struct
              let row = field "new_action" q in
              st.rows <- row :: st.rows;
              st.size <- st.size + 1;
-             hash_put st.by_id (str (field "id" row)) row;
-             hash_put st.by_alias (str (field "alias" row)) row
+             kput st.by_id (field "id" row) row;
+             kput st.by_alias (field "alias" row) row
          (* getRequiredActionProviderById(id) -> ...get(id) *)
          | 1 ->
-             say (match hash_probe st.by_id (str (field "k" q)) with
+             say (match kprobe st.by_id (field "k" q) with
                   | Some _ -> 1 | None -> 0)
          (* getRequiredActionProviderByAlias(alias) -> ...ByAlias().get(alias) *)
          | 2 ->
-             say (match hash_probe st.by_alias (str (field "k" q)) with
+             say (match kprobe st.by_alias (field "k" q) with
                   | Some _ -> 1 | None -> 0)
          (* getRequiredActionProviderList(), counted: ArrayList.size() *)
          | _ -> say st.size)
@@ -258,19 +322,6 @@ module Keycloak = struct
 end
 
 (* ---------- named cache: an ordered map and a maintained total ---------- *)
-
-(* The comparison the author's TREE performs, counted.  NamedCache's cache is a
-   NavigableMap, so unlike the other three subjects here there is no
-   hash-versus-tree gap to declare: both sides pay log n comparisons, which
-   makes this the one line where `cmps` is comparable without a caveat. *)
-module CountedString = struct
-  type t = string
-  let compare (a : string) (b : string) : int =
-    incr Count.comparisons;
-    String.compare a b
-end
-
-module SMap = Map.Make (CountedString)
 
 module NamedCache = struct
   let name = "named_cache"
@@ -285,43 +336,47 @@ module NamedCache = struct
      a maintained SUM over it, which is the pair the optimizer derives as
      [UniqueDictIdx "k"; SumAgg "size"]. *)
   type state = {
-    mutable cache : Value.t SMap.t;
+    cache : Value.t keyed;
     mutable total : int;                     (* currentSizeBytes *)
   }
 
   let size_of (row : Value.t) : int = int_of (field "size" row)
 
   let run (w : Gen.workload) : (string * Value.t) list =
-    let st = { cache = SMap.empty; total = 0 } in
+    (* Unlicensed: the author chose a NavigableMap, so the Typed column
+       charges the tree they wrote.  None of the operations this subject models
+       reads the key order -- the real class needs it for operations the
+       subject does not model -- so the Hashes column is a hypothetical about
+       a smaller program, not a claim that the author chose badly. *)
+    let st = { cache = kmake Unlicensed; total = 0 } in
     let outputs = ref [] in
     let say (n : int) = outputs := Value.VString (string_of_int n) :: !outputs in
     (* remove(key), maintaining the total: the node has to be READ to know what
        to subtract, which is the one row a delete touches, and is why the
        optimizer's own delete probes rather than scans *)
-    let remove (k : string) =
-      match SMap.find_opt k st.cache with
-      | Some old -> Count.visit 1;
-                    st.total <- st.total - size_of old;
-                    st.cache <- SMap.remove k st.cache
+    let remove (k : Value.t) =
+      match kprobe st.cache k with
+      | Some old -> st.total <- st.total - size_of old;
+                    kremove st.cache k
       | None -> () in
     List.iter
       (fun q ->
          match int_of (field "kind" q) with
          (* delete(key) -- :273 *)
-         | 0 -> remove (str (field "k" q))
+         | 0 -> remove (field "k" q)
          (* put(key, value) -- :174-192: evict the old binding, then insert *)
          | 1 ->
              let node = field "node" q in
-             let k = str (field "k" node) in
+             let k = field "k" node in
              remove k;
-             st.cache <- SMap.add k node st.cache;
+             kput st.cache k node;
              st.total <- st.total + size_of node
          (* sizeInBytes() -- :196: a field read, no row *)
          | 2 -> say st.total
          (* get(key) -- :200-201 *)
          | _ ->
-             say (match SMap.find_opt (str (field "k" q)) st.cache with
-                  | Some _ -> Count.visit 1; 1
+             say (match kprobe st.cache (field "k" q) with
+                  | Some _ -> 1
                   | None -> 0))
       (queries_of w "ops");
     [ ("outputs", Value.VList !outputs) ]
@@ -350,7 +405,7 @@ module ItemDeletion = struct
      table.  What separates the two sides is entirely in `cmps`: a hash
      membership is one equality where our balanced tree is a descent. *)
   let run (w : Gen.workload) : (string * Value.t) list =
-    let reg : (Value.t, unit) Hashtbl.t = Hashtbl.create 4096 in
+    let reg : unit keyed = kmake Licensed in
     (* The items in flight arrive in the ENVIRONMENT rather than through build
        queries, as this subject's table does and as the other three subjects'
        do not.  Missing this is what the `agree` column caught on the first run:
@@ -358,7 +413,7 @@ module ItemDeletion = struct
        the subject said "deleting".  The build is not part of the comparison --
        baseline_phase subtracts the ops=0 run -- so what this costs cancels. *)
     (match List.assoc_opt "items_tbl" w.Gen.env with
-     | Some (Value.VList l) -> List.iter (fun r -> Hashtbl.replace reg r ()) l
+     | Some (Value.VList l) -> List.iter (fun r -> kput reg r ()) l
      | _ -> ());
     let outputs = ref [] in
     let say (s : string) = outputs := Value.VString s :: !outputs in
@@ -367,21 +422,15 @@ module ItemDeletion = struct
          let item = field "item" q in
          match int_of (field "kind" q) with
          (* THE WHOLE ROW IS THE KEY -- registrations.contains(item) asks
-            about a row and not an attribute -- so hashing it walks the whole
-            record, which is what Value.key_work returns.  This is the site
-            the ~kw parameter above exists for. *)
-         | 0 ->
-             Count.hash (Value.key_work item);
-             incr Count.comparisons;
-             say (if Hashtbl.mem reg item then "deleting" else "free")
-         | 1 ->
-             Count.hash (Value.key_work item);
-             incr Count.comparisons;
-             Hashtbl.replace reg item ()
-         | _ ->
-             Count.hash (Value.key_work item);
-             incr Count.comparisons;
-             Hashtbl.remove reg item)
+            about a row and not an attribute -- so a hash of it walks the whole
+            record and a tree descent compares the whole record per level.
+            Neither is written here: the key is the row, and Value.key_access
+            charges whichever the setting calls for.  This is the site the
+            retired ~kw annotation existed for, and the reason it is better
+            computed than declared. *)
+         | 0 -> say (if kmem reg item then "deleting" else "free")
+         | 1 -> kput reg item ()
+         | _ -> kremove reg item)
       (queries_of w "queries");
     [ ("outputs", Value.VList !outputs) ]
 end
@@ -404,7 +453,7 @@ module UserSearch = struct
      So the row column here is the result: parity on find and remove, and a
      difference on suggest. *)
   let run (w : Gen.workload) : (string * Value.t) list =
-    let by_id : (string, Value.t) Hashtbl.t = Hashtbl.create 4096 in
+    let by_id : Value.t keyed = kmake Licensed in
     let outputs = ref [] in
     let suggested =
       ref (match List.assoc_opt "suggested" w.Gen.store with
@@ -417,27 +466,42 @@ module UserSearch = struct
          (* User.get(id, true) -> AllUsers.putIfAbsent *)
          | 0 ->
              let u = field "new_user" q in
-             hash_put by_id (str (field "id" u)) u
+             kput by_id (field "id" u) u
          (* AllUsers.remove(id) *)
          | 1 ->
-             Count.hash 1; incr Count.comparisons;
-             Hashtbl.remove by_id (str (field "k" q))
+             kremove by_id (field "k" q)
          (* find(id): the ConcurrentHashMap lookup, counted as the subject
             counts it *)
          | 2 ->
-             say (match hash_probe by_id (str (field "k" q)) with
+             say (match kprobe by_id (field "k" q) with
                   | Some _ -> 1 | None -> 0)
          (* suggest(token): the author's own scan over every user *)
          | _ ->
              let tok = str (field "k" q) in
-             let hits = ref Value.VSet.empty in
-             Hashtbl.iter
+             (* The author's work is the scan: n users, one contains() each.
+                Accumulating the hits is not theirs -- Jenkins hands back a
+                List -- but the SUBJECT models the result as a set, and that
+                modelling choice is upstream of both columns, so both sides
+                pay for building one.  Collect, then build once through
+                Eval.set_build, which is the same function the optimizer's
+                OSetOfList goes through: one rule for the same work, and
+                policy-aware, so under `hashes` this result set hashes exactly
+                as the optimizer's does.
+
+                Before this, the hits went in one at a time as the scan found
+                them, so the charge depended on the order the structure
+                happened to iterate -- 184 comparisons under a Hashtbl's
+                bucket order against 246 under a tree's key order, for an
+                identical answer.  A number that moves when the storage
+                changes underneath it is measuring the harness. *)
+             let hits = ref [] in
+             kiter
                (fun _ u ->
                   Count.visit 1;
                   if Eval.str_contains (str (field "fullName" u)) tok
-                  then hits := Value.VSet.add u !hits)
+                  then hits := u :: !hits)
                by_id;
-             suggested := Value.VSet !hits)
+             suggested := Value.VSet (Eval.set_build (List.rev !hits)))
       (queries_of w "queries");
     [ ("outputs", Value.VList !outputs); ("suggested", !suggested) ]
 end
@@ -496,65 +560,63 @@ module AreaRegistry = struct
      _aliases_index key on each element of a per-row collection, which is the
      gap the survey recorded and nothing here builds. *)
   type state = {
-    data : (string, Value.t) Hashtbl.t;                      (* self.data *)
-    floors : (string, (string, unit) Hashtbl.t) Hashtbl.t;   (* _floors_index *)
+    data : Value.t keyed;                        (* self.data *)
+    floors : unit keyed keyed;                   (* _floors_index *)
   }
 
-  let floor_of (row : Value.t) : string option =
-    match field "floor" row with Value.VOption (Some f) -> Some (str f) | _ -> None
+  let floor_of (row : Value.t) : Value.t option =
+    match field "floor" row with Value.VOption (Some f) -> Some f | _ -> None
 
   let run (w : Gen.workload) : (string * Value.t) list =
-    let st = { data = Hashtbl.create 4096; floors = Hashtbl.create 1024 } in
+    let st = { data = kmake Licensed; floors = kmake Licensed } in
     let outputs = ref [] in
     let say (n : int) = outputs := Value.VString (string_of_int n) :: !outputs in
     (* _index_entry: the primary dict, then the floor posting list *)
-    let index_entry (key : string) (row : Value.t) =
-      hash_put st.data key row;
+    let index_entry (key : Value.t) (row : Value.t) =
+      kput st.data key row;
       match floor_of row with
       | None -> ()                                 (* `if ... is not None` *)
       | Some f ->
           let b =
-            match hash_find st.floors f with
+            match kfind st.floors f with
             | Some b -> b
-            | None -> let b = Hashtbl.create 8 in Hashtbl.replace st.floors f b; b in
-          hash_put b key () in
+            | None -> let b = kmake Licensed in kput st.floors f b; b in
+          kput b key () in
     (* _unindex_entry, then UserDict.__delitem__ (registry.py:61) *)
-    let unindex_entry (key : string) =
-      match hash_probe st.data key with
+    let unindex_entry (key : Value.t) =
+      match kprobe st.data key with
       | None -> ()                                 (* HA raises; nothing to do *)
       | Some row ->
           (match floor_of row with
            | None -> ()
            | Some f ->
-               (match hash_find st.floors f with
+               (match kfind st.floors f with
                 | None -> ()
                 | Some b ->
-                    Count.hash 1; incr Count.comparisons;
-                    Hashtbl.remove b key;
+                    kremove b key;
                     (* `if not entries: del index[value]` -- registry.py:56 *)
-                    if Hashtbl.length b = 0 then Hashtbl.remove st.floors f));
-          Count.hash 1; incr Count.comparisons;
-          Hashtbl.remove st.data key in
+                    if klen b = 0 then kremove st.floors f));
+          kremove st.data key in
     List.iter
       (fun q ->
          match int_of (field "kind" q) with
          (* __setitem__ with a fresh key: the build's insert *)
          | 0 -> let row = field "new_area" q in
-                index_entry (str (field "id" row)) row
+                index_entry (field "id" row) row
          (* __delitem__ *)
-         | 1 -> unindex_entry (str (field "k" q))
+         | 1 -> unindex_entry (field "k" q)
          (* async_get_area(area_id) -- area_registry.py:241, a dict get at :247 *)
-         | 2 -> say (match hash_probe st.data (str (field "k" q)) with
+         | 2 -> say (match kprobe st.data (field "k" q) with
                      | Some _ -> 1 | None -> 0)
          (* get_areas_for_floor(floor), counted *)
          | _ ->
-             let fl = str (field "fl" q) in
-             say (match hash_find st.floors fl with
+             let fl = field "fl" q in
+             say (match kfind st.floors fl with
                   | None -> 0
                   | Some b ->
-                      Hashtbl.fold
+                      kfold
                         (fun key _ acc ->
-                           match hash_probe st.data key with
+                           match kprobe st.data key with
                            | Some _ -> acc + 1
                            | None -> acc)
                         b 0))
@@ -584,22 +646,21 @@ module Lookin = struct
      the whole of it, because the list does not survive the derivation here
      either: `self._device` is read only at :94. *)
   let run (w : Gen.workload) : (string * Value.t) list =
-    let names : (string, unit) Hashtbl.t = Hashtbl.create 4096 in
+    let names : unit keyed = kmake Licensed in
     (match List.assoc_opt "functions_tbl" w.Gen.env with
      | Some (Value.VList l) ->
-         List.iter (fun r -> Hashtbl.replace names (str (field "name" r)) ()) l
+         List.iter (fun r -> kput names (field "name" r) ()) l
      | _ -> ());
     let outputs = ref [] in
     let say (s : string) = outputs := Value.VString s :: !outputs in
-    let has (k : string) =
-      Count.hash 1; incr Count.comparisons; Hashtbl.mem names k in
+    let has (k : Value.t) = kmem names k in
     List.iter
       (fun q ->
          match int_of (field "kind" q) with
          (* media_player.py:87 -- the key varies with the loop *)
-         | 0 -> say (if has (str (field "k" q)) then "supported" else "unsupported")
+         | 0 -> say (if has (field "k" q) then "supported" else "unsupported")
          (* media_player.py:107 -- the key is a literal *)
-         | _ -> say (if has "mode" then "has-mode" else "no-mode"))
+         | _ -> say (if has (Value.VString "mode") then "has-mode" else "no-mode"))
       (queries_of w "queries");
     [ ("outputs", Value.VList !outputs) ]
 end
@@ -656,43 +717,43 @@ module Cluster = struct
      where no partition is unavailable); built in the same loop here, since
      the structure is the same one and the build phase is not compared. *)
   type state = {
-    by_tp : (string * int, Value.t) Hashtbl.t;
-    by_topic : (string, Value.t list ref) Hashtbl.t;
-    available : (string, Value.t list ref) Hashtbl.t;
-    by_node : (int, Value.t list ref) Hashtbl.t;
+    by_tp : Value.t keyed;
+    by_topic : Value.t list ref keyed;
+    available : Value.t list ref keyed;
+    by_node : Value.t list ref keyed;
   }
 
   (* computeIfAbsent(k, _ -> new ArrayList<>()).add(p) *)
-  let bucket_add (h : ('k, Value.t list ref) Hashtbl.t) (k : 'k) (row : Value.t) =
-    Count.hash 1;
-    incr Count.comparisons;
-    match Hashtbl.find_opt h k with
+  let bucket_add (h : Value.t list ref keyed) (k : Value.t) (row : Value.t) =
+    match kfind h k with
     | Some b -> b := row :: !b
-    | None -> Hashtbl.replace h k (ref [ row ])
+    | None -> kput h k (ref [ row ])
 
   (* the rows an accessor hands back, counted by its caller *)
-  let bucket_count (h : ('k, Value.t list ref) Hashtbl.t) (k : 'k) : int =
-    match hash_find h k with
+  let bucket_count (h : Value.t list ref keyed) (k : Value.t) : int =
+    match kfind h k with
     | None -> 0                                   (* getOrDefault(k, List.of()) *)
     | Some b -> let n = List.length !b in Count.visit n; n
 
   let run (w : Gen.workload) : (string * Value.t) list =
-    let st = { by_tp = Hashtbl.create 4096; by_topic = Hashtbl.create 1024;
-               available = Hashtbl.create 1024; by_node = Hashtbl.create 1024 } in
+    let st = { by_tp = kmake Licensed; by_topic = kmake Licensed;
+               available = kmake Licensed; by_node = kmake Licensed } in
     (match List.assoc_opt "partitions_tbl" w.Gen.env with
      | Some (Value.VList l) ->
          List.iter
            (fun p ->
-              let topic = str (field "topic" p) in
-              (* a TopicPartition is a two-field key, so hashing it walks
-                 three nodes under count.ml's rule, the same as the two-field
-                 record our side would need and cannot state *)
-              hash_put ~kw:3 st.by_tp (topic, int_of (field "partition" p)) p;
+              let topic = field "topic" p in
+              (* a TopicPartition is a two-field key, so it costs three nodes
+                 under count.ml's rule -- the record and its two fields, which
+                 is what key2 builds and Value.key_work then charges without
+                 anyone having to declare it *)
+              kput st.by_tp
+                (key2 "topic" topic "partition" (field "partition" p)) p;
               bucket_add st.by_topic topic p;
               match field "leader" p with
               | Value.VOption (Some n) ->
                   (* `if (p.leader() == null) continue` -- :150 *)
-                  bucket_add st.by_node (int_of n) p;
+                  bucket_add st.by_node n p;
                   bucket_add st.available topic p
               | _ -> ())
            l
@@ -702,13 +763,14 @@ module Cluster = struct
     List.iter
       (fun q ->
          match int_of (field "kind" q) with
-         | 0 -> say (bucket_count st.by_topic (str (field "topic" q)))
-         | 1 -> say (bucket_count st.by_node (int_of (field "node" q)))
+         | 0 -> say (bucket_count st.by_topic (field "topic" q))
+         | 1 -> say (bucket_count st.by_node (field "node" q))
          | 2 ->
-             say (match hash_probe ~kw:3 st.by_tp
-                          (str (field "topic" q), int_of (field "part" q)) with
+             say (match kprobe st.by_tp
+                          (key2 "topic" (field "topic" q)
+                                "partition" (field "part" q)) with
                   | Some _ -> 1 | None -> 0)
-         | _ -> say (bucket_count st.available (str (field "topic" q))))
+         | _ -> say (bucket_count st.available (field "topic" q)))
       (queries_of w "queries");
     [ ("outputs", Value.VList !outputs) ]
 end
@@ -782,15 +844,22 @@ module WindowStore = struct
      all carry fresh times, so no run distinguishes them; stated because the
      transcription would otherwise look like it had chosen. *)
   let run (w : Gen.workload) : (string * Value.t) list =
-    let segments = ref (IMap.empty : Value.t SMap.t IMap.t) in
+    (* The outer level is the ordered one -- subMap and headMap read its key
+       order, so it is a tree under every setting, charged by CountedInt as it
+       descends.  The inner per-segment map is Unlicensed for the same reason
+       Kafka's NamedCache is: the author's level is ordered, and none of the
+       operations this subject models reads that order. *)
+    let segments = ref (IMap.empty : Value.t keyed IMap.t) in
     (match List.assoc_opt "segments_tbl" w.Gen.env with
      | Some (Value.VList l) ->
          List.iter
            (fun r ->
-              let t = int_of (field "time" r) and k = str (field "k" r) in
+              let t = int_of (field "time" r) in
               let seg = match IMap.find_opt t !segments with
-                        | Some s -> s | None -> SMap.empty in
-              segments := IMap.add t (SMap.add k r seg) !segments)
+                        | Some s -> s
+                        | None -> let s = kmake Unlicensed in
+                                  segments := IMap.add t s !segments; s in
+              kput seg (field "k" r) r)
            l
      | _ -> ());
     let outputs = ref [] in
@@ -803,26 +872,28 @@ module WindowStore = struct
          | 0 ->
              let n = IMap.fold
                        (fun _ seg acc ->
-                          let c = SMap.cardinal seg in Count.visit c; acc + c)
+                          let c = klen seg in Count.visit c; acc + c)
                        (sub_range lo hi !segments) 0 in
              say n
          (* fetch: the window's segments, each asked for the one key *)
          | 1 ->
-             let key = str (field "key" q) in
+             let key = field "key" q in
              let n = IMap.fold
                        (fun _ seg acc ->
-                          match SMap.find_opt key seg with
-                          | Some _ -> Count.visit 1; acc + 1
+                          match kprobe seg key with
+                          | Some _ -> acc + 1
                           | None -> acc)
                        (sub_range lo hi !segments) 0 in
              say n
          (* put: computeIfAbsent, then the inner put.  No row is read. *)
          | 2 ->
              let r = field "new_rec" q in
-             let t = int_of (field "time" r) and k = str (field "k" r) in
+             let t = int_of (field "time" r) in
              let seg = match IMap.find_opt t !segments with
-                       | Some s -> s | None -> SMap.empty in
-             segments := IMap.add t (SMap.add k r seg) !segments
+                       | Some s -> s
+                       | None -> let s = kmake Unlicensed in
+                                 segments := IMap.add t s !segments; s in
+             kput seg (field "k" r) r
          (* removeExpiredSegments *)
          | _ -> segments := keep_from lo !segments)
       (queries_of w "queries");
@@ -952,6 +1023,11 @@ module DependentPlugins = struct
        the manifest.  Reconstructing the nested shape in one pass is what
        keeps this column the author's algorithm rather than the author's
        algorithm plus our own setup. *)
+    (* A PLAIN Hashtbl, and the only one left in this file: it is setup and
+       not algorithm, so it must stay UNCHARGED.  Routing it through [keyed]
+       like every other structure here would charge the author for work
+       Jenkins does not do, which is the opposite of what the paragraph above
+       is for.  The same goes for the two accumulators inside [resolve]. *)
     let by_dependent : (string, dependency list) Hashtbl.t =
       Hashtbl.create 4096 in
     List.iter
@@ -979,6 +1055,13 @@ module DependentPlugins = struct
     let resolve () =
       List.iter
         (fun plugin ->
+           (* uncharged, deliberately: see [by_dependent] above.  These are
+              the two result sets setDependents/setOptionalDependents receive,
+              and a HashSet insert into them is a cost this column does not
+              charge -- an omission that runs AGAINST the optimizer, since it
+              makes the author's column cheaper than it should be.  Stated
+              rather than fixed, because it is the same under all three
+              settings and so cannot move the comparison between them. *)
            let dependents = Hashtbl.create 64 in
            let optional_dependents = Hashtbl.create 64 in
            List.iter

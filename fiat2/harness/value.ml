@@ -30,12 +30,13 @@
             the subject terms 19 are Unranged and 2 are Ranged.
 
             So the dictionary carries its [dict_rep] below, and REPRESENTATION
-            AND CHARGE ARE SEPARATE QUESTIONS.  An Unranged dictionary is
-            charged as a hash table -- the key's hash, by Count.hash -- and
-            still STORED in the tree, because OCaml's standard library has no
-            persistent hash map and a hand-written one would put the harness's
-            own HAMT into the numbers instead of a backend's.  The tree's
-            descent is therefore charged to neither counter (Count.quiet).
+            AND CHARGE ARE SEPARATE QUESTIONS.  A dictionary charged as a hash
+            table -- the key's hash, by Count.hash, as Count.structures
+            directs -- is still STORED in the tree, because OCaml's standard
+            library has no persistent hash map and a hand-written one would put
+            the harness's own HAMT into the numbers instead of a backend's.
+            The tree's descent is therefore charged to neither counter
+            (Count.quiet).
             That is the same move the bag below makes, in the same direction:
             the counters are a cost model, and what the representation must
             do is denote the right value and pay for what the semantics can
@@ -69,15 +70,23 @@
        well-typed program ever compares across constructors, but the
        evaluator is not allowed to assume that. *)
 
-(* How a dictionary is CHARGED, which the evaluator reads off the dict_kind
-   its AEmptyDict carries.  It is not part of the value: two dictionaries with
-   the same bindings denote the same finite map and compare equal whatever
-   they are charged as, which is why [compare] below ignores it. *)
+(* The dict_kind the dictionary's AEmptyDict carried, retained at runtime.
+
+   It is the TYPE's annotation and nothing more -- deliberately not a charging
+   decision, because the charge also depends on Count.structures and the two
+   must not be conflated.  Keeping the kind itself is what lets ODictRange
+   reject an Unranged dictionary under EVERY setting of that parameter: if
+   this said "tree" or "hash" instead, the conservative Trees setting would
+   turn that rejection into a silent success.
+
+   It is not part of the value: two dictionaries with the same bindings denote
+   the same finite map and compare equal whatever they are charged as, which
+   is why [compare] below ignores it. *)
 type dict_rep =
-  | RTree      (* Ranged: a range restriction reads the key order, so the *)
-               (* descent is the cost and comparisons are charged for it *)
-  | RHash      (* Unranged: no operator on it reads the key order, so the *)
-               (* key's hash is the cost and Count.hash is charged for it *)
+  | RRanged    (* a range restriction may read the key order, so it is a tree *)
+               (* under every setting and its descent is the cost *)
+  | RUnranged  (* no operator on it can read the key order, so Count.licensed *)
+               (* decides, and only the Trees floor declines the hash *)
 
 (* The constructor order of value_compare's fall-through arms, read off
    Value.v: VUnit is Lt against everything, then VBool against everything
@@ -149,12 +158,16 @@ end = struct
        order and stop at the first difference, which is the same lexicographic
        comparison of canonical forms that dict_compare, bag_compare and
        list_compare perform on the sorted lists *)
-    (* The rep is deliberately not looked at: equal bindings are an equal
-       map.  A hash-charged dictionary has no key order of its own, so OEq
-       on one produces the canonical order the semantics compares -- the same
-       thing the bag below pays, and charged the same way. *)
+    (* The bindings decide the answer -- equal bindings are an equal map, so
+       the kind does not change what this returns.  It changes the CHARGE: a
+       dictionary being charged as a hash table has no key order of its own,
+       so OEq on one has to produce the canonical order the semantics compares,
+       which is the same thing the bag below pays and is charged the same way.
+       Under the Trees setting nothing is charged as a hash, and nothing here
+       canonicalises. *)
     | VDict (ra, a), VDict (rb, b) ->
-        if ra = RHash || rb = RHash then incr Count.canonicalisations;
+        let hashed r = r = RUnranged && Count.licensed () = Count.Hashed in
+        if hashed ra || hashed rb then incr Count.canonicalisations;
         VMap.compare compare a b
     (* the only place a bag's canonical order is observable, and the only
        place it is paid for *)
@@ -191,6 +204,35 @@ let rec key_work (v : t) : int =
   | VBag b -> List.fold_left (fun n v -> n + key_work v) 1 b
   | VSet s -> VSet.fold (fun v n -> n + key_work v) s 1
 
+(* What a point access at key [k] costs on a structure of the given kind,
+   performing the access with [f].  THE ONE RULE, called by eval.ml for the
+   optimizer's output and by baseline.ml for the original authors' code, so
+   the two columns are charged by the same function rather than by two helpers
+   that agree on inspection.  That is the only reason a ratio between them
+   means anything.
+
+   [f] reaches into a balanced tree under BOTH kinds, on both sides, for the
+   reason given at the top of this file: the storage and the charge are
+   separate questions, and OCaml has no persistent hash map whose constants
+   would not be the harness's own.  So under Hashed the descent [f] performs is
+   the harness's bookkeeping and is charged to neither counter; the key's hash
+   is charged instead.  WALL-CLOCK SECONDS THEREFORE DO NOT FOLLOW THIS
+   CHARGE -- they time a tree in every column, and are a check on shape only.
+
+   One asymmetry this closes, named because it MOVES A NUMBER.  The equality
+   that confirms a hash bucket was charged by baseline.ml's probe and not by
+   eval.ml's, so our hashed reads came out a comparison per probe cheaper than
+   the originals' for no reason anyone had argued for.  It is charged here,
+   once, for whoever calls.  Our columns go up by one comparison per hashed
+   probe against what this harness printed before; the shift is against us. *)
+let key_access (kind : Count.kind) (k : t) (f : unit -> 'a) : 'a =
+  match kind with
+  | Count.Ordered -> f ()
+  | Count.Hashed ->
+      Count.hash (key_work k);
+      incr Count.comparisons;
+      Count.quiet f
+
 let eqb (a : t) (b : t) : bool = compare a b = 0
 let ltb (a : t) (b : t) : bool = compare a b < 0
 
@@ -213,6 +255,10 @@ let bag_canonical (b : t list) : t list =
 
 (* ---------- sets ---------- *)
 
+(* UNCHARGED, and used only by bridge.ml to carry the Gallina oracle's values
+   across: nothing downstream of that bridge is measured.  The charged
+   counterpart, which is what the evaluator's coercions go through, is
+   Eval.set_build. *)
 let set_of_list (l : t list) : VSet.t = List.fold_left (fun s v -> VSet.add v s) VSet.empty l
 
 (* ---------- printing, for the differential test and for debugging ----------

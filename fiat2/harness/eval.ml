@@ -80,26 +80,58 @@ let interp_atom (a : atom) : value =
   | AString s -> VString s
   | ANone _ -> VOption None
   | ANil _ -> VList []
-  (* the dict_kind the term carries is the whole of what decides how this
-     dictionary's operations are charged; see value.ml's [dict_rep] *)
-  | AEmptyDict (Ranged, _) -> VDict (RTree, VMap.empty)
-  | AEmptyDict (Unranged, _) -> VDict (RHash, VMap.empty)
+  (* the dict_kind the term carries is retained as it stands; what it is worth
+     is decided at the use site, by [keyed] below *)
+  | AEmptyDict (Ranged, _) -> VDict (RRanged, VMap.empty)
+  | AEmptyDict (Unranged, _) -> VDict (RUnranged, VMap.empty)
   | AEmptyBag _ -> VBag bag_empty
   | AEmptySet _ -> VSet VSet.empty
   | AUnit -> VUnit
 
-(* ---------- dictionaries: what a key-addressed operation costs ----------
+(* ---------- what a key-addressed operation costs ----------
 
-   RTree pays the tree descent, which Value.compare charges as it walks.
-   RHash pays the key's hash instead, and the descent this harness still
-   performs is charged to neither counter, because the representation is the
-   tree either way and the type system has said a hash would serve.  The
-   bindings are identical, so nothing here changes what is computed. *)
+   Both helpers defer to Value.key_access, which baseline.ml also calls, so
+   the optimizer's output and the originals are charged by the same function.
+   Neither changes what is computed: the bindings and the elements are the
+   same whatever they are charged as.
+
+   A dictionary's kind decides which situation it is in.  Ranged is a tree
+   under every setting, because ODictRange reads the key order.  Unranged is
+   [licensed]: the type says no operator on it can read that order, so only
+   the conservative floor declines the hash. *)
 
 let keyed (r : dict_rep) (k : value) (f : unit -> 'a) : 'a =
-  match r with
-  | RTree -> f ()
-  | RHash -> Count.hash (Value.key_work k); Count.quiet f
+  Value.key_access
+    (match r with RRanged -> Count.ordered | RUnranged -> Count.licensed ())
+    k f
+
+(* A set is [unlicensed]: these terms never sort one, but TSet carries no kind
+   and TyESort_Set would take any set to a sorted list, so nothing in the
+   program licenses the hash the way dict_kind does.  Typed therefore charges
+   the tree it is stored in and only Hashes hashes it -- which is what makes
+   the Hashes column the measurement of what a set_kind would be worth. *)
+
+let in_set (k : value) (f : unit -> 'a) : 'a =
+  Value.key_access (Count.unlicensed ()) k f
+
+(* A set-vs-set operation.  On a tree it is a merge of the two shapes, and
+   Set.union/inter/diff charge the comparisons they actually perform.  On a
+   hash table there is no merge to do: it is one probe per element of the side
+   that gets iterated, so that is what is charged, and the tree work this
+   harness still performs is suppressed.  [iterated] is that side -- the right
+   operand of a difference, the smaller of the two otherwise. *)
+let set_pair (iterated : VSet.t) (f : unit -> 'a) : 'a =
+  match Count.unlicensed () with
+  | Count.Ordered -> f ()
+  | Count.Hashed ->
+      VSet.iter (fun e -> Value.key_access Count.Hashed e (fun () -> ())) iterated;
+      Count.quiet f
+
+(* Building a set from a list of n elements: n inserts, charged one at a time
+   through the same rule, so a coercion costs what n insertions cost under
+   whichever structure the run is charging.  The caller charges the rows. *)
+let set_build (l : value list) : VSet.t =
+  List.fold_left (fun s v -> in_set v (fun () -> VSet.add v s)) VSet.empty l
 
 (* ---------- unary ---------- *)
 
@@ -123,14 +155,14 @@ let interp_unop (o : unop) (v : value) : value =
      for -- one tree insert per entry, charged to cmps.  That is the same price
      the source's own OSetOfList pays on its survivors, so the coercion is not
      somewhere a pessimization could hide. *)
-  | OSetOfBag, VBag b -> VSet (set_of_list b)
-  (* A coercion READS every row: bag_of_list and set_of_list walk the list, and
-     set_of_list inserts each element into a tree.  Counting these is what keeps
+  | OSetOfBag, VBag b -> VSet (set_build b)
+  (* A coercion READS every row: bag_of_list and set_build walk the list, and
+     set_build inserts each element one at a time.  Counting these is what keeps
      the row counter honest about the source programs, whose whole cost on a
      membership test is the coercion -- eval/Jenkins_ItemDeletion's source does
      nothing else, and would otherwise be reported as touching no rows at all. *)
   | OBagOfList, VList l -> Count.visit (List.length l); VBag (bag_of_list l)
-  | OSetOfList, VList l -> Count.visit (List.length l); VSet (set_of_list l)
+  | OSetOfList, VList l -> Count.visit (List.length l); VSet (set_build l)
   | _, _ -> VUnit
 
 (* ---------- binary ---------- *)
@@ -167,11 +199,27 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
            VList (List.init n (fun i -> VInt (s + i)))
        | _ -> VUnit)
   | OBagInsert -> (match a with VBag m -> VBag (bag_add b m) | _ -> VUnit)
-  | OSetInsert -> (match a with VSet s -> VSet (VSet.add b s) | _ -> VUnit)
-  | OSetUnion -> (match a, b with VSet x, VSet y -> VSet (VSet.union x y) | _ -> VUnit)
-  | OSetIntersect -> (match a, b with VSet x, VSet y -> VSet (VSet.inter x y) | _ -> VUnit)
-  | OSetDiff -> (match a, b with VSet x, VSet y -> VSet (VSet.diff x y) | _ -> VUnit)
-  | OSetMem -> (match a with VSet s -> VBool (VSet.mem b s) | _ -> VUnit)
+  | OSetInsert ->
+      (match a with VSet s -> VSet (in_set b (fun () -> VSet.add b s)) | _ -> VUnit)
+  | OSetUnion ->
+      (match a, b with
+       | VSet x, VSet y ->
+           (* the smaller side is the one iterated either way *)
+           VSet (set_pair (if VSet.cardinal x < VSet.cardinal y then x else y)
+                   (fun () -> VSet.union x y))
+       | _ -> VUnit)
+  | OSetIntersect ->
+      (match a, b with
+       | VSet x, VSet y ->
+           VSet (set_pair (if VSet.cardinal x < VSet.cardinal y then x else y)
+                   (fun () -> VSet.inter x y))
+       | _ -> VUnit)
+  | OSetDiff ->
+      (match a, b with
+       | VSet x, VSet y -> VSet (set_pair y (fun () -> VSet.diff x y))
+       | _ -> VUnit)
+  | OSetMem ->
+      (match a with VSet s -> VBool (in_set b (fun () -> VSet.mem b s)) | _ -> VUnit)
   (* a contains b *)
   | OStrContains ->
       (match a, b with VString s, VString p -> VBool (str_contains s p) | _ -> VUnit)
@@ -239,7 +287,7 @@ let interp_ternop (o : ternop) (a : value) (b : value) (c : value) : value =
        | VString s, VInt i, VInt n -> VString (substring s i n)
        | _ -> VUnit)
   (* The two operators that READ the key order, and the only two whose typing
-     pins the kind: TyODictRange is stated at Ranged.  So RHash here is not an
+     pins the kind: TyODictRange is stated at Ranged.  So RUnranged here is not an
      ill-typed program to be absorbed into VUnit like the arms above -- it
      would mean the dict_kind the term carries disagrees with the operator
      applied to it, i.e. that a type-preservation proof is wrong or that the
@@ -247,13 +295,13 @@ let interp_ternop (o : ternop) (a : value) (b : value) (c : value) : value =
      rather than a number. *)
   | ODictRange ->
       (match a with
-       | VDict (RTree, d) -> VDict (RTree, dict_range b c d)
-       | VDict (RHash, _) -> failwith "ODictRange on an Unranged dictionary"
+       | VDict (RRanged, d) -> VDict (RRanged, dict_range b c d)
+       | VDict (RUnranged, _) -> failwith "ODictRange on an Unranged dictionary"
        | _ -> VUnit)
   | ODictRangeDelete ->
       (match a with
-       | VDict (RTree, d) -> VDict (RTree, dict_range_delete b c d)
-       | VDict (RHash, _) -> failwith "ODictRangeDelete on an Unranged dictionary"
+       | VDict (RRanged, d) -> VDict (RRanged, dict_range_delete b c d)
+       | VDict (RUnranged, _) -> failwith "ODictRangeDelete on an Unranged dictionary"
        | _ -> VUnit)
 
 (* ---------- aggregates ----------
@@ -378,7 +426,11 @@ and interp_flatmap store env tag e1 x e2 =
         (VSet.fold
            (fun v acc ->
               match interp_expr store (SMap.add x v env) e2 with
-              | VSet s2 -> VSet.union acc s2
+              (* the union the set flatmap performs is charged like any other *)
+              | VSet s2 ->
+                  set_pair
+                    (if VSet.cardinal acc < VSet.cardinal s2 then acc else s2)
+                    (fun () -> VSet.union acc s2)
               | _ -> acc)
            s VSet.empty)
   | _, _ -> VUnit

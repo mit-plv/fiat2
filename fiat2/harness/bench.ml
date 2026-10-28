@@ -570,6 +570,93 @@ let baseline (sizes : int list) =
     Baseline.runners
 
 (* ============================================================
+   THE SAME TWO PROGRAMS UNDER THE SAME STRUCTURE CHOICE
+
+   The table the structure parameter exists for.  Each kind is run six times:
+   the optimizer's output and the original author's code, under each of the
+   three settings count.ml describes.  WITHIN a column both sides were charged
+   by the same function at the same structure, so the ratio compares two
+   PROGRAMS and nothing else; ACROSS columns it is that same comparison under
+   a different assumption about the backend.
+
+   What each column is:
+
+     typed   what the type system licenses today -- a dictionary carrying
+             Unranged is a hash table because ODictRange is untypeable at it,
+             a set is a tree because no set_kind exists to say otherwise, and
+             the originals are charged as their authors wrote them.  The only
+             column whose every charge is backed by the type system.
+     trees   the floor: nothing hashes, on either side.
+     hashes  what a set_kind would ADD to typed, since sets are the only thing
+             standing between the two columns on our side.
+
+   A kind whose three columns are identical has no structure choice in it at
+   all, which is what a Ranged dictionary's row should look like -- its key
+   order is read, so no setting can hash it.
+
+   Key work is cmps+hashing, the figure count.ml defines.  Seconds are not
+   shown here: they time a tree in every column, by construction, so they
+   would be the same three numbers three times and would invite exactly the
+   misreading the parameter exists to prevent. *)
+
+let settings = [ Count.Typed; Count.Trees; Count.Hashes ]
+
+let matched (sizes : int list) =
+  let sizes = if sizes = [] then default_sizes else sizes in
+  let hi = List.nth sizes (List.length sizes - 1) in
+  let saved = !Count.structures in
+  Printf.printf
+    "The optimizer's output and the original authors' code, each charged the\n\
+     SAME way within a column.  Key work is cmps+hashing at %d rows; `x` is\n\
+     ours/theirs, so 1.00 is parity and below 1 is ours ahead.  See the\n\
+     comment above this table in bench.ml for what the three columns mean,\n\
+     and count.ml for what the settings do.  A row whose three columns agree\n\
+     has no structure choice in it -- its key order is read, so nothing can\n\
+     hash it.  'agree' is the same check the baseline table makes, re-made\n\
+     under every setting: the two computed the same answer.  A dash in the\n\
+     x column means the author's side does no key work there at all -- a\n\
+     field read, not a structure -- so there is no ratio to take.\n" hi;
+  List.iter
+    (fun (name, brun) ->
+       match List.find_opt (fun ((n, _), _) -> n = name) subjects with
+       | None -> Printf.eprintf "  (no extracted subject named %s)\n" name
+       | Some ((_, _src), opt) ->
+           let sp = List.assoc name Gen.specs in
+           Printf.printf "\n=== %s ===%s\n" name
+             (if List.mem name Baseline.hand_written then
+                "  (no author: our own example, against the implementation its\n                 \
+                 structure asks for -- weaker evidence than the rest)"
+              else "");
+           Printf.printf "    %-13s %21s %21s %21s %6s\n"
+             "kind" "typed  ours/theirs  x" "trees  ours/theirs  x"
+             "hashes ours/theirs  x" "agree";
+           List.iter
+             (fun (kind, _) ->
+                let only = Some kind in
+                let cell st =
+                  Count.structures := st;
+                  let o = op_phase opt sp ~rows:hi ~ops:ops_per_kind ~only in
+                  let b = baseline_phase brun sp ~rows:hi ~ops:ops_per_kind ~only in
+                  let ow = o.cmps + o.hash and bw = b.b_cmps + b.b_hash in
+                  (ow, bw, o.out = b.b_out) in
+                let cells = List.map cell settings in
+                (* a dash where the author's side does no key work at all --
+                   ArrayList.size() and currentSizeBytes are field reads, so
+                   there is no ratio to take and the pair says it better *)
+                let fmt (ow, bw, _) =
+                  Printf.sprintf "%7d /%7d %5s" ow bw
+                    (if bw = 0 then "--"
+                     else Printf.sprintf "%.2f" (float ow /. float bw)) in
+                let agree_str =
+                  if List.for_all (fun (_, _, a) -> a) cells then "yes" else "NO" in
+                Printf.printf "    %-13s %s %s %s %6s\n" kind
+                  (fmt (List.nth cells 0)) (fmt (List.nth cells 1))
+                  (fmt (List.nth cells 2)) agree_str)
+             sp.kinds)
+    Baseline.runners;
+  Count.structures := saved
+
+(* ============================================================
    WHAT THE SELECTOR'S CHOICE IS WORTH -- a side note, deliberately kept
    out of every table above.
 

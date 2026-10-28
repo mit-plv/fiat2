@@ -51,7 +51,7 @@ let rec of_ref (v : R.value) : value =
   (* the oracle's dictionary carries no rep; nothing downstream of here is
      measured, and [compare] ignores the rep, so either one would do *)
   | R.VDict d ->
-      VDict (RTree,
+      VDict (RRanged,
              List.fold_left (fun m (k, v) -> VMap.add (of_ref k) (of_ref v) m) VMap.empty d)
   | R.VBag b ->
       VBag (List.concat_map (fun (v, n) -> List.init (int_of_nat n) (fun _ -> of_ref v)) b)

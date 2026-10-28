@@ -20,10 +20,27 @@
                     picks.  Both are sound; only the index list differs
 
    With no argument it runs the report, which is what the README's one-line
-   recipe does. *)
+   recipe does.
+
+   Any command may be preceded or followed by a STRUCTURE SETTING -- typed,
+   trees or hashes -- which says what every point-access collection is charged
+   as, on BOTH sides of the author comparison.  count.ml says what the three
+   mean; the default is typed, which charges only what the type system
+   licenses.  `baseline matched` prints all three in sequence, which is the
+   comparison this parameter exists for. *)
 
 let () =
-  match Array.to_list Sys.argv with
+  let argv = Array.to_list Sys.argv in
+  (* pull the setting out of the arguments wherever it appears, so that it
+     composes with the size lists the commands take *)
+  let argv =
+    List.filter
+      (fun a ->
+         match Count.structures_of_string a with
+         | Some s -> Count.structures := s; false
+         | None -> true)
+      argv in
+  match argv with
   | _ :: "report" :: _ | [ _ ] -> Report.run ()
   | _ :: "check" :: _ -> Differential.run ()
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
@@ -31,11 +48,14 @@ let () =
   | _ :: "timing" :: rest -> Bench.timing rest
   | _ :: "baseline" :: rest ->
       Bench.baseline (List.filter_map int_of_string_opt rest)
+  | _ :: "matched" :: rest ->
+      Bench.matched (List.filter_map int_of_string_opt rest)
   | _ :: "alternatives" :: rest ->
       Bench.alternatives_cost (List.filter_map int_of_string_opt rest)
   | _ :: other :: _ ->
       Printf.eprintf
         "unknown command %s; expected report, check, bench, csv, timing, \
-         baseline or alternatives\n" other;
+         baseline, matched or alternatives, optionally with typed, trees or hashes\n"
+        other;
       exit 2
   | [] -> ()
