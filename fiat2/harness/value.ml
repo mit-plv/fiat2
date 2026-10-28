@@ -272,6 +272,24 @@ let bag_canonical (b : t list) : t list =
   incr Count.canonicalisations;
   List.sort compare b
 
+(* Multiset difference, the value Interpret.v's bag_diff computes: one
+   occurrence of each element of [rem] taken out of [b], and nothing below
+   zero.  The list is UNORDERED, so this removes the first occurrence it
+   meets rather than a canonical one -- which is the same multiset, and the
+   only thing a bag's semantics asks of it.
+
+   What it COSTS here is not what it costs a backend, and eval.ml's bag_pair
+   is where that is said. *)
+let bag_remove (v : t) (b : t list) : t list =
+  let rec go seen = function
+    | [] -> List.rev seen
+    | x :: rest when compare x v = 0 -> List.rev_append seen rest
+    | x :: rest -> go (x :: seen) rest in
+  go [] b
+
+let bag_diff (b : t list) (rem : t list) : t list =
+  List.fold_left (fun acc v -> bag_remove v acc) b rem
+
 (* ---------- sets ---------- *)
 
 (* UNCHARGED, and used only by bridge.ml to carry the Gallina oracle's values

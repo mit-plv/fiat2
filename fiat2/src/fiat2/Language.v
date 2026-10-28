@@ -117,6 +117,12 @@ Inductive binop : Type :=
 | OCons
 | ORange
 | OBagInsert
+(* The dual of OBagInsert, and the bag-level counterpart of OSetDiff: the
+   multiset difference, which is how a program says a row LEAVES a bag.  A
+   filter is the only other way to say it, and a filter cannot say it -- it
+   walks every element that stays, so a backend reading one cannot tell a
+   removal from an arbitrary predicate.  See BagRemoveTransf.v. *)
+| OBagDiff
 | OSetInsert
 | OSetUnion
 | OSetIntersect

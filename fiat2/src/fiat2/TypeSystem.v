@@ -191,7 +191,11 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOSetIntersect t : type_of_binop OSetIntersect (TSet t) (TSet t) (TSet t)
 | TyOSetDiff t : type_of_binop OSetDiff (TSet t) (TSet t) (TSet t)
 | TyOSetMem t : type_of_binop OSetMem (TSet t) t TBool
-| TyOStrContains : type_of_binop OStrContains TString TString TBool.
+| TyOStrContains : type_of_binop OStrContains TString TString TBool
+(* Last on purpose: TypeSound.v selects the binop goals by POSITION, so a rule
+   added anywhere else renumbers every selector in that proof.  The order here
+   is already independent of the order in Language.v. *)
+| TyOBagDiff t : type_of_binop OBagDiff (TBag t) (TBag t) (TBag t).
 
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
 | TyOInsert dk kt vt : type_of_ternop OInsert (TDict dk kt vt) kt vt (TDict dk kt vt)
@@ -714,6 +718,12 @@ Section WithMap.
                                          Success (EBinop o e1' e2')
                             | _ => error:(e "is a set but expected" expected)
                             end
+                        | OBagDiff =>
+                            match expected with
+                            | TBag t => e1' <- analyze_expr Gstore Genv (TBag t) e1 ;; e2' <- analyze_expr Gstore Genv (TBag t) e2 ;;
+                                         Success (EBinop OBagDiff e1' e2')
+                            | _ => error:(e "is a bag but expected" expected)
+                            end
                         | OSetMem =>
                             match expected with
                             | TBool => '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
@@ -991,6 +1001,12 @@ Section WithMap.
                                  match t1 with
                                  | TSet t => e2' <- analyze_expr Gstore Genv (TSet t) e2 ;; Success (TSet t, EBinop o e1' e2')
                                  | t => error:(e1 "has type" t "but expected a set")
+                                 end
+                             | OBagDiff =>
+                                 '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;
+                                 match t1 with
+                                 | TBag t => e2' <- analyze_expr Gstore Genv (TBag t) e2 ;; Success (TBag t, EBinop OBagDiff e1' e2')
+                                 | t => error:(e1 "has type" t "but expected a bag")
                                  end
                              | OSetMem =>
                                  '(t1, e1') <- synthesize_expr Gstore Genv e1 ;;

@@ -127,6 +127,38 @@ let set_pair (iterated : VSet.t) (f : unit -> 'a) : 'a =
       VSet.iter (fun e -> Value.key_access Count.Hashed e (fun () -> ())) iterated;
       Count.quiet f
 
+(* A bag difference.  THE CHARGE IS THE WHOLE POINT OF THE OPERATOR, and it
+   is also where this harness cannot have everything it would like.
+
+   A bag is stored here as an unordered LIST (value.ml says why: every other
+   bag operation in these programs is an insert, a concatenation or a fold,
+   none of which wants an order).  So unlike the dictionary -- stored in a
+   tree, charged as a hash, with the descent quieted -- there is no tree here
+   whose descent could stand in for the Ordered cost of a multiset.  What the
+   list really does is a scan.
+
+   So the two settings say different things, and only one of them is a model
+   of a multiset:
+
+     Ordered  the scan the list really performs, Theta(b).  That is the
+              honest charge for a bag with no kind annotation, in exactly the
+              way a set with no set_kind is charged the tree it is stored in.
+     Hashed   one point removal per element of the iterated side, which is
+              what a backend holding the bag as a hashed multiset would pay,
+              with the list's own scan quieted.
+
+   A bag_kind, the analogue of dict_kind, is what would let the typed column
+   charge a removal as a removal.  Until then the operator makes the INTENT
+   expressible -- a filter cannot say "this row leaves", because a backend
+   reading one cannot tell a removal from an arbitrary predicate -- and the
+   hashes column is where that intent turns into a cost. *)
+let bag_pair (iterated : value list) (f : unit -> 'a) : 'a =
+  match Count.unlicensed () with
+  | Count.Ordered -> f ()
+  | Count.Hashed ->
+      List.iter (fun e -> Value.key_access Count.Hashed e (fun () -> ())) iterated;
+      Count.quiet f
+
 (* Building a set from a list of n elements: n inserts, charged one at a time
    through the same rule, so a coercion costs what n insertions cost under
    whichever structure the run is charging.  The caller charges the rows. *)
@@ -217,6 +249,10 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
   | OSetDiff ->
       (match a, b with
        | VSet x, VSet y -> VSet (set_pair y (fun () -> VSet.diff x y))
+       | _ -> VUnit)
+  | OBagDiff ->
+      (match a, b with
+       | VBag x, VBag y -> VBag (bag_pair y (fun () -> Value.bag_diff x y))
        | _ -> VUnit)
   | OSetMem ->
       (match a with VSet s -> VBool (in_set b (fun () -> VSet.mem b s)) | _ -> VUnit)

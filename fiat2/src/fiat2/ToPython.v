@@ -87,6 +87,15 @@ Definition binop_py (o:binop) (e1 e2:string) : string :=
   | OSetUnion => "(lambda s1, s2: s1 + [v for v in s2 if v not in s1])(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetIntersect => "(lambda s1, s2: [v for v in s1 if v in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetDiff => "(lambda s1, s2: [v for v in s1 if v not in s2])(" ++ e1 ++ ", " ++ e2 ++ ")"
+  (* bags are Python lists too, so a multiset difference has to count rather
+     than test membership: an element is kept when the occurrences of it
+     already passed over reach the number the right operand removes.  That
+     drops the first b2.count(x) copies of each x and keeps the rest, which is
+     the difference truncated at zero.  list.count and `in` both compare with
+     ==, which is what unhashable rows need. *)
+  | OBagDiff =>
+      "(lambda b1, b2: [x for i, x in enumerate(b1) if b1[:i].count(x) >= b2.count(x)])("
+        ++ e1 ++ ", " ++ e2 ++ ")"
   | OSetMem => paren (e2 ++ " in " ++ e1)
   | OStrContains => paren (e2 ++ " in " ++ e1)
   | OLookup => e1 ++ ".get(" ++ e2 ++ ")"

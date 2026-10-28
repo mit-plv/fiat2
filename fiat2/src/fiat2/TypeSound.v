@@ -1181,6 +1181,142 @@ Section WithWord.
     rewrite Forall_forall in H; auto.
   Qed.
 
+  (* ---- bag_remove, and the four invariants of the dual operation ----
+
+     Every case of bag_remove returns l itself, its tail, its tail under a new
+     head carrying the SAME key, or a shorter tail under the old head.  So no
+     key appears that was not there already, and that single fact is what all
+     four invariants need: sortedness and duplicate-freedom are statements
+     about the keys, and so is the element type, because a bag's entries are
+     keyed by the element itself. *)
+
+  Lemma bag_remove_keys_incl : forall (l : list (value * nat)) v p,
+      In p (bag_remove v l) -> exists q, In q l /\ fst q = fst p.
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v p H.
+    1: contradiction.
+    unfold value_ltb, value_eqb in H.
+    destruct (value_compare v v') eqn:E_cmp.
+    (* Eq: the entry that replaces the head carries the key the old one did,
+       because value_compare called them equal *)
+    - apply value_compare_Eq_eq in E_cmp; subst.
+      cbn in H. destruct n' as [ | [ | n'' ] ].
+      1,2: exists p; split; [ right; exact H | reflexivity ].
+      cbn in H; destruct H as [ H | H ].
+      (* subst kept v', so the head is spelled with it *)
+      1:{ exists (v', S (S n'')); split.
+          1: left; reflexivity.
+          1: rewrite <- H; reflexivity. }
+      1: exists p; split; [ right; exact H | reflexivity ].
+    (* Lt: the list comes back unchanged *)
+    - cbn in H. exists p; split; [ exact H | reflexivity ].
+    (* Gt: the head stays, and the rest is the recursion's *)
+    - cbn in H. destruct H as [ H | H ].
+      1: exists p; split; [ left; exact H | reflexivity ].
+      1:{ apply IHl in H; destruct H as [ q [ H_q H_fst ] ].
+          exists q; split; [ right; exact H_q | exact H_fst ]. }
+  Qed.
+
+  Lemma bag_remove_preserve_SSorted : forall (l : list (value * nat)) v,
+      StronglySorted bag_entry_leb l ->
+      StronglySorted bag_entry_leb (bag_remove v l).
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v H.
+    1: constructor.
+    unfold value_ltb, value_eqb.
+    destruct (value_compare v v') eqn:E_cmp; cbn.
+    - apply value_compare_Eq_eq in E_cmp; subst.
+      destruct n' as [ | [ | n'' ] ]; invert_SSorted; auto.
+      constructor; assumption.
+    - assumption.
+    - invert_SSorted. constructor.
+      1: apply IHl; assumption.
+      rewrite Forall_forall; intros p H_in.
+      apply bag_remove_keys_incl in H_in; destruct H_in as [ q [ H_q H_fst ] ].
+      unfold bag_entry_leb; rewrite <- H_fst.
+      lazymatch goal with H: Forall _ l |- _ => rewrite Forall_forall in H; apply H in H_q end.
+      exact H_q.
+  Qed.
+
+  Lemma bag_remove_preserve_NoDup : forall (l : list (value * nat)) v,
+      NoDup (List.map fst l) ->
+      StronglySorted bag_entry_leb l ->
+      NoDup (List.map fst (bag_remove v l)).
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v H_nd H_ss.
+    1: constructor.
+    unfold value_ltb, value_eqb.
+    destruct (value_compare v v') eqn:E_cmp; cbn.
+    (* the replacement head has the old key, so map fst does not change *)
+    - apply value_compare_Eq_eq in E_cmp; subst.
+      destruct n' as [ | [ | n'' ] ]; invert_NoDup; cbn; auto.
+    - assumption.
+    (* v' cannot reappear below it: a key the recursion keeps was already
+       a key of l, and NoDup forbids v' from being one *)
+    - invert_NoDup. cbn. constructor.
+      1:{ intro contra. apply In_fst in contra.
+          destruct contra as [ p [ H_in H_fst ] ].
+          apply bag_remove_keys_incl in H_in.
+          destruct H_in as [ q [ H_q H_q_fst ] ].
+          apply in_map with (f:=fst) in H_q.
+          rewrite H_q_fst, H_fst in H_q; auto. }
+      1: apply IHl; auto; invert_SSorted; assumption.
+  Qed.
+
+  Lemma bag_remove_preserve_pos : forall (l : list (value * nat)) v,
+      Forall (fun p => Nat.lt 0 (snd p)) l ->
+      Forall (fun p => Nat.lt 0 (snd p)) (bag_remove v l).
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v H.
+    1: constructor.
+    unfold value_ltb, value_eqb.
+    inversion H; subst.
+    destruct (value_compare v v') eqn:E_cmp; cbn.
+    (* the one new entry is a successor, so it is positive by construction *)
+    - destruct n' as [ | [ | n'' ] ].
+      1,2: assumption.
+      constructor.
+      1: apply Nat.lt_0_succ.
+      1: assumption.
+    - assumption.
+    - constructor.
+      1: assumption.
+      1: apply IHl; assumption.
+  Qed.
+
+  (* The element type travels with the keys, by the same lemma. *)
+  Lemma bag_remove_preserve_ty : forall (l : list (value * nat)) v t,
+      Forall (fun p => type_of_value (fst p) t) l ->
+      Forall (fun p => type_of_value (fst p) t) (bag_remove v l).
+  Proof.
+    intros * H. rewrite Forall_forall; intros p H_in.
+    apply bag_remove_keys_incl in H_in; destruct H_in as [ q [ H_q H_fst ] ].
+    rewrite <- H_fst. rewrite Forall_forall in H; auto.
+  Qed.
+
+  Lemma bag_remove_sound : forall (l : list (value * nat)) v t,
+      type_of_value (VBag l) (TBag t) ->
+      type_of_value (VBag (bag_remove v l)) (TBag t).
+  Proof.
+    intros * H. inversion H; subst.
+    constructor;
+      auto using bag_remove_preserve_NoDup, bag_remove_preserve_SSorted,
+                 bag_remove_preserve_pos, bag_remove_preserve_ty.
+  Qed.
+
+  (* A difference is a removal per occurrence on the right, so the right
+     operand's TYPE never enters: what it contributes is a list of values to
+     take out, and taking a value out of a well-typed bag leaves one. *)
+  Lemma bag_diff_sound : forall (l1 l2 : list (value * nat)) t,
+      type_of_value (VBag l1) (TBag t) ->
+      type_of_value (VBag (bag_diff l1 l2)) (TBag t).
+  Proof.
+    unfold bag_diff; intros * H.
+    induction (bag_to_list l2) as [ | v vs IH ]; cbn.
+    1: assumption.
+    apply bag_remove_sound; assumption.
+  Qed.
+
   Lemma incl_repeat : forall A (x : A) l n,
       In x l -> incl (repeat x n) l.
   Proof.
@@ -1497,6 +1633,9 @@ Section WithWord.
              cbn. constructor. }
         14:{ (* OStrContains *)
              repeat apply_type_sound_IH. cbn. constructor. }
+        (* OBagDiff.  Last in type_of_binop, so it arrives here once the
+           block above has taken OStrContains out of position 14. *)
+        14:{ repeat apply_type_sound_IH. cbn. apply bag_diff_sound; constructor; auto. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).

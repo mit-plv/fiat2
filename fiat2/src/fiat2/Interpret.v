@@ -30,8 +30,32 @@ Section WithWord.
   Definition list_to_bag : list value -> list (value * nat):=
     fold_right bag_insert nil.
 
+  (* One occurrence of v out of a canonical bag: the mirror of bag_insert,
+     walking the same sorted spine and stopping at the same three cases.  A
+     bag holds only positive multiplicities (TyVBag), so an entry that drops
+     to zero is removed rather than kept at 0 -- which is what keeps the
+     representation canonical, and what makes the empty bag the unique
+     representation of the empty multiset. *)
+  Fixpoint bag_remove (v : value) (l : list (value * nat)) :=
+    match l with
+    | nil => nil
+    | (v', n') :: l' =>
+        if value_ltb v v' then (v', n') :: l'
+        else if value_eqb v v' then
+               match n' with
+               | S (S n'') => (v, S n'') :: l'
+               | _ => l'
+               end
+             else (v', n') :: bag_remove v l'
+    end.
+
   Definition bag_to_list : list (value * nat) -> list value :=
     flat_map (fun p => repeat (fst p) (snd p)).
+
+  (* Multiset difference, truncated at zero: one removal per occurrence on the
+     right.  Mirrors OSetUnion's fold over the other side. *)
+  Definition bag_diff (l1 l2 : list (value * nat)) : list (value * nat) :=
+    fold_right bag_remove l1 (bag_to_list l2).
 
   Fixpoint set_insert (v : value) (l : list value) :=
     match l with
@@ -178,6 +202,10 @@ Section WithWord.
                        end
     | OSetDiff => match a, b with
                   | VSet l1, VSet l2 => VSet (filter (fun v => negb (set_mem v l2)) l1)
+                  | _, _ => VUnit
+                  end
+    | OBagDiff => match a, b with
+                  | VBag l1, VBag l2 => VBag (bag_diff l1 l2)
                   | _, _ => VUnit
                   end
     | OSetMem => match a with
