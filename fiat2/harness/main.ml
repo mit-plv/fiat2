@@ -13,6 +13,10 @@
      baseline [n ...]
                     the originals' own structures, beside what the
                     optimizer derived
+     threeway [n ...]
+                    all three programs in one table: the query as written,
+                    the program derived from it, and the author's own code,
+                    compared on the one cost that crosses to the author
      alternatives [n ...]
                     a SIDE NOTE, kept out of the other tables: what the
                     selector's own choice is worth, by running each
@@ -48,6 +52,8 @@ let () =
   | _ :: "timing" :: rest -> Bench.timing rest
   | _ :: "baseline" :: rest ->
       Bench.baseline (List.filter_map int_of_string_opt rest)
+  | _ :: "threeway" :: rest ->
+      Bench.threeway (List.filter_map int_of_string_opt rest)
   | _ :: "matched" :: rest ->
       Bench.matched (List.filter_map int_of_string_opt rest)
   | _ :: "alternatives" :: rest ->
@@ -55,7 +61,8 @@ let () =
   | _ :: other :: _ ->
       Printf.eprintf
         "unknown command %s; expected report, check, bench, csv, timing, \
-         baseline, matched or alternatives, optionally with typed, trees or hashes\n"
+         baseline, threeway, matched or alternatives, optionally with typed, \
+         trees or hashes\n"
         other;
       exit 2
   | [] -> ()

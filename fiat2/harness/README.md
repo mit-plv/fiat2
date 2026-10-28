@@ -26,6 +26,8 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe check   # the differential test
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
+    ./_build/default/main.exe threeway      # all three programs in one table:
+                                            # as written, derived, and the author's
     ./_build/default/main.exe matched       # both sides, under each of the three
                                             # structure settings
     ./_build/default/main.exe alternatives  # a side note: what the selector's
@@ -255,10 +257,12 @@ author's code**: the author's hand-built structure was removed so the query coul
 written declaratively, so `src -> opt` measures "declarative with no index" against
 "compiler-indexed", and a reviewer can fairly say nobody would write that baseline.
 `baseline.ml` transcribes the **authors' own structures**, each citing the file and line
-it came from, and runs them over the same workloads. Eight of the nine subjects have an
-author; `range_delete` is our own example, so what stands in for one there is the
+it came from, and runs them over the same workloads. Nine of the eleven subjects have an
+author. `range_delete` is our own example, so what stands in for one there is the
 implementation its structure asks for, and it is listed in `Baseline.hand_written` so the
-report marks it instead of letting it pass as a transcription.
+report marks it instead of letting it pass as a transcription; `sat4j` came from Cozy's
+benchmark suite rather than from a program we chose, and has no transcription at all, so
+its author column is empty everywhere.
 
 **Parity is the expected result.** The compiler is supposed to arrive back at what the
 author built, so matching asymptotics is the positive finding and a win would mean one of
@@ -327,7 +331,7 @@ is also why `named_cache/delete` reports 2 rows per delete against the author's 
 *not* reading the row twice: `delete_corrects_by_a_probe` pins one probe, and the second
 tick is the fold over the projection of the row the probe found.
 
-**The result.** All 31 kinds `agree`, and every optimized exponent matches the author's
+**The result.** All 32 kinds `agree`, and every optimized exponent matches the author's
 except `user_search/suggest` at **0.52 against 1.00** — the trigram index Jenkins never
 built, 66x faster than their own `contains` scan at 1600 rows. Two places run the other
 way, both a composite key the author indexed and this development has no index for:
@@ -346,6 +350,62 @@ same way the subject's is, so a transcription that computes something else is ca
 any of its numbers are read. It earned its place on the first run — `item_deletion`'s table
 arrives in the environment rather than through build queries, the transcription started
 empty, and every `containsHit` disagreed.
+
+## All three in one table
+
+`main.exe threeway` is the two comparisons above printed side by side, one row per op
+kind: the query **as written** with no index, the program the optimizer **derives** from
+it, and the **author's own** code. The two ratios are the two claims — `src/opt` is what
+the optimizer buys, `opt/orig` is whether it arrived back where the author was by hand —
+and the exponents are what either claim actually rests on.
+
+Only key work is shown, because it is the only cost that crosses to `orig`: `steps`
+counts this interpreter walking a tree, which hand-written OCaml never does. The
+src-against-opt steps comparison is in the `bench` table, where both sides are the same
+interpreter.
+
+**The one thing to read carefully.** Key work alone misdescribes the *source* column on
+some kinds, which is why the source's steps exponent is printed beside its key exponent:
+
+| kind | `src aK` | `src aS` | what the source form pays |
+|---|---|---|---|
+| `window_store/fetchAll` | 0.00 | 0.99 | a full scan that compares **no keys** — the range filter is `OLess` on ints, not a key descent. Its cost is all traversal |
+| `item_deletion/containsHit` | 1.22 | 0.00 | the mirror image: a whole-row membership test is almost **nothing but** key comparison |
+
+So the `0.04x` in `fetchAll`'s `src/opt` column is an artifact of the instrument and not a
+pessimization — the optimizer's win on that row sits in a column this table does not
+carry. On a row whose `src aK` is at or near 1.0 the ratio means what it looks like.
+
+With that read in, at 1600 rows under `typed`:
+
+- **The exponent falls on every kind that had one.** `src aK` runs 0.95–1.22 across the
+  subjects whose source scan compares keys, and **2.00** on `dependent_plugins` — the one
+  quadratic source — against an `opt a` of 0.00–0.27, and 1.00 on `dependent_plugins`.
+  That is the claim, and it is the same number in all three settings.
+- **`src/opt` spans 1.00x to 1721x** on the key-work constant:
+  `item_deletion/containsHit` 1721x, `cluster/forNode` 576x, `area_registry/byFloor`
+  534x, `keycloak/byId` 400x, and `dependent_plugins/resolveAll` 1066x *with the exponent
+  halved underneath it*.
+- **`opt/orig` on a read is a constant, never an exponent** — 0.50x to 6.50x, every
+  exponent matching, which is the parity the comparison predicts. The top of that range
+  is the `set_kind` gap and nothing else: `lookin/varyingKey` 5.28x and
+  `item_deletion/containsHit` 5.55x both fall to about 1.1–1.5x under `hashes`. The one
+  read that runs **0.0019x** in our favour is `dependent_plugins/resolveAll`, where the
+  author's own code is quadratic and the derived form is not — the only place in the
+  table where we beat an author on the exponent rather than on a constant.
+- **Writes are where `opt/orig` is widest, and that is index maintenance**:
+  `user_search/remove` 61.15x — three indexes to keep, including the trigram pair Jenkins
+  never built — `area_registry/remove` 9.62x, `item_deletion/register` 7.22x,
+  `window_store/put` 1.20x, and `named_cache/delete` **0.22x**, where the derived form is
+  ahead because the author re-walks a list the index replaces. The reads above are bought
+  with these writes, and the table prices both rather than reporting only the half that
+  flatters the compiler.
+- **`src/opt` below 1 is the same fact from the source side**: `range_delete/insert`
+  0.04x, `item_deletion/register` 0.07x. The source form maintains nothing because it has
+  no index to maintain.
+
+All 42 kinds `agree`, at every size — which here is the stronger statement it looks like,
+because it is checked across all three programs rather than two.
 
 ## A side note: what the selector's choice is worth
 

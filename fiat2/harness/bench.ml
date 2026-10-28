@@ -570,6 +570,165 @@ let baseline (sizes : int list) =
     Baseline.runners
 
 (* ============================================================
+   THE THREE PROGRAMS SIDE BY SIDE
+
+   The query as it is written with no index, the program the optimizer
+   derives from it, and the original author's hand-written code -- one row
+   per op kind, at the largest table, with each column's fitted exponent.
+
+   What the three columns ARE, because the comparison is only as honest as
+   this: `src` is the subject as WRITTEN -- the query over the plain table,
+   no index installed.  It is not a straw man and it is not the author's
+   code; it is what the programmer hands the compiler.  `opt` is what the
+   compiler hands back.  `orig` is what the author actually wrote,
+   transcribed in baseline.ml.  So src -> opt is what the optimizer buys,
+   and opt -> orig is whether it arrived back where the author was by hand.
+
+   The COSTS are key work, because that is the only cost that crosses to
+   `orig`.  `steps` counts this interpreter walking a tree, which the
+   author's OCaml never does, so a steps column for `orig` would mean
+   nothing; the src-against-opt steps comparison is in the `bench` table,
+   where both sides are the same interpreter.
+
+   But key work alone MISREADS the source column on some kinds, so the
+   source's steps exponent is printed beside its key exponent -- `aK` and
+   `aS` -- and the two together say what the source form actually pays:
+
+     window_store/fetchAll   aK 0.00, aS 0.99   a full scan that compares
+                                                no keys: the range filter
+                                                is OLess on ints, not a
+                                                key descent, so its cost
+                                                is all traversal.  The
+                                                0.04x src/opt ratio is an
+                                                artifact of the instrument
+                                                and NOT a pessimization.
+     item_deletion/containsHit  aK 1.22, aS 0.00  the mirror image: a
+                                                whole-row membership test
+                                                is almost nothing BUT key
+                                                comparison.
+
+   So on a row where aK is flat and aS is linear, read the exponent and not
+   the constant: the optimizer's win there is in a column this table does
+   not carry.  Every row whose aK is at or near 1.0 is one where the ratio
+   means what it looks like.
+
+   Both ratios are of the key-work totals.  A `--` is a ZERO DENOMINATOR --
+   the column does no key work at all on that kind, which is a finding on a
+   few of them and not a missing measurement.
+
+   `agree` is the store check, re-made at EVERY size rather than only the
+   largest: all three programs computed the same final store.  On the left
+   that is the soundness theorem on this input; on the right it is the
+   transcription's own correctness.  A size that differed is named. *)
+
+let threeway (sizes : int list) =
+  let sizes = if sizes = [] then default_sizes else sizes in
+  let hi = List.nth sizes (List.length sizes - 1) in
+  Printf.printf
+    "The query as written, the program derived from it, and the author's own\n\
+     code.  Key work is cmps+hashing (see count.ml) at %d rows, charged by\n\
+     the same function in all three columns; `a` is its fitted exponent over\n\
+     %d sizes, which is the claim -- 1.0 linear, 0.0 independent of the table,\n\
+     ~0.2 a probe's compares, a leading ~ a loose fit.\n\
+     Steps are NOT here: they count this interpreter's tree-walking, which\n\
+     the author's OCaml never does, so only key work crosses to `orig`.  The\n\
+     src/opt steps comparison is in the `bench` table.\n\
+     src/opt is what the optimizer buys.  opt/orig is the parity claim: the\n\
+     source form is not the author's code -- their structure was removed to\n\
+     write the query declaratively -- so the claim is that the compiler\n\
+     arrives back at what they built, and about 1x is the expected result.\n\
+     `--` is a zero denominator, not a missing number, and a `-` exponent is\n\
+     a column that is identically zero.  `agree` is checked at every size.\n\
+     Structure setting: %s.\n"
+    hi (List.length sizes) (Count.structures_name !Count.structures);
+  List.iter
+    (fun ((name, src), opt) ->
+       let sp = List.assoc name Gen.specs in
+       let brun = List.assoc_opt name Baseline.runners in
+       Printf.printf "\n=== %s ===%s\n" name
+         (match brun with
+          | None ->
+              "  (no author transcription: a third-party subject we did not\n\
+               \                 choose, so its orig column is empty)"
+          | Some _ when List.mem name Baseline.hand_written ->
+              "  (no author: our own example, against the implementation its\n\
+               \                 structure asks for -- weaker evidence than the rest)"
+          | Some _ -> "");
+       Printf.printf "    %-13s %13s %12s %12s %7s %7s %6s %6s %9s %9s %6s\n"
+         "kind" "src key" "opt key" "orig key" "src aK" "src aS" "opt a"
+         "orig a" "src/opt" "opt/orig" "agree";
+       List.iter
+         (fun (kind, _) ->
+            let only = Some kind in
+            (* Each column is run once per size and the records are KEPT, so
+               that the exponents and the agreement below come from the same
+               runs as the printed totals and cannot drift from them. *)
+            let runs_s =
+              List.map (fun r ->
+                (r, op_phase src sp ~rows:r ~ops:ops_per_kind ~only)) sizes
+            and runs_o =
+              List.map (fun r ->
+                (r, op_phase opt sp ~rows:r ~ops:ops_per_kind ~only)) sizes in
+            let runs_b =
+              Option.map (fun b ->
+                List.map (fun r ->
+                  (r, baseline_phase b sp ~rows:r ~ops:ops_per_kind ~only))
+                  sizes)
+                brun in
+            let last l = snd (List.nth l (List.length l - 1)) in
+            let s_hi = last runs_s and o_hi = last runs_o in
+            let kw (r : run) = r.cmps + r.hash in
+            let bkw (r : base_run) = r.b_cmps + r.b_hash in
+            let b_hi = Option.map last runs_b in
+            (* The agreement spans every column that exists, at every size.
+               src = opt is the optimizer's soundness theorem; opt = orig is
+               the transcription's.  Either failing names the size. *)
+            let differing =
+              List.filter_map
+                (fun (r, o) ->
+                   let s = List.assoc r runs_s in
+                   let b = Option.map (List.assoc r) runs_b in
+                   if s.out <> o.out
+                      || (match b with Some b -> b.b_out <> o.out | None -> false)
+                   then Some r else None)
+                runs_o in
+            let agree_str = match differing with
+              | [] -> "yes"
+              | rs -> "NO@" ^ String.concat "," (List.map string_of_int rs) in
+            let work c h = Printf.sprintf "%d+%d" c h in
+            (* four decimals below 0.01, because the one ratio down there --
+               dependent_plugins, where the optimizer beats the author's own
+               code by changing the exponent -- rounds to 0.00x otherwise and
+               reads as a missing number *)
+            let ratio a b =
+              if b = 0 then "       --"
+              else
+                let x = float a /. float b in
+                Printf.sprintf (if x < 0.01 then format_of_string "%8.4fx"
+                                else format_of_string "%8.2fx") x in
+            Printf.printf
+              "    %-13s %13s %12s %12s %7s %7s %6s %6s %9s %9s %6s\n"
+              kind
+              (work s_hi.cmps s_hi.hash)
+              (work o_hi.cmps o_hi.hash)
+              (match b_hi with
+               | None -> "--"
+               | Some b -> work b.b_cmps b.b_hash)
+              (exp_str (fit (List.map (fun (r, x) -> (r, kw x)) runs_s)))
+              (exp_str (fit (List.map (fun (r, x) -> (r, x.steps)) runs_s)))
+              (exp_str (fit (List.map (fun (r, x) -> (r, kw x)) runs_o)))
+              (match runs_b with
+               | None -> "     -"
+               | Some l -> exp_str (fit (List.map (fun (r, x) -> (r, bkw x)) l)))
+              (ratio (kw s_hi) (kw o_hi))
+              (match b_hi with
+               | None -> "       --"
+               | Some b -> ratio (kw o_hi) (bkw b))
+              agree_str)
+         sp.kinds)
+    subjects
+
+(* ============================================================
    THE SAME TWO PROGRAMS UNDER THE SAME STRUCTURE CHOICE
 
    The table the structure parameter exists for.  Each kind is run six times:
