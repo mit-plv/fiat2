@@ -114,7 +114,7 @@ module rec V : sig
     | VList of t list
     | VRecord of (string * t) list   (* sorted by field name *)
     | VDict of dict_rep * dstore
-    | VBag of t list                 (* UNORDERED; multiplicity is repetition *)
+    | VBag of bstore
     | VSet of sstore
     | VUnit
 
@@ -139,6 +139,25 @@ module rec V : sig
     | STree of VSet.t
     | SHash of unit VTrie.t
 
+  (* A bag has THREE candidate implementations, not two, and that is not an
+     accident of this harness -- it is the shape of the question.  A bag's
+     operations in these programs are an insert, a concatenation and a fold,
+     none of which wants an order, so a LIST is the cheapest faithful
+     representation and the one a backend would pick for a bag it only builds
+     and folds.  A bag something is REMOVED from wants an index, and then a
+     multiset over a tree or a trie is right.  Which of those a given bag
+     deserves is a per-bag question, and the dial answers it per RUN.
+
+     [bempty] picks BTree for Ordered and BHash for Hashed, mirroring the set
+     above, so that a removal costs a removal in every column.  BList is what
+     the Ordered column would hold if the cheap-build reading won instead; the
+     choice is one line in [bempty] and the probe exercises all three, so the
+     measurement can decide rather than the comment. *)
+  and bstore =
+    | BList of t list        (* multiplicity by repetition, no order *)
+    | BTree of int VMap.t    (* element -> multiplicity, balanced tree *)
+    | BHash of int VTrie.t   (* element -> multiplicity, hash trie *)
+
   val compare : t -> t -> int
   (* for CCHashTrie's functor, which wants an equal and a hash *)
   val equal : t -> t -> bool
@@ -147,6 +166,8 @@ module rec V : sig
      module never case-split on the representation *)
   val dfold : (t -> t -> 'a -> 'a) -> dstore -> 'a -> 'a
   val sfold : (t -> 'a -> 'a) -> sstore -> 'a -> 'a
+  val bfold : (t -> 'a -> 'a) -> bstore -> 'a -> 'a
+  val bcanon : bstore -> t list
 end = struct
   type t =
     | VInt of int
@@ -156,7 +177,7 @@ end = struct
     | VList of t list
     | VRecord of (string * t) list
     | VDict of dict_rep * dstore
-    | VBag of t list
+    | VBag of bstore
     | VSet of sstore
     | VUnit
 
@@ -170,6 +191,25 @@ end = struct
   and sstore =
     | STree of VSet.t
     | SHash of unit VTrie.t
+
+  (* A bag has THREE candidate implementations, not two, and that is not an
+     accident of this harness -- it is the shape of the question.  A bag's
+     operations in these programs are an insert, a concatenation and a fold,
+     none of which wants an order, so a LIST is the cheapest faithful
+     representation and the one a backend would pick for a bag it only builds
+     and folds.  A bag something is REMOVED from wants an index, and then a
+     multiset over a tree or a trie is right.  Which of those a given bag
+     deserves is a per-bag question, and the dial answers it per RUN.
+
+     [bempty] picks BTree for Ordered and BHash for Hashed, mirroring the set
+     above, so that a removal costs a removal in every column.  BList is what
+     the Ordered column would hold if the cheap-build reading won instead; the
+     choice is one line in [bempty] and the probe exercises all three, so the
+     measurement can decide rather than the comment. *)
+  and bstore =
+    | BList of t list        (* multiplicity by repetition, no order *)
+    | BTree of int VMap.t    (* element -> multiplicity, balanced tree *)
+    | BHash of int VTrie.t   (* element -> multiplicity, hash trie *)
 
   let rank = function
     | VUnit -> 0 | VBool _ -> 1 | VInt _ -> 2 | VString _ -> 3
@@ -191,6 +231,11 @@ end = struct
      dcardinal and scardinal outside are these under their public names *)
   let dsize = function DTree m -> VMap.cardinal m | DHash h -> VTrie.cardinal h
   let ssize = function STree x -> VSet.cardinal x | SHash h -> VTrie.cardinal h
+  (* occurrences, WITH multiplicity *)
+  let bsize = function
+    | BList l -> List.length l
+    | BTree m -> VMap.fold (fun _ n acc -> acc + n) m 0
+    | BHash h -> VTrie.fold ~f:(fun acc _ n -> acc + n) ~x:0 h
 
   let rec compare (a : t) (b : t) : int =
     incr Count.comparisons;
@@ -239,17 +284,13 @@ end = struct
              let c = compare k1 k2 in
              if c <> 0 then c else compare v1 v2)
           (canon a) (canon b)
-    (* An emptiness test asks nothing about order, so it does not pay for
-       one: these three return exactly what sorting both sides and comparing
-       returned, for the reason given at the head of this file. *)
-    | VBag [], VBag [] -> 0
-    | VBag [], VBag _ -> -1
-    | VBag _, VBag [] -> 1
-    (* the only place a bag's canonical order is observable, and the only
-       place it is paid for *)
-    | VBag a, VBag b ->
-        incr Count.canonicalisations;
-        list_compare compare (List.sort compare a) (List.sort compare b)
+    (* An emptiness test asks nothing about order, so it does not pay for one,
+       for the reason given at the head of this file. *)
+    | VBag a, VBag b when bsize a = 0 || bsize b = 0 ->
+        Int.compare (min 1 (bsize a)) (min 1 (bsize b))
+    (* and otherwise the canonical order is what the semantics compares, which
+       a BList has to produce and the two multisets already hold *)
+    | VBag a, VBag b -> list_compare compare (bcanon a) (bcanon b)
     (* Emptiness tests, for the reason given at the head of this file: the
        answer is settled by the cardinalities, and producing a canonical order
        to discover it would be the bag's old mistake in a new place.  MEASURED
@@ -269,6 +310,20 @@ end = struct
         list_compare compare (canon a) (canon b)
     | VUnit, VUnit -> 0
     | _ -> Int.compare (rank a) (rank b)
+  (* THE CANONICAL ORDER, which only OEq above and ESort ask for.  The two
+     multisets hold it already, so expanding their multiplicities costs no
+     comparison; a BList does not, and sorting it is charged where every other
+     canonicalisation is. *)
+  and bcanon : bstore -> t list = function
+    | BList l ->
+        incr Count.canonicalisations;
+        List.sort compare l
+    | BTree m ->
+        List.concat_map (fun (v, n) -> List.init n (fun _ -> v)) (VMap.bindings m)
+    | BHash h ->
+        incr Count.canonicalisations;
+        List.concat_map (fun (v, n) -> List.init n (fun _ -> v))
+          (List.sort (fun (a, _) (b, _) -> compare a b) (VTrie.to_list h))
 
   let equal (a : t) (b : t) : bool = compare a b = 0
 
@@ -296,8 +351,7 @@ end = struct
           (fun acc (f, v) -> (acc * 31) + Hashtbl.hash f + hash v) 37 l
     | VDict (_, d) ->
         dfold (fun k v acc -> acc + (hash k * 31) + hash v) d 41
-    | VBag b ->
-        List.fold_left (fun acc v -> acc + hash v) (43 + List.length b) b
+    | VBag b -> bfold (fun v acc -> acc + hash v) b (43 + bsize b)
     | VSet s -> sfold (fun v acc -> acc + hash v) s 47
 
   (* the store's operations, in the one place that may look inside it *)
@@ -316,6 +370,17 @@ end = struct
     match s with
     | STree x -> VSet.fold f x init
     | SHash h -> VTrie.fold ~f:(fun acc k () -> f k acc) ~x:init h
+
+  (* every OCCURRENCE, in whatever order the store holds them *)
+  and bfold : 'a. (t -> 'a -> 'a) -> bstore -> 'a -> 'a =
+    fun f b init ->
+    let rep v n acc =
+      let rec go n acc = if n <= 0 then acc else go (n - 1) (f v acc) in
+      go n acc in
+    match b with
+    | BList l -> List.fold_left (fun acc v -> f v acc) init l
+    | BTree m -> VMap.fold (fun v n acc -> rep v n acc) m init
+    | BHash h -> VTrie.fold ~f:(fun acc v n -> rep v n acc) ~x:init h
 end
 and VMap : (Map.S with type key = V.t) = Map.Make (V)
 and VSet : (Set.S with type elt = V.t) = Set.Make (V)
@@ -479,81 +544,135 @@ let rec key_work (v : t) : int =
   | VList l -> List.fold_left (fun n v -> n + key_work v) 1 l
   | VRecord l -> List.fold_left (fun n (_, v) -> n + key_work v) 1 l
   | VDict (_, d) -> dfold (fun k v n -> n + key_work k + key_work v) d 1
-  | VBag b -> List.fold_left (fun n v -> n + key_work v) 1 b
+  | VBag b -> bfold (fun v n -> n + key_work v) b 1
   | VSet s -> sfold (fun v n -> n + key_work v) s 1
 
-(* What a point access at key [k] costs on a structure of the given kind,
-   performing the access with [f].  THE ONE RULE, called by eval.ml for the
-   optimizer's output and by baseline.ml for the original authors' code, so
-   the two columns are charged by the same function rather than by two helpers
-   that agree on inspection.  That is the only reason a ratio between them
-   means anything.
+(* [key_access] USED TO LIVE HERE, and its absence is the point of the last
+   three commits.  It priced a point access -- a hash of the key plus one
+   comparison for the bucket equality, with the structure's real descent
+   credited to neither counter -- and eval.ml called it for the optimizer's
+   output while baseline.ml called it for the originals, so that the two
+   columns were charged by one function rather than by two helpers that agreed
+   on inspection.
 
-   WHAT IS LEFT OF THIS, AND WHAT IS NOT.  Neither a dictionary nor a set comes
-   here any more: each holds the store its setting named, so its cost is
-   counted rather than charged, and ODictRange cannot even be written against a
-   hashed dictionary.  ONLY A BAG still does, because a bag is an unordered
-   list under every setting -- so for a bag the old caveat stands: under Hashed
-   the work [f] performs is the harness's bookkeeping, charged to neither
-   counter, and the key's hash is charged instead.  Seconds do not follow the
-   charge for a bag, and converting one is the remaining step.
+   Every collection now HOLDS the structure its setting names, so there is
+   nothing left to price: [compare] counts a tree's descent, [hash] a trie's
+   hash and [equal] its leaf comparison, on both sides, because both sides run
+   the same store.  The reason the wrapper existed -- "OCaml has no persistent
+   hash map whose constants would not be the harness's own" -- stopped being
+   true when CCHashTrie turned out to be a library rather than our code.
 
-   The reason this wrapper existed at all -- "OCaml has no persistent hash map
-   whose constants would not be the harness's own" -- no longer holds for a
-   dictionary: CCHashTrie is a library, not our code.  What remains of the argument is only that a
-   structure not yet converted cannot be measured.
-
-   One asymmetry this closes, named because it MOVES A NUMBER.  The equality
-   that confirms a hash bucket was charged by baseline.ml's probe and not by
-   eval.ml's, so our hashed reads came out a comparison per probe cheaper than
-   the originals' for no reason anyone had argued for.  It is charged here,
-   once, for whoever calls.  Our columns go up by one comparison per hashed
-   probe against what this harness printed before; the shift is against us. *)
-let key_access (kind : Count.kind) (k : t) (f : unit -> 'a) : 'a =
-  match kind with
-  | Count.Ordered -> f ()
-  | Count.Hashed ->
-      Count.hash (key_work k);
-      incr Count.comparisons;
-      Count.quiet f
+   What the model got wrong, now that there is something to compare it with:
+   it charged a flat +1 for the bucket equality, where a real trie calls
+   [equal], which WALKS the key.  So a hit on a structured key cost more than
+   the model said -- item_deletion keys on a whole row, and the author's
+   containsHit went 80 to 120, exactly its extra nodes -- and a miss cost
+   less, because a trie that reaches no leaf compares nothing. *)
 
 let eqb (a : t) (b : t) : bool = compare a b = 0
 let ltb (a : t) (b : t) : bool = compare a b < 0
 
-(* ---------- bags ----------
+(* ---------- the bag store ----------
 
-   A bag is just its elements, in whatever order they arrived.  list_to_bag
-   and bag_to_list, which in Value.v move between a list and the canonical
-   multiset, are therefore the identity here; the content of that claim is
-   that nothing but [compare] and ESort looks at the order, which report.ml
-   checks for ESort and [canonicalisations] counts for compare. *)
+   [bempty] is where the per-run choice is made, and the one line to change if
+   the cheap-build reading of an Ordered bag should win instead (see bstore).
 
-let bag_empty : t list = []
-let bag_add (v : t) (b : t list) : t list = v :: b
-let bag_of_list (l : t list) : t list = l
+   Every operation is the one the store really performs, so the counters see
+   it: a BList conses and scans, a BTree walks a path, a BHash hashes and
+   descends a trie.  Nothing here is modelled. *)
 
-(* the canonical order, for the two operations that can see it *)
-let bag_canonical (b : t list) : t list =
-  incr Count.canonicalisations;
-  List.sort compare b
+(* A BAG IS A LIST UNDER EVERY SETTING, AND THE MEASUREMENT DECIDED THAT.
 
-(* Multiset difference, the value Interpret.v's bag_diff computes: one
-   occurrence of each element of [rem] taken out of [b], and nothing below
-   zero.  The list is UNORDERED, so this removes the first occurrence it
-   meets rather than a canonical one -- which is the same multiset, and the
-   only thing a bag's semantics asks of it.
+   The dial was tried both other ways and is badly wrong both times, because
+   these programs BUILD bags constantly -- every flatmap and every coercion
+   makes one -- and only one subject's rules ever remove from one.
 
-   What it COSTS here is not what it costs a backend, and eval.ml's bag_pair
-   is where that is said. *)
-let bag_remove (v : t) (b : t list) : t list =
-  let rec go seen = function
-    | [] -> List.rev seen
-    | x :: rest when compare x v = 0 -> List.rev_append seen rest
-    | x :: rest -> go (x :: seen) rest in
-  go [] b
+     Ordered as a balanced tree: OBagOfList becomes n log n whole-row
+     comparisons, and coercing the table to a bag is the whole of what a
+     source-form membership test does.  user_search/suggestMiss went 60 ->
+     612820, suggestShort 10074 -> 637464, window_store/fetchAll 508 -> 2599.
 
-let bag_diff (b : t list) (rem : t list) : t list =
-  List.fold_left (fun acc v -> bag_remove v acc) b rem
+     Hashed as a trie: every bag construction hashes every element for a
+     benefit no fold collects.  EVERY ratio in the hashes column got worse --
+     suggestShort 1.02 -> 38.02, area_registry/remove 3.88 -> 22.57,
+     cluster/available 7.03 -> 44.22 -- which would have wrecked the one thing
+     that column is for, measuring what a set_kind is worth.
+
+   So the structure choice for a bag CANNOT be made by a run-level dial, and
+   that is a finding rather than a limitation of this harness.  A dictionary's
+   choice is uniform because every dictionary here is probed; a set's is
+   uniform because every set here is tested for membership.  A bag's is not:
+   the right structure depends on whether THAT bag is ever removed from, which
+   is a per-bag question, and the only thing that can answer a per-bag question
+   is a per-bag annotation.  Both uniform answers are wrong by one to four
+   orders of magnitude, which is a stronger argument than the one I first gave
+   for an annotation, and it is the measured one.
+
+   The three stores stay.  BTree and BHash are what a bag that is removed from
+   should hold, they are what OBagDiff is fast on, and the probe exercises all
+   three -- so when something can say which bags those are, the structures are
+   already here and already checked. *)
+let bempty () : bstore =
+  (* ignore the setting, deliberately: see above *)
+  BList []
+
+let badd (v : t) (b : bstore) : bstore =
+  match b with
+  | BList l -> BList (v :: l)
+  | BTree m ->
+      BTree (VMap.update v (function None -> Some 1 | Some n -> Some (n + 1)) m)
+  | BHash h ->
+      BHash (VTrie.update v ~f:(function None -> Some 1 | Some n -> Some (n + 1)) h)
+
+(* one occurrence out, and the entry with it if that was the last -- which is
+   what keeps the empty bag the only representation of the empty multiset, and
+   what [bsize]'s emptiness test in [compare] relies on *)
+let bremove (v : t) (b : bstore) : bstore =
+  match b with
+  | BList l ->
+      let rec go seen = function
+        | [] -> List.rev seen
+        | x :: rest when compare x v = 0 -> List.rev_append seen rest
+        | x :: rest -> go (x :: seen) rest in
+      BList (go [] l)
+  | BTree m ->
+      BTree (VMap.update v
+               (function None -> None | Some 1 -> None | Some n -> Some (n - 1)) m)
+  | BHash h ->
+      BHash (VTrie.update v
+               ~f:(function None -> None | Some 1 -> None | Some n -> Some (n - 1)) h)
+
+let bcardinal (b : bstore) : int =
+  match b with
+  | BList l -> List.length l
+  | BTree m -> VMap.fold (fun _ n acc -> acc + n) m 0
+  | BHash h -> VTrie.fold ~f:(fun acc _ n -> acc + n) ~x:0 h
+
+(* A LIST ALREADY IS A BAG, so under Ordered this costs nothing -- which is
+   the point of holding it that way.  A multiset has to be built, and that is
+   what a backend choosing one would pay. *)
+let bof_list (l : t list) : bstore = BList l
+
+(* Every occurrence, in whatever order the store holds them, for the callers
+   that accumulate commutatively or build something with no order of its own.
+
+   A BList hands back its own list rather than [bfold]'s reversal of it, and
+   that is not cosmetic: a later sort or a sequence of tree inserts costs a
+   different number of comparisons on a different permutation, so reversing
+   here moved user_search/suggestShort by 142 under typed for no reason anyone
+   could defend.  The multiset's order is its own and there is nothing to
+   preserve. *)
+let belements_unordered (b : bstore) : t list =
+  match b with
+  | BList l -> l
+  | _ -> bfold (fun v acc -> v :: acc) b []
+
+(* Multiset difference, truncated at zero: one removal per occurrence on the
+   right, mirroring Interpret.v's bag_diff.  The iterated side is the right
+   operand, which is what makes OBagDiff b {row} -- the shape the keyed delete
+   wants -- one removal rather than a traversal. *)
+let bdiff (a : bstore) (b : bstore) : bstore =
+  bfold bremove b a
 
 (* ---------- sets ---------- *)
 
@@ -588,6 +707,6 @@ let rec to_string (v : t) : string =
       ^ "}"
   | VBag b ->
       (* printed canonically, so that two equal bags print the same string *)
-      "bag{" ^ String.concat "; " (List.map to_string (List.sort compare b)) ^ "}"
+      "bag{" ^ String.concat "; " (List.map to_string (bcanon b)) ^ "}"
   | VSet s -> "set{" ^ String.concat "; " (List.map to_string (selements s)) ^ "}"
   | VUnit -> "unit"

@@ -120,9 +120,26 @@ hashed they iterate one side and probe the other, which is the cost model the ol
 `set_pair` already described, with the probes now real. Two trees still merge, because
 that is what a backend holding two trees would do.
 
-**Bags are not converted.** A bag is an unordered list under every setting, so for a bag
-the older arrangement still holds: `Value.key_access` prices the access, the real work is
-credited to neither counter (`Count.quiet`), and the key's hash is charged instead.
+**A bag is a list under every setting, and that is a finding rather than an omission.**
+It has three implementations here -- a list, a multiset over a tree, a multiset over a
+trie -- and the dial was tried both other ways:
+
+| Ordered as a tree | Hashed as a trie |
+|---|---|
+| `OBagOfList` becomes n·log n whole-row comparisons, and coercing the table to a bag is the *whole* of what a source-form membership test does. `user_search/suggestMiss` 60 → **612,820**, `suggestShort` 10,074 → **637,464**, `window_store/fetchAll` 508 → 2,599 | every bag construction hashes every element for a benefit no fold collects. **Every** ratio in the `hashes` column got worse: `suggestShort` 1.02 → **38.02**, `area_registry/remove` 3.88 → 22.57, `cluster/available` 7.03 → 44.22 |
+
+A dictionary's choice can be uniform because every dictionary here is probed, and a set's
+because every set here is tested for membership. A bag's cannot: the right structure
+depends on whether *that* bag is ever removed from, and these programs build bags
+constantly while only one subject's rules remove from one. Both uniform answers are wrong
+by one to four orders of magnitude. **A per-bag question needs a per-bag annotation**,
+which is what `dict_kind` is for dictionaries — and the measurement above is a better
+argument for one than "the harness cannot tell one bag from another".
+
+The three stores stay, because `BTree` and `BHash` are what a bag that is removed from
+should hold and what `OBagDiff` is fast on, and the store check exercises all three. So
+when something can say which bags those are, the structures are already here and already
+checked.
 
 The consequence, now narrowed to what is still true: **wall-clock seconds follow the
 charge for a dictionary and a set, and not for a bag.**
@@ -303,7 +320,7 @@ Three instruments, because no one of them crosses the boundary cleanly:
 | `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
 | `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per nesting level**, so a derived read can count the same rows more than once. See below |
 | `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one **function** on both — `Value.key_access` — at the structure the run's setting says, with the key's cost computed by `Value.key_work` rather than declared. Printed as `cmp+hash` |
-| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It now **follows** the `cmp+hash` charge for dictionaries and sets, which hold the store their setting names, and still does **not** for bags, which are a list under every setting |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It now **follows** the `cmp+hash` charge for dictionaries and sets, which hold the store their setting names, and still does **not** for bags, which are a list under every setting for the reason given above |
 
 `rows` is the instrument the other two cannot replace: the key counters are blind to a
 traversal that compares nothing, which is how Keycloak's whole-list **count** came out at

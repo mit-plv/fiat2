@@ -35,7 +35,7 @@ and to_ref (v : value) : R.value =
   | VList l -> R.VList (List.map to_ref l)
   | VRecord l -> R.VRecord (List.map (fun (s, v) -> (s, to_ref v)) l)
   | VDict (_, d) -> R.VDict (List.map (fun (k, v) -> (to_ref k, to_ref v)) (dbindings d))
-  | VBag b -> R.VBag (counted (List.sort compare b))
+  | VBag b -> R.VBag (counted (bcanon b))
   | VSet s -> R.VSet (List.map to_ref (selements s))
   | VUnit -> R.VUnit
 
@@ -57,6 +57,8 @@ let rec of_ref (v : R.value) : value =
              DTree (List.fold_left
                       (fun m (k, v) -> VMap.add (of_ref k) (of_ref v) m) VMap.empty d))
   | R.VBag b ->
-      VBag (List.concat_map (fun (v, n) -> List.init (int_of_nat n) (fun _ -> of_ref v)) b)
+      VBag (bof_list
+              (List.concat_map
+                 (fun (v, n) -> List.init (int_of_nat n) (fun _ -> of_ref v)) b))
   | R.VSet s -> VSet (set_of_list (List.map of_ref s))
   | R.VUnit -> VUnit

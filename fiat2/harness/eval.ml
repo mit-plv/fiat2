@@ -84,87 +84,43 @@ let interp_atom (a : atom) : value =
      is decided at the use site, by [keyed] below *)
   | AEmptyDict (Ranged, _) -> VDict (RRanged, Value.dempty RRanged)
   | AEmptyDict (Unranged, _) -> VDict (RUnranged, Value.dempty RUnranged)
-  | AEmptyBag _ -> VBag bag_empty
+  | AEmptyBag _ -> VBag (Value.bempty ())
   | AEmptySet _ -> VSet (Value.sempty ())
   | AUnit -> VUnit
 
 (* ---------- what a key-addressed operation costs ----------
 
-   Both helpers defer to Value.key_access, which baseline.ml also calls, so
-   the optimizer's output and the originals are charged by the same function.
-   Neither changes what is computed: the bindings and the elements are the
-   same whatever they are charged as.
+   NOTHING HERE PRICES ONE ANY MORE.  Every collection with a point access
+   holds the store its setting named -- Value.dempty, Value.sempty,
+   Value.bempty -- and the operations run on that store, so the cost is what
+   the structure really does: Value.compare counts a tree's descent, and
+   Value.hash and Value.equal count a trie's hash and its leaf comparison.
+   The wrappers that used to model those costs are gone, and so is
+   Value.key_access, which baseline.ml called for the same purpose.
 
-   A dictionary's kind decides which situation it is in.  Ranged is a tree
-   under every setting, because ODictRange reads the key order.  Unranged is
-   [licensed]: the type says no operator on it can read that order, so only
-   the conservative floor declines the hash. *)
+   That matters for the one claim the author comparison rests on.  The two
+   columns used to be charged identically because they called the same pricing
+   function; now they are charged identically because they RUN THE SAME DATA
+   STRUCTURE.  The second is stronger, and unlike the first it cannot drift.
 
-(* A DICTIONARY NO LONGER NEEDS ONE OF THESE.  Its store is the structure the
-   setting chose (Value.dempty), so a lookup, an insert and a delete are the
-   real descent of a real tree or the real descent of a real trie, and the
-   counters see them: Value.compare charges the tree's comparisons, and
-   Value.hash charges the trie's hash while Value.equal charges its leaf
-   comparison.  Nothing about a dictionary is modelled any more, which is why
-   the wrapper that used to model it is gone.
+   Which store a collection gets, and on whose authority:
 
-   A SET IS THE SAME, with no annotation to consult: TSet carries no kind and
-   TyESort_Set would take any set to a sorted list, so nothing in a program
-   licenses the hash the way dict_kind does, and [Count.unlicensed] is what
-   picks its store (Value.sempty).  That is what makes the Hashes column a
-   MEASUREMENT of what a set_kind would be worth rather than a charge standing
-   in for one.
+     a dictionary   its kind decides.  Ranged is a tree under every setting,
+                    because ODictRange reads the key order -- and CCHashTrie
+                    has no split, so a range restriction cannot even be
+                    WRITTEN against a hashed store.  Unranged is [licensed]:
+                    the type says no operator on it can read that order, so
+                    only the Trees floor declines the hash.
+     a set          [unlicensed].  TSet carries no kind and TyESort_Set would
+                    take any set to a sorted list, so nothing in a program
+                    licenses the hash the way dict_kind does.  That is what
+                    makes the Hashes column a MEASUREMENT of what a set_kind
+                    would be worth rather than a charge standing in for one.
+     a bag          [unlicensed] too, and with a third option: a bag whose
+                    operations are an insert, a concatenation and a fold wants
+                    a list, and a bag something is REMOVED from wants an index.
+                    value.ml's bstore says which the dial picks and why. *)
 
-   Only a bag still goes through [key_access], below. *)
-
-(* A SET NO LONGER NEEDS ONE OF THESE EITHER.  Value.sempty gives it the
-   store Count.unlicensed names, and its operations run on that store, so a
-   membership test, an insert and a difference are counted and not charged.
-   Only bags still go through key_access. *)
-
-(* A set-vs-set operation.  On a tree it is a merge of the two shapes, and
-   Set.union/inter/diff charge the comparisons they actually perform.  On a
-   hash table there is no merge to do: it is one probe per element of the side
-   that gets iterated, so that is what is charged, and the tree work this
-   harness still performs is suppressed.  [iterated] is that side -- the right
-   operand of a difference, the smaller of the two otherwise. *)
-
-
-(* A bag difference.  THE CHARGE IS THE WHOLE POINT OF THE OPERATOR, and it
-   is also where this harness cannot have everything it would like.
-
-   A bag is stored here as an unordered LIST (value.ml says why: every other
-   bag operation in these programs is an insert, a concatenation or a fold,
-   none of which wants an order).  So unlike the dictionary -- stored in a
-   tree, charged as a hash, with the descent quieted -- there is no tree here
-   whose descent could stand in for the Ordered cost of a multiset.  What the
-   list really does is a scan.
-
-   So the two settings say different things, and only one of them is a model
-   of a multiset:
-
-     Ordered  the scan the list really performs, Theta(b).  That is the
-              honest charge for a bag with no kind annotation, in exactly the
-              way a set with no set_kind is charged the tree it is stored in.
-     Hashed   one point removal per element of the iterated side, which is
-              what a backend holding the bag as a hashed multiset would pay,
-              with the list's own scan quieted.
-
-   A bag_kind, the analogue of dict_kind, is what would let the typed column
-   charge a removal as a removal.  Until then the operator makes the INTENT
-   expressible -- a filter cannot say "this row leaves", because a backend
-   reading one cannot tell a removal from an arbitrary predicate -- and the
-   hashes column is where that intent turns into a cost. *)
-let bag_pair (iterated : value list) (f : unit -> 'a) : 'a =
-  match Count.unlicensed () with
-  | Count.Ordered -> f ()
-  | Count.Hashed ->
-      List.iter (fun e -> Value.key_access Count.Hashed e (fun () -> ())) iterated;
-      Count.quiet f
-
-(* Building a set from a list of n elements: n inserts, charged one at a time
-   through the same rule, so a coercion costs what n insertions cost under
-   whichever structure the run is charging.  The caller charges the rows. *)
 let set_build (l : value list) : Value.sstore =
   List.fold_left (fun s v -> Value.sadd v s) (Value.sempty ()) l
 
@@ -184,20 +140,23 @@ let interp_unop (o : unop) (v : value) : value =
      is charged the same under either rep *)
   | ODictValues, VDict (_, d) ->
       (* a bag has no order to get wrong, so the store's own order will do *)
-      VBag (Value.dfold (fun _ v b -> Count.walk 1; v :: b) d [])
+      (* the values, in whatever order the dictionary holds them: a bag has
+         no order of its own to get wrong *)
+      VBag (Value.dfold (fun _ v b -> Count.walk 1; Value.badd v b) d
+              (Value.bempty ()))
   (* VSet (map fst l).  In Interpret.v this is a projection, because a
      well-typed bag is a sorted dedup'd association list already; here a bag is
      an UNORDERED list (see value.ml), so the order the set needs has to be paid
      for -- one tree insert per entry, charged to cmps.  That is the same price
      the source's own OSetOfList pays on its survivors, so the coercion is not
      somewhere a pessimization could hide. *)
-  | OSetOfBag, VBag b -> VSet (set_build b)
+  | OSetOfBag, VBag b -> VSet (set_build (Value.belements_unordered b))
   (* A coercion READS every row: bag_of_list and set_build walk the list, and
      set_build inserts each element one at a time.  Counting these is what keeps
      the row counter honest about the source programs, whose whole cost on a
      membership test is the coercion -- eval/Jenkins_ItemDeletion's source does
      nothing else, and would otherwise be reported as touching no rows at all. *)
-  | OBagOfList, VList l -> Count.visit (List.length l); VBag (bag_of_list l)
+  | OBagOfList, VList l -> Count.visit (List.length l); VBag (Value.bof_list l)
   | OSetOfList, VList l -> Count.visit (List.length l); VSet (set_build l)
   | _, _ -> VUnit
 
@@ -234,7 +193,7 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
            Count.walk n;
            VList (List.init n (fun i -> VInt (s + i)))
        | _ -> VUnit)
-  | OBagInsert -> (match a with VBag m -> VBag (bag_add b m) | _ -> VUnit)
+  | OBagInsert -> (match a with VBag m -> VBag (Value.badd b m) | _ -> VUnit)
   | OSetInsert ->
       (match a with VSet s -> VSet (Value.sadd b s) | _ -> VUnit)
   | OSetUnion ->
@@ -252,7 +211,7 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
        | _ -> VUnit)
   | OBagDiff ->
       (match a, b with
-       | VBag x, VBag y -> VBag (bag_pair y (fun () -> Value.bag_diff x y))
+       | VBag x, VBag y -> VBag (Value.bdiff x y)
        | _ -> VUnit)
   | OSetMem ->
       (match a with VSet s -> VBool (Value.smem b s) | _ -> VUnit)
@@ -355,6 +314,8 @@ let interp_ternop (o : ternop) (a : value) (b : value) (c : value) : value =
    element of the wrong shape makes the whole fold VUnit.  That is reproduced
    rather than assumed away. *)
 
+(* sum and count are commutative, so the order the store hands the
+   occurrences over in cannot change the answer and is not paid for *)
 let interp_ac_fold (ag : aggr) (b : value list) : value =
   Count.walk (List.length b);
   match ag with
@@ -420,7 +381,9 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
              l a
        | _ -> VUnit)
   | EACFold (ag, e) ->
-      (match interp_expr store env e with VBag b -> interp_ac_fold ag b | _ -> VUnit)
+      (match interp_expr store env e with
+       | VBag b -> interp_ac_fold ag (Value.belements_unordered b)
+       | _ -> VUnit)
   | EACIFold (ag, e) ->
       (match interp_expr store env e with VSet s -> interp_aci_fold ag s | _ -> VUnit)
   | ERecord l ->
@@ -436,7 +399,7 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
       (match tag, interp_expr store env e with
        | LikeList, VList l ->
            Count.visit (List.length l); VList (List.stable_sort Value.compare l)
-       | LikeBag, VBag b -> Count.visit (List.length b); VList (bag_canonical b)
+       | LikeBag, VBag b -> Count.visit (Value.bcardinal b); VList (Value.bcanon b)
        | LikeSet, VSet s -> Count.visit (Value.scardinal s); VList (Value.selements s)
        | _, _ -> VUnit)
 
@@ -454,16 +417,18 @@ and interp_flatmap store env tag e1 x e2 =
               match interp_expr store (SMap.add x v env) e2 with VList l2 -> l2 | _ -> [])
            l)
   | LikeBag, VBag b ->
-      (* rev_append rather than append: a bag has no order to preserve, and
-         the left fold would otherwise be quadratic *)
-      Count.visit (List.length b);
+      (* A BAG HAS NO ORDER TO PRESERVE, so each sub-bag's occurrences go in
+         wherever the accumulator's store puts them.  Under BList that is a
+         cons apiece, as the old rev_append was; under either multiset it is
+         an insert apiece, which is what holding a bag that way costs. *)
+      Count.visit (Value.bcardinal b);
       VBag
-        (List.fold_left
-           (fun acc v ->
+        (Value.bfold
+           (fun v acc ->
               match interp_expr store (SMap.add x v env) e2 with
-              | VBag b2 -> List.rev_append b2 acc
+              | VBag b2 -> Value.bfold Value.badd b2 acc
               | _ -> acc)
-           bag_empty b)
+           b (Value.bempty ()))
   | LikeSet, VSet s ->
       Count.visit (Value.scardinal s);
       VSet
