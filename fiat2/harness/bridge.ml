@@ -34,7 +34,7 @@ and to_ref (v : value) : R.value =
   | VOption (Some v) -> R.VOption (Some (to_ref v))
   | VList l -> R.VList (List.map to_ref l)
   | VRecord l -> R.VRecord (List.map (fun (s, v) -> (s, to_ref v)) l)
-  | VDict (_, d) -> R.VDict (List.map (fun (k, v) -> (to_ref k, to_ref v)) (VMap.bindings d))
+  | VDict (_, d) -> R.VDict (List.map (fun (k, v) -> (to_ref k, to_ref v)) (dbindings d))
   | VBag b -> R.VBag (counted (List.sort compare b))
   | VSet s -> R.VSet (List.map to_ref (VSet.elements s))
   | VUnit -> R.VUnit
@@ -51,8 +51,11 @@ let rec of_ref (v : R.value) : value =
   (* the oracle's dictionary carries no rep; nothing downstream of here is
      measured, and [compare] ignores the rep, so either one would do *)
   | R.VDict d ->
+      (* the oracle's dictionaries arrive as association lists and are only
+         read, never range-queried, so a tree carries them across *)
       VDict (RRanged,
-             List.fold_left (fun m (k, v) -> VMap.add (of_ref k) (of_ref v) m) VMap.empty d)
+             DTree (List.fold_left
+                      (fun m (k, v) -> VMap.add (of_ref k) (of_ref v) m) VMap.empty d))
   | R.VBag b ->
       VBag (List.concat_map (fun (v, n) -> List.init (int_of_nat n) (fun _ -> of_ref v)) b)
   | R.VSet s -> VSet (set_of_list (List.map of_ref s))

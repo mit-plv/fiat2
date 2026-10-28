@@ -113,12 +113,32 @@ module rec V : sig
     | VOption of t option
     | VList of t list
     | VRecord of (string * t) list   (* sorted by field name *)
-    | VDict of dict_rep * t VMap.t
+    | VDict of dict_rep * dstore
     | VBag of t list                 (* UNORDERED; multiplicity is repetition *)
     | VSet of VSet.t
     | VUnit
 
+  (* HOW a dictionary is stored, as against [dict_rep], which is what its
+     TYPE says.  The two are now the same question for the first time: the
+     setting picks the store at creation, and the store is what the operations
+     actually run on, so a cost is counted rather than charged.
+
+     DHash has no [split] -- CCHashTrie does not provide one, because a hash
+     table has no key order to split at.  So ODictRange is not rejected by a
+     [failwith] any more; it cannot be WRITTEN against a hashed store, and
+     TyODictRange's restriction to TDict Ranged is enforced by OCaml's type
+     checker rather than honoured by hand. *)
+  and dstore =
+    | DTree of t VMap.t
+    | DHash of t VTrie.t
+
   val compare : t -> t -> int
+  (* for CCHashTrie's functor, which wants an equal and a hash *)
+  val equal : t -> t -> bool
+  val hash : t -> int
+  (* the one fold that may look inside a store, so that callers outside this
+     module never case-split on the representation *)
+  val dfold : (t -> t -> 'a -> 'a) -> dstore -> 'a -> 'a
 end = struct
   type t =
     | VInt of int
@@ -127,10 +147,14 @@ end = struct
     | VOption of t option
     | VList of t list
     | VRecord of (string * t) list
-    | VDict of dict_rep * t VMap.t
+    | VDict of dict_rep * dstore
     | VBag of t list
     | VSet of VSet.t
     | VUnit
+
+  and dstore =
+    | DTree of t VMap.t
+    | DHash of t VTrie.t
 
   let rank = function
     | VUnit -> 0 | VBool _ -> 1 | VInt _ -> 2 | VString _ -> 3
@@ -178,10 +202,21 @@ end = struct
        which is the same thing the bag below pays and is charged the same way.
        Under the Trees setting nothing is charged as a hash, and nothing here
        canonicalises. *)
-    | VDict (ra, a), VDict (rb, b) ->
-        let hashed r = r = RUnranged && Count.licensed () = Count.Hashed in
-        if hashed ra || hashed rb then incr Count.canonicalisations;
-        VMap.compare compare a b
+    | VDict (_, DTree a), VDict (_, DTree b) -> VMap.compare compare a b
+    | VDict (_, a), VDict (_, b) ->
+        (* a hashed store has no key order of its own, so the order the
+           semantics compares has to be produced -- which is the same cost
+           the bag below pays, charged the same way *)
+        let canon = function
+          | DTree d -> VMap.bindings d
+          | DHash h ->
+              incr Count.canonicalisations;
+              List.sort (fun (k1, _) (k2, _) -> compare k1 k2) (VTrie.to_list h) in
+        list_compare
+          (fun (k1, v1) (k2, v2) ->
+             let c = compare k1 k2 in
+             if c <> 0 then c else compare v1 v2)
+          (canon a) (canon b)
     (* An emptiness test asks nothing about order, so it does not pay for
        one: these three return exactly what sorting both sides and comparing
        returned, for the reason given at the head of this file. *)
@@ -196,14 +231,111 @@ end = struct
     | VSet a, VSet b -> VSet.compare a b
     | VUnit, VUnit -> 0
     | _ -> Int.compare (rank a) (rank b)
+
+  let equal (a : t) (b : t) : bool = compare a b = 0
+
+  (* The hash a hashed store actually uses, and therefore the hash the
+     counters actually count: one unit per value node, charged HERE, as
+     [compare] charges one per node it walks.  So `comparisons + hashing`
+     stays one figure for the work done on keys, and under a hashed store
+     that figure is now measured rather than modelled.
+
+     It must agree with [equal], which cannot see the order of a bag, a set
+     or a dictionary -- so those combine their elements COMMUTATIVELY, with
+     the cardinality mixed in.  Sorting to hash would defeat the point. *)
+  let rec hash (v : t) : int =
+    incr Count.hashing;
+    match v with
+    | VInt n -> Hashtbl.hash n
+    | VBool b -> Hashtbl.hash b
+    | VString s -> Hashtbl.hash s
+    | VUnit -> 17
+    | VOption None -> 19
+    | VOption (Some v) -> 23 + (31 * hash v)
+    | VList l -> List.fold_left (fun acc v -> (acc * 31) + hash v) 29 l
+    | VRecord l ->
+        List.fold_left
+          (fun acc (f, v) -> (acc * 31) + Hashtbl.hash f + hash v) 37 l
+    | VDict (_, d) ->
+        dfold (fun k v acc -> acc + (hash k * 31) + hash v) d 41
+    | VBag b ->
+        List.fold_left (fun acc v -> acc + hash v) (43 + List.length b) b
+    | VSet s -> VSet.fold (fun v acc -> acc + hash v) s 47
+
+  (* the store's operations, in the one place that may look inside it *)
+  and dfold : 'a. (t -> t -> 'a -> 'a) -> dstore -> 'a -> 'a =
+    fun f d init ->
+    match d with
+    | DTree m -> VMap.fold f m init
+    | DHash h -> VTrie.fold ~f:(fun acc k v -> f k v acc) ~x:init h
 end
 and VMap : (Map.S with type key = V.t) = Map.Make (V)
 and VSet : (Set.S with type elt = V.t) = Set.Make (V)
+and VTrie : (CCHashTrie.S with type key = V.t) = CCHashTrie.Make (V)
 
 include V
 
 (* [Value.value] reads better at the use sites than [Value.t] *)
 type value = t
+
+(* ---------- the dictionary store ----------
+
+   Every operation a dictionary has, once per store, so that no caller outside
+   this file case-splits on the representation.  Each is the operation the
+   store really performs -- a tree path or a trie descent -- and the counters
+   see it: [compare] charges the tree's comparisons, [hash] charges the trie's
+   hash and [equal] its leaf comparison.  Nothing here is modelled.
+
+   There is deliberately no [dsplit].  CCHashTrie has none to offer, which is
+   the whole point: a range restriction is a question only an ordered store can
+   answer, and the only store that can be asked is the one TyODictRange's
+   TDict Ranged admits. *)
+
+let dempty (r : dict_rep) : dstore =
+  match r with
+  | RRanged -> DTree VMap.empty
+  (* Unranged is where the setting has a choice to make, and this is the one
+     place it is made *)
+  | RUnranged ->
+      (match Count.licensed () with
+       | Count.Ordered -> DTree VMap.empty
+       | Count.Hashed -> DHash VTrie.empty)
+
+let dfind (k : t) (d : dstore) : t option =
+  match d with
+  | DTree m -> VMap.find_opt k m
+  | DHash h -> VTrie.get k h
+
+let dmem (k : t) (d : dstore) : bool =
+  match d with DTree m -> VMap.mem k m | DHash h -> VTrie.mem k h
+
+let dadd (k : t) (v : t) (d : dstore) : dstore =
+  match d with
+  | DTree m -> DTree (VMap.add k v m)
+  | DHash h -> DHash (VTrie.add k v h)
+
+let dremove (k : t) (d : dstore) : dstore =
+  match d with
+  | DTree m -> DTree (VMap.remove k m)
+  | DHash h -> DHash (VTrie.remove k h)
+
+let dcardinal (d : dstore) : int =
+  match d with DTree m -> VMap.cardinal m | DHash h -> VTrie.cardinal h
+
+(* The bindings in CANONICAL order.  A tree is already in it; a trie is not,
+   and producing it is the cost the semantics can observe, so it is charged
+   exactly where [compare] charges it. *)
+let dbindings (d : dstore) : (t * t) list =
+  match d with
+  | DTree m -> VMap.bindings m
+  | DHash h ->
+      incr Count.canonicalisations;
+      List.sort (fun (k1, _) (k2, _) -> compare k1 k2) (VTrie.to_list h)
+
+(* and in whatever order the store holds them, for the callers that do not
+   care -- ODictValues builds a BAG, which has no order to get wrong *)
+let dvalues_unordered (d : dstore) : t list =
+  dfold (fun _ v acc -> v :: acc) d []
 
 (* The work a KEY costs, by the same rule [compare] charges for walking one:
    one unit per node, with a string counting as one node because
@@ -219,7 +351,7 @@ let rec key_work (v : t) : int =
   | VOption (Some v) -> 1 + key_work v
   | VList l -> List.fold_left (fun n v -> n + key_work v) 1 l
   | VRecord l -> List.fold_left (fun n (_, v) -> n + key_work v) 1 l
-  | VDict (_, d) -> VMap.fold (fun k v n -> n + key_work k + key_work v) d 1
+  | VDict (_, d) -> dfold (fun k v n -> n + key_work k + key_work v) d 1
   | VBag b -> List.fold_left (fun n v -> n + key_work v) 1 b
   | VSet s -> VSet.fold (fun v n -> n + key_work v) s 1
 
@@ -230,13 +362,19 @@ let rec key_work (v : t) : int =
    that agree on inspection.  That is the only reason a ratio between them
    means anything.
 
-   [f] reaches into a balanced tree under BOTH kinds, on both sides, for the
-   reason given at the top of this file: the storage and the charge are
-   separate questions, and OCaml has no persistent hash map whose constants
-   would not be the harness's own.  So under Hashed the descent [f] performs is
-   the harness's bookkeeping and is charged to neither counter; the key's hash
-   is charged instead.  WALL-CLOCK SECONDS THEREFORE DO NOT FOLLOW THIS
-   CHARGE -- they time a tree in every column, and are a check on shape only.
+   WHAT IS LEFT OF THIS, AND WHAT IS NOT.  Dictionaries no longer come here:
+   they hold the store the setting named, so their cost is counted and not
+   charged, and ODictRange cannot even be written against a hashed one.  Sets
+   and bags still do, because they are still a Set.Make tree and a list under
+   every setting -- so for THEM the old caveat stands: under Hashed the descent
+   [f] performs is the harness's bookkeeping, charged to neither counter, and
+   the key's hash is charged instead.  Seconds do not follow the charge for a
+   set or a bag, and converting those is the next step.
+
+   The reason this wrapper existed at all -- "OCaml has no persistent hash map
+   whose constants would not be the harness's own" -- no longer holds for a
+   dictionary: CCHashTrie is a library, not our code.  What remains of the argument is only that a
+   structure not yet converted cannot be measured.
 
    One asymmetry this closes, named because it MOVES A NUMBER.  The equality
    that confirms a hash bucket was charged by baseline.ml's probe and not by
@@ -319,7 +457,7 @@ let rec to_string (v : t) : string =
   | VDict (_, d) ->
       "dict{"
       ^ String.concat "; "
-          (List.map (fun (k, v) -> to_string k ^ " -> " ^ to_string v) (VMap.bindings d))
+          (List.map (fun (k, v) -> to_string k ^ " -> " ^ to_string v) (dbindings d))
       ^ "}"
   | VBag b ->
       (* printed canonically, so that two equal bags print the same string *)

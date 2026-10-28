@@ -19,11 +19,14 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
 
 ## Building and running
 
+    opam install containers-data      # the one library the harness needs: CCHashTrie,
+                                      # a persistent hash map, for the hashed stores
     make                              # from the repository root: compiles the Rocq
                                       # development and writes generated/
     dune build                        # from this directory
     ./_build/default/main.exe report  # what is in the terms
-    ./_build/default/main.exe check   # the differential test
+    ./_build/default/main.exe check   # the store check, then the differential test
+    ./_build/default/main.exe stores  # the store check alone
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
     ./_build/default/main.exe threeway      # all three programs in one table:
@@ -92,17 +95,31 @@ canonical form. What the semantics observes is narrow: `OEq` on two collections,
 | bag | unordered list | a bag rejects nothing and probes nothing; every operation on one in these programs is an insert, a concatenation or a fold |
 
 **Representation and charge are separate questions, deliberately.** The table above is
-the *storage*, and it is a balanced tree for every point-access collection on **both**
-sides, under every setting -- because OCaml's standard library has no persistent hash
-map and a hand-written one would put this harness's own HAMT into the numbers instead of
-a backend's. What the structure setting changes is the *charge*: `Value.key_access` is
-the one function that prices a point access, `eval.ml` calls it for the optimizer's
-output and `baseline.ml` calls it for the originals, and under a hash charge the tree
-descent it still performs is credited to neither counter (`Count.quiet`) while the key's
-hash is charged instead.
+the *storage*. **For a dictionary the two are now the same question.** The setting picks
+the store when the dictionary is created (`Value.dempty`) and the store is what the
+operations run on: a `Map.Make` balanced tree where the kind is Ordered, `CCHashTrie`'s
+persistent hash-array-mapped trie where it is Hashed. So a dictionary's cost is
+**counted, not charged** -- `Value.compare` counts the tree's descent, `Value.hash` the
+trie's hash and `Value.equal` its leaf comparison -- and it is counted the same way on
+both sides, because both sides run the same structure rather than calling the same
+pricing helper. That is a stronger claim than the one this file used to make, and one
+that cannot drift.
 
-The consequence, which the tables repeat wherever they print it: **wall-clock seconds do
-not follow the charge.** They time a tree in every column and are a check on shape only.
+It also moves a theorem from honour to enforcement. `TyODictRange` is stated at
+`TDict Ranged`, so an `Unranged` dictionary can never be asked for a range -- and
+`CCHashTrie` has no `split` to offer, because a hash table has no key order to split at.
+A range restriction is now impossible to *write* against a hashed store, where it used to
+be a `failwith` the harness had to remember.
+
+**Sets and bags are not converted yet.** A set is a `Set.Make` tree and a bag an
+unordered list under every setting, so for those the older arrangement still holds:
+`Value.key_access` prices the access, the real descent is credited to neither counter
+(`Count.quiet`), and the key's hash is charged instead.
+
+The consequence, now narrowed to what is still true: **wall-clock seconds follow the
+charge for a dictionary and not for a set or a bag.** Where a subject's cost is in its
+dictionaries the seconds are a measurement; where it is in a set or a bag they remain a
+check on shape only.
 
 The deferred cost is counted rather than assumed away: `canonicalisations` says how often
 a bag's canonical order actually had to be produced, and across every subject, phase and
@@ -280,7 +297,7 @@ Three instruments, because no one of them crosses the boundary cleanly:
 | `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
 | `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per nesting level**, so a derived read can count the same rows more than once. See below |
 | `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one **function** on both — `Value.key_access` — at the structure the run's setting says, with the key's cost computed by `Value.key_work` rather than declared. Printed as `cmp+hash` |
-| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed — and it does **not** follow the `cmp+hash` charge, because the storage is a tree in every column on both sides |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It now **follows** the `cmp+hash` charge for dictionaries, which hold the store their setting names, and still does **not** for sets and bags, which are a tree and a list under every setting |
 
 `rows` is the instrument the other two cannot replace: the key counters are blind to a
 traversal that compares nothing, which is how Keycloak's whole-list **count** came out at

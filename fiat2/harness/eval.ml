@@ -82,8 +82,8 @@ let interp_atom (a : atom) : value =
   | ANil _ -> VList []
   (* the dict_kind the term carries is retained as it stands; what it is worth
      is decided at the use site, by [keyed] below *)
-  | AEmptyDict (Ranged, _) -> VDict (RRanged, VMap.empty)
-  | AEmptyDict (Unranged, _) -> VDict (RUnranged, VMap.empty)
+  | AEmptyDict (Ranged, _) -> VDict (RRanged, Value.dempty RRanged)
+  | AEmptyDict (Unranged, _) -> VDict (RUnranged, Value.dempty RUnranged)
   | AEmptyBag _ -> VBag bag_empty
   | AEmptySet _ -> VSet VSet.empty
   | AUnit -> VUnit
@@ -100,10 +100,16 @@ let interp_atom (a : atom) : value =
    [licensed]: the type says no operator on it can read that order, so only
    the conservative floor declines the hash. *)
 
-let keyed (r : dict_rep) (k : value) (f : unit -> 'a) : 'a =
-  Value.key_access
-    (match r with RRanged -> Count.ordered | RUnranged -> Count.licensed ())
-    k f
+(* A DICTIONARY NO LONGER NEEDS ONE OF THESE.  Its store is the structure the
+   setting chose (Value.dempty), so a lookup, an insert and a delete are the
+   real descent of a real tree or the real descent of a real trie, and the
+   counters see them: Value.compare charges the tree's comparisons, and
+   Value.hash charges the trie's hash while Value.equal charges its leaf
+   comparison.  Nothing about a dictionary is modelled any more, which is why
+   the wrapper that used to model it is gone.
+
+   Sets and bags still go through [key_access] below.  Converting them is the
+   next step, and until it happens the set column is charged as it was. *)
 
 (* A set is [unlicensed]: these terms never sort one, but TSet carries no kind
    and TyESort_Set would take any set to a sorted list, so nothing in the
@@ -180,7 +186,8 @@ let interp_unop (o : unop) (v : value) : value =
   (* no key, and a hash table enumerates its entries as a tree does, so this
      is charged the same under either rep *)
   | ODictValues, VDict (_, d) ->
-      VBag (VMap.fold (fun _ v b -> Count.walk 1; v :: b) d [])
+      (* a bag has no order to get wrong, so the store's own order will do *)
+      VBag (Value.dfold (fun _ v b -> Count.walk 1; v :: b) d [])
   (* VSet (map fst l).  In Interpret.v this is a projection, because a
      well-typed bag is a sorted dedup'd association list already; here a bag is
      an UNORDERED list (see value.ml), so the order the set needs has to be paid
@@ -261,11 +268,11 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
       (match a, b with VString s, VString p -> VBool (str_contains s p) | _ -> VUnit)
   | OLookup ->
       (match a with
-       | VDict (r, d) -> VOption (keyed r b (fun () -> VMap.find_opt b d))
+       | VDict (_, d) -> VOption (Value.dfind b d)
        | _ -> VUnit)
   | ODelete ->
       (match a with
-       | VDict (r, d) -> VDict (r, keyed r b (fun () -> VMap.remove b d))
+       | VDict (r, d) -> VDict (r, Value.dremove b d)
        | _ -> VUnit)
 
 (* ---------- ternary ----------
@@ -316,7 +323,7 @@ let interp_ternop (o : ternop) (a : value) (b : value) (c : value) : value =
   match o with
   | OInsert ->
       (match a with
-       | VDict (r, d) -> VDict (r, keyed r b (fun () -> VMap.add b c d))
+       | VDict (r, d) -> VDict (r, Value.dadd b c d)
        | _ -> VUnit)
   | OSubstring ->
       (match a, b, c with
@@ -331,13 +338,19 @@ let interp_ternop (o : ternop) (a : value) (b : value) (c : value) : value =
      rather than a number. *)
   | ODictRange ->
       (match a with
-       | VDict (RRanged, d) -> VDict (RRanged, dict_range b c d)
+       | VDict (RRanged, DTree d) -> VDict (RRanged, DTree (dict_range b c d))
        | VDict (RUnranged, _) -> failwith "ODictRange on an Unranged dictionary"
+       (* Value.dempty gives a Ranged dictionary a tree under every setting,
+          so this is unreachable -- and it is spelled out rather than left to
+          a wildcard, because a wildcard here would silently accept a hashed
+          store if that ever changed *)
+       | VDict (RRanged, DHash _) -> failwith "a Ranged dictionary is never hashed"
        | _ -> VUnit)
   | ODictRangeDelete ->
       (match a with
-       | VDict (RRanged, d) -> VDict (RRanged, dict_range_delete b c d)
+       | VDict (RRanged, DTree d) -> VDict (RRanged, DTree (dict_range_delete b c d))
        | VDict (RUnranged, _) -> failwith "ODictRangeDelete on an Unranged dictionary"
+       | VDict (RRanged, DHash _) -> failwith "a Ranged dictionary is never hashed"
        | _ -> VUnit)
 
 (* ---------- aggregates ----------

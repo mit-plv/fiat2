@@ -190,11 +190,18 @@ let queries_of (w : Gen.workload) (var : string) : Value.t list =
       is 3 as its ~kw:3 said, and ItemDeletion's row is key_work of the row
       exactly as it was charged explicitly.
 
-   The storage is a balanced tree under every setting, on this side as on the
-   other, for the reason value.ml gives: representation and charge are
-   separate questions, and OCaml has no persistent hash map whose constants
-   would not be the harness's own.  Mutable, so the transcriptions keep the
-   imperative shape the originals have.
+   THE STORAGE IS NOW THE STRUCTURE THE SETTING NAMES, on this side as on the
+   other: a balanced tree where the kind is Ordered, CCHashTrie's persistent
+   hash-array-mapped trie where it is Hashed.  So the two columns are no longer charged identically
+   because they call one shared helper -- they are charged identically
+   because they run THE SAME DATA STRUCTURE, which is a stronger statement and
+   one that cannot drift.  The counters see the real work: Value.compare
+   charges the tree's descent, and Value.hash and Value.equal charge the
+   trie's hash and its leaf comparison.
+
+   Held in a mutable cell, so the transcriptions keep the imperative shape the
+   originals have.  The trie is persistent, which costs nothing here: a put
+   stores the new version back in the cell.
 
    [situation] is what the structure's creator CLAIMS about its key order, and
    it is the one thing written by hand at each site, because it is the one
@@ -213,46 +220,87 @@ let kind_of = function
   | Unlicensed -> Count.unlicensed ()
   | NeedsOrder -> Count.ordered
 
-type 'v keyed = { mutable m : 'v Value.VMap.t; sit : situation }
+(* The same two stores Value.dstore offers a dictionary, polymorphic in the
+   payload because these structures hold rows, posting lists, segments and
+   counts rather than only values. *)
+type 'v kstore =
+  | KTree of 'v Value.VMap.t
+  | KHash of 'v Value.VTrie.t
 
-let kmake (sit : situation) : 'v keyed = { m = Value.VMap.empty; sit }
+type 'v keyed = { mutable m : 'v kstore; sit : situation }
+
+(* The situation and the setting between them pick the store, ONCE, when the
+   structure is created -- the kind can no longer be resolved per access,
+   because a structure now IS one or the other.  Nothing reads the setting
+   between a kmake and the accesses on it within a run, so this cannot capture
+   a stale choice. *)
+let kmake (sit : situation) : 'v keyed =
+  { m = (match kind_of sit with
+         | Count.Ordered -> KTree Value.VMap.empty
+         | Count.Hashed -> KHash Value.VTrie.empty);
+    sit }
+
+let kget (k : Value.t) (t : 'v keyed) : 'v option =
+  match t.m with
+  | KTree m -> Value.VMap.find_opt k m
+  | KHash h -> Value.VTrie.get k h
 
 (* A probe whose RESULT IS A STORED ROW: one key access, and one row
    ENUMERATED into `rows` on a hit, because the row comes out and is looked
    at. *)
 let kprobe (t : 'v keyed) (k : Value.t) : 'v option =
-  Value.key_access (kind_of t.sit) k
-    (fun () ->
-       match Value.VMap.find_opt k t.m with
-       | Some v -> Count.visit 1; Some v
-       | None -> None)
+  match kget k t with
+  | Some v -> Count.visit 1; Some v
+  | None -> None
 
 (* A probe whose result IS NOT a stored row: a posting list, a bucket, a
    segment.  The same key access and no row, because nothing has been
    enumerated yet -- whatever walks the thing it returns pays for the rows in
    it. *)
-let kfind (t : 'v keyed) (k : Value.t) : 'v option =
-  Value.key_access (kind_of t.sit) k (fun () -> Value.VMap.find_opt k t.m)
+let kfind (t : 'v keyed) (k : Value.t) : 'v option = kget k t
 
 let kmem (t : 'v keyed) (k : Value.t) : bool =
-  Value.key_access (kind_of t.sit) k (fun () -> Value.VMap.mem k t.m)
+  match t.m with
+  | KTree m -> Value.VMap.mem k m
+  | KHash h -> Value.VTrie.mem k h
 
 (* A put reads no stored row -- it writes one -- so it costs the key access and
    no row.  The same is true of the optimizer's output, whose OInsert is a map
    add: the convention is the same on both sides, which is the point of it. *)
 let kput (t : 'v keyed) (k : Value.t) (v : 'v) : unit =
-  Value.key_access (kind_of t.sit) k (fun () -> t.m <- Value.VMap.add k v t.m)
+  t.m <- (match t.m with
+          | KTree m -> KTree (Value.VMap.add k v m)
+          | KHash h -> KHash (Value.VTrie.add k v h))
 
 let kremove (t : 'v keyed) (k : Value.t) : unit =
-  Value.key_access (kind_of t.sit) k (fun () -> t.m <- Value.VMap.remove k t.m)
+  t.m <- (match t.m with
+          | KTree m -> KTree (Value.VMap.remove k m)
+          | KHash h -> KHash (Value.VTrie.remove k h))
 
 (* Size, and the two whole-structure walks.  None of these is a key access and
    none is charged as one: java.util.HashMap keeps its own size, and a walk
    charges the rows its caller looks at.  The callers below do that. *)
-let klen (t : 'v keyed) : int = Value.VMap.cardinal t.m
-let kiter (f : Value.t -> 'v -> unit) (t : 'v keyed) : unit = Value.VMap.iter f t.m
+let klen (t : 'v keyed) : int =
+  match t.m with
+  | KTree m -> Value.VMap.cardinal m
+  | KHash h -> Value.VTrie.cardinal h
+
+(* A WALK OVER A HASHED STRUCTURE HAS NO ORDER, which is the one place this
+   change can alter an answer rather than a cost.  user_search/suggest already
+   taught us that: its result set was built by insertion, so its cost followed
+   the storage's iteration order, and the fix was to route it through
+   Eval.set_build.  Anything a caller below builds by insertion from one of
+   these walks has to be order-insensitive, and `agree` at every size is what
+   checks that it is. *)
+let kiter (f : Value.t -> 'v -> unit) (t : 'v keyed) : unit =
+  match t.m with
+  | KTree m -> Value.VMap.iter f m
+  | KHash h -> Value.VTrie.iter ~f h
+
 let kfold (f : Value.t -> 'v -> 'a -> 'a) (t : 'v keyed) (init : 'a) : 'a =
-  Value.VMap.fold f t.m init
+  match t.m with
+  | KTree m -> Value.VMap.fold f m init
+  | KHash h -> Value.VTrie.fold ~f:(fun acc k v -> f k v acc) ~x:init h
 
 (* A composite key, built so that Value.key_work charges its parts: the pair
    Kafka's cache is keyed on costs 3 nodes -- the record and its two fields --

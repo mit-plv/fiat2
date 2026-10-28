@@ -3,7 +3,12 @@
    quietly diverge from the others.
 
      report         what is in the extracted terms; evaluates nothing
-     check          the differential test against the Gallina interpreter
+     stores         the dictionary store against a reference map: that it is a
+                    finite map on the keys these subjects use, and that one
+                    delete removes one binding.  It exists because a library
+                    got that last one wrong -- see probe.ml
+     check          the store check, then the differential test against the
+                    Gallina interpreter
      bench [n ...]  run the subjects and count
      csv [n ...]    the same op-phase series as data, one row per point
      timing [subject kind rows]
@@ -46,7 +51,8 @@ let () =
       argv in
   match argv with
   | _ :: "report" :: _ | [ _ ] -> Report.run ()
-  | _ :: "check" :: _ -> Differential.run ()
+  | _ :: "check" :: _ -> ignore (Probe.run ()); Differential.run ()
+  | _ :: "stores" :: _ -> ignore (Probe.run ())
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
   | _ :: "csv" :: rest -> Bench.csv (List.filter_map int_of_string_opt rest)
   | _ :: "timing" :: rest -> Bench.timing rest
@@ -60,9 +66,9 @@ let () =
       Bench.alternatives_cost (List.filter_map int_of_string_opt rest)
   | _ :: other :: _ ->
       Printf.eprintf
-        "unknown command %s; expected report, check, bench, csv, timing, \
-         baseline, threeway, matched or alternatives, optionally with typed, \
-         trees or hashes\n"
+        "unknown command %s; expected report, stores, check, bench, csv, \
+         timing, baseline, threeway, matched or alternatives, optionally with \
+         typed, trees or hashes\n"
         other;
       exit 2
   | [] -> ()
