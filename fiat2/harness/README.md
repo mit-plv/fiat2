@@ -105,11 +105,15 @@ The consequence, which the tables repeat wherever they print it: **wall-clock se
 not follow the charge.** They time a tree in every column and are a check on shape only.
 
 The deferred cost is counted rather than assumed away: `canonicalisations` says how often
-a bag's canonical order actually had to be produced. Across all eight subjects it happens
-in two places, both an `OEq` against the empty bag, and the interesting one is that the
-optimizer removes it -- the membership subject's source canonicalises 40 times in an op
-phase and its optimized form 0, which is the `FilterEmptyToSetMem` rule doing exactly
-what it is for.
+a bag's canonical order actually had to be produced, and across every subject, phase and
+size it is now **zero**. Every site that used to fire was an `OEq` against the *empty*
+bag, which asks nothing about order; `value.ml` answers those arms directly, charging what
+a backend would pay rather than what a list costs. Two of the three sites were comparing
+two empty bags and so had always been free. The third was real: `HA_AreaRegistry`'s keyed
+delete asking whether a bucket had emptied, which sorted the bucket to find out -- 48
+comparisons per delete, 62% of that kind's cost, and Θ(b·log b) in the bucket size where
+a backend pays Θ(1). A line reappearing in that report would mean a subject had begun to
+observe a bag's order for real.
 
 `report` also checks that no subject contains an `ESort` at all, before or after, so the
 other observer never fires.
@@ -133,7 +137,8 @@ other observer never fires.
             is 0 because it writes -- counted once per NESTING LEVEL that iterates them.
     canonicalisations
             every time a bag's canonical order had to be produced, which is the only
-            cost the unordered bag defers.
+            cost the unordered bag defers.  Identically zero across the development; a
+            nonzero value is a signal, not a measurement.
 
 All four are machine-independent, which is why they and not wall-clock time are the
 evidence. A string comparison counts as one, and so does a string hash, which is honest
@@ -395,7 +400,7 @@ With that read in, at 1600 rows under `typed`:
   table where we beat an author on the exponent rather than on a constant.
 - **Writes are where `opt/orig` is widest, and that is index maintenance**:
   `user_search/remove` 61.15x — three indexes to keep, including the trigram pair Jenkins
-  never built — `area_registry/remove` 9.62x, `item_deletion/register` 7.22x,
+  never built — `area_registry/remove` 3.62x, `item_deletion/register` 7.22x,
   `window_store/put` 1.20x, and `named_cache/delete` **0.22x**, where the derived form is
   ahead because the author re-walks a list the index replaces. The reads above are bought
   with these writes, and the table prices both rather than reporting only the half that

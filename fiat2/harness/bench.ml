@@ -375,12 +375,15 @@ let run (sizes : int list) =
          sizes;
        (* a bag is an unordered list here, so this counts the times a
           subject observed a bag's canonical order and had to pay for it.
-          Both of the places it happens are an OEq against the empty bag:
-          the emptiness test HA_LookinFunctions' source performs on a
-          filter, which the optimized program replaces with a set
-          membership test -- 40 down to 0 -- and a probe that
-          HA_AreaRegistry's keyed delete compares, which the optimized
-          program introduces and the source does not have. *)
+          It now prints NOTHING, at every subject and size, and that is the
+          finding rather than an absence: every site that used to fire was an
+          OEq against the EMPTY bag, which asks nothing about order, and
+          value.ml answers those directly.  Two of the three compared two
+          empty bags and so cost nothing even before; the third was
+          HA_AreaRegistry's keyed delete asking whether a bucket had emptied,
+          and it was 62% of that kind's cost.  A line appearing here again
+          would mean a subject had started to observe a bag's order for real,
+          which is exactly when these numbers deserve a second look. *)
        (match List.filter (fun (_, a, b) -> a > 0 || b > 0) (List.rev !canon) with
         | [] -> ()
         | l ->

@@ -39,7 +39,12 @@
      canonicalisations
                   every time a bag's canonical order had to be produced,
                   which is the only cost value.ml's unordered bag defers.
-                  Zero means no subject ever observes it.
+                  Zero means no subject ever observes it -- and it IS zero,
+                  at every subject, phase and size, now that an emptiness
+                  test no longer sorts the bag it is asking about.  The three
+                  sites that used to fire were all an OEq against the empty
+                  bag; two of them compared two EMPTY bags, so the counter was
+                  recording an event that cost nothing.
 
      steps        a unit of interpreter work: one entry into interp_expr,
                   plus one for each element a primitive that is linear in

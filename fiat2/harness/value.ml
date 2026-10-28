@@ -56,6 +56,19 @@
             [canonicalisations], because a subject that triggered one often
             would be one whose numbers deserve a second look.
 
+            That last sentence earned its keep.  A bag EQUALITY against the
+            empty bag is not a question about order, but the generic arm
+            answered it by sorting both sides, so asking whether a bucket had
+            emptied cost the bucket a sort -- MEASURED at 48 comparisons per
+            delete in HA_AreaRegistry, 62% of that kind's whole cost, and
+            Theta(b log b) in the bucket size where a backend pays Theta(1).
+            The empty cases are therefore answered directly below.  That is
+            the same move the dictionary makes above -- the representation
+            stays a list and the CHARGE is what a backend would pay -- and it
+            is order-preserving, not an approximation: sorting [] yields [],
+            and list_compare [] (_ :: _) is -1 whatever the order, so the
+            three arms return exactly what the generic one returned.
+
    The comparison is NOT a free choice.  The semantics observes it -- OEq on
    two collections compares canonical forms, and ODictRange reads the key
    order directly -- so it has to be exactly Value.value_compare.  It is
@@ -169,6 +182,12 @@ end = struct
         let hashed r = r = RUnranged && Count.licensed () = Count.Hashed in
         if hashed ra || hashed rb then incr Count.canonicalisations;
         VMap.compare compare a b
+    (* An emptiness test asks nothing about order, so it does not pay for
+       one: these three return exactly what sorting both sides and comparing
+       returned, for the reason given at the head of this file. *)
+    | VBag [], VBag [] -> 0
+    | VBag [], VBag _ -> -1
+    | VBag _, VBag [] -> 1
     (* the only place a bag's canonical order is observable, and the only
        place it is paid for *)
     | VBag a, VBag b ->
