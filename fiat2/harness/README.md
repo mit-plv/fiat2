@@ -317,6 +317,15 @@ tree-walking OCaml interpreter over an extracted AST, so the constants belong to
 harness rather than to anything a backend would produce, and the only thing worth
 reading off them is whether a curve the counters call flat is flat in seconds too.
 
+**The check the seconds exist to provide, made.** Over 42 op kinds, the counters call 39
+of them flat or sublinear in the table and 3 of them linear. The clock agrees on every
+one: across a **32x** table the 30 timeable flat kinds grow by a median of **1.1x** and
+at most 4.3x, while the three the counters call linear grow **34x, 36x and 32x**. The
+three are `user_search/suggestMiss` and `suggestShort`, the two deliberately-linear
+fallback kinds, and `dependent_plugins/resolveAll`, whose derived form is linear where
+the author's is quadratic. Nothing the counters call flat is linear on the clock, which
+is the one thing this column could falsify and does not.
+
 An op phase is timed as (build + ops) less (build alone), each side repeated until it
 has accumulated 0.1s. Two nearly-equal timings subtracted have no meaningful quotient,
 so the op count **doubles until the difference clears 2ms** — which costs nothing for a
