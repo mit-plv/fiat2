@@ -23,7 +23,15 @@
 open Extracted
 
 type run =
-  { steps : int; cmps : int; canon : int; rows : int; hash : int; out : string }
+  { steps : int; cmps : int; canon : int; rows : int; hash : int;
+    strs : int; flds : int; over : int; out : string }
+
+(* THE SINGLE FIGURE, and the part of it that crosses to hand-written code.
+   count.ml's note says why there are two of them and why [rows] and
+   [canon] are in neither.  Everything printed below is one of these or a
+   named component of one. *)
+let total (r : run) : int = r.steps + r.over + r.cmps + r.hash + r.strs + r.flds
+let crossing (r : run) : int = r.cmps + r.hash + r.strs + r.flds
 
 let run_one (c : command) (w : Gen.workload) : run =
   let store = Gen.locals_of w.store and env = Gen.locals_of w.env in
@@ -43,16 +51,19 @@ let run_one (c : command) (w : Gen.workload) : run =
      stored a bag of two. *)
   let steps = !Count.steps and cmps = !Count.comparisons
   and canon = !Count.canonicalisations and rows = !Count.rows
-  and hash = !Count.hashing in
+  and hash = !Count.hashing and strs = !Count.strings
+  and flds = !Count.fields and over = !Count.overhead in
   let out =
     String.concat "; "
       (List.map (fun (k, v) -> k ^ " = " ^ Value.to_string v) (Eval.SMap.bindings final))
   in
-  { steps; cmps; canon; rows; hash; out }
+  { steps; cmps; canon; rows; hash; strs; flds; over; out }
 
 let sub (a : run) (b : run) : run =
   { steps = a.steps - b.steps; cmps = a.cmps - b.cmps; canon = a.canon - b.canon;
-    rows = a.rows - b.rows; hash = a.hash - b.hash; out = a.out }
+    rows = a.rows - b.rows; hash = a.hash - b.hash;
+    strs = a.strs - b.strs; flds = a.flds - b.flds; over = a.over - b.over;
+    out = a.out }
 
 (* ---- wall clock, which is a cross-check and not the evidence ----
 
@@ -75,15 +86,18 @@ let min_secs = 0.1
    subtracted.  This threshold is where such a difference stops being
    readable.
 
-   MEASURED 2026-10-25, with the `timing` mode at the end of this file,
-   because it had been asserted and never checked.  At 1600 rows
-   item_deletion/containsHit's optimized op phase is 9us over 20 operations
-   with a 119% spread -- unreadable, as this threshold says.  But the
-   threshold is not a property of the CLOCK, it is a property of using twenty
-   operations: at 320 the same measurement is stable to 6% and at 1280 to
-   3%, and the implied cost per operation agrees across all of them to within
-   2%.  So a flat read is perfectly timeable; it just has to be timed with
-   enough operations.  That is what secs_per_op below does, and the threshold
+   MEASURED with the `timing` mode at the end of this file, because it had
+   been asserted and never checked.  At 1600 rows item_deletion/containsHit's
+   optimized op phase over 20 operations is a few tens of microseconds with a
+   spread of several hundred percent -- unreadable, as this threshold says.
+   But the threshold is not a property of the CLOCK, it is a property of
+   using twenty operations: the same measurement settles to about 7% at 1280
+   and 5% at 5120, falling monotonically, and the implied cost per operation
+   agrees across those points to about 10%.  So a flat read is perfectly
+   timeable; it just has to be timed with enough operations.  (The absolute
+   numbers moved when the string and field counters were added -- counting a
+   character means comparing characters one at a time -- so the figures here
+   are deliberately given as shapes rather than as constants.)  That is what secs_per_op below does, and the threshold
    survives only for the kinds it cannot be done for. *)
 let resolvable = 50e-6
 
@@ -241,7 +255,9 @@ let exp_str (f : fitted option) : string =
 
 let csv (sizes : int list) =
   let sizes = if sizes = [] then default_sizes else sizes in
-  print_string "subject,kind,program,rows,steps,cmps,hashing,rows_touched\n";
+  print_string
+    "subject,kind,program,rows,work,data_work,steps,overhead,cmps,hashing,\
+     strings,fields,rows_touched\n";
   List.iter
     (fun ((name, src), opt) ->
        let sp = List.assoc name Gen.specs in
@@ -253,8 +269,9 @@ let csv (sizes : int list) =
                  List.iter
                    (fun (tag, c) ->
                       let r = op_phase c sp ~rows ~ops:ops_per_kind ~only in
-                      Printf.printf "%s,%s,%s,%d,%d,%d,%d,%d\n" name kind tag rows
-                        r.steps r.cmps r.hash r.rows)
+                      Printf.printf "%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n"
+                        name kind tag rows (total r) (crossing r)
+                        r.steps r.over r.cmps r.hash r.strs r.flds r.rows)
                    [ ("src", src); ("opt", opt) ])
               sizes)
          sp.kinds)
@@ -341,10 +358,14 @@ let run (sizes : int list) =
   let lo = List.hd sizes and hi = List.nth sizes (List.length sizes - 1) in
   Printf.printf
     "Each op phase is %d queries of each kind the subject dispatches on.\n\
-     steps counts interpreter work; cmp+hash counts the work done on KEYS,\n\
-     a comparison per value node walked and a hash per value node of a key,\n\
-     the latter charged where dict_kind says a hash table would serve.  Both\n\
-     are machine-independent, and they are the evidence.  'agree' compares the\n\
+     `work` is the SINGLE figure: every elementary operation the run performs,\n\
+     interpreter dispatch and its environment lookups included, as well as the\n\
+     comparisons, hashes, characters and record fields the program itself\n\
+     touches.  It is machine-independent, and count.ml says what it is the sum\n\
+     of and why nothing else belongs in it.  cmp+hash is printed beside it\n\
+     because it is the part the structure choice moves, and the line below\n\
+     each table breaks the total into all five of its components at the\n\
+     largest size, so no cost is hidden behind a name.  'agree' compares the\n\
      two programs' final stores, which is the soundness theorem on this input.\n\
      Wall clock is printed per kind below, as a check on the shape only: it\n\
      times this interpreter, so its constants mean nothing for a backend.\n"
@@ -354,7 +375,7 @@ let run (sizes : int list) =
        let sp = List.assoc name Gen.specs in
        Printf.printf "\n=== %s ===" name;
        Printf.printf
-         "\n  rows  phase   src steps    opt steps  src cmp+hash  opt cmp+hash  agree\n";
+         "\n  rows  phase    src work     opt work  src cmp+hash  opt cmp+hash  agree\n";
        let canon = ref [] in
        List.iter
          (fun rows ->
@@ -364,14 +385,33 @@ let run (sizes : int list) =
             let s1 = run_one src (Gen.workload sp ~rows ~ops:ops_per_kind ~only)
             and o1 = run_one opt (Gen.workload sp ~rows ~ops:ops_per_kind ~only) in
             canon := (rows, (sub s1 s0).canon, (sub o1 o0).canon) :: !canon;
-            (* cmp+hash: the key work, by one rule on both sides.  A source
-               program installs no index, so its hash column is always 0. *)
+            (* cmp+hash is printed beside the total because it is the part
+               the structure setting moves; the full decomposition is on the
+               line after the largest size.  A source program installs no
+               index, so its hash column is always 0. *)
             let line phase (s : run) (o : run) agree =
               let w (r : run) = Printf.sprintf "%d+%d" r.cmps r.hash in
               Printf.printf "%6d  %-6s %10d   %10d  %12s  %12s  %s\n" rows phase
-                s.steps o.steps (w s) (w o) agree in
+                (total s) (total o) (w s) (w o) agree in
             line "build" s0 o0 (if s0.out = o0.out then "yes" else "NO");
-            line "ops" (sub s1 s0) (sub o1 o0) (if s1.out = o1.out then "yes" else "NO"))
+            line "ops" (sub s1 s0) (sub o1 o0) (if s1.out = o1.out then "yes" else "NO");
+            (* THE WHOLE OF THE TOTAL, SPELT OUT, at the largest size: the
+               five components the work column is the sum of.  It is printed
+               so that the claim "nothing is left out" is something a reader
+               can check against the column beside it rather than take on
+               trust -- and so that a component which is zero here is visibly
+               zero rather than absent. *)
+            if rows = hi then begin
+              let d (r : run) =
+                Printf.sprintf
+                  "%d = %d stp + %d ovh | %d cmp + %d hsh + %d str + %d fld"
+                  (total r) r.steps r.over r.cmps r.hash r.strs r.flds in
+              Printf.printf
+                "         work, ops phase, in full (the bar separates this\n\
+                \         interpreter's own overhead from what crosses):\n";
+              Printf.printf "           src %s\n" (d (sub s1 s0));
+              Printf.printf "           opt %s\n" (d (sub o1 o0))
+            end)
          sizes;
        (* a bag is an unordered list here, so this counts the times a
           subject observed a bag's canonical order and had to pay for it.
@@ -400,7 +440,7 @@ let run (sizes : int list) =
          \  a leading ~ marks a loose fit.  Columns are at %d rows.\n"
          (List.length sizes) hi;
        Printf.printf "    %-14s %11s %6s %6s %11s %6s %6s\n" "kind"
-         "src steps" "a" "a key" "opt steps" "a" "a key";
+         "src work" "a" "a data" "opt work" "a" "a data";
        let timings =
          List.map
            (fun (kind, _) ->
@@ -412,12 +452,12 @@ let run (sizes : int list) =
               let ss = series src and os = series opt in
               let at l rows = List.assoc rows l in
               Printf.printf "    %-14s %11d %6s %6s %11d %6s %6s\n" kind
-                (at ss hi).steps
-                (exp_str (fit (List.map (fun (n, r) -> (n, r.steps)) ss)))
-                (exp_str (fit (List.map (fun (n, r) -> (n, r.cmps + r.hash)) ss)))
-                (at os hi).steps
-                (exp_str (fit (List.map (fun (n, r) -> (n, r.steps)) os)))
-                (exp_str (fit (List.map (fun (n, r) -> (n, r.cmps + r.hash)) os)));
+                (total (at ss hi))
+                (exp_str (fit (List.map (fun (n, r) -> (n, total r)) ss)))
+                (exp_str (fit (List.map (fun (n, r) -> (n, crossing r)) ss)))
+                (total (at os hi))
+                (exp_str (fit (List.map (fun (n, r) -> (n, total r)) os)))
+                (exp_str (fit (List.map (fun (n, r) -> (n, crossing r)) os)));
               (kind,
                secs_per_op src sp ~rows:lo ~kind,
                secs_per_op src sp ~rows:hi ~kind,
@@ -451,18 +491,27 @@ let run (sizes : int list) =
 (* ---------- the authors' own code, beside the optimizer's output ----------
 
    See baseline.ml for what is transcribed and for the constraints on what
-   these numbers may be read as saying.  The short form: `steps` cannot cross
-   the boundary and is not shown; `cmps + hashing` can, and is charged by one
-   rule on both sides; seconds can, and are about 25% inflated on our side by
-   the interpreter, and do not follow the cmp+hash charge.  The BUILD phase is
-   not comparable and is not shown.
+   these numbers may be read as saying.  The short form: `steps` and the
+   interpreter's `overhead` cannot cross the boundary and are not shown; the
+   DATA WORK -- comparisons, hashes, string characters and record fields --
+   can, and is counted by the same rules on both sides; seconds can, and are
+   about 25% inflated on our side by the interpreter.  The BUILD phase is not
+   comparable and is not shown.
 
    The column that matters is not either cost but `agree`.  Each
    transcription is run over the very workload the subject programs are run
    over, and its final store is printed the same way, so a transcription that
    computes something else is caught before any of its numbers are read. *)
 
-type base_run = { b_cmps : int; b_rows : int; b_hash : int; b_out : string }
+type base_run =
+  { b_cmps : int; b_rows : int; b_hash : int; b_strs : int; b_flds : int;
+    b_out : string }
+
+(* the same crossing figure as [crossing] above, on the author's column: the
+   work the two sides both really do, on keys, on strings and on fields.
+   [steps] and [overhead] have no counterpart here, which is the whole reason
+   the total and the crossing figure are two different numbers. *)
+let b_crossing (r : base_run) : int = r.b_cmps + r.b_hash + r.b_strs + r.b_flds
 
 let baseline_phase (brun : Baseline.runner) (sp : Gen.spec) ~rows ~ops ~only
   : base_run =
@@ -471,11 +520,13 @@ let baseline_phase (brun : Baseline.runner) (sp : Gen.spec) ~rows ~ops ~only
   let go w =
     Count.reset ();
     let st = brun w in
-    let c = !Count.comparisons and r = !Count.rows and h = !Count.hashing in
-    (c, r, h, Baseline.format_store st) in
-  let c0, r0, h0, _ = go (Gen.workload sp ~rows ~ops:0 ~only) in
-  let c1, r1, h1, out = go (Gen.workload sp ~rows ~ops ~only) in
-  { b_cmps = c1 - c0; b_rows = r1 - r0; b_hash = h1 - h0; b_out = out }
+    let c = !Count.comparisons and r = !Count.rows and h = !Count.hashing
+    and st_ = !Count.strings and fl = !Count.fields in
+    (c, r, h, st_, fl, Baseline.format_store st) in
+  let c0, r0, h0, s0, f0, _ = go (Gen.workload sp ~rows ~ops:0 ~only) in
+  let c1, r1, h1, s1, f1, out = go (Gen.workload sp ~rows ~ops ~only) in
+  { b_cmps = c1 - c0; b_rows = r1 - r0; b_hash = h1 - h0;
+    b_strs = s1 - s0; b_flds = f1 - f0; b_out = out }
 
 let baseline (sizes : int list) =
   let sizes = if sizes = [] then default_sizes else sizes in
@@ -485,20 +536,26 @@ let baseline (sizes : int list) =
      PARITY is the expected result: the source form is not the author's code --\n\
      the author's structure was removed to write the query declaratively -- so\n\
      the claim is that the compiler arrives back at what the author built.\n\
-     'a' is the fitted exponent over %d sizes; cmp+hash and s/op are at %d\n\
+     'a' is the fitted exponent over %d sizes; data work and s/op are at %d\n\
      rows.\n\
      The EXPONENT is the claim.  The rows constant is not comparable factor\n\
      for factor: it charges each pipeline stage that iterates a collection,\n\
      so a derived read counts the same rows once per stage and hand-written\n\
      code has no stages (see count.ml).\n\
-     cmp+hash is the work each side's structures do ON KEYS, charged by one\n\
-     rule on both: a comparison per value node walked, a hash per value node\n\
-     of the key.  A dictionary the type system marks Unranged is charged as a\n\
-     hash table on our side too, which is what dict_kind exists to license;\n\
-     SETS have no such annotation and are still charged as trees.\n\
-     s/op is ~25%% inflated on the opt side by the interpreter, and does NOT\n\
-     follow the cmp+hash charge -- the Unranged dictionaries are still stored\n\
-     in trees, so seconds remain a check on shape and not evidence.\n\
+     DATA WORK is everything the two sides both really do: comparisons and\n\
+     hashes on keys, characters examined by a string primitive, and record\n\
+     fields walked by a projection.  It is counted by the same rules on both,\n\
+     and the line under each row breaks it into those four.  What it leaves\n\
+     out is this interpreter's dispatch and its environment lookups, which\n\
+     hand-written OCaml has no counterpart for -- that part is in the `work`\n\
+     column of the bench table and nowhere here.  A dictionary the type\n\
+     system marks Unranged is stored as a hash table on our side too, which\n\
+     is what dict_kind exists to license; SETS have no such annotation and\n\
+     are stored as trees outside the hashes column.\n\
+     s/op is ~25%% inflated on the opt side by the interpreter.  It FOLLOWS\n\
+     the charge for dictionaries and sets, which hold the store their setting\n\
+     names, and not for bags, which are a list under every setting -- so it\n\
+     stays a check on shape rather than evidence.\n\
      'agree' is the real check -- the two computed the same answer, at EVERY\n\
      size and not just the largest; a size that differed is named.\n"
     (List.length sizes) hi;
@@ -515,7 +572,7 @@ let baseline (sizes : int list) =
            Printf.printf
              "    %-13s %18s %18s %13s %13s %11s %11s %6s\n"
              "kind" "rows a (src/opt/base)" "rows at n (s/o/b)"
-             "opt cmp+hash" "base cmp+hash" "opt s/op" "base s/op" "agree";
+             "opt data work" "base data work" "opt s/op" "base s/op" "agree";
            List.iter
              (fun (kind, _) ->
                 let only = Some kind in
@@ -559,16 +616,29 @@ let baseline (sizes : int list) =
                   secs_per_op_of (fun w -> ignore (brun w)) sp ~rows:hi ~kind in
                 let p x = if x.secs < resolvable /. float x.ops_used then "   <50us"
                           else Printf.sprintf "%8.3e" x.secs in
-                let work c h = Printf.sprintf "%d+%d" c h in
                 Printf.printf
-                  "    %-13s %5s %5s %5s %6d %5d %5d %13s %13s %11s %11s %6s\n"
+                  "    %-13s %5s %5s %5s %6d %5d %5d %13d %13d %11s %11s %6s\n"
                   kind
                   (exp_str (fit (series_s (fun r -> r.rows))))
                   (exp_str (fit (series_o (fun r -> r.rows))))
                   (exp_str (fit (series_b (fun r -> r.b_rows))))
                   s_hi.rows o_hi.rows b_hi.b_rows
-                  (work o_hi.cmps o_hi.hash) (work b_hi.b_cmps b_hi.b_hash)
-                  (p os) (p bs) agree_str)
+                  (crossing o_hi) (b_crossing b_hi)
+                  (p os) (p bs) agree_str;
+                (* the four components, so that a reader can see which of
+                   them the row is made of rather than taking the sum on
+                   trust.  Printed only where the row has more than one
+                   component on either side, since a row that is all
+                   comparisons says so already. *)
+                let parts (c, h, st_, f) =
+                  Printf.sprintf "%d cmp + %d hsh + %d str + %d fld" c h st_ f in
+                let ours = (o_hi.cmps, o_hi.hash, o_hi.strs, o_hi.flds)
+                and theirs = (b_hi.b_cmps, b_hi.b_hash, b_hi.b_strs, b_hi.b_flds) in
+                let nonzero (c, h, st_, f) =
+                  List.length (List.filter (fun x -> x > 0) [c; h; st_; f]) in
+                if nonzero ours > 1 || nonzero theirs > 1 then
+                  Printf.printf "    %-13s   opt %s | base %s\n" "" (parts ours)
+                    (parts theirs))
              sp.kinds)
     Baseline.runners
 
@@ -587,37 +657,37 @@ let baseline (sizes : int list) =
    transcribed in baseline.ml.  So src -> opt is what the optimizer buys,
    and opt -> orig is whether it arrived back where the author was by hand.
 
-   The COSTS are key work, because that is the only cost that crosses to
-   `orig`.  `steps` counts this interpreter walking a tree, which the
-   author's OCaml never does, so a steps column for `orig` would mean
-   nothing; the src-against-opt steps comparison is in the `bench` table,
-   where both sides are the same interpreter.
+   The COSTS are DATA WORK, which is everything the three columns all
+   really do: comparisons and hashes on keys, characters a string primitive
+   examines, record fields a projection walks.  What it leaves out is this
+   interpreter's dispatch and its environment lookups, because the author's
+   OCaml has no counterpart for either; the src-against-opt comparison of
+   the complete total is in the `bench` table, where both sides are the same
+   interpreter.
 
-   But key work alone MISREADS the source column on some kinds, so the
-   source's steps exponent is printed beside its key exponent -- `aK` and
-   `aS` -- and the two together say what the source form actually pays:
+   THIS COLUMN USED TO BE KEY WORK ALONE, and that misread two kinds badly
+   enough to be worth recording, because both were fixed by completing the
+   figure rather than by adding a caveat to it:
 
-     window_store/fetchAll   aK 0.00, aS 0.99   a full scan that compares
-                                                no keys: the range filter
-                                                is OLess on ints, not a
-                                                key descent, so its cost
-                                                is all traversal.  The
-                                                0.04x src/opt ratio is an
-                                                artifact of the instrument
-                                                and NOT a pessimization.
-     item_deletion/containsHit  aK 1.22, aS 0.00  the mirror image: a
-                                                whole-row membership test
-                                                is almost nothing BUT key
-                                                comparison.
+     window_store/fetchAll    a full scan that compares no keys -- its range
+                              filter is OLess on ints, not a key descent --
+                              so key work called it FLAT and the src/opt
+                              ratio came out at 0.04x, which had to be
+                              explained as an artifact.  Counting the field
+                              each scanned row is projected through makes
+                              the exponent 1.00 and the ratio 396x, and the
+                              caveat is gone rather than documented.
+     user_search/suggest      the author's own algorithm is a contains()
+                              scan over every row.  Key work charged it 184,
+                              because a character comparison is not a key
+                              comparison; it really does about 200,000
+                              character comparisons, and now that they are
+                              counted the ratio moves from 2.53x against us
+                              to 0.0064x in our favour -- which is also what
+                              the wall clock had been saying all along.
 
-   So on a row where aK is flat and aS is linear, read the exponent and not
-   the constant: the optimizer's win there is in a column this table does
-   not carry.  Every row whose aK is at or near 1.0 is one where the ratio
-   means what it looks like.
-
-   Both ratios are of the key-work totals.  A `--` is a ZERO DENOMINATOR --
-   the column does no key work at all on that kind, which is a finding on a
-   few of them and not a missing measurement.
+   Both ratios are of the data-work totals.  A `--` is a ZERO DENOMINATOR,
+   which now happens only where a column is absent rather than free.
 
    `agree` is the store check, re-made at EVERY size rather than only the
    largest: all three programs computed the same final store.  On the left
@@ -629,13 +699,18 @@ let threeway (sizes : int list) =
   let hi = List.nth sizes (List.length sizes - 1) in
   Printf.printf
     "The query as written, the program derived from it, and the author's own\n\
-     code.  Key work is cmps+hashing (see count.ml) at %d rows, charged by\n\
-     the same function in all three columns; `a` is its fitted exponent over\n\
-     %d sizes, which is the claim -- 1.0 linear, 0.0 independent of the table,\n\
-     ~0.2 a probe's compares, a leading ~ a loose fit.\n\
-     Steps are NOT here: they count this interpreter's tree-walking, which\n\
-     the author's OCaml never does, so only key work crosses to `orig`.  The\n\
-     src/opt steps comparison is in the `bench` table.\n\
+     code.  DATA WORK is everything the three columns all really do (see\n\
+     count.ml): comparisons and hashes on keys, characters a string primitive\n\
+     examines, record fields a projection walks.  At %d rows, counted by the\n\
+     same rules in all three columns.  `aD` is its fitted exponent over %d\n\
+     sizes, which is the claim -- 1.0 linear, 0.0 independent of the table,\n\
+     ~0.1 a probe's descent, a leading ~ a loose fit; `src aT` is the\n\
+     exponent of the source's TOTAL work, interpreter included, and is\n\
+     printed beside it as a check that the two tell the same story.\n\
+     The interpreter's own dispatch and environment lookups are NOT here:\n\
+     the author's OCaml has no counterpart for them, so they would make this\n\
+     a measurement of the harness.  They are in the `work` column of the\n\
+     bench table, where both sides are the same interpreter.\n\
      src/opt is what the optimizer buys.  opt/orig is the parity claim: the\n\
      source form is not the author's code -- their structure was removed to\n\
      write the query declaratively -- so the claim is that the compiler\n\
@@ -658,8 +733,8 @@ let threeway (sizes : int list) =
                \                 structure asks for -- weaker evidence than the rest)"
           | Some _ -> "");
        Printf.printf "    %-13s %13s %12s %12s %7s %7s %6s %6s %9s %9s %6s\n"
-         "kind" "src key" "opt key" "orig key" "src aK" "src aS" "opt a"
-         "orig a" "src/opt" "opt/orig" "agree";
+         "kind" "src data" "opt data" "orig data" "src aD" "src aT" "opt aD"
+         "orig aD" "src/opt" "opt/orig" "agree";
        List.iter
          (fun (kind, _) ->
             let only = Some kind in
@@ -680,8 +755,7 @@ let threeway (sizes : int list) =
                 brun in
             let last l = snd (List.nth l (List.length l - 1)) in
             let s_hi = last runs_s and o_hi = last runs_o in
-            let kw (r : run) = r.cmps + r.hash in
-            let bkw (r : base_run) = r.b_cmps + r.b_hash in
+            let kw = crossing and bkw = b_crossing in
             let b_hi = Option.map last runs_b in
             (* The agreement spans every column that exists, at every size.
                src = opt is the optimizer's soundness theorem; opt = orig is
@@ -698,7 +772,6 @@ let threeway (sizes : int list) =
             let agree_str = match differing with
               | [] -> "yes"
               | rs -> "NO@" ^ String.concat "," (List.map string_of_int rs) in
-            let work c h = Printf.sprintf "%d+%d" c h in
             (* four decimals below 0.01, because the one ratio down there --
                dependent_plugins, where the optimizer beats the author's own
                code by changing the exponent -- rounds to 0.00x otherwise and
@@ -712,13 +785,13 @@ let threeway (sizes : int list) =
             Printf.printf
               "    %-13s %13s %12s %12s %7s %7s %6s %6s %9s %9s %6s\n"
               kind
-              (work s_hi.cmps s_hi.hash)
-              (work o_hi.cmps o_hi.hash)
+              (string_of_int (kw s_hi))
+              (string_of_int (kw o_hi))
               (match b_hi with
                | None -> "--"
-               | Some b -> work b.b_cmps b.b_hash)
+               | Some b -> string_of_int (bkw b))
               (exp_str (fit (List.map (fun (r, x) -> (r, kw x)) runs_s)))
-              (exp_str (fit (List.map (fun (r, x) -> (r, x.steps)) runs_s)))
+              (exp_str (fit (List.map (fun (r, x) -> (r, total x)) runs_s)))
               (exp_str (fit (List.map (fun (r, x) -> (r, kw x)) runs_o)))
               (match runs_b with
                | None -> "     -"
@@ -756,10 +829,11 @@ let threeway (sizes : int list) =
    all, which is what a Ranged dictionary's row should look like -- its key
    order is read, so no setting can hash it.
 
-   Key work is cmps+hashing, the figure count.ml defines.  Seconds are not
-   shown here: they time a tree in every column, by construction, so they
-   would be the same three numbers three times and would invite exactly the
-   misreading the parameter exists to prevent. *)
+   Data work is the crossing figure count.ml defines -- cmps + hashing +
+   strings + fields, everything both sides really do.  Seconds are not shown
+   here: the structure setting moves them only where the store it names
+   differs from the store the other setting names, so three columns of them
+   would invite exactly the misreading the parameter exists to prevent. *)
 
 let settings = [ Count.Typed; Count.Trees; Count.Hashes ]
 
@@ -769,15 +843,17 @@ let matched (sizes : int list) =
   let saved = !Count.structures in
   Printf.printf
     "The optimizer's output and the original authors' code, each charged the\n\
-     SAME way within a column.  Key work is cmps+hashing at %d rows; `x` is\n\
+     SAME way within a column.  Data work is the crossing figure count.ml\n\
+     defines -- cmps + hashing + strings + fields -- at %d rows; `x` is\n\
      ours/theirs, so 1.00 is parity and below 1 is ours ahead.  See the\n\
      comment above this table in bench.ml for what the three columns mean,\n\
      and count.ml for what the settings do.  A row whose three columns agree\n\
      has no structure choice in it -- its key order is read, so nothing can\n\
      hash it.  'agree' is the same check the baseline table makes, re-made\n\
      under every setting: the two computed the same answer.  A dash in the\n\
-     x column means the author's side does no key work there at all -- a\n\
-     field read, not a structure -- so there is no ratio to take.\n" hi;
+     x column means the author's side does no data work there at all, which\n\
+     no row does any more: a cached count still costs the field read that\n\
+     fetches it, and that is now counted.\n" hi;
   List.iter
     (fun (name, brun) ->
        match List.find_opt (fun ((n, _), _) -> n = name) subjects with
@@ -789,7 +865,7 @@ let matched (sizes : int list) =
                 "  (no author: our own example, against the implementation its\n                 \
                  structure asks for -- weaker evidence than the rest)"
               else "");
-           Printf.printf "    %-13s %21s %21s %21s %6s\n"
+           Printf.printf "    %-13s %22s %22s %22s %6s\n"
              "kind" "typed  ours/theirs  x" "trees  ours/theirs  x"
              "hashes ours/theirs  x" "agree";
            List.iter
@@ -799,16 +875,25 @@ let matched (sizes : int list) =
                   Count.structures := st;
                   let o = op_phase opt sp ~rows:hi ~ops:ops_per_kind ~only in
                   let b = baseline_phase brun sp ~rows:hi ~ops:ops_per_kind ~only in
-                  let ow = o.cmps + o.hash and bw = b.b_cmps + b.b_hash in
+                  let ow = crossing o and bw = b_crossing b in
                   (ow, bw, o.out = b.b_out) in
                 let cells = List.map cell settings in
-                (* a dash where the author's side does no key work at all --
-                   ArrayList.size() and currentSizeBytes are field reads, so
-                   there is no ratio to take and the pair says it better *)
+                (* a dash would mean the author's side does no data work at
+                   all on that kind.  No row does any more: ArrayList.size()
+                   and currentSizeBytes are field reads, and a field read is
+                   now counted, so the cached answer costs what fetching it
+                   costs instead of costing nothing. *)
                 let fmt (ow, bw, _) =
-                  Printf.sprintf "%7d /%7d %5s" ow bw
+                  Printf.sprintf "%7d /%7d %6s" ow bw
                     (if bw = 0 then "--"
-                     else Printf.sprintf "%.2f" (float ow /. float bw)) in
+                     else
+                       let x = float ow /. float bw in
+                       (* four decimals below 0.01, as in the threeway table:
+                          the two rows down there are the two places the
+                          derived form beats an author's own algorithm, and
+                          0.01 reads as a rounding artifact *)
+                       Printf.sprintf (if x < 0.01 then format_of_string "%.4f"
+                                       else format_of_string "%.2f") x) in
                 let agree_str =
                   if List.for_all (fun (_, _, a) -> a) cells then "yes" else "NO" in
                 Printf.printf "    %-13s %s %s %s %6s\n" kind
@@ -882,8 +967,8 @@ let alternatives_cost (sizes : int list) =
            Printf.printf "\n=== %s ===\n" name;
            Printf.printf
              "    %-13s %11s %11s %7s %6s %6s %11s %11s %7s %6s\n"
-             "phase/kind" "chosen stp" "alt stp" "x" "a ch" "a alt"
-             "chosen key" "alt key" "x" "agree";
+             "phase/kind" "chosen work" "alt work" "x" "a ch" "a alt"
+             "chosen data" "alt data" "x" "agree";
            (* one row: two series over the sizes, and the pair at hi *)
            let row (label : string) (f : int -> run * run) =
              let series = List.map (fun r -> (r, f r)) sizes in
@@ -892,12 +977,12 @@ let alternatives_cost (sizes : int list) =
                fit (List.map (fun (r, p) -> (r, pick p)) series) in
              Printf.printf
                "    %-13s %11d %11d %7s %6s %6s %11d %11d %7s %6s\n"
-               label ch_hi.steps alt_hi.steps
-               (factor ch_hi.steps alt_hi.steps)
-               (exp_str (fit_of (fun (c, _) -> c.steps)))
-               (exp_str (fit_of (fun (_, a) -> a.steps)))
-               (ch_hi.cmps + ch_hi.hash) (alt_hi.cmps + alt_hi.hash)
-               (factor (ch_hi.cmps + ch_hi.hash) (alt_hi.cmps + alt_hi.hash))
+               label (total ch_hi) (total alt_hi)
+               (factor (total ch_hi) (total alt_hi))
+               (exp_str (fit_of (fun (c, _) -> total c)))
+               (exp_str (fit_of (fun (_, a) -> total a)))
+               (crossing ch_hi) (crossing alt_hi)
+               (factor (crossing ch_hi) (crossing alt_hi))
                (if ch_hi.out = alt_hi.out then "yes" else "NO") in
            row "build" (fun r ->
              (build_only chosen sp ~rows:r, build_only alt sp ~rows:r));

@@ -88,12 +88,14 @@
      composite keys -- the claim is also stated structurally, as which
      structure each side descends, so that it does not rest on the ratio.
      See count.ml, which says the same thing where the counter lives.
-   * `cmps + hashing` can, and is charged by ONE FUNCTION on both sides:
-     Value.key_access, which eval.ml calls for the optimizer's output and the
-     [keyed] structures below call for the originals.  A comparison per value
-     node walked on a tree descent, a hash per value node of the key on a hash
-     probe, and the key's cost COMPUTED by Value.key_work rather than declared
-     at the site.
+   * DATA WORK can -- comparisons and hashes on keys, characters a string
+     primitive examines, record fields a projection walks -- and it is
+     counted by the same code on both sides, not by two conventions that
+     agree on inspection: the [keyed] structures below hold the same stores
+     eval.ml's collections hold, the author's string scan calls the same
+     Eval.str_contains, and the author's field read goes through the [field]
+     above.  A comparison per value node walked on a tree descent, a hash per
+     value node of the key on a hash probe, and neither declared at the site.
 
      THIS REPLACES AN EARLIER ASYMMETRY, and it is worth naming because every
      number in this file moved when it was fixed.  `cmps` alone charged a tree
@@ -158,8 +160,19 @@ let format_store (l : (string * Value.t) list) : string =
 
 (* ---------- shared accessors on the workload's values ---------- *)
 
+(* A projection walks the record, and is charged for it by the same rule
+   eval.ml's record_proj uses -- so the author's column pays for reading a
+   field exactly what ours pays.  It is a small constant on both sides, and
+   that is a thing this file now says rather than assumes. *)
 let field (f : string) (v : Value.t) : Value.t =
-  match v with VRecord l -> (try List.assoc f l with Not_found -> VUnit) | _ -> VUnit
+  match v with
+  | VRecord l ->
+      let rec go = function
+        | [] -> Value.VUnit
+        | (k, x) :: rest -> Count.field 1; if k = f then x else go rest
+      in
+      go l
+  | _ -> Value.VUnit
 
 let str (v : Value.t) : string = match v with VString s -> s | _ -> ""
 let int_of (v : Value.t) : int = match v with VInt n -> n | _ -> min_int
@@ -172,32 +185,30 @@ let queries_of (w : Gen.workload) (var : string) : Value.t list =
    Every map and set in this file is one of these.  Two properties matter and
    neither is an accident:
 
-   1. THE CHARGE COMES FROM Value.key_access, the same function eval.ml calls
-      for the optimizer's output.  Not the same convention, carefully applied
-      twice -- the same function.  That is the only reason a ratio between the
-      two columns of the author comparison means anything, and it is why this
-      file no longer has arithmetic of its own on Count.hash or
-      Count.comparisons for a key access.
+   1. THE STORAGE IS THE STRUCTURE THE SETTING NAMES, on this side as on the
+      other: a balanced tree where the kind is Ordered, CCHashTrie's
+      persistent hash-array-mapped trie where it is Hashed.  So the two
+      columns are not charged identically because they call one shared
+      pricing helper -- there is no such helper any more -- they are charged
+      identically because they RUN THE SAME DATA STRUCTURE, which is a
+      stronger statement and one that cannot drift.  The counters see the
+      real work: Value.compare charges the tree's descent, and Value.hash
+      and Value.equal charge the trie's hash and its leaf comparison.
 
-   2. THE KEY IS A Value.t, so its cost is COMPUTED by Value.key_work rather
-      than declared.  This replaces the `~kw` annotation the three helpers
-      here used to carry, which defaulted to 1 and had to be overridden by
-      hand at the two sites whose keys are not scalars -- Cluster's (topic,
-      partition) and ItemDeletion's whole row.  A declared cost is a cost
-      someone has to remember to declare; a computed one cannot drift from
-      the key it charges for.  The numbers are unchanged where the old
-      annotations were right: a string key is 1 node as before, Cluster's pair
-      is 3 as its ~kw:3 said, and ItemDeletion's row is key_work of the row
-      exactly as it was charged explicitly.
+   2. THE KEY IS A Value.t, so what it costs is whatever walking it costs,
+      per value node, rather than a number declared at the call site.  This
+      replaced a `~kw` annotation that defaulted to 1 and had to be
+      overridden by hand wherever a key was not a scalar -- Cluster's
+      (topic, partition) and ItemDeletion's whole row.  A declared cost is a
+      cost someone has to remember to declare.
 
-   THE STORAGE IS NOW THE STRUCTURE THE SETTING NAMES, on this side as on the
-   other: a balanced tree where the kind is Ordered, CCHashTrie's persistent
-   hash-array-mapped trie where it is Hashed.  So the two columns are no longer charged identically
-   because they call one shared helper -- they are charged identically
-   because they run THE SAME DATA STRUCTURE, which is a stronger statement and
-   one that cannot drift.  The counters see the real work: Value.compare
-   charges the tree's descent, and Value.hash and Value.equal charge the
-   trie's hash and its leaf comparison.
+   3. AND THE SAME IS TRUE OF THE WORK THAT IS NOT A KEY ACCESS.  A string
+      scan goes through Eval.str_contains, which charges its characters, and
+      a field read goes through [field] above, which charges the record
+      positions it walks -- both the same functions, and the same rules, as
+      the other column.  That is what makes the data-work figure in the
+      tables a comparison between two programs instead of between two
+      conventions.
 
    Held in a mutable cell, so the transcriptions keep the imperative shape the
    originals have.  The trie is persistent, which costs nothing here: a put
@@ -302,7 +313,7 @@ let kfold (f : Value.t -> 'v -> 'a -> 'a) (t : 'v keyed) (init : 'a) : 'a =
   | KTree m -> Value.VMap.fold f m init
   | KHash h -> Value.VTrie.fold ~f:(fun acc k v -> f k v acc) ~x:init h
 
-(* A composite key, built so that Value.key_work charges its parts: the pair
+(* A composite key, built so that walking it charges for its parts: the pair
    Kafka's cache is keyed on costs 3 nodes -- the record and its two fields --
    which is what the ~kw:3 annotation it replaces said by hand. *)
 let key2 (a : string) (va : Value.t) (b : string) (vb : Value.t) : Value.t =
@@ -472,10 +483,10 @@ module ItemDeletion = struct
          (* THE WHOLE ROW IS THE KEY -- registrations.contains(item) asks
             about a row and not an attribute -- so a hash of it walks the whole
             record and a tree descent compares the whole record per level.
-            Neither is written here: the key is the row, and Value.key_access
-            charges whichever the setting calls for.  This is the site the
-            retired ~kw annotation existed for, and the reason it is better
-            computed than declared. *)
+            Neither is written here: the key is the row, and the store the
+            setting named does whichever of the two.  This is the site the
+            retired ~kw annotation existed for, and the reason a cost is
+            better counted than declared. *)
          | 0 -> say (if kmem reg item then "deleting" else "free")
          | 1 -> kput reg item ()
          | _ -> kremove reg item)
@@ -793,7 +804,7 @@ module Cluster = struct
               let topic = field "topic" p in
               (* a TopicPartition is a two-field key, so it costs three nodes
                  under count.ml's rule -- the record and its two fields, which
-                 is what key2 builds and Value.key_work then charges without
+                 is what key2 builds, and walking it then charges without
                  anyone having to declare it *)
               kput st.by_tp
                 (key2 "topic" topic "partition" (field "partition" p)) p;

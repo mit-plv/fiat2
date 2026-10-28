@@ -30,7 +30,20 @@ open Value
    a well-typed program never reaches those branches and silently differing
    on them would be a difference in the semantics rather than in the cost. *)
 
-module SMap = Map.Make (String)
+(* The local environment is a map from names to values, and a lookup in one
+   is a descent comparing strings.  The comparator charges them, so what an
+   EVar costs is counted rather than assumed to be nothing.
+
+   It is charged to [Count.over] and not to [Count.field], because this map
+   is the INTERPRETER'S and not the program's: a compiled backend reads a
+   local from a slot.  So it joins [steps] in the total and stays out of the
+   figure that crosses to hand-written code.  It is not small -- on most
+   subjects it is the same order as [steps] -- which is the reason it gets a
+   counter instead of a remark. *)
+module SMap = Map.Make (struct
+  type t = string
+  let compare (a : string) (b : string) : int = Count.over 1; String.compare a b
+end)
 
 type locals = value SMap.t
 
@@ -61,14 +74,24 @@ let zmod (a : int) (b : int) : int = if b = 0 then a else a - (b * zdiv a b)
 
 let str_contains (s : string) (p : string) : bool =
   let n = String.length s and m = String.length p in
-  let rec at i = i + m <= n && (String.sub s i m = p || at (i + 1)) in
+  (* written out character by character, where this used to build a substring
+     and compare it, so that what is charged is what the scan really does:
+     the comparisons it performs before it stops, not an upper bound on them *)
+  let rec at i =
+    i + m <= n
+    && (let rec eq j = j = m || ((Count.chars 1; s.[i + j] = p.[j]) && eq (j + 1)) in
+        eq 0 || at (i + 1))
+  in
   at 0
 
 (* String.substring n m s: skip n, take m, stop at the end *)
 let substring (s : string) (i : int) (n : int) : string =
   let start = max 0 i and len = max 0 n in
   if start >= String.length s then ""
-  else String.sub s start (min len (String.length s - start))
+  else
+    let taken = min len (String.length s - start) in
+    Count.chars taken;
+    String.sub s start taken
 
 (* ---------- atoms ---------- *)
 
@@ -96,7 +119,8 @@ let interp_atom (a : atom) : value =
    the structure really does: Value.compare counts a tree's descent, and
    Value.hash and Value.equal count a trie's hash and its leaf comparison.
    The wrappers that used to model those costs are gone, and so is
-   Value.key_access, which baseline.ml called for the same purpose.
+   Value.key_access and Value.key_work, which baseline.ml called for the
+   same purpose.
 
    That matters for the one claim the author comparison rests on.  The two
    columns used to be charged identically because they called the same pricing
@@ -126,39 +150,63 @@ let set_build (l : value list) : Value.sstore =
 
 (* ---------- unary ---------- *)
 
-(* interp_unop *)
+(* interp_unop.
+
+   MATCHED ON THE OPERATOR, EXHAUSTIVELY, with the value match nested inside
+   each arm, and no wildcard over the operator.  That is deliberate and it is
+   the thing that keeps the total honest: an operator added to the language
+   cannot arrive here costing one step by falling into a catch-all, because
+   there is no catch-all to fall into and the file will not compile until an
+   arm is written.  Every arm below either charges what its body does or is
+   constant, in which case the one step the dispatch already charged is the
+   whole of it. *)
 let interp_unop (o : unop) (v : value) : value =
-  match o, v with
-  | ONeg, VInt z -> VInt (-z)
-  | ONot, VBool b -> VBool (not b)
-  | OLength, VList l -> let n = List.length l in Count.walk n; VInt n
-  | OLengthString, VString s -> VInt (String.length s)
-  | OStringOfInt, VInt z -> VString (string_of_int z)
-  | OSome, v -> VOption (Some v)
+  match o with
+  (* constant: the dispatch is the whole cost *)
+  | ONeg -> (match v with VInt z -> VInt (-z) | _ -> VUnit)
+  | ONot -> (match v with VBool b -> VBool (not b) | _ -> VUnit)
+  | OSome -> VOption (Some v)
+  (* an OCaml string carries its length, so this reads a header word *)
+  | OLengthString -> (match v with VString s -> VInt (String.length s) | _ -> VUnit)
+  | OLength -> (match v with VList l -> let n = List.length l in Count.walk n; VInt n | _ -> VUnit)
+  | OStringOfInt ->
+      (match v with
+       | VInt z -> let s = string_of_int z in Count.chars (String.length s); VString s
+       | _ -> VUnit)
   (* list_to_bag (map snd d) *)
   (* no key, and a hash table enumerates its entries as a tree does, so this
      is charged the same under either rep *)
-  | ODictValues, VDict (_, d) ->
-      (* a bag has no order to get wrong, so the store's own order will do *)
-      (* the values, in whatever order the dictionary holds them: a bag has
-         no order of its own to get wrong *)
-      VBag (Value.dfold (fun _ v b -> Count.walk 1; Value.badd v b) d
-              (Value.bempty ()))
+  | ODictValues ->
+      (match v with
+       (* the values, in whatever order the dictionary holds them: a bag has
+          no order of its own to get wrong *)
+       | VDict (_, d) ->
+           VBag (Value.dfold (fun _ v b -> Count.walk 1; Value.badd v b) d
+                   (Value.bempty ()))
+       | _ -> VUnit)
   (* VSet (map fst l).  In Interpret.v this is a projection, because a
      well-typed bag is a sorted dedup'd association list already; here a bag is
      an UNORDERED list (see value.ml), so the order the set needs has to be paid
      for -- one tree insert per entry, charged to cmps.  That is the same price
      the source's own OSetOfList pays on its survivors, so the coercion is not
      somewhere a pessimization could hide. *)
-  | OSetOfBag, VBag b -> VSet (set_build (Value.belements_unordered b))
+  | OSetOfBag ->
+      (match v with
+       | VBag b -> VSet (set_build (Value.belements_unordered b))
+       | _ -> VUnit)
   (* A coercion READS every row: bag_of_list and set_build walk the list, and
      set_build inserts each element one at a time.  Counting these is what keeps
      the row counter honest about the source programs, whose whole cost on a
      membership test is the coercion -- eval/Jenkins_ItemDeletion's source does
      nothing else, and would otherwise be reported as touching no rows at all. *)
-  | OBagOfList, VList l -> Count.visit (List.length l); VBag (Value.bof_list l)
-  | OSetOfList, VList l -> Count.visit (List.length l); VSet (set_build l)
-  | _, _ -> VUnit
+  | OBagOfList ->
+      (match v with
+       | VList l -> Count.visit (List.length l); VBag (Value.bof_list l)
+       | _ -> VUnit)
+  | OSetOfList ->
+      (match v with
+       | VList l -> Count.visit (List.length l); VSet (set_build l)
+       | _ -> VUnit)
 
 (* ---------- binary ---------- *)
 
@@ -182,7 +230,12 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
       (match a, b with
        | VList a, VList b -> Count.walk (List.length a); VList (a @ b)
        | _ -> VUnit)
-  | OConcatString -> (match a, b with VString a, VString b -> VString (a ^ b) | _ -> VUnit)
+  | OConcatString ->
+      (match a, b with
+       | VString a, VString b ->
+           Count.chars (String.length a + String.length b);
+           VString (a ^ b)
+       | _ -> VUnit)
   | OLess -> (match a, b with VInt a, VInt b -> VBool (a < b) | _ -> VUnit)
   | OEq -> VBool (eqb a b)
   | OCons -> (match b with VList l -> VList (a :: l) | _ -> VUnit)
@@ -342,12 +395,24 @@ let interp_aci_fold (ag : aci_aggr) (s : Value.sstore) : value =
 (* ---------- records ---------- *)
 
 (* record_sort: by field name *)
+(* Putting a record's fields into canonical order is the interpreter keeping
+   its values canonical, not work the program implies -- a backend fixes a
+   record's layout at compile time -- so it is charged to [Count.over] with
+   the environment lookups, and not to the crossing figure.  baseline.ml
+   builds its records already ordered and would otherwise be getting this
+   for free against us. *)
 let record_sort (l : (string * value) list) : (string * value) list =
-  List.stable_sort (fun (a, _) (b, _) -> String.compare a b) l
+  List.stable_sort (fun (a, _) (b, _) -> Count.over 1; String.compare a b) l
 
-(* record_proj *)
+(* record_proj.  An association list is walked, so the position reached is
+   what a projection costs; a record is small and fixed by the term, so this
+   can never bend an exponent, but it happens once per row of a scan. *)
 let record_proj (s : string) (l : (string * value) list) : value =
-  match List.assoc_opt s l with Some v -> v | None -> VUnit
+  let rec go = function
+    | [] -> VUnit
+    | (k, v) :: rest -> Count.field 1; if k = s then v else go rest
+  in
+  go l
 
 (* ---------- expressions ---------- *)
 

@@ -529,36 +529,20 @@ let sdiff (a : sstore) (b : sstore) : sstore =
      OSetDiff s {x} -- the shape SetRemoveTransf emits -- one probe *)
   | _ -> sfold sremove b a
 
-(* The work a KEY costs, by the same rule [compare] charges for walking one:
-   one unit per node, with a string counting as one node because
-   Value.compare charges one for String.compare.  That makes
-   `comparisons + hashing` a single figure, and it carries the caveat cmps
-   already carries -- it is honest while the generators keep keys short.
-
-   A bag contributes its elements without their order, since a hash
-   consistent with [eqb] cannot depend on an order [eqb] cannot see. *)
-let rec key_work (v : t) : int =
-  match v with
-  | VInt _ | VBool _ | VString _ | VUnit | VOption None -> 1
-  | VOption (Some v) -> 1 + key_work v
-  | VList l -> List.fold_left (fun n v -> n + key_work v) 1 l
-  | VRecord l -> List.fold_left (fun n (_, v) -> n + key_work v) 1 l
-  | VDict (_, d) -> dfold (fun k v n -> n + key_work k + key_work v) d 1
-  | VBag b -> bfold (fun v n -> n + key_work v) b 1
-  | VSet s -> sfold (fun v n -> n + key_work v) s 1
-
-(* [key_access] USED TO LIVE HERE, and its absence is the point of the last
-   three commits.  It priced a point access -- a hash of the key plus one
+(* [key_access] AND [key_work] USED TO LIVE HERE, and their absence is the
+   point of the three commits that moved the stores.  It priced a point access -- a hash of the key plus one
    comparison for the bucket equality, with the structure's real descent
    credited to neither counter -- and eval.ml called it for the optimizer's
    output while baseline.ml called it for the originals, so that the two
    columns were charged by one function rather than by two helpers that agreed
    on inspection.
 
-   Every collection now HOLDS the structure its setting names, so there is
-   nothing left to price: [compare] counts a tree's descent, [hash] a trie's
-   hash and [equal] its leaf comparison, on both sides, because both sides run
-   the same store.  The reason the wrapper existed -- "OCaml has no persistent
+   [key_work] was the other half of it: the cost of a key, computed per value
+   node, so that the pricing function had a number to multiply.  Both are
+   gone, and nothing calls either, because every collection now HOLDS the
+   structure its setting names and there is nothing left to price:
+   [compare] counts a tree's descent, [hash] a trie's hash and [equal] its
+   leaf comparison, on both sides, because both sides run the same store.  The reason the wrapper existed -- "OCaml has no persistent
    hash map whose constants would not be the harness's own" -- stopped being
    true when CCHashTrie turned out to be a library rather than our code.
 

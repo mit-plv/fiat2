@@ -8,6 +8,13 @@
    for is a check on the SHAPE: a read these counters call flat had better
    not take eight times longer on an eight-times-larger table.
 
+   THERE IS ONE FIGURE AND THESE ARE ITS PARTS.  `work` is the sum of every
+   counter below that represents work done, and the names exist so that the
+   sum can be read rather than taken on trust -- not so that a table can
+   quote one of them and leave the others out.  `data work` is the part of it
+   that crosses to hand-written code.  Both are spelt out at the bottom of
+   this file, with the argument for the split.
+
      comparisons  every entry into Value.compare, including the recursive
                   entries on sub-values.  This is where the cost of a
                   dictionary, bag or set operation lives: a probe into a
@@ -35,6 +42,42 @@
                   across a tree and a hash table.  Nothing that was counted
                   before is counted differently: every number this harness
                   used to print is still that number.
+
+     strings      characters a string primitive examines or produces: the
+                  positions a naive substring scan really compares, the bytes
+                  a substring copies, the bytes a concatenation writes, the
+                  digits an int-to-string emits.  It exists because the
+                  dispatch of OStrContains is one step whatever the two
+                  strings are, which made the one subject that is ABOUT string
+                  matching the one subject whose characteristic cost was
+                  invisible.  Charged on BOTH sides: baseline.ml's author scan
+                  calls the same str_contains.
+
+     fields       record fields a projection walks past before it reaches
+                  the one it wants.  This is bounded by a constant of the
+                  term rather than by the table, so it cannot bend an
+                  exponent -- but a projection happens once per row of a
+                  scan, so it is a real part of the constant, and leaving it
+                  out was an assumption rather than a measurement.  It is
+                  charged on both sides, and symmetrically: the workload
+                  hands both columns the same VRecord association lists, and
+                  baseline.ml's own accessor walks one the same way ours
+                  does.  A backend would project by offset, which is as true
+                  of the author's column as of ours -- the representation is
+                  an assumption this comparison already rests on, and this
+                  counter prices it instead of hiding it.
+
+     overhead     work THIS INTERPRETER does that a compiled backend would
+                  not: the comparisons a lookup or an insert into its map of
+                  local names performs, and the comparisons that put a
+                  record's fields into canonical order when one is built.  A
+                  backend reads a local from a slot and lays a record out at
+                  compile time, so neither is a cost the program implies.
+                  It belongs with [steps]: counted, so the total is complete,
+                  and kept out of the crossing figure, so the author
+                  comparison stays about the two programs.  It is about the
+                  same size as [steps] on most subjects, which is the
+                  argument for naming it rather than folding it in.
 
      canonicalisations
                   every time a bag's canonical order had to be produced,
@@ -160,10 +203,12 @@ let structures_of_string = function
             per-value-node rule comparisons uses, plus the one equality that
             confirms the bucket.
 
-   Value.key_access charges it, and both eval.ml and baseline.ml call that one
-   function.  The three classifiers below are how a call site says which
-   situation its structure is in; the choice is the claim being made about that
-   structure, so each is written at the site rather than defaulted. *)
+   NOTHING CHARGES EITHER ANY MORE: a collection holds the store its setting
+   named, and the store's own comparisons and hashes are what the counters
+   see, on both sides.  The three classifiers below are how a call site says
+   which situation its structure is in; the choice is the claim being made
+   about that structure, so each is written at the site rather than
+   defaulted. *)
 
 type kind = Ordered | Hashed
 
@@ -206,16 +251,71 @@ let steps = ref 0
 let canonicalisations = ref 0
 let rows = ref 0
 let hashing = ref 0
+let strings = ref 0
+let fields = ref 0
+let overhead = ref 0
 
 let reset () =
   comparisons := 0;
   steps := 0;
   canonicalisations := 0;
   rows := 0;
-  hashing := 0
+  hashing := 0;
+  strings := 0;
+  fields := 0;
+  overhead := 0
 
 (* n value nodes hashed *)
 let hash (n : int) = hashing := !hashing + n
+
+(* n characters examined or produced by a string primitive, and n record
+   fields or environment entries walked past by a name lookup.  See the note
+   on `work` below for why these exist separately from [steps]. *)
+let chars (n : int) = strings := !strings + n
+let field (n : int) = fields := !fields + n
+let over (n : int) = overhead := !overhead + n
+
+(* ---------- the total, and the part of it that crosses ----------
+
+   THE PROBLEM THESE TWO SOLVE.  Every counter above answers a question about
+   one kind of work, which is what makes them readable -- and it is also how a
+   cost gets left out.  A primitive whose dispatch is one [step] and whose body
+   walks a string was counted as one unit however long the string was; a record
+   projection walking an association list was free.  Neither changed an
+   exponent in this development, because the strings and the records are fixed
+   by the generators and by the terms -- but nothing in the instrument said so,
+   and "it did not matter here" is not something a reader can check.
+
+   So `work` is the sum of EVERY counter that represents work done, and the
+   named counters are its decomposition rather than a selection from it.  The
+   invariant to keep is the one in eval.ml's dispatch: every operator states
+   its cost, and the match that would have to be edited to add a new one is
+   exhaustive, so a new operator cannot arrive costing nothing by default.
+
+   [rows] and [canonicalisations] are deliberately NOT in the sum.  [rows] is a
+   different view of work already counted (a [walk] charges both), and
+   [canonicalisations] is an event counter whose value is zero -- adding either
+   would double-count.
+
+   WHY THE TOTAL CANNOT BE THE ONE NUMBER FOR THE AUTHOR COMPARISON.  [steps]
+   counts entries into interp_expr, and hand-written OCaml does not have any:
+   charging it to our side and to nothing on theirs would make the comparison
+   a measurement of this harness.  `data work` is therefore the crossing
+   subset -- everything the two sides both really do, on keys, on strings and
+   on fields -- and it is a strict superset of the cmp+hash figure it
+   replaces.  The gap between `work` and `data work` is the interpreter's own
+   dispatch, named rather than hidden. *)
+
+(* The two are IMPLEMENTED in bench.ml, as [total] and [crossing] over a
+   differenced pair of readings, because every figure the tables print is the
+   op phase with the build subtracted and a counter read here would be the
+   wrong number.  They are written out once, here, where the parts are:
+
+     work      = steps + overhead + comparisons + hashing + strings + fields
+     data work =                    comparisons + hashing + strings + fields
+
+   If a counter is added above and does not appear in one of those two, that
+   is the bug this note exists to make visible. *)
 
 (* Run [f] without charging its comparisons.
 

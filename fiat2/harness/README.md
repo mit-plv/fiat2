@@ -122,7 +122,9 @@ that is what a backend holding two trees would do.
 
 **A bag is a list under every setting, and that is a finding rather than an omission.**
 It has three implementations here -- a list, a multiset over a tree, a multiset over a
-trie -- and the dial was tried both other ways:
+trie -- and the dial was tried both other ways. The figures below are the key-work
+ratios as that experiment measured them, before `strings` and `fields` were counted;
+the orders of magnitude are what the comparison rests on and they do not move:
 
 | Ordered as a tree | Hashed as a trie |
 |---|---|
@@ -160,29 +162,81 @@ other observer never fires.
 
 ## What is counted
 
-    steps   a unit of interpreter work: one entry into interp_expr, plus one for each
-            element a primitive that is linear in its argument has to walk (OLength,
-            ODictValues, OConcat, ORange, and the two aggregate folds).  A scan over n
-            rows evaluates its body n times and shows up here; so does a fold over an
-            n-element bag, which evaluates nothing but is no cheaper for it.  An index
-            probe shows up in neither counter.
-    cmps    entries into the value comparison, recursive ones included.  A tree descent
-            is logarithmically many, a scan linearly many.
-    hashing value nodes walked in order to HASH a key, one per node, by exactly the rule
-            cmps uses for the nodes walked in order to compare one.  Charged on BOTH
-            sides, so `cmps + hashing` is one figure for the work a structure does on
-            keys, comparable across a tree and a hash table.
-    rows    the stored elements an operation ITERATES -- a scan of n is n, a probe that
-            yields a row is 1, a membership test is 0 because it yields nothing, a write
-            is 0 because it writes -- counted once per NESTING LEVEL that iterates them.
-    canonicalisations
-            every time a bag's canonical order had to be produced, which is the only
-            cost the unordered bag defers.  Identically zero across the development; a
-            nonzero value is a signal, not a measurement.
+**One figure, and its decomposition.** `work` is every elementary operation a run
+performs. It is a *sum*, not a selection, and the named counters below are what it is
+the sum of -- so a cost cannot be left out of the measurement without being left out of
+one of these, and the invariant that stops that is in `eval.ml`'s dispatch: the match
+over the operator is exhaustive, so a new operator cannot arrive costing nothing by
+falling into a catch-all.
 
-All four are machine-independent, which is why they and not wall-clock time are the
-evidence. A string comparison counts as one, and so does a string hash, which is honest
-only because the generators keep keys short.
+    work       = steps + overhead | cmps + hashing + strings + fields
+    data work  =                    cmps + hashing + strings + fields
+
+The bar is the boundary. Everything to its right is work the *program* does and both
+sides of the author comparison really perform; everything to its left is this
+interpreter's own, and a compiled backend would not pay it. That is why there are two
+figures rather than one: see below.
+
+    steps     a unit of interpreter work: one entry into interp_expr, plus one for each
+              element a primitive that is linear in its argument has to walk (OLength,
+              ODictValues, OConcat, ORange, and the two aggregate folds).  A scan over n
+              rows evaluates its body n times and shows up here; so does a fold over an
+              n-element bag, which evaluates nothing but is no cheaper for it.  An index
+              probe shows up in neither this nor rows.
+    overhead  what the interpreter does for itself: the string comparisons a lookup or
+              an insert into its map of local names performs, and the ones that put a
+              record's fields in canonical order when one is built.  A backend reads a
+              local from a slot and lays a record out at compile time, so neither is a
+              cost the program implies.  It runs about the same size as steps, which is
+              the argument for naming it rather than folding it in.
+    cmps      entries into the value comparison, recursive ones included.  A tree descent
+              is logarithmically many, a scan linearly many.
+    hashing   value nodes walked in order to HASH a key, one per node, by exactly the
+              rule cmps uses for the nodes walked in order to compare one.
+    strings   characters a string primitive examines or produces: the positions a naive
+              substring scan really compares before it stops, the bytes a substring
+              copies or a concatenation writes, the digits an int-to-string emits.
+    fields    record fields a projection walks past before reaching the one it wants.
+    rows      the stored elements an operation ITERATES -- a scan of n is n, a probe that
+              yields a row is 1, a membership test is 0 because it yields nothing, a
+              write is 0 because it writes -- counted once per NESTING LEVEL that
+              iterates them.  A different VIEW of work already counted, not a component
+              of it, so it is not in the sum.
+    canonicalisations
+              every time a bag's canonical order had to be produced, which is the only
+              cost the unordered bag defers.  Identically zero across the development; a
+              nonzero value is a signal, not a measurement.
+
+All of them are machine-independent, which is why they and not wall-clock time are the
+evidence.
+
+**Why `strings` and `fields` were worth adding, with the numbers that say so.** Both
+were previously free: the dispatch of `OStrContains` was one step however long the two
+strings were, and a record projection cost nothing at all. Neither changed an exponent,
+because the generators fix the strings and the terms fix the records -- but nothing in
+the instrument said so, and two rows were being reported wrongly because of it:
+
+| | with key work alone | with the complete figure |
+|---|---|---|
+| `user_search/suggest`, ours against the author's | **2.53x against us** | **0.0064x in our favour** |
+| `window_store/fetchAll`, source against optimized | **0.04x**, flagged in this file as an instrument artifact | **396x**, and the caveat deleted rather than explained |
+
+The first is the subject that is *about* string matching. The author's own algorithm is
+a `contains()` scan over every row, which really does about 200,000 character
+comparisons at 1600 rows; key work charged it 184, because a character comparison is not
+a key comparison. The complete figure now agrees with the wall clock, which had been
+saying 57x in our favour all along -- so this was not a presentational problem. The
+second is the mirror image: a scan whose per-row cost is a field projection and an
+integer comparison was called *flat*, which made the optimizer's win on that row look
+like a loss.
+
+**Why the total cannot be the one number for the author comparison.** `steps` counts
+entries into `interp_expr` and `overhead` counts this interpreter's own bookkeeping, and
+hand-written OCaml has neither. Charging them to our side and to nothing on theirs would
+make the comparison a measurement of the harness. So the tables that cross the boundary
+use **data work**, which is complete for everything the two sides both do, and the gap
+between the two figures is named rather than hidden. A string comparison counts as one,
+and so does a string hash, which is honest only because the generators keep keys short.
 
 **"Once per nesting level" is not "once",** and it has nothing to do with the phases of
 the optimizer -- this harness never runs the optimizer, it runs the extracted terms. It
@@ -220,27 +274,27 @@ exponent without saying how it fit would be worse than reporting nothing. A loga
 cost fits a power law loosely and should, with a visible `~` where the constant term is
 large enough to bend it.
 
-**Since key work is charged by structure, the `a key` column now separates the three
-structures by exponent alone**, which is worth reading as a result rather than as a
-scale. `csv [n ...]` prints the same op-phase series as one row per
+**The key-work component separates the three structures by exponent alone**, which is
+worth reading as a result rather than as a scale. This is the one place below where the
+component and not the total is the right quantity, because it is the only part of the
+total the structure setting moves. `csv [n ...]` prints every component as one row per
 `(subject, kind, program, rows)`, so the curves can be checked independently; the
 table's exponents are computed from exactly those numbers and nothing else. Three
-series, all optimized, all twenty queries:
+series, all optimized, all twenty queries, `cmps + hashing`:
 
-| structure | series | `a key` |
+| structure | series | exponent |
 |---|---|---|
 | `Unranged` dict (`keycloak/byId`, charged as a hash) | `60+20` at **every one of the six sizes** | 0.00 |
 | set (`lookin/varyingKey`, no `set_kind`, charged as a tree) | 114, 134, 157, 177, 191, 211 | 0.18 |
 | `Ranged` dict (`window_store/fetchAll`, which needs the order) | 272, 316, 357, 398, 453, 508 | 0.18 |
 
 Those are the **`typed`** column, and the structure setting moves exactly the two rows
-it should. Same three reads, same six sizes, key work **summed** (`cmps + hashing`,
-where the table above splits it):
+it should. Same three reads, same six sizes, under each setting:
 
 | | `typed` | `trees` | `hashes` |
 |---|---|---|---|
 | `keycloak/byId` | `80` flat | 136, 157, 187, 200, 216, 242 | `80` flat |
-| `lookin/varyingKey` | 114 … 211 | 114 … 211 | `60` flat |
+| `lookin/varyingKey` | 114 … 211 | 114 … 211 | `59` flat |
 | `window_store/fetchAll` | 272 … 508 | 272 … 508 | 272 … 508 |
 
 The `Unranged` dictionary is flat wherever anything is allowed to hash and a descent on
@@ -255,7 +309,7 @@ weak power law at all: it is the same number at 50 rows and at 1600. Which struc
 read lands on is decided by the type system, so the column reads off `dict_kind` rather
 than anything this harness chose. The Lookin step count is **exactly 300 at every size**
 in all three cases, which is the other half of the point -- `steps` cannot see a tree
-descent, and `cmp+hash` is where it lives.
+descent, and the key-work component is where it lives.
 
 Wall-clock seconds are printed too, **per operation**, as a check that the counters have
 the right shape and not as the result. They are weak evidence on purpose: they time a
@@ -273,23 +327,48 @@ on a fifty-row table would measure a table that grew a hundredfold while being m
 and print `<50us` when they fall below the floor.
 
 That floor was asserted for a long time and is now measured. `main.exe timing <subject>
-<kind> <rows>` reports the spread of the difference directly: at 1600 rows
-`item_deletion/containsHit`'s optimized op phase is 9us over 20 operations with a **119%
-spread**, which is indeed unreadable — but at 320 operations it is stable to 6%, at 1280
-to 3%, and the implied per-operation cost agrees across all of them to within 2%. So the
+<kind> <rows>` reports the spread of the difference directly. At 1600 rows,
+`item_deletion/containsHit`'s optimized op phase over seven repetitions:
+
+| ops | mean | spread | per-op |
+|---|---|---|---|
+| 20 | 14us | **604%** | 6.8e-07 |
+| 80 | 89us | 41% | 1.12e-06 |
+| 320 | 336us | 28% | 1.05e-06 |
+| 1280 | 1.29ms | 7.2% | 1.00e-06 |
+| 5120 | 5.32ms | 5.0% | 1.04e-06 |
+
+Twenty operations is indeed unreadable — the difference of two 20ms numbers is noise with
+a sign. But the per-operation cost it implies is within about 10% of the one 5120
+operations implies, and the spread falls monotonically as the op count rises. So the
 floor was never a property of the clock; it was a property of using twenty operations.
-With the scaling above, 25 of the 31 optimized entries that used to print `<50us` now
-report a number, and the six that remain are all writes.
+With the scaling above, most of the optimized entries that used to print `<50us` now
+report a number — on a recent run, 36 of the 42 do — and every one that still does not is
+a **write**, which is the one thing the scaling cannot be applied to. Which writes fall
+below the floor varies between runs, since they sit just under it; which *kinds* can fall
+below it does not.
+
+**The instrumentation itself costs about 2x of the wall clock, and it is now measured
+rather than hoped.** Counting the characters a string scan compares means comparing them
+one at a time instead of letting `String.sub` reach a `memcmp`, and counting the record
+fields a projection walks means a hand-written loop instead of `List.assoc`. Timing the
+same kinds on the same machine before and after: the optimized programs got **2.02x**
+slower, the author transcriptions **2.07x**, and the source programs 1.34x. It lands on
+both columns of the author comparison at nearly the same rate, so the ratios survive —
+`item_deletion/containsHit` reads 2.67x ours-over-theirs where it read 2.51x before —
+but the absolute seconds are now the harness's instrumented clock and not even its
+uninstrumented one. One more reason the counters and not the seconds are the evidence.
 
 What the diagnostic also settled, which matters for anything built on top of these
 numbers: **the interpreter is not where the time goes.** `containsHit`'s optimized cost
-is 0.293us per operation at 50 rows and 0.460us at 1600, while the tree descent inside
-`VSet.mem` goes from about 5.6 levels to 10.6 — so fitting `cost = fixed + k * levels`
-puts the fixed part at roughly 0.11us and the structural part at 0.35us. The
-interpreter's own dispatch and environment lookups are about **a quarter** of the cost at
-1600 rows, and the rest is `Value.compare` walking records inside a balanced tree, which
-is work any implementation using an ordered structure also does. Generating OCaml from
-the interpreter would therefore buy a factor of roughly 1.3 here, not an order of
+is 0.66us per operation at 50 rows and 1.06us at 1600, while the tree descent inside the
+set goes from about 5.6 levels to 10.6 — so fitting `cost = fixed + k * levels` puts the
+fixed part at roughly 0.22us and the per-level part at 0.08us. The interpreter's own
+dispatch and environment lookups are about **a fifth** of the cost at 1600 rows (it was
+a quarter before the instrumentation above was added, which inflates both parts), and
+the rest is `Value.compare` walking records inside a balanced tree, which is work any
+implementation using an ordered structure also does. Generating OCaml from the
+interpreter would therefore buy a factor of roughly **1.3** here, not an order of
 magnitude: what separates these seconds from hand-written code is the **representation**
 (boxed dynamic values compared structurally) and the **structure choice** (tree where the
 original used a hash), not the evaluation strategy.
@@ -317,39 +396,49 @@ Three instruments, because no one of them crosses the boundary cleanly:
 
 | | crosses? | bias |
 |---|---|---|
-| `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
+| `steps` + `overhead` | **no** | entries into `interp_expr`, and the interpreter's own name lookups and record ordering. Hand-written OCaml does neither. Together they are about half of `work` |
 | `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per nesting level**, so a derived read can count the same rows more than once. See below |
-| `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one **function** on both — `Value.key_access` — at the structure the run's setting says, with the key's cost computed by `Value.key_work` rather than declared. Printed as `cmp+hash` |
-| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It now **follows** the `cmp+hash` charge for dictionaries and sets, which hold the store their setting names, and still does **not** for bags, which are a list under every setting for the reason given above |
+| **data work** | yes | `cmps + hashing + strings + fields`: everything the two sides both really do. Not one convention applied twice — the same code. Both columns hold the stores the run's setting names, both call the same `Eval.str_contains`, both project a record through the same accessor |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It **follows** the charge for dictionaries and sets, which hold the store their setting names, and does **not** for bags, which are a list under every setting for the reason given above |
 
-`rows` is the instrument the other two cannot replace: the key counters are blind to a
-traversal that compares nothing, which is how Keycloak's whole-list **count** came out at
-exponent 0.00 on the source side when its step count is linear.
+`rows` is still the instrument the others cannot replace, though it is no longer the
+only one that sees a traversal: completing the figure is what fixed that. Keycloak's
+whole-list **count** came out at exponent 0.00 on the source side under key work alone,
+while its step count was linear; its data-work exponent is now linear too, because the
+scan projects a field per row. `rows` remains the one counter that is about *stored
+elements* rather than operations, which is a different question and the one an index is
+supposed to change.
 
 **The structure choice is a parameter, the same one on both sides.** It used to be an
 assumption buried in the instrument: ours was charged as a hash because its type said
 `Unranged`, while the originals' was charged as whatever the author happened to write. So
 Kafka's `NamedCache`, whose author chose a `NavigableMap`, compared our hash against their
 tree — and the number flattered us for a reason that had nothing to do with the optimizer.
-`matched` prints the three settings side by side, and within a column both sides were
-charged by the same function at the same structure, so the ratio compares two *programs*.
+`matched` prints the three settings side by side, and within a column both sides ran the
+same structure, so the ratio compares two *programs*.
 
-What that shows, at 1600 rows, `cmp+hash` as ours/theirs:
+What that shows, at 1600 rows, data work as ours/theirs:
 
 | | `typed` | `trees` | `hashes` | what the spread is |
 |---|---|---|---|---|
-| `named_cache/get` | **0.50** | 1.30 | 2.50 | the confound. Matched, we are behind; the 0.50 was their tree against our hash |
-| `item_deletion/containsHit` | 5.55 | **1.05** | 1.25 | almost all of it was the set charging gap, not the algorithm |
-| `lookin/varyingKey` | 5.28 | 1.09 | **1.50** | what a `set_kind` is worth: 5.28 → 1.50 |
-| `window_store/fetchAll` | 1.25 | 1.25 | 1.25 | a `Ranged` dict: no structure choice in it at all |
-| `cluster/onePartition` | 3.25 | **0.76** | 3.25 | their composite-key descent costs more than ours when both are trees |
-| `dependent_plugins/resolveAll` | 0.0019 | **0.0013** | 0.0019 | hashing is *dearer* than a shallow descent here, which is why the model is not rigged toward hashes |
+| `named_cache/get` | **1.15** | 1.76 | 3.00 | the confound. Matched, we are behind; the 0.50 this row used to read was their tree against our hash |
+| `item_deletion/containsHit` | 3.02 | **1.12** | 1.33 | almost all of it is the set charging gap, not the algorithm |
+| `lookin/varyingKey` | 3.14 | 1.22 | **1.61** | what a `set_kind` is worth: 3.14 → 1.61 |
+| `window_store/fetchAll` | 1.29 | 1.29 | 1.29 | a `Ranged` dict: no structure choice in it at all |
+| `cluster/onePartition` | 4.50 | **2.14** | 4.50 | their composite-key descent costs less than ours; a tree narrows it rather than closing it |
+| `user_search/suggest` | **0.0064** | 0.0090 | 0.0066 | the trigram index against a `contains()` scan: 156x, and visible only now that a character comparison is counted |
+| `dependent_plugins/resolveAll` | 0.0088 | **0.0081** | 0.0088 | hashing is *dearer* than a shallow descent here, which is why the model is not rigged toward hashes |
 
 So the remaining asymmetry is named and now also **priced**: sets have no `set_kind`, so
 under `typed` — the only column every charge of which the type system backs —
-`TableRep`'s set and the set indexes are charged as the trees they are stored in.
-`hashes` is the measurement of what the annotation would buy, and `item_deletion` and
-`lookin` are where it lands.
+`TableRep`'s set and the set indexes are the trees they are stored in. `hashes` is the
+measurement of what the annotation would buy, and `item_deletion` and `lookin` are where
+it lands. Completing the figure made that gap look *smaller* rather than larger, because
+the record and string work it added is the same on both sides and dilutes a ratio that
+was all key work: `lookin/varyingKey` reads 3.14x where key work alone said 5.41x. The
+unchanged statement underneath is the structural one: on 20 queries ours pays **211
+comparisons** descending a tree where the author pays **39 units** probing a hash, and
+licensing the hash would take ours to **59**.
 
 The build phase is never compared, and that exclusion is the one asymmetry running in
 **our** favour rather than the author's: our source build is O(n²) because the declared-key
@@ -376,9 +465,11 @@ is also why `named_cache/delete` reports 2 rows per delete against the author's 
 *not* reading the row twice: `delete_corrects_by_a_probe` pins one probe, and the second
 tick is the fold over the projection of the row the probe found.
 
-**The result.** All 32 kinds `agree`, and every optimized exponent matches the author's
-except `user_search/suggest` at **0.52 against 1.00** — the trigram index Jenkins never
-built, 66x faster than their own `contains` scan at 1600 rows. Two places run the other
+**The result.** All 32 kinds `agree`. Every optimized `rows` exponent matches the
+author's but two, and both are ours: `user_search/suggest` at **0.52 against 1.00** — the
+trigram index Jenkins never built, **156x** less data work than their own `contains` scan
+at 1600 rows and 57x faster on the clock — and `dependent_plugins/resolveAll` at **1.00
+against 2.00**, where the author's own code is quadratic. Two places run the other
 way, both a composite key the author indexed and this development has no index for:
 `Cluster.partition(new TopicPartition(topic, partition))` and `InMemoryWindowStore`'s
 inner map from key to value. Stated structurally, because that statement does not depend
@@ -404,50 +495,59 @@ it, and the **author's own** code. The two ratios are the two claims — `src/op
 the optimizer buys, `opt/orig` is whether it arrived back where the author was by hand —
 and the exponents are what either claim actually rests on.
 
-Only key work is shown, because it is the only cost that crosses to `orig`: `steps`
-counts this interpreter walking a tree, which hand-written OCaml never does. The
-src-against-opt steps comparison is in the `bench` table, where both sides are the same
-interpreter.
+Only **data work** is shown, because it is what crosses to `orig`: `steps` counts this
+interpreter walking a tree and `overhead` counts its own name lookups, and hand-written
+OCaml does neither. The comparison of the complete total is in the `bench` table, where
+both sides are the same interpreter. The source's total exponent is printed beside its
+data exponent, as `src aT` beside `src aD`, so that the two can be seen to agree.
 
-**The one thing to read carefully.** Key work alone misdescribes the *source* column on
-some kinds, which is why the source's steps exponent is printed beside its key exponent:
+**This column used to be key work alone, and the two rows it misread are worth keeping.**
+Both were fixed by completing the figure rather than by annotating it:
 
-| kind | `src aK` | `src aS` | what the source form pays |
+| kind | under key work | now | what was missing |
 |---|---|---|---|
-| `window_store/fetchAll` | 0.00 | 0.99 | a full scan that compares **no keys** — the range filter is `OLess` on ints, not a key descent. Its cost is all traversal |
-| `item_deletion/containsHit` | 1.22 | 0.00 | the mirror image: a whole-row membership test is almost **nothing but** key comparison |
+| `window_store/fetchAll`, `src/opt` | `0.04x`, with `src aK` 0.00 against `src aS` 0.99 | **396x**, `src aD` 1.00 | a scan whose range filter is `OLess` on ints compares no *keys*, so the instrument called a full scan flat. Its per-row cost is the field each row is projected through |
+| `user_search/suggest`, `opt/orig` | `2.53x` against us | **0.0064x** in our favour | the author's algorithm *is* a `contains()` scan. 198,860 character comparisons at 1600 rows, charged as 184 |
 
-So the `0.04x` in `fetchAll`'s `src/opt` column is an artifact of the instrument and not a
-pessimization — the optimizer's win on that row sits in a column this table does not
-carry. On a row whose `src aK` is at or near 1.0 the ratio means what it looks like.
+The second one is the one to take seriously: it was not a presentational problem. The
+wall clock had been reporting 57x in our favour on that row while the counter reported
+2.53x against, and the counter was the thing we said was the evidence.
 
-With that read in, at 1600 rows under `typed`:
+At 1600 rows under `typed`:
 
-- **The exponent falls on every kind that had one.** `src aK` runs 0.95–1.22 across the
-  subjects whose source scan compares keys, and **2.00** on `dependent_plugins` — the one
-  quadratic source — against an `opt a` of 0.00–0.27, and 1.00 on `dependent_plugins`.
-  That is the claim, and it is the same number in all three settings.
-- **`src/opt` spans 1.00x to 1721x** on the key-work constant:
-  `item_deletion/containsHit` 1721x, `cluster/forNode` 576x, `area_registry/byFloor`
-  534x, `keycloak/byId` 400x, and `dependent_plugins/resolveAll` 1066x *with the exponent
-  halved underneath it*.
-- **`opt/orig` on a read is a constant, never an exponent** — 0.50x to 6.50x, every
-  exponent matching, which is the parity the comparison predicts. The top of that range
-  is the `set_kind` gap and nothing else: `lookin/varyingKey` 5.28x and
-  `item_deletion/containsHit` 5.55x both fall to about 1.1–1.5x under `hashes`. The one
-  read that runs **0.0019x** in our favour is `dependent_plugins/resolveAll`, where the
-  author's own code is quadratic and the derived form is not — the only place in the
-  table where we beat an author on the exponent rather than on a constant.
+- **The exponent falls on every read.** `src aD` is 0.99–1.22 on every one of them now —
+  there is no longer a read whose source column looks flat — and **2.00** on
+  `dependent_plugins`, the one quadratic source. Against that, `opt aD` is **−0.01 to
+  0.16** for the indexed reads, `~0.28` for `suggest`, and 1.00 for `resolveAll`. The two
+  deliberately-linear fallback kinds are 0.99, which is what they are there to be. Same
+  exponents in all three settings.
+- **`src/opt` spans 1.00x to 1405x** on the data-work constant: `item_deletion/containsHit`
+  1405x, `cluster/forTopic` 1164x, `dependent_plugins/resolveAll` 1143x *with the exponent
+  halved underneath it*, `sat4j/findRecord` 1001x, `cluster/forNode` 561x,
+  `area_registry/byId` 401x.
+- **`opt/orig` on a read is a constant, never an exponent** — the parity the comparison
+  predicts. Reads run 0.0064x to 8.50x, every exponent matching. The two that beat an
+  author do it on the **exponent**: `user_search/suggest` at 0.0064x and
+  `dependent_plugins/resolveAll` at 0.0088x, both against an author algorithm that is
+  linear or quadratic where the derived form is not. The top of the range is
+  `keycloak/wholeList` and `named_cache/sizeInBytes` at 8.50x, which is the honest cost
+  of answering a whole-collection read by traversing it where the author keeps a cached
+  number; after those, `item_deletion/register` 5.98x and `cluster/available` 4.53x.
 - **Writes are where `opt/orig` is widest, and that is index maintenance**:
-  `user_search/remove` 61.15x — three indexes to keep, including the trigram pair Jenkins
-  never built — `area_registry/remove` 3.62x, `item_deletion/register` 7.22x,
-  `window_store/put` 1.20x, and `named_cache/delete` **0.22x**, where the derived form is
+  `user_search/remove` **41.86x** — three indexes to keep, including the trigram pair
+  Jenkins never built — `item_deletion/register` 5.98x, `area_registry/remove` 8.21x,
+  `window_store/put` 1.47x, and `named_cache/delete` **0.65x**, where the derived form is
   ahead because the author re-walks a list the index replaces. The reads above are bought
   with these writes, and the table prices both rather than reporting only the half that
   flatters the compiler.
-- **`src/opt` below 1 is the same fact from the source side**: `range_delete/insert`
-  0.04x, `item_deletion/register` 0.07x. The source form maintains nothing because it has
-  no index to maintain.
+- **`src/opt` below 1 is mostly the same fact from the source side**:
+  `range_delete/insert` 0.18x, `item_deletion/register` 0.25x, `window_store/put` 0.29x.
+  The source form maintains nothing because it has no index to maintain. The two reads
+  that used to sit below 1 were the instrument and do not any more; the two that remain
+  are not — `keycloak/wholeList` 0.76x and `sat4j/size` 0.84x, both whole-collection
+  reads with nothing to index, where the derived form reads through the index
+  representation and pays a few more field projections for it. `src aD` on the first is
+  **0.03**, so what the ratio is comparing is two flat constants.
 
 All 42 kinds `agree`, at every size — which here is the stronger statement it looks like,
 because it is checked across all three programs rather than two.
@@ -469,7 +569,10 @@ a write: the table-representation pair degrades an insert, and for the subjects 
 inserts *are* their build that is the only place it would show. The result worth naming is
 `named_cache/swapped`, whose build exponent goes 1.00 to **1.97** — both configurations
 install the same two members, and listing them the other way round leaves a scan inside a
-write that the uniqueness guard then runs once per row. The table is in
+write that the uniqueness guard then runs once per row, costing 225x the total work at
+1600 rows and 796x on the `delete` that follows. `user_search/table-rep` costs **194x**
+the data work on `remove`, and `dependent_plugins/unpromoted` puts the exponent back to
+2.00. The table is in
 `src/fiat2/eval/README.md`, under *Who chooses the heuristics*, which is where the
 question belongs.
 
@@ -481,9 +584,10 @@ the outer binding on the way out, so what is left is exactly the program's outpu
 `yes` in that column is therefore a concrete witness of that subject's soundness theorem
 on that input.
 
-`check` compares the evaluator against the oracle on both programs of all eight
+`check` compares the evaluator against the oracle on both programs of all eleven
 subjects, over tables of 0, 1, 2, 7 and 23 rows and op phases of 0, 1 and 5 queries per
-kind: 240 configurations, 0 mismatches. A failure there would be a bug in `eval.ml`, in
+kind: 330 configurations, 0 mismatches, re-run under each of the three structure
+settings. A failure there would be a bug in `eval.ml`, in
 `bridge.ml` or in a generator -- never in the development, which depends on none of them.
 
 ## Reading the numbers
