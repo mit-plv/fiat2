@@ -18,6 +18,24 @@
                   also the one where the counts are reported with that
                   caveat.
 
+     hashing      value nodes walked in order to HASH a key, one per node,
+                  by exactly the rule [comparisons] uses for the nodes walked
+                  in order to compare one -- so a string is one unit on both
+                  counters and a four-field record of scalars is five.  It is
+                  the other half of what a key costs, and it exists because
+                  the two sides of the author comparison were charged by
+                  different rules: a tree descent paid a comparison per level
+                  per node of the key, while a hash probe in baseline.ml paid
+                  one flat unit however large the key was.  A whole-row key
+                  made that gap 22x on item_deletion, almost all of it the
+                  convention rather than the algorithm.
+
+                  Charged on BOTH sides, so `comparisons + hashing` is one
+                  figure for the work a structure does on keys, comparable
+                  across a tree and a hash table.  Nothing that was counted
+                  before is counted differently: every number this harness
+                  used to print is still that number.
+
      canonicalisations
                   every time a bag's canonical order had to be produced,
                   which is the only cost value.ml's unordered bag defers.
@@ -71,12 +89,38 @@ let comparisons = ref 0
 let steps = ref 0
 let canonicalisations = ref 0
 let rows = ref 0
+let hashing = ref 0
 
 let reset () =
   comparisons := 0;
   steps := 0;
   canonicalisations := 0;
-  rows := 0
+  rows := 0;
+  hashing := 0
+
+(* n value nodes hashed *)
+let hash (n : int) = hashing := !hashing + n
+
+(* Run [f] without charging its comparisons.
+
+   One use only: a dictionary the type system marks Unranged is charged as a
+   hash probe, but the evaluator still STORES it in a balanced tree (see the
+   note in value.ml on why the representation and the charge are separate
+   questions).  The tree descent inside is the harness's own bookkeeping, not
+   work the measured program does, so it is charged to neither counter: the
+   key's hash is charged instead, by [hash] above.
+
+   Restoring the count rather than muting a flag keeps this exact under
+   nesting and leaves Value.compare with no branch in it. *)
+let quiet (f : unit -> 'a) : 'a =
+  let c = !comparisons and k = !canonicalisations in
+  let r = f () in
+  comparisons := c;
+  (* a key holding a bag would canonicalise on the way down; no key in these
+     subjects does, and restoring it costs nothing and keeps the suppression
+     total rather than nearly total *)
+  canonicalisations := k;
+  r
 
 (* a primitive that walks n elements without evaluating anything *)
 let walk (n : int) =

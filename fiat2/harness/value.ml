@@ -23,6 +23,25 @@
             identity on bindings; a lookup, an insert, a delete and a range
             restriction cost a path rather than a copy.
 
+            Of those four operations only the RANGE RESTRICTION needs the
+            order, and Language.v:79 says which dictionaries can be asked for
+            one: AEmptyDict carries a dict_kind, outside the option, so it
+            survives extraction on every dictionary a program creates.  Across
+            the subject terms 19 are Unranged and 2 are Ranged.
+
+            So the dictionary carries its [dict_rep] below, and REPRESENTATION
+            AND CHARGE ARE SEPARATE QUESTIONS.  An Unranged dictionary is
+            charged as a hash table -- the key's hash, by Count.hash -- and
+            still STORED in the tree, because OCaml's standard library has no
+            persistent hash map and a hand-written one would put the harness's
+            own HAMT into the numbers instead of a backend's.  The tree's
+            descent is therefore charged to neither counter (Count.quiet).
+            That is the same move the bag below makes, in the same direction:
+            the counters are a cost model, and what the representation must
+            do is denote the right value and pay for what the semantics can
+            observe.  Wall-clock SECONDS do not follow the charge, so they
+            remain what they always were -- a check on shape, not evidence.
+
      set    a balanced tree.  A set has to reject duplicates on insert, so
             it needs the order anyway, and OSetMem is a probe.
 
@@ -50,6 +69,16 @@
        well-typed program ever compares across constructors, but the
        evaluator is not allowed to assume that. *)
 
+(* How a dictionary is CHARGED, which the evaluator reads off the dict_kind
+   its AEmptyDict carries.  It is not part of the value: two dictionaries with
+   the same bindings denote the same finite map and compare equal whatever
+   they are charged as, which is why [compare] below ignores it. *)
+type dict_rep =
+  | RTree      (* Ranged: a range restriction reads the key order, so the *)
+               (* descent is the cost and comparisons are charged for it *)
+  | RHash      (* Unranged: no operator on it reads the key order, so the *)
+               (* key's hash is the cost and Count.hash is charged for it *)
+
 (* The constructor order of value_compare's fall-through arms, read off
    Value.v: VUnit is Lt against everything, then VBool against everything
    remaining, and so on, leaving VSet greatest. *)
@@ -62,7 +91,7 @@ module rec V : sig
     | VOption of t option
     | VList of t list
     | VRecord of (string * t) list   (* sorted by field name *)
-    | VDict of t VMap.t
+    | VDict of dict_rep * t VMap.t
     | VBag of t list                 (* UNORDERED; multiplicity is repetition *)
     | VSet of VSet.t
     | VUnit
@@ -76,7 +105,7 @@ end = struct
     | VOption of t option
     | VList of t list
     | VRecord of (string * t) list
-    | VDict of t VMap.t
+    | VDict of dict_rep * t VMap.t
     | VBag of t list
     | VSet of VSet.t
     | VUnit
@@ -120,7 +149,13 @@ end = struct
        order and stop at the first difference, which is the same lexicographic
        comparison of canonical forms that dict_compare, bag_compare and
        list_compare perform on the sorted lists *)
-    | VDict a, VDict b -> VMap.compare compare a b
+    (* The rep is deliberately not looked at: equal bindings are an equal
+       map.  A hash-charged dictionary has no key order of its own, so OEq
+       on one produces the canonical order the semantics compares -- the same
+       thing the bag below pays, and charged the same way. *)
+    | VDict (ra, a), VDict (rb, b) ->
+        if ra = RHash || rb = RHash then incr Count.canonicalisations;
+        VMap.compare compare a b
     (* the only place a bag's canonical order is observable, and the only
        place it is paid for *)
     | VBag a, VBag b ->
@@ -137,6 +172,24 @@ include V
 
 (* [Value.value] reads better at the use sites than [Value.t] *)
 type value = t
+
+(* The work a KEY costs, by the same rule [compare] charges for walking one:
+   one unit per node, with a string counting as one node because
+   Value.compare charges one for String.compare.  That makes
+   `comparisons + hashing` a single figure, and it carries the caveat cmps
+   already carries -- it is honest while the generators keep keys short.
+
+   A bag contributes its elements without their order, since a hash
+   consistent with [eqb] cannot depend on an order [eqb] cannot see. *)
+let rec key_work (v : t) : int =
+  match v with
+  | VInt _ | VBool _ | VString _ | VUnit | VOption None -> 1
+  | VOption (Some v) -> 1 + key_work v
+  | VList l -> List.fold_left (fun n v -> n + key_work v) 1 l
+  | VRecord l -> List.fold_left (fun n (_, v) -> n + key_work v) 1 l
+  | VDict (_, d) -> VMap.fold (fun k v n -> n + key_work k + key_work v) d 1
+  | VBag b -> List.fold_left (fun n v -> n + key_work v) 1 b
+  | VSet s -> VSet.fold (fun v n -> n + key_work v) s 1
 
 let eqb (a : t) (b : t) : bool = compare a b = 0
 let ltb (a : t) (b : t) : bool = compare a b < 0
@@ -177,7 +230,10 @@ let rec to_string (v : t) : string =
   | VList l -> "[" ^ String.concat "; " (List.map to_string l) ^ "]"
   | VRecord l ->
       "{" ^ String.concat "; " (List.map (fun (s, v) -> s ^ " = " ^ to_string v) l) ^ "}"
-  | VDict d ->
+  (* the rep is not printed: it is not part of the value, and two dictionaries
+     that denote the same map have to print the same string for the
+     differential test to compare them *)
+  | VDict (_, d) ->
       "dict{"
       ^ String.concat "; "
           (List.map (fun (k, v) -> to_string k ^ " -> " ^ to_string v) (VMap.bindings d))

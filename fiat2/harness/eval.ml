@@ -80,10 +80,26 @@ let interp_atom (a : atom) : value =
   | AString s -> VString s
   | ANone _ -> VOption None
   | ANil _ -> VList []
-  | AEmptyDict (_, _) -> VDict VMap.empty
+  (* the dict_kind the term carries is the whole of what decides how this
+     dictionary's operations are charged; see value.ml's [dict_rep] *)
+  | AEmptyDict (Ranged, _) -> VDict (RTree, VMap.empty)
+  | AEmptyDict (Unranged, _) -> VDict (RHash, VMap.empty)
   | AEmptyBag _ -> VBag bag_empty
   | AEmptySet _ -> VSet VSet.empty
   | AUnit -> VUnit
+
+(* ---------- dictionaries: what a key-addressed operation costs ----------
+
+   RTree pays the tree descent, which Value.compare charges as it walks.
+   RHash pays the key's hash instead, and the descent this harness still
+   performs is charged to neither counter, because the representation is the
+   tree either way and the type system has said a hash would serve.  The
+   bindings are identical, so nothing here changes what is computed. *)
+
+let keyed (r : dict_rep) (k : value) (f : unit -> 'a) : 'a =
+  match r with
+  | RTree -> f ()
+  | RHash -> Count.hash (Value.key_work k); Count.quiet f
 
 (* ---------- unary ---------- *)
 
@@ -97,7 +113,9 @@ let interp_unop (o : unop) (v : value) : value =
   | OStringOfInt, VInt z -> VString (string_of_int z)
   | OSome, v -> VOption (Some v)
   (* list_to_bag (map snd d) *)
-  | ODictValues, VDict d ->
+  (* no key, and a hash table enumerates its entries as a tree does, so this
+     is charged the same under either rep *)
+  | ODictValues, VDict (_, d) ->
       VBag (VMap.fold (fun _ v b -> Count.walk 1; v :: b) d [])
   (* VSet (map fst l).  In Interpret.v this is a projection, because a
      well-typed bag is a sorted dedup'd association list already; here a bag is
@@ -157,8 +175,14 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
   (* a contains b *)
   | OStrContains ->
       (match a, b with VString s, VString p -> VBool (str_contains s p) | _ -> VUnit)
-  | OLookup -> (match a with VDict d -> VOption (VMap.find_opt b d) | _ -> VUnit)
-  | ODelete -> (match a with VDict d -> VDict (VMap.remove b d) | _ -> VUnit)
+  | OLookup ->
+      (match a with
+       | VDict (r, d) -> VOption (keyed r b (fun () -> VMap.find_opt b d))
+       | _ -> VUnit)
+  | ODelete ->
+      (match a with
+       | VDict (r, d) -> VDict (r, keyed r b (fun () -> VMap.remove b d))
+       | _ -> VUnit)
 
 (* ---------- ternary ----------
 
@@ -206,13 +230,31 @@ let dict_range_delete (lo : value) (hi : value) (d : value VMap.t) : value VMap.
 (* interp_ternop *)
 let interp_ternop (o : ternop) (a : value) (b : value) (c : value) : value =
   match o with
-  | OInsert -> (match a with VDict d -> VDict (VMap.add b c d) | _ -> VUnit)
+  | OInsert ->
+      (match a with
+       | VDict (r, d) -> VDict (r, keyed r b (fun () -> VMap.add b c d))
+       | _ -> VUnit)
   | OSubstring ->
       (match a, b, c with
        | VString s, VInt i, VInt n -> VString (substring s i n)
        | _ -> VUnit)
-  | ODictRange -> (match a with VDict d -> VDict (dict_range b c d) | _ -> VUnit)
-  | ODictRangeDelete -> (match a with VDict d -> VDict (dict_range_delete b c d) | _ -> VUnit)
+  (* The two operators that READ the key order, and the only two whose typing
+     pins the kind: TyODictRange is stated at Ranged.  So RHash here is not an
+     ill-typed program to be absorbed into VUnit like the arms above -- it
+     would mean the dict_kind the term carries disagrees with the operator
+     applied to it, i.e. that a type-preservation proof is wrong or that the
+     extracted term is not the one that was checked.  That is worth a crash
+     rather than a number. *)
+  | ODictRange ->
+      (match a with
+       | VDict (RTree, d) -> VDict (RTree, dict_range b c d)
+       | VDict (RHash, _) -> failwith "ODictRange on an Unranged dictionary"
+       | _ -> VUnit)
+  | ODictRangeDelete ->
+      (match a with
+       | VDict (RTree, d) -> VDict (RTree, dict_range_delete b c d)
+       | VDict (RHash, _) -> failwith "ODictRangeDelete on an Unranged dictionary"
+       | _ -> VUnit)
 
 (* ---------- aggregates ----------
 

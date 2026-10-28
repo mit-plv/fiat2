@@ -670,13 +670,36 @@ bucket is bounded, so the exponents still match. A third is noted rather than me
 would need a maintained aggregate per bucket -- the dict-of-aggregates combinator this
 development does not build.
 
-Three biases, all of them running in the author's favour and stated rather than corrected:
-the originals' maps are hash maps where ours are `Map.Make(Value)`, so they win a log
-factor on every point lookup (a backend freedom the type system records, not a defect in
-the rewriting -- and `Kafka_NamedCache` is the exception, since its author chose a
-`TreeMap`); wall-clock seconds are about 25% inflated on our side by the tree-walking
-interpreter, measured; and the row counter charges each pipeline stage, so its constant is
-not comparable factor for factor against code that has no stages.
+**How the two sides are charged**, and in which direction each remaining asymmetry runs.
+
+The work a structure does on keys is charged by ONE rule on both sides: a comparison per
+value node walked, and a hash per value node of the key, printed together as `cmp+hash`.
+Our own dictionaries are charged as hash tables wherever the type system marks them
+`Unranged` and as trees where it marks them `Ranged` -- which is what `dict_kind` exists
+to license, and `Ex_Range`'s `ranged_probes` / `unranged_scans` pair is the evidence that
+the annotation is load-bearing rather than decorative. So the old disclaimer -- their hash
+maps against our `Map.Make(Value)`, a log factor on every point lookup -- is no longer a
+statement about the counters. It is a statement about the storage this harness happens to
+use, and it survives only in SECONDS.
+
+What is left runs in both directions, which is worth saying plainly because the earlier
+version of this paragraph claimed every bias ran in the author's favour:
+
+* **In the author's favour.** Wall-clock seconds are about 25% inflated on our side by
+  the tree-walking interpreter, measured; and because the `Unranged` dictionaries are
+  still *stored* in trees, seconds do not follow the `cmp+hash` charge at all. The row
+  counter charges each pipeline stage, so its constant is not comparable factor for factor
+  against code that has no stages. And **sets have no `set_kind`**: `TableRep`'s set and
+  the set indexes are charged as trees against the originals' hash sets, which is the
+  whole of why `Jenkins_ItemDeletion` and `HA_LookinFunctions` still show a multiple on a
+  flat read.
+* **In ours.** `Kafka_NamedCache`'s author chose a `NavigableMap`, so that subject's
+  column is charged as the tree it is while ours is charged as a hash -- and the real
+  class needs the ordering for operations this subject does not model. Its `cmp+hash`
+  column should therefore not be read as a win.
+* **Excluded rather than biased.** The build phase is not compared, which also runs in our
+  favour; see the note at the end of this section, and `baseline.ml`'s header for why
+  "the originals check nothing" turned out to be false of Keycloak's `alias`.
 
 **How large that implementation gap actually is, measured.** Where the optimizer and the
 author reach the SAME exponent, the ratio of their seconds per operation is a comparison

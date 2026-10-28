@@ -88,25 +88,56 @@
      composite keys -- the claim is also stated structurally, as which
      structure each side descends, so that it does not rest on the ratio.
      See count.ml, which says the same thing where the counter lives.
-   * `cmps` can, with a stated bias.  The transcriptions use the same
-     Count.comparisons counter, counting one key equality per hash probe --
-     which is what a hash lookup does beyond hashing the key.  It therefore
-     UNDERCOUNTS a hash map and flatters the author.  Said out loud rather than
-     hidden, because the gap it hides is the real one: our dictionaries are
-     Map.Make(Value) at O(log n) and the originals are hash maps at O(1), a
-     backend freedom the type system already records (Language.dict_kind) and
-     not a defect in the rewriting.
+   * `cmps + hashing` can, and is charged by ONE RULE on both sides: a
+     comparison per value node walked (Count.comparisons, incremented inside
+     Value.compare) and a hash per value node of a key (Count.hash, charged
+     here by the ~kw parameter on hash_probe/hash_find/hash_put).  The
+     transcriptions use the same two refs the evaluator uses.
+
+     THIS REPLACES AN EARLIER ASYMMETRY, and it is worth naming because every
+     number in this file moved when it was fixed.  `cmps` alone charged a tree
+     descent a comparison per level PER NODE OF THE KEY, and charged a hash
+     probe one flat unit however large the key was.  On a scalar key the two
+     were close; on ItemDeletion's whole-row key the gap read as 22x and was
+     almost entirely the rule rather than the algorithm.
+
+     AND OUR SIDE NOW PAYS THE HASH WHERE THE TYPE SYSTEM SAYS IT MAY.  A
+     dictionary whose AEmptyDict carries Unranged is charged as a hash table
+     (eval.ml's [keyed]); one carrying Ranged is charged as the tree it has to
+     be, because a range restriction reads the key order.  So the old
+     disclaimer -- ours is Map.Make(Value) at O(log n) where the originals are
+     hash maps at O(1) -- is no longer a disclaimer about the counters; it is
+     a fact about the STORAGE this harness happens to use, which the counters
+     no longer charge for.  Seconds still do; see the next bullet.
+
+     WHAT IS STILL ASYMMETRIC: sets.  There is no set_kind, so TableRep's set
+     and the set indexes are charged as trees while a Java HashSet is charged
+     as a hash.  ItemDeletion is where that shows, and it is the one row in
+     this file whose key-work ratio is still an artifact as much as a result.
    * Wall clock can, with the opposite bias.  Our side is a tree-walking
      interpreter; measured 2026-10-25, that costs about a quarter of a flat
      read's time at 1600 rows, the rest being structural work any ordered
      implementation also does.  So seconds are roughly 25% inflated on our
      side, by a cause that is quantified rather than waved at.
-   * The BUILD phase is not comparable and is not reported.  Our source build
-     is O(n^2) because the declared-key subjects elaborate a uniqueness guard
-     into a table scan, and the originals check nothing -- Keycloak's model
-     guarantees uniqueness, Home Assistant's __setitem__ and Kafka's put just
-     overwrite.  That is a claim about constraint checking, not about a missing
-     index. *)
+   * The BUILD phase is not comparable and is not reported, and this is the
+     one exclusion that runs in OUR favour rather than the author's.  Our
+     source build is O(n^2) because the declared-key subjects elaborate a
+     uniqueness guard into a table scan.  Home Assistant's __setitem__ and
+     Kafka's put do just overwrite, so for those two "the originals check
+     nothing" is right.
+
+     KEYCLOAK IS NOT, and the claim that its model guarantees uniqueness was
+     checked and is only half true.  `id` is a JPA @Id with primary key
+     CONSTRAINT_REQ_ACT_PRV_PK (jpa-changelog-1.4.0.xml), so the database
+     enforces it and no application code looks.  `alias` has NO unique
+     constraint in any changelog; it is enforced in application code at one
+     write path -- RealmAdapter.addRequiredActionProvider, which calls
+     getRequiredActionProviderByAlias and throws ModelDuplicateException --
+     and that getter is a linear scan of the collection.  Which is the shape
+     SLetConstrained + DUnique elaborates.  So on that key the exclusion
+     declines a comparison we would win, and the reason for declining it is
+     the honest one: it is a claim about constraint checking rather than about
+     a missing index, not that the author checks nothing. *)
 
 type runner = Gen.workload -> (string * Value.t) list
 
@@ -129,10 +160,20 @@ let queries_of (w : Gen.workload) (var : string) : Value.t list =
   match List.assoc_opt var w.Gen.env with Some (Value.VList l) -> l | _ -> []
 
 (* A hash lookup, instrumented under the conventions in the header: one key
-   equality into `cmps` -- what it does beyond hashing, which this undercounts
-   -- and, on a hit, one row ENUMERATED into `rows`, because the row comes out
-   and is looked at. *)
-let hash_probe (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
+   equality into `cmps`, the key's hash into `hashing`, and, on a hit, one row
+   ENUMERATED into `rows`, because the row comes out and is looked at.
+
+   `~kw` IS THE KEY'S SIZE IN VALUE NODES, by count.ml's rule -- one per node,
+   a string counting as one.  It defaults to 1, which is right for the scalar
+   keys (a string, an int) and wrong for the two keys here that are not
+   scalars, which pass it: Cluster's (topic, partition) pair and
+   ItemDeletion's whole row.  Before this parameter existed a hash probe was
+   charged one flat unit however large its key, while our own tree descent was
+   charged a comparison per level PER NODE OF THE KEY -- so the whole-row key
+   read as 22x when most of that was the charging rule.  The hashing a real
+   HashMap does is linear in the key, and this is that. *)
+let hash_probe ?(kw = 1) (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
+  Count.hash kw;
   incr Count.comparisons;
   match Hashtbl.find_opt h k with
   | Some v -> Count.visit 1; Some v
@@ -142,14 +183,16 @@ let hash_probe (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
    segment.  It costs the same key equality and no row, because nothing has
    been enumerated yet -- whatever walks the thing it returns is what pays
    for the rows in it. *)
-let hash_find (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
+let hash_find ?(kw = 1) (h : ('k, 'v) Hashtbl.t) (k : 'k) : 'v option =
+  Count.hash kw;
   incr Count.comparisons;
   Hashtbl.find_opt h k
 
 (* A put reads no stored row -- it writes one -- so it costs a key equality and
    no row.  The same is true of the optimizer's output, whose OInsert is a map
    add: the convention is the same on both sides, which is the point of it. *)
-let hash_put (h : ('k, 'v) Hashtbl.t) (k : 'k) (v : 'v) : unit =
+let hash_put ?(kw = 1) (h : ('k, 'v) Hashtbl.t) (k : 'k) (v : 'v) : unit =
+  Count.hash kw;
   incr Count.comparisons;
   Hashtbl.replace h k v
 
@@ -323,11 +366,22 @@ module ItemDeletion = struct
       (fun q ->
          let item = field "item" q in
          match int_of (field "kind" q) with
+         (* THE WHOLE ROW IS THE KEY -- registrations.contains(item) asks
+            about a row and not an attribute -- so hashing it walks the whole
+            record, which is what Value.key_work returns.  This is the site
+            the ~kw parameter above exists for. *)
          | 0 ->
+             Count.hash (Value.key_work item);
              incr Count.comparisons;
              say (if Hashtbl.mem reg item then "deleting" else "free")
-         | 1 -> incr Count.comparisons; Hashtbl.replace reg item ()
-         | _ -> incr Count.comparisons; Hashtbl.remove reg item)
+         | 1 ->
+             Count.hash (Value.key_work item);
+             incr Count.comparisons;
+             Hashtbl.replace reg item ()
+         | _ ->
+             Count.hash (Value.key_work item);
+             incr Count.comparisons;
+             Hashtbl.remove reg item)
       (queries_of w "queries");
     [ ("outputs", Value.VList !outputs) ]
 end
@@ -365,7 +419,9 @@ module UserSearch = struct
              let u = field "new_user" q in
              hash_put by_id (str (field "id" u)) u
          (* AllUsers.remove(id) *)
-         | 1 -> incr Count.comparisons; Hashtbl.remove by_id (str (field "k" q))
+         | 1 ->
+             Count.hash 1; incr Count.comparisons;
+             Hashtbl.remove by_id (str (field "k" q))
          (* find(id): the ConcurrentHashMap lookup, counted as the subject
             counts it *)
          | 2 ->
@@ -473,11 +529,11 @@ module AreaRegistry = struct
                (match hash_find st.floors f with
                 | None -> ()
                 | Some b ->
-                    incr Count.comparisons;
+                    Count.hash 1; incr Count.comparisons;
                     Hashtbl.remove b key;
                     (* `if not entries: del index[value]` -- registry.py:56 *)
                     if Hashtbl.length b = 0 then Hashtbl.remove st.floors f));
-          incr Count.comparisons;
+          Count.hash 1; incr Count.comparisons;
           Hashtbl.remove st.data key in
     List.iter
       (fun q ->
@@ -535,7 +591,8 @@ module Lookin = struct
      | _ -> ());
     let outputs = ref [] in
     let say (s : string) = outputs := Value.VString s :: !outputs in
-    let has (k : string) = incr Count.comparisons; Hashtbl.mem names k in
+    let has (k : string) =
+      Count.hash 1; incr Count.comparisons; Hashtbl.mem names k in
     List.iter
       (fun q ->
          match int_of (field "kind" q) with
@@ -607,6 +664,7 @@ module Cluster = struct
 
   (* computeIfAbsent(k, _ -> new ArrayList<>()).add(p) *)
   let bucket_add (h : ('k, Value.t list ref) Hashtbl.t) (k : 'k) (row : Value.t) =
+    Count.hash 1;
     incr Count.comparisons;
     match Hashtbl.find_opt h k with
     | Some b -> b := row :: !b
@@ -626,7 +684,10 @@ module Cluster = struct
          List.iter
            (fun p ->
               let topic = str (field "topic" p) in
-              hash_put st.by_tp (topic, int_of (field "partition" p)) p;
+              (* a TopicPartition is a two-field key, so hashing it walks
+                 three nodes under count.ml's rule, the same as the two-field
+                 record our side would need and cannot state *)
+              hash_put ~kw:3 st.by_tp (topic, int_of (field "partition" p)) p;
               bucket_add st.by_topic topic p;
               match field "leader" p with
               | Value.VOption (Some n) ->
@@ -644,7 +705,7 @@ module Cluster = struct
          | 0 -> say (bucket_count st.by_topic (str (field "topic" q)))
          | 1 -> say (bucket_count st.by_node (int_of (field "node" q)))
          | 2 ->
-             say (match hash_probe st.by_tp
+             say (match hash_probe ~kw:3 st.by_tp
                           (str (field "topic" q), int_of (field "part" q)) with
                   | Some _ -> 1 | None -> 0)
          | _ -> say (bucket_count st.available (str (field "topic" q))))

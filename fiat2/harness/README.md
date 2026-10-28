@@ -112,17 +112,29 @@ a log axis, and 32x is as wide as the quadratic source build phases allow. `benc
 
 The exponent is printed with a `~` when the fit is loose, because reporting a fitted
 exponent without saying how it fit would be worse than reporting nothing. A logarithmic
-cost fits a power law loosely and should: a probe's comparison count comes out around
-0.2 over this range, with a visible `~` on the subjects where the constant term is large
-enough to bend it.
+cost fits a power law loosely and should, with a visible `~` where the constant term is
+large enough to bend it.
 
-`csv [n ...]` prints the same op-phase series as one row per `(subject, kind, program,
-rows)`, so the curves can be plotted or fitted independently. The table's exponents are
-computed from exactly those numbers and nothing else. It is worth looking at the series
-directly at least once -- for instance the Lookin membership test, whose optimized op
-phase is **exactly 300 steps at every one of the six sizes** while its comparison count
-goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling for twenty queries.
-That is `log n`, stated by the data rather than by a curve fit.
+**Since key work is charged by structure, the `a key` column now separates the three
+structures by exponent alone**, which is worth reading as a result rather than as a
+scale. `csv [n ...]` prints the same op-phase series as one row per
+`(subject, kind, program, rows)`, so the curves can be checked independently; the
+table's exponents are computed from exactly those numbers and nothing else. Three
+series, all optimized, all twenty queries:
+
+| structure | series | `a key` |
+|---|---|---|
+| `Unranged` dict (`keycloak/byId`, charged as a hash) | `40+20` at **every one of the six sizes** | 0.00 |
+| set (`lookin/varyingKey`, no `set_kind`, charged as a tree) | 114, 134, 157, 177, 191, 211 | 0.18 |
+| `Ranged` dict (`window_store/fetchAll`, which needs the order) | 272, 316, 357, 398, 453, 508 | 0.18 |
+
+The middle and bottom rows are `log n`, stated by the data rather than by a curve fit --
+about twenty more comparisons per doubling across twenty queries. The top row is not a
+weak power law at all: it is the same number at 50 rows and at 1600. Which structure a
+read lands on is decided by the type system, so the column reads off `dict_kind` rather
+than anything this harness chose. The Lookin step count is **exactly 300 at every size**
+in all three cases, which is the other half of the point -- `steps` cannot see a tree
+descent, and `cmp+hash` is where it lives.
 
 Wall-clock seconds are printed too, **per operation**, as a check that the counters have
 the right shape and not as the result. They are weak evidence on purpose: they time a
@@ -184,14 +196,36 @@ Three instruments, because no one of them crosses the boundary cleanly:
 |---|---|---|
 | `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
 | `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per pipeline stage**, so a derived read can count the same rows more than once. See below |
-| `cmps` | yes | **undercounts a hash map** — one key equality per probe, no hashing. Flatters the author |
-| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed |
+| `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one rule on both: a comparison per value node walked, a hash per value node of the key. Printed as `cmp+hash` |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed — and it does **not** follow the `cmp+hash` charge, since the Unranged dictionaries are still stored in trees |
 
-`rows` is the instrument the other two cannot replace: `cmps` is blind to a traversal that
-compares nothing, which is how Keycloak's whole-list **count** came out at exponent 0.00 on
-the source side when its step count is linear. The build phase is never compared — our
-source build is O(n²) because the declared-key subjects elaborate a uniqueness guard into a
-table scan while the originals check nothing.
+`rows` is the instrument the other two cannot replace: the key counters are blind to a
+traversal that compares nothing, which is how Keycloak's whole-list **count** came out at
+exponent 0.00 on the source side when its step count is linear.
+
+**What `cmp+hash` fixed, and what it did not.** `cmps` alone was charged by two different
+rules on the two sides: a tree descent paid a comparison per level per node of the key,
+while `baseline.ml`'s hash probe paid one flat unit however large the key. On a whole-row
+key that gap read as 22x and was almost all convention. Both sides are now charged for
+hashing by key size (`Count.hash`), and a dictionary the type system marks `Unranged` is
+charged as a hash table on our side too — which is what `dict_kind` exists to license, and
+`Ex_Range`'s two pins are the evidence that the annotation is load-bearing. What remains
+uncorrected is stated rather than hidden: **sets have no such annotation**, so `TableRep`'s
+set and the set indexes are still charged as trees, and `Jenkins_ItemDeletion`'s whole-row
+membership test is the one place that shows. Closing it would need a `set_kind`, which the
+language does not have.
+
+The build phase is never compared, and that exclusion is the one asymmetry running in
+**our** favour rather than the author's: our source build is O(n²) because the declared-key
+subjects elaborate a uniqueness guard into a table scan. The reason for excluding it is
+that it is a claim about constraint checking rather than about a missing index — but
+"the originals check nothing" is not true of all of them, and Keycloak is the counterexample.
+Its `id` is a JPA `@Id` with primary key `CONSTRAINT_REQ_ACT_PRV_PK`, so the database
+enforces it and no application code looks; its `alias` has **no** unique constraint in any
+changelog, and is enforced instead at one write path, `RealmAdapter.addRequiredActionProvider`,
+by `getRequiredActionProviderByAlias` — a linear scan of the collection followed by a
+throw. That is the same shape `SLetConstrained` + `DUnique` elaborates, so on that key the
+build phase is a comparison we could make rather than one we have to decline.
 
 **What the constant in the `rows` column is not.** The counter charges every stage of a
 pipeline that iterates a collection, and an intermediate collection is not storage.
