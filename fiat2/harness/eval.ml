@@ -85,7 +85,7 @@ let interp_atom (a : atom) : value =
   | AEmptyDict (Ranged, _) -> VDict (RRanged, Value.dempty RRanged)
   | AEmptyDict (Unranged, _) -> VDict (RUnranged, Value.dempty RUnranged)
   | AEmptyBag _ -> VBag bag_empty
-  | AEmptySet _ -> VSet VSet.empty
+  | AEmptySet _ -> VSet (Value.sempty ())
   | AUnit -> VUnit
 
 (* ---------- what a key-addressed operation costs ----------
@@ -108,17 +108,19 @@ let interp_atom (a : atom) : value =
    comparison.  Nothing about a dictionary is modelled any more, which is why
    the wrapper that used to model it is gone.
 
-   Sets and bags still go through [key_access] below.  Converting them is the
-   next step, and until it happens the set column is charged as it was. *)
+   A SET IS THE SAME, with no annotation to consult: TSet carries no kind and
+   TyESort_Set would take any set to a sorted list, so nothing in a program
+   licenses the hash the way dict_kind does, and [Count.unlicensed] is what
+   picks its store (Value.sempty).  That is what makes the Hashes column a
+   MEASUREMENT of what a set_kind would be worth rather than a charge standing
+   in for one.
 
-(* A set is [unlicensed]: these terms never sort one, but TSet carries no kind
-   and TyESort_Set would take any set to a sorted list, so nothing in the
-   program licenses the hash the way dict_kind does.  Typed therefore charges
-   the tree it is stored in and only Hashes hashes it -- which is what makes
-   the Hashes column the measurement of what a set_kind would be worth. *)
+   Only a bag still goes through [key_access], below. *)
 
-let in_set (k : value) (f : unit -> 'a) : 'a =
-  Value.key_access (Count.unlicensed ()) k f
+(* A SET NO LONGER NEEDS ONE OF THESE EITHER.  Value.sempty gives it the
+   store Count.unlicensed names, and its operations run on that store, so a
+   membership test, an insert and a difference are counted and not charged.
+   Only bags still go through key_access. *)
 
 (* A set-vs-set operation.  On a tree it is a merge of the two shapes, and
    Set.union/inter/diff charge the comparisons they actually perform.  On a
@@ -126,12 +128,7 @@ let in_set (k : value) (f : unit -> 'a) : 'a =
    that gets iterated, so that is what is charged, and the tree work this
    harness still performs is suppressed.  [iterated] is that side -- the right
    operand of a difference, the smaller of the two otherwise. *)
-let set_pair (iterated : VSet.t) (f : unit -> 'a) : 'a =
-  match Count.unlicensed () with
-  | Count.Ordered -> f ()
-  | Count.Hashed ->
-      VSet.iter (fun e -> Value.key_access Count.Hashed e (fun () -> ())) iterated;
-      Count.quiet f
+
 
 (* A bag difference.  THE CHARGE IS THE WHOLE POINT OF THE OPERATOR, and it
    is also where this harness cannot have everything it would like.
@@ -168,8 +165,8 @@ let bag_pair (iterated : value list) (f : unit -> 'a) : 'a =
 (* Building a set from a list of n elements: n inserts, charged one at a time
    through the same rule, so a coercion costs what n insertions cost under
    whichever structure the run is charging.  The caller charges the rows. *)
-let set_build (l : value list) : VSet.t =
-  List.fold_left (fun s v -> in_set v (fun () -> VSet.add v s)) VSet.empty l
+let set_build (l : value list) : Value.sstore =
+  List.fold_left (fun s v -> Value.sadd v s) (Value.sempty ()) l
 
 (* ---------- unary ---------- *)
 
@@ -239,30 +236,26 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
        | _ -> VUnit)
   | OBagInsert -> (match a with VBag m -> VBag (bag_add b m) | _ -> VUnit)
   | OSetInsert ->
-      (match a with VSet s -> VSet (in_set b (fun () -> VSet.add b s)) | _ -> VUnit)
+      (match a with VSet s -> VSet (Value.sadd b s) | _ -> VUnit)
   | OSetUnion ->
       (match a, b with
-       | VSet x, VSet y ->
-           (* the smaller side is the one iterated either way *)
-           VSet (set_pair (if VSet.cardinal x < VSet.cardinal y then x else y)
-                   (fun () -> VSet.union x y))
+       (* the smaller side is the one iterated, inside Value.sunion *)
+       | VSet x, VSet y -> VSet (Value.sunion x y)
        | _ -> VUnit)
   | OSetIntersect ->
       (match a, b with
-       | VSet x, VSet y ->
-           VSet (set_pair (if VSet.cardinal x < VSet.cardinal y then x else y)
-                   (fun () -> VSet.inter x y))
+       | VSet x, VSet y -> VSet (Value.sinter x y)
        | _ -> VUnit)
   | OSetDiff ->
       (match a, b with
-       | VSet x, VSet y -> VSet (set_pair y (fun () -> VSet.diff x y))
+       | VSet x, VSet y -> VSet (Value.sdiff x y)
        | _ -> VUnit)
   | OBagDiff ->
       (match a, b with
        | VBag x, VBag y -> VBag (bag_pair y (fun () -> Value.bag_diff x y))
        | _ -> VUnit)
   | OSetMem ->
-      (match a with VSet s -> VBool (in_set b (fun () -> VSet.mem b s)) | _ -> VUnit)
+      (match a with VSet s -> VBool (Value.smem b s) | _ -> VUnit)
   (* a contains b *)
   | OStrContains ->
       (match a, b with VString s, VString p -> VBool (str_contains s p) | _ -> VUnit)
@@ -371,8 +364,10 @@ let interp_ac_fold (ag : aggr) (b : value list) : value =
         (VInt 0) b
   | AGCount -> VInt (List.length b)
 
-let interp_aci_fold (ag : aci_aggr) (s : VSet.t) : value =
-  Count.walk (VSet.cardinal s);
+(* min and max are picked by COMPARISON, so the order the store hands them
+   over in cannot change the answer and is not paid for *)
+let interp_aci_fold (ag : aci_aggr) (s : Value.sstore) : value =
+  Count.walk (Value.scardinal s);
   let pick = match ag with AGMin -> min | AGMax -> max in
   List.fold_right
     (fun v acc ->
@@ -381,7 +376,7 @@ let interp_aci_fold (ag : aci_aggr) (s : VSet.t) : value =
        | VOption (Some (VInt v')) ->
            (match v with VInt z -> VOption (Some (VInt (pick z v'))) | _ -> VUnit)
        | _ -> VUnit)
-    (VSet.elements s) (VOption None)
+    (Value.selements_unordered s) (VOption None)
 
 (* ---------- records ---------- *)
 
@@ -442,7 +437,7 @@ let rec interp_expr (store : locals) (env : locals) (e : expr) : value =
        | LikeList, VList l ->
            Count.visit (List.length l); VList (List.stable_sort Value.compare l)
        | LikeBag, VBag b -> Count.visit (List.length b); VList (bag_canonical b)
-       | LikeSet, VSet s -> Count.visit (VSet.cardinal s); VList (VSet.elements s)
+       | LikeSet, VSet s -> Count.visit (Value.scardinal s); VList (Value.selements s)
        | _, _ -> VUnit)
 
 (* EFlatmap, one case per tag.
@@ -470,18 +465,16 @@ and interp_flatmap store env tag e1 x e2 =
               | _ -> acc)
            bag_empty b)
   | LikeSet, VSet s ->
-      Count.visit (VSet.cardinal s);
+      Count.visit (Value.scardinal s);
       VSet
-        (VSet.fold
+        (Value.sfold
            (fun v acc ->
               match interp_expr store (SMap.add x v env) e2 with
-              (* the union the set flatmap performs is charged like any other *)
-              | VSet s2 ->
-                  set_pair
-                    (if VSet.cardinal acc < VSet.cardinal s2 then acc else s2)
-                    (fun () -> VSet.union acc s2)
+              (* the union the set flatmap performs iterates the smaller side
+                 and probes the other, like every other union *)
+              | VSet s2 -> Value.sunion acc s2
               | _ -> acc)
-           s VSet.empty)
+           s (Value.sempty ()))
   | _, _ -> VUnit
 
 (* ---------- commands ---------- *)

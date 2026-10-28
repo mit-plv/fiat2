@@ -174,7 +174,7 @@ let user_search =
           ("fullName", s (Printf.sprintf "user%04d" j)) ] in
   let q kind k = rcd [ ("kind", i kind); ("k", s k); ("new_user", row 0) ] in
   { queries_var = "queries";
-    store = ("suggested", VSet VSet.empty) :: outputs_only;
+    store = ("suggested", VSet (Value.sempty ())) :: outputs_only;
     table = no_table;
     build = (fun rows ->
       List.init rows (fun j ->

@@ -506,7 +506,7 @@ module UserSearch = struct
     let suggested =
       ref (match List.assoc_opt "suggested" w.Gen.store with
            | Some v -> v
-           | None -> Value.VSet Value.VSet.empty) in
+           | None -> Value.VSet (Value.sempty ())) in
     let say (n : int) = outputs := Value.VString (string_of_int n) :: !outputs in
     List.iter
       (fun q ->

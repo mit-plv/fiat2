@@ -77,11 +77,55 @@ let check_store (rep : Value.dict_rep) (what : string) =
   if List.map fst (Value.dbindings d) <> sorted then
     fail "%s: bindings are not in canonical order\n" what
 
+(* and the set store must be a finite SET: insert twice is insert once, a
+   delete removes one element, and union/intersection/difference agree with a
+   reference set however the two sides are stored *)
+let check_set_store () =
+  let what = "set for " ^ Count.structures_name !Count.structures in
+  let ref_of l = List.sort_uniq Value.compare l in
+  let s = List.fold_left (fun s k -> Value.sadd k s) (Value.sempty ()) keys in
+  (* a duplicate insert must not grow it *)
+  let s = Value.sadd (List.hd keys) s in
+  if Value.scardinal s <> List.length (ref_of keys) then
+    fail "%s: cardinal %d, expected %d\n" what (Value.scardinal s)
+      (List.length (ref_of keys));
+  List.iter
+    (fun k -> if not (Value.smem k s) then fail "%s: lost %s\n" what (Value.to_string k))
+    keys;
+  if Value.selements s <> ref_of keys then
+    fail "%s: elements are not in canonical order\n" what;
+  List.iter
+    (fun gone ->
+       let s' = Value.sremove gone s in
+       if Value.scardinal s' <> List.length (ref_of keys) - 1 then
+         fail "%s: removing %s left cardinal %d\n" what (Value.to_string gone)
+           (Value.scardinal s');
+       if Value.smem gone s' then
+         fail "%s: %s survived its removal\n" what (Value.to_string gone))
+    keys;
+  (* the three set operations, against List as the reference *)
+  let half l = List.filteri (fun i _ -> i mod 2 = 0) l in
+  let a = half keys and b = half (List.tl keys) in
+  let sa = List.fold_left (fun s k -> Value.sadd k s) (Value.sempty ()) a
+  and sb = List.fold_left (fun s k -> Value.sadd k s) (Value.sempty ()) b in
+  let cmp name got want =
+    if Value.selements got <> ref_of want then
+      fail "%s: %s disagrees with the reference\n" what name in
+  cmp "union" (Value.sunion sa sb) (a @ b);
+  cmp "intersect" (Value.sinter sa sb)
+    (List.filter (fun k -> List.exists (Value.equal k) b) a);
+  cmp "diff" (Value.sdiff sa sb)
+    (List.filter (fun k -> not (List.exists (Value.equal k) b)) a);
+  (* the singleton difference SetRemoveTransf emits *)
+  let one = Value.sadd (List.hd a) (Value.sempty ()) in
+  cmp "diff with a singleton" (Value.sdiff sa one) (List.tl a)
+
 let run () =
   failures := 0;
   check_hash_contract ();
   check_store Value.RRanged "tree";
   check_store Value.RUnranged ("store for " ^ Count.structures_name !Count.structures);
+  check_set_store ();
   Printf.printf "store check (%s): %s\n"
     (Count.structures_name !Count.structures)
     (if !failures = 0 then "ok" else Printf.sprintf "%d FAILURES" !failures);

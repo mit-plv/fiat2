@@ -115,7 +115,7 @@ module rec V : sig
     | VRecord of (string * t) list   (* sorted by field name *)
     | VDict of dict_rep * dstore
     | VBag of t list                 (* UNORDERED; multiplicity is repetition *)
-    | VSet of VSet.t
+    | VSet of sstore
     | VUnit
 
   (* HOW a dictionary is stored, as against [dict_rep], which is what its
@@ -132,6 +132,13 @@ module rec V : sig
     | DTree of t VMap.t
     | DHash of t VTrie.t
 
+  (* and the same two for a set, which is a map to unit.  A set has no kind
+     annotation to consult -- TSet carries none -- so [Count.unlicensed] is
+     what picks between them, exactly as it already decided the CHARGE. *)
+  and sstore =
+    | STree of VSet.t
+    | SHash of unit VTrie.t
+
   val compare : t -> t -> int
   (* for CCHashTrie's functor, which wants an equal and a hash *)
   val equal : t -> t -> bool
@@ -139,6 +146,7 @@ module rec V : sig
   (* the one fold that may look inside a store, so that callers outside this
      module never case-split on the representation *)
   val dfold : (t -> t -> 'a -> 'a) -> dstore -> 'a -> 'a
+  val sfold : (t -> 'a -> 'a) -> sstore -> 'a -> 'a
 end = struct
   type t =
     | VInt of int
@@ -149,12 +157,19 @@ end = struct
     | VRecord of (string * t) list
     | VDict of dict_rep * dstore
     | VBag of t list
-    | VSet of VSet.t
+    | VSet of sstore
     | VUnit
 
   and dstore =
     | DTree of t VMap.t
     | DHash of t VTrie.t
+
+  (* and the same two for a set, which is a map to unit.  A set has no kind
+     annotation to consult -- TSet carries none -- so [Count.unlicensed] is
+     what picks between them, exactly as it already decided the CHARGE. *)
+  and sstore =
+    | STree of VSet.t
+    | SHash of unit VTrie.t
 
   let rank = function
     | VUnit -> 0 | VBool _ -> 1 | VInt _ -> 2 | VString _ -> 3
@@ -171,6 +186,11 @@ end = struct
     | x :: l1, y :: l2 ->
         let c = cmp x y in
         if c <> 0 then c else list_compare cmp l1 l2
+
+  (* cardinality, needed by [compare] below and so needed INSIDE the knot;
+     dcardinal and scardinal outside are these under their public names *)
+  let dsize = function DTree m -> VMap.cardinal m | DHash h -> VTrie.cardinal h
+  let ssize = function STree x -> VSet.cardinal x | SHash h -> VTrie.cardinal h
 
   let rec compare (a : t) (b : t) : int =
     incr Count.comparisons;
@@ -202,6 +222,8 @@ end = struct
        which is the same thing the bag below pays and is charged the same way.
        Under the Trees setting nothing is charged as a hash, and nothing here
        canonicalises. *)
+    | VDict (_, a), VDict (_, b) when dsize a = 0 || dsize b = 0 ->
+        Int.compare (min 1 (dsize a)) (min 1 (dsize b))
     | VDict (_, DTree a), VDict (_, DTree b) -> VMap.compare compare a b
     | VDict (_, a), VDict (_, b) ->
         (* a hashed store has no key order of its own, so the order the
@@ -228,7 +250,23 @@ end = struct
     | VBag a, VBag b ->
         incr Count.canonicalisations;
         list_compare compare (List.sort compare a) (List.sort compare b)
-    | VSet a, VSet b -> VSet.compare a b
+    (* Emptiness tests, for the reason given at the head of this file: the
+       answer is settled by the cardinalities, and producing a canonical order
+       to discover it would be the bag's old mistake in a new place.  MEASURED
+       -- without these, user_search/remove costs 702235 under hashes against
+       1680, because the trigram delete asks "did this bucket empty?" once per
+       trigram and each ask sorted the bucket. *)
+    | VSet a, VSet b when ssize a = 0 || ssize b = 0 ->
+        Int.compare (min 1 (ssize a)) (min 1 (ssize b))
+    | VSet (STree a), VSet (STree b) -> VSet.compare a b
+    | VSet a, VSet b ->
+        (* as for a dictionary: a hashed store has no order of its own *)
+        let canon = function
+          | STree x -> VSet.elements x
+          | SHash h ->
+              incr Count.canonicalisations;
+              List.sort compare (List.map fst (VTrie.to_list h)) in
+        list_compare compare (canon a) (canon b)
     | VUnit, VUnit -> 0
     | _ -> Int.compare (rank a) (rank b)
 
@@ -260,7 +298,7 @@ end = struct
         dfold (fun k v acc -> acc + (hash k * 31) + hash v) d 41
     | VBag b ->
         List.fold_left (fun acc v -> acc + hash v) (43 + List.length b) b
-    | VSet s -> VSet.fold (fun v acc -> acc + hash v) s 47
+    | VSet s -> sfold (fun v acc -> acc + hash v) s 47
 
   (* the store's operations, in the one place that may look inside it *)
   and dfold : 'a. (t -> t -> 'a -> 'a) -> dstore -> 'a -> 'a =
@@ -268,6 +306,16 @@ end = struct
     match d with
     | DTree m -> VMap.fold f m init
     | DHash h -> VTrie.fold ~f:(fun acc k v -> f k v acc) ~x:init h
+
+  (* UNORDERED on purpose.  Every caller of this either accumulates
+     commutatively or is building something with no order of its own; the one
+     operation that needs the canonical order is [selements], which says so
+     and pays for it. *)
+  and sfold : 'a. (t -> 'a -> 'a) -> sstore -> 'a -> 'a =
+    fun f s init ->
+    match s with
+    | STree x -> VSet.fold f x init
+    | SHash h -> VTrie.fold ~f:(fun acc k () -> f k acc) ~x:init h
 end
 and VMap : (Map.S with type key = V.t) = Map.Make (V)
 and VSet : (Set.S with type elt = V.t) = Set.Make (V)
@@ -337,6 +385,85 @@ let dbindings (d : dstore) : (t * t) list =
 let dvalues_unordered (d : dstore) : t list =
   dfold (fun _ v acc -> v :: acc) d []
 
+(* ---------- the set store ----------
+
+   A set is a map to unit, so it gets the same two stores.  Which one is
+   [Count.unlicensed]'s call: TSet carries no kind, and TyESort_Set would take
+   any set to a sorted list, so nothing in a program licenses the hash the way
+   dict_kind does -- which is exactly why Hashes is the measurement of what a
+   set_kind would be worth, and why it is now a measurement rather than a
+   charge.
+
+   CCHashTrie offers no union, intersection or difference, so those fold one
+   side into the other.  That is not a compromise: it is the cost model the old
+   [set_pair] already described -- one probe per element of the side that gets
+   iterated -- with the probes now real. *)
+
+let sempty () : sstore =
+  match Count.unlicensed () with
+  | Count.Ordered -> STree VSet.empty
+  | Count.Hashed -> SHash VTrie.empty
+
+let sadd (v : t) (s : sstore) : sstore =
+  match s with
+  | STree x -> STree (VSet.add v x)
+  | SHash h -> SHash (VTrie.add v () h)
+
+let sremove (v : t) (s : sstore) : sstore =
+  match s with
+  | STree x -> STree (VSet.remove v x)
+  | SHash h -> SHash (VTrie.remove v h)
+
+let smem (v : t) (s : sstore) : bool =
+  match s with STree x -> VSet.mem v x | SHash h -> VTrie.mem v h
+
+let scardinal (s : sstore) : int =
+  match s with STree x -> VSet.cardinal x | SHash h -> VTrie.cardinal h
+
+(* THE CANONICAL ORDER, which only ESort asks for.  A tree is already in it; a
+   trie is not, and producing it is charged where every other canonicalisation
+   is.  report.ml checks that no subject contains an ESort at all, so this
+   should not fire -- and if it ever does, the counter says so. *)
+let selements (s : sstore) : t list =
+  match s with
+  | STree x -> VSet.elements x
+  | SHash h ->
+      incr Count.canonicalisations;
+      List.sort compare (List.map fst (VTrie.to_list h))
+
+(* the elements in whatever order the store holds them, for the callers that
+   accumulate commutatively *)
+let selements_unordered (s : sstore) : t list =
+  sfold (fun v acc -> v :: acc) s []
+
+(* Union, intersection and difference, each iterating ONE side and probing the
+   other.  Which side is iterated is the whole cost: for a union or an
+   intersection it is the smaller, and for a difference it is the right
+   operand, which is what makes the singleton idiom OSetDiff s {x} one probe
+   rather than a traversal -- the shape SetRemoveTransf emits. *)
+let sunion (a : sstore) (b : sstore) : sstore =
+  match a, b with
+  (* a balanced merge, which is what a backend holding two trees would do and
+     what this harness has always charged for *)
+  | STree x, STree y -> STree (VSet.union x y)
+  | _ ->
+      let small, big = if scardinal a <= scardinal b then (a, b) else (b, a) in
+      sfold sadd small big
+
+let sinter (a : sstore) (b : sstore) : sstore =
+  match a, b with
+  | STree x, STree y -> STree (VSet.inter x y)
+  | _ ->
+      let small, big = if scardinal a <= scardinal b then (a, b) else (b, a) in
+      sfold (fun v acc -> if smem v big then sadd v acc else acc) small (sempty ())
+
+let sdiff (a : sstore) (b : sstore) : sstore =
+  match a, b with
+  | STree x, STree y -> STree (VSet.diff x y)
+  (* iterating the RIGHT operand is what makes the singleton idiom
+     OSetDiff s {x} -- the shape SetRemoveTransf emits -- one probe *)
+  | _ -> sfold sremove b a
+
 (* The work a KEY costs, by the same rule [compare] charges for walking one:
    one unit per node, with a string counting as one node because
    Value.compare charges one for String.compare.  That makes
@@ -353,7 +480,7 @@ let rec key_work (v : t) : int =
   | VRecord l -> List.fold_left (fun n (_, v) -> n + key_work v) 1 l
   | VDict (_, d) -> dfold (fun k v n -> n + key_work k + key_work v) d 1
   | VBag b -> List.fold_left (fun n v -> n + key_work v) 1 b
-  | VSet s -> VSet.fold (fun v n -> n + key_work v) s 1
+  | VSet s -> sfold (fun v n -> n + key_work v) s 1
 
 (* What a point access at key [k] costs on a structure of the given kind,
    performing the access with [f].  THE ONE RULE, called by eval.ml for the
@@ -362,14 +489,14 @@ let rec key_work (v : t) : int =
    that agree on inspection.  That is the only reason a ratio between them
    means anything.
 
-   WHAT IS LEFT OF THIS, AND WHAT IS NOT.  Dictionaries no longer come here:
-   they hold the store the setting named, so their cost is counted and not
-   charged, and ODictRange cannot even be written against a hashed one.  Sets
-   and bags still do, because they are still a Set.Make tree and a list under
-   every setting -- so for THEM the old caveat stands: under Hashed the descent
-   [f] performs is the harness's bookkeeping, charged to neither counter, and
-   the key's hash is charged instead.  Seconds do not follow the charge for a
-   set or a bag, and converting those is the next step.
+   WHAT IS LEFT OF THIS, AND WHAT IS NOT.  Neither a dictionary nor a set comes
+   here any more: each holds the store its setting named, so its cost is
+   counted rather than charged, and ODictRange cannot even be written against a
+   hashed dictionary.  ONLY A BAG still does, because a bag is an unordered
+   list under every setting -- so for a bag the old caveat stands: under Hashed
+   the work [f] performs is the harness's bookkeeping, charged to neither
+   counter, and the key's hash is charged instead.  Seconds do not follow the
+   charge for a bag, and converting one is the remaining step.
 
    The reason this wrapper existed at all -- "OCaml has no persistent hash map
    whose constants would not be the harness's own" -- no longer holds for a
@@ -434,7 +561,7 @@ let bag_diff (b : t list) (rem : t list) : t list =
    across: nothing downstream of that bridge is measured.  The charged
    counterpart, which is what the evaluator's coercions go through, is
    Eval.set_build. *)
-let set_of_list (l : t list) : VSet.t = List.fold_left (fun s v -> VSet.add v s) VSet.empty l
+let set_of_list (l : t list) : sstore = List.fold_left (fun s v -> sadd v s) (sempty ()) l
 
 (* ---------- printing, for the differential test and for debugging ----------
 
@@ -462,5 +589,5 @@ let rec to_string (v : t) : string =
   | VBag b ->
       (* printed canonically, so that two equal bags print the same string *)
       "bag{" ^ String.concat "; " (List.map to_string (List.sort compare b)) ^ "}"
-  | VSet s -> "set{" ^ String.concat "; " (List.map to_string (VSet.elements s)) ^ "}"
+  | VSet s -> "set{" ^ String.concat "; " (List.map to_string (selements s)) ^ "}"
   | VUnit -> "unit"

@@ -111,15 +111,21 @@ It also moves a theorem from honour to enforcement. `TyODictRange` is stated at
 A range restriction is now impossible to *write* against a hashed store, where it used to
 be a `failwith` the harness had to remember.
 
-**Sets and bags are not converted yet.** A set is a `Set.Make` tree and a bag an
-unordered list under every setting, so for those the older arrangement still holds:
-`Value.key_access` prices the access, the real descent is credited to neither counter
-(`Count.quiet`), and the key's hash is charged instead.
+**A set is the same story, with no annotation to consult.** `TSet` carries no kind, so
+`Count.unlicensed` picks its store (`Value.sempty`) -- a tree under `typed` and `trees`,
+a trie under `hashes` -- which is what makes the `hashes` column a *measurement* of what
+a `set_kind` would be worth rather than a charge standing in for one. Union,
+intersection and difference have no trie counterpart to call, so where either side is
+hashed they iterate one side and probe the other, which is the cost model the old
+`set_pair` already described, with the probes now real. Two trees still merge, because
+that is what a backend holding two trees would do.
+
+**Bags are not converted.** A bag is an unordered list under every setting, so for a bag
+the older arrangement still holds: `Value.key_access` prices the access, the real work is
+credited to neither counter (`Count.quiet`), and the key's hash is charged instead.
 
 The consequence, now narrowed to what is still true: **wall-clock seconds follow the
-charge for a dictionary and not for a set or a bag.** Where a subject's cost is in its
-dictionaries the seconds are a measurement; where it is in a set or a bag they remain a
-check on shape only.
+charge for a dictionary and a set, and not for a bag.**
 
 The deferred cost is counted rather than assumed away: `canonicalisations` says how often
 a bag's canonical order actually had to be produced, and across every subject, phase and
@@ -297,7 +303,7 @@ Three instruments, because no one of them crosses the boundary cleanly:
 | `steps` | **no** | counts entries into `interp_expr`, which has no analogue in hand-written OCaml |
 | `rows` | yes — its **exponent** is the headline | counts the elements an operation iterates — a scan is n, a probe that yields a row is 1, a membership test is 0, a write is 0 — but **once per nesting level**, so a derived read can count the same rows more than once. See below |
 | `cmps + hashing` | yes | the work each side's structures do **on keys**, charged by one **function** on both — `Value.key_access` — at the structure the run's setting says, with the key's cost computed by `Value.key_work` rather than declared. Printed as `cmp+hash` |
-| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It now **follows** the `cmp+hash` charge for dictionaries, which hold the store their setting names, and still does **not** for sets and bags, which are a tree and a list under every setting |
+| s/op | yes | **~25% inflated on our side** by the interpreter, measured, not guessed. It now **follows** the `cmp+hash` charge for dictionaries and sets, which hold the store their setting names, and still does **not** for bags, which are a list under every setting |
 
 `rows` is the instrument the other two cannot replace: the key counters are blind to a
 traversal that compares nothing, which is how Keycloak's whole-list **count** came out at

@@ -36,7 +36,7 @@ and to_ref (v : value) : R.value =
   | VRecord l -> R.VRecord (List.map (fun (s, v) -> (s, to_ref v)) l)
   | VDict (_, d) -> R.VDict (List.map (fun (k, v) -> (to_ref k, to_ref v)) (dbindings d))
   | VBag b -> R.VBag (counted (List.sort compare b))
-  | VSet s -> R.VSet (List.map to_ref (VSet.elements s))
+  | VSet s -> R.VSet (List.map to_ref (selements s))
   | VUnit -> R.VUnit
 
 let rec of_ref (v : R.value) : value =
