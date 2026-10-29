@@ -317,26 +317,15 @@ let over (n : int) = overhead := !overhead + n
    If a counter is added above and does not appear in one of those two, that
    is the bug this note exists to make visible. *)
 
-(* Run [f] without charging its comparisons.
-
-   One use only, through Keyed.access: a structure charged as a hash table is
-   still STORED in a balanced tree, on both sides of the comparison and under
-   every setting above (see the note in value.ml on why the representation and
-   the charge are separate questions).  The tree descent inside is then the
-   harness's own bookkeeping, not work the measured program does, so it is
-   charged to neither counter: the key's hash is charged instead, by [hash].
-
-   Restoring the count rather than muting a flag keeps this exact under
-   nesting and leaves Value.compare with no branch in it. *)
-let quiet (f : unit -> 'a) : 'a =
-  let c = !comparisons and k = !canonicalisations in
-  let r = f () in
-  comparisons := c;
-  (* a key holding a bag would canonicalise on the way down; no key in these
-     subjects does, and restoring it costs nothing and keeps the suppression
-     total rather than nearly total *)
-  canonicalisations := k;
-  r
+(* THERE IS NO SUPPRESSION IN THIS FILE, and that is a property worth
+   stating rather than inferring from its absence.  A [quiet] wrapper used to
+   run a point access without charging its comparisons, because a structure
+   priced as a hash table was still stored in a balanced tree and the descent
+   inside was the harness's bookkeeping rather than the program's work.  Every
+   collection now HOLDS the store its setting names, so there is no longer a
+   descent anyone has to hide, and nothing calls it.  Every counter above is
+   incremented by a primitive actually doing the work it charges for, with no
+   path that performs work silently. *)
 
 (* a primitive that walks n elements without evaluating anything *)
 let walk (n : int) =

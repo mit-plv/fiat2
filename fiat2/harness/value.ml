@@ -18,10 +18,11 @@
    see it.  So the three types are represented by what their own operations
    need, and the two observers pay:
 
-     dict   a balanced tree ordered by the same comparison.  Canonical in
-            the same sense as the sorted list, so the bijection is the
-            identity on bindings; a lookup, an insert, a delete and a range
-            restriction cost a path rather than a copy.
+     dict   a balanced tree ordered by the same comparison, or a persistent
+            hash trie where the setting licenses one.  The tree is canonical
+            in the same sense as the sorted list, so the bijection is the
+            identity on bindings; either way a lookup, an insert, a delete
+            and a range restriction cost a path rather than a copy.
 
             Of those four operations only the RANGE RESTRICTION needs the
             order, and Language.v:79 says which dictionaries can be asked for
@@ -29,28 +30,38 @@
             survives extraction on every dictionary a program creates.  Across
             the subject terms 19 are Unranged and 2 are Ranged.
 
-            So the dictionary carries its [dict_rep] below, and REPRESENTATION
-            AND CHARGE ARE SEPARATE QUESTIONS.  A dictionary charged as a hash
-            table -- the key's hash, by Count.hash, as Count.structures
-            directs -- is still STORED in the tree, because OCaml's standard
-            library has no persistent hash map and a hand-written one would put
-            the harness's own HAMT into the numbers instead of a backend's.
-            The tree's descent is therefore charged to neither counter
-            (Count.quiet).
-            That is the same move the bag below makes, in the same direction:
-            the counters are a cost model, and what the representation must
-            do is denote the right value and pay for what the semantics can
-            observe.  Wall-clock SECONDS do not follow the charge, so they
-            remain what they always were -- a check on shape, not evidence.
+            So the dictionary carries its [dict_rep] below, and THE
+            REPRESENTATION IS THE CHARGE.  A Ranged one is a balanced tree
+            under every setting, because a range query is not answerable
+            from anything else; an Unranged one is whichever store
+            Count.licensed names, VMap or CCHashTrie's persistent HAMT, and
+            [dempty] is the one place that choice is made.  Nothing models
+            the cost of a structure the harness does not run: [compare]
+            counts the descent a tree really performs and [hash] counts the
+            hash a trie really takes, so the counters see the store's own
+            work and cannot disagree with it.
 
-     set    a balanced tree.  A set has to reject duplicates on insert, so
-            it needs the order anyway, and OSetMem is a probe.
+            This replaced a wrapper that charged a hash-table price while
+            storing the tree -- it existed because OCaml's standard library
+            has no persistent hash map, and it stopped being needed when
+            CCHashTrie turned out to be a library rather than our code.  Its
+            obituary is at the foot of this file.
+
+     set    a balanced tree, or a hash trie under `hashes`.  A set has to
+            reject duplicates on insert and OSetMem is a probe, so it needs
+            one structure or the other; what it does not need is the ORDER,
+            and no set_kind exists for a program to say so.  That is why the
+            choice is Count.unlicensed's and why only `hashes` takes it --
+            the Hashes column is what adding a set_kind would be worth.
 
      bag    an UNORDERED list, with multiplicity as repetition.  A bag
             rejects nothing and probes nothing: every operation on one in
             these programs is an insert, a concatenation or a fold.  Keeping
             it sorted would charge a logarithmic factor, and a record-valued
-            comparison, for work no backend would do.  Canonicalising is
+            comparison, for work no backend would do.  The keyed stores exist
+            below and are probed, but [bempty] deliberately does not pick one,
+            because nothing in a program says which bags a backend would keep
+            keyed -- see the note there.  Canonicalising is
             therefore deferred to the two places that can see it, and those
             places sort and are charged for it -- counted separately, as
             [canonicalisations], because a subject that triggered one often
@@ -545,6 +556,12 @@ let sdiff (a : sstore) (b : sstore) : sstore =
    leaf comparison, on both sides, because both sides run the same store.  The reason the wrapper existed -- "OCaml has no persistent
    hash map whose constants would not be the harness's own" -- stopped being
    true when CCHashTrie turned out to be a library rather than our code.
+
+   Count.quiet went with them, and its absence is worth as much as theirs: it
+   ran a point access without charging the comparisons of the tree the hash
+   price was pretending not to use.  With the store real there is no descent
+   to suppress, so no counter in this harness is ever muted and no primitive
+   does work silently.
 
    What the model got wrong, now that there is something to compare it with:
    it charged a flat +1 for the bucket equality, where a real trie calls
