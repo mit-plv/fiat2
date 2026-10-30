@@ -627,3 +627,37 @@ test: every generated token was exactly three characters long, and the guard is
 `2 < length token`. They are the two kinds whose optimized exponent is deliberately
 linear, because a substring match has to look at every row; what they measure is which
 rows it looks at and what that costs over the source's own scan.
+
+A third kind, `suggestLong`, was added on 2026-10-30 for a different reason, and the
+sentence above is why it was needed: *every* generated token was exactly three
+characters long, so every token had exactly **one trigram**. The lookup rule intersects
+the buckets of all of the pattern's trigrams, and on a one-trigram token that is the
+same probe as taking the first bucket alone -- so the kind meant to exercise the rule
+could not tell it apart from its predecessor at all. The guard was not the only thing
+the token length was hiding.
+
+`suggestLong` takes five characters out of the middle of a name, `"user0042"` ->
+`"r0042"`, giving three trigrams whose buckets differ by two orders of magnitude:
+`"r00"` is every name whose digits begin `00`, `"042"` is the one or two names
+containing it. The first bucket alone leaves about a hundred candidates to resolve and
+recheck; the intersection of the three leaves one or two. Swapping the two rules with
+everything else held fixed, at 1600 rows:
+
+| kind | src | one bucket | all trigrams |
+| --- | --- | --- | --- |
+| `suggest` | 648,937 | 5,673 | 5,893 |
+| `suggestLong` | 628,160 | **96,700** | **6,687** |
+
+So on a one-trigram token the two rules agree *to the index operation* -- `opt cmp+hash`
+is `12713+379` either way -- and differ by 220 units of this interpreter's own fold
+scaffolding, 3.9%. On a three-trigram token intersecting is **14.5x** cheaper, the
+subject's whole op phase drops 6%, and hashing drops 5x. That asymmetry is what
+`gin_trgm_consistent` exploits for `LIKE`, and before this kind existed our data could
+not have shown it either way.
+
+**Stale figures, flagged rather than silently revised:** the `user_search/suggest`
+numbers quoted elsewhere in this file predate the rule swap, so its optimized work is
+3.9% higher than they say and ratios derived from it move in the third significant
+figure; subject-level aggregates for `user_search` now cover six op kinds rather than
+five. The per-kind figures for every other subject and every other `user_search` kind
+are unchanged, since neither the source programs nor the cost model moved.
