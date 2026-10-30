@@ -1,5 +1,9 @@
-From Stdlib Require Import String Ascii List Lia.
+From Stdlib Require Import String Ascii List Arith Lia.
 Import ListNotations.
+
+(* for the string literals in pad and the examples below; Local, so that
+   requiring this file does not change any other file's scopes *)
+Local Open Scope string_scope.
 
 (* The string theory a trigram index needs, and which neither fiat2 nor the
    standard library has.
@@ -136,6 +140,94 @@ Proof.
   eapply occurrence_all_trigrams; [ exact E_idx | ].
   apply In_trigrams_first; exact H_len.
 Qed.
+
+(* ==================================================================
+   Padding.
+
+   pg_trgm does not extract a string's trigrams directly: it pads first,
+   LPADDING 2 and RPADDING 1 with a space (trgm.h), so that "Smith" yields
+   six trigrams rather than three and the two ends of the string are
+   themselves indexed.  That is not cosmetic.  Unpadded, "Smith" gives
+   {Smi, mit, ith} and "Smyth" gives {Smy, myt, yth} -- DISJOINT, so no
+   threshold can match them.  Padded they share three trigrams out of nine,
+   which clears pg_trgm's default threshold of 0.3.  Padding is what makes
+   a trigram index able to do fuzzy matching at all.
+
+   Two things are worth being precise about.
+
+   First, the key stays a STRING.  A padded trigram is still three
+   characters; only the characters differ.  So nothing about the index's
+   type, its typing rules, or its maintenance changes shape -- which is a
+   simpler arrangement than carrying the pad widths beside a shorter string,
+   and it is what trgm.h itself does.
+
+   Second, padding only ADDS keys.  trigrams_pad is the whole soundness
+   argument for keeping the existing rules: s is a substring of pad s, so
+   every trigram of s is a trigram of pad s.  A rule proved against the
+   unpadded index therefore stays sound against the padded one, and the
+   substring lookup keeps extracting the PATTERN's trigrams unpadded, as
+   Postgres does -- a substring may match in the middle of a word, where no
+   padding applies.
+   ================================================================== *)
+Definition pad (s : string) : string := "  " ++ s ++ " ".
+
+Lemma length_append : forall s t,
+    String.length (s ++ t) = String.length s + String.length t.
+Proof.
+  induction s as [ | c s IH ]; intros t;
+    cbn [append String.length]; [ reflexivity | ].
+  rewrite IH; reflexivity.
+Qed.
+
+Lemma length_pad : forall s, String.length (pad s) = String.length s + 3.
+Proof.
+  intros s; unfold pad. rewrite !length_append. cbn [String.length]. lia.
+Qed.
+
+(* A window that ends before the join does not see the second string. *)
+Lemma substring_app_l : forall s t n k,
+    n + k <= String.length s -> substring n k (s ++ t) = substring n k s.
+Proof.
+  induction s as [ | c s IH ]; intros t n k H_le.
+  1:{ cbn [String.length] in H_le.
+      assert (E : n = 0) by lia. assert (E2 : k = 0) by lia. subst.
+      destruct t; reflexivity. }
+  destruct n as [ | n ].
+  1:{ destruct k as [ | k ]; [ reflexivity | ].
+      cbn [append substring]. f_equal. apply IH.
+      cbn [String.length] in H_le. lia. }
+  cbn [append substring]. apply IH. cbn [String.length] in H_le. lia.
+Qed.
+
+(* Reading past the two-space prefix. *)
+Lemma substring_pad_shift : forall s i k,
+    substring (2 + i) k (pad s) = substring i k (s ++ " ").
+Proof. intros; unfold pad; reflexivity. Qed.
+
+(* Padding only adds keys. *)
+Theorem trigrams_pad : forall s g, In g (trigrams s) -> In g (trigrams (pad s)).
+Proof.
+  unfold trigrams; intros s g H_in.
+  apply in_map_iff in H_in as [ i [ E_g H_i ] ]. apply in_seq in H_i.
+  apply in_map_iff. exists (2 + i); split.
+  1:{ rewrite substring_pad_shift, substring_app_l by lia. exact E_g. }
+  1:{ apply in_seq. rewrite length_pad. lia. }
+Qed.
+
+(* and what it adds, concretely: the three trigrams at the two boundaries.
+   Pinned rather than proved in general, because the general statement is
+   fiddlier than it is useful -- these two lines say what the padding does
+   more clearly than a quantified version of them would. *)
+Example trigrams_smith : trigrams "Smith" = [ "Smi"; "mit"; "ith" ].
+Proof. reflexivity. Qed.
+
+Example trigrams_pad_smith :
+  trigrams (pad "Smith") = [ "  S"; " Sm"; "Smi"; "mit"; "ith"; "th " ].
+Proof. reflexivity. Qed.
+
+(* The pair that makes the point: unpadded, these two names share nothing. *)
+Example trigrams_smyth : trigrams "Smyth" = [ "Smy"; "myt"; "yth" ].
+Proof. reflexivity. Qed.
 
 (* Every trigram of s really has three characters, which is what lets the
    index's key type be a string and the lookup compare with substring 0 3. *)
