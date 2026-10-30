@@ -347,13 +347,15 @@ Section WithConcreteMaps.
       (EAtom (AEmptySet None)) "b" (EVar "b").
 
   (* Every trigram of the token has to be present for the token to occur, so
-     the candidates are the INTERSECTION of all their buckets -- a fold over
-     the token's own trigram positions, seeded with the first one's bucket.
-     The token's length is not known until run time, so this is a fold and
-     not a static chain. *)
+     the candidates are the INTERSECTION of all their buckets: seeded with
+     the first trigram's bucket, then narrowed at each LATER position.  The
+     token's length is not known until run time, so this is a fold and not a
+     static chain -- and the range starts at 1, so a token of exactly three
+     characters has an empty fold and the term reduces to the single-bucket
+     probe. *)
   Definition all_tri_candidates (tri_tag : string) : expr :=
     EFold
-      (EBinop ORange (EAtom (AInt 0))
+      (EBinop ORange (EAtom (AInt 1))
          (EBinop OMinus (EUnop OLengthString token) (EAtom (AInt 2))))
       (tri_bucket tri_tag (tri_at token (EAtom (AInt 0))))
       "cpos" "cacc"

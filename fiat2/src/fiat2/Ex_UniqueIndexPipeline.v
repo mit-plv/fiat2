@@ -700,7 +700,7 @@ Section WithConcreteMaps.
      intersected by a fold over the pattern's own positions *)
   Definition sall_cands (p : expr) : expr :=
     EFold
-      (EBinop ORange (EAtom (AInt 0))
+      (EBinop ORange (EAtom (AInt 1))
          (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))))
       (sbucket (ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3))))
       "cpos" "cacc"
@@ -810,7 +810,7 @@ Section WithConcreteMaps.
 
   Definition vall_cands (p : expr) : expr :=
     EFold
-      (EBinop ORange (EAtom (AInt 0))
+      (EBinop ORange (EAtom (AInt 1))
          (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))))
       (vbucket (ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3))))
       "cpos" "cacc"

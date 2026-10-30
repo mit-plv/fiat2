@@ -1116,8 +1116,16 @@ Section WithIndexUse.
       Definition tri_at (p pe : expr) : expr :=
         ETernop OSubstring p pe (EAtom (AInt 3)).
 
+      (* 1, 2, ... |p| - 3: the positions AFTER the first, because the fold
+         is seeded with the first trigram's bucket.  Starting at 0 instead
+         would look the first bucket up twice and intersect it with itself,
+         which costs a second probe and a whole set walk for nothing -- and
+         for a pattern of exactly three characters, where there is only one
+         trigram, that waste is the entire rewrite.  Starting at 1 makes the
+         one-trigram case an EMPTY fold, so the rewritten term reduces to the
+         single-bucket probe. *)
       Definition tri_positions (p : expr) : expr :=
-        EBinop ORange (EAtom (AInt 0))
+        EBinop ORange (EAtom (AInt 1))
           (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))).
 
       Definition cands_body (p : expr) : expr :=
@@ -1911,8 +1919,8 @@ Section WithIndexUse.
             cbn [interp_expr interp_atom interp_ternop]. reflexivity. }
         (* the positions the fold runs over *)
         assert (H_pos : interp_expr store env (tri_positions pat)
-                        = VList (eval_range 0
-                                   (Z.to_nat (Z.of_nat (String.length pv) - 2 - 0)))).
+                        = VList (eval_range 1
+                                   (Z.to_nat (Z.of_nat (String.length pv) - 2 - 1)))).
         1:{ unfold tri_positions.
             rewrite interp_EBinop, interp_EBinop, interp_EUnop, E_pv, !interp_EAtom.
             cbn [interp_unop interp_binop interp_atom]. reflexivity. }
@@ -1940,8 +1948,8 @@ Section WithIndexUse.
                    In r rows -> contains_test attr pv r = true ->
                    In (row_key key r)
                      (cands_g
-                        (eval_range 0
-                           (Z.to_nat (Z.of_nat (String.length pv) - 2 - 0)))
+                        (eval_range 1
+                           (Z.to_nat (Z.of_nat (String.length pv) - 2 - 1)))
                         pv (VDict td)
                         (tri_bucket (VString (String.substring 0 3 pv))
                            (VDict td)))).
@@ -1953,14 +1961,14 @@ Section WithIndexUse.
             1:{ intros iv H_iv.
                 apply In_eval_range_inv in H_iv as [ i [ H_lt E_iv ] ]; subst iv.
                 cbn [tri_str].
-                replace (Z.to_nat (0 + Z.of_nat i)) with i by lia.
+                replace (Z.to_nat (1 + Z.of_nat i)) with (S i) by lia.
                 apply key_at__In_tri_bucket. rewrite <- E_te.
                 apply (TrigramIndexImpl.tri_lookup_complete_all attr key _ _ pv
-                         (String.substring i 3 pv));
+                         (String.substring (S i) 3 pv));
                   [ exact H_in
                   | apply contains_test_true__occurrence; exact H_p | ].
                 unfold trigrams. apply in_map_iff.
-                exists i; split; [ reflexivity | ]. apply in_seq. lia. } }
+                exists (S i); split; [ reflexivity | ]. apply in_seq. lia. } }
         rewrite (probe_recheck_cands_eq attr key rows pv _ H_nd H_compl).
         unfold probe_body. reflexivity.
       Qed.

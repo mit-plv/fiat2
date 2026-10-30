@@ -198,6 +198,26 @@ let user_search =
            drawn from the names also pays for the answer. *)
         ("suggestMiss", fun _ _ -> q 3 "zz");
         ("suggestShort", fun _ j -> q 3 (Printf.sprintf "%02d" (spread 100 j)));
+        (* A token with MORE THAN ONE trigram, which is the only kind that
+           tells the two trigram rules apart.
+
+           Every kind above uses a token of exactly three characters, so it
+           has exactly one trigram and there is nothing for an intersecting
+           rule to narrow: probing one bucket and probing all of them are
+           the same probe.  This kind takes five characters out of the
+           middle of a name, "user0042" -> "r0042", so the token has three
+           trigrams whose buckets differ by two orders of magnitude:
+
+             "r00"  every name whose digits begin 00  -- about rows/16
+             "004"  every name whose digits begin 004 -- about rows/160
+             "042"  the one or two names containing 042
+
+           So the first bucket alone leaves a hundred candidates to resolve
+           and recheck, and the intersection of the three leaves one or two.
+           That is the asymmetry gin_trgm_consistent exploits for LIKE, and
+           without a kind like this one our measurement could not see it. *)
+        ("suggestLong", fun rows j ->
+           q 3 (String.sub (Printf.sprintf "user%04d" (spread rows j)) 3 5));
         ("remove", fun rows j -> q 1 (Printf.sprintf "u%d" (victim rows j))) ];
     mutating = [ "remove" ] }
 
