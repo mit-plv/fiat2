@@ -62,6 +62,23 @@ Section WithHole.
        mentions a position under the bucket's binder. *)
     Context (H_pos_bkt : pos <> bkt).
 
+    (* The row's text, bound ONCE per row by an ELet outside the position
+       fold.  Without the binder the text is rebuilt at every position --
+       the range bound and three mentions in the body -- which an O(1)
+       concatenation made merely wasteful, and which a per-character
+       transformation would make QUADRATIC in the field's length.
+
+       Declared here at the end, after the hypotheses, for the reason given
+       just above: a section variable is abstracted into the lemmas that
+       use it in declaration order, so adding one last leaves every
+       existing lemma's arguments where they were. *)
+    Context (tvar : string).
+    Context (H_tvar_tup : tvar <> tup).
+    Context (H_tvar_acc : tvar <> acc).
+    Context (H_tvar_pos : tvar <> pos).
+    Context (H_tvar_sacc : tvar <> sacc).
+    Context (H_tvar_bkt : tvar <> bkt).
+
     (* The text whose trigrams are indexed, PADDED: two spaces before and
        one after, which is what pg_trgm does (LPADDING 2, RPADDING 1 in
        trgm.h).  Padding is what makes the index able to answer a FUZZY
@@ -87,6 +104,9 @@ Section WithHole.
         (EBinop OConcatString (EAccess r attr) (EAtom (AString " "))).
     Definition row_pk (r : expr) : expr := EAccess r key.
 
+    (* what every body reads the text THROUGH, now that it is let-bound *)
+    Definition tri_text : expr := EVar tvar.
+
     (* 0, 1, ... |s| - 3: the positions at which s has a trigram.  Empty when
        s is shorter than three characters, since ORange counts up by one and
        stops, and a negative length is no positions at all. *)
@@ -100,18 +120,19 @@ Section WithHole.
     (* the key goes into the bucket at one trigram of one row's text *)
     Definition tri_insert_body : expr :=
       ETernop OInsert (EVar sacc)
-        (trigram_at (row_text (EVar tup)) (EVar pos))
+        (trigram_at tri_text (EVar pos))
         (EOptMatch
            (EBinop OLookup (EVar sacc)
-              (trigram_at (row_text (EVar tup)) (EVar pos)))
+              (trigram_at tri_text (EVar pos)))
            (EBinop OSetInsert (EAtom (AEmptySet None)) (row_pk (EVar tup)))
            bkt
            (EBinop OSetInsert (EVar bkt) (row_pk (EVar tup)))).
 
     (* one row: every position at which its text has a trigram *)
     Definition tri_row_body : expr :=
-      EFold (trigram_positions (row_text (EVar tup))) (EVar acc) pos sacc
-        tri_insert_body.
+      ELet (row_text (EVar tup)) tvar
+        (EFold (trigram_positions tri_text) (EVar acc) pos sacc
+           tri_insert_body).
 
     Definition to_idx : expr :=
       EFold (EVar hole) (EAtom (AEmptyDict Unranged None)) tup acc tri_row_body.
@@ -132,19 +153,20 @@ Section WithHole.
     Definition tri_delete_body : expr :=
       EOptMatch
         (EBinop OLookup (EVar sacc)
-           (trigram_at (row_text (EVar tup)) (EVar pos)))
+           (trigram_at tri_text (EVar pos)))
         (EVar sacc)
         bkt
         (EIf (EBinop OEq tri_without_pk (EAtom (AEmptySet None)))
            (EBinop ODelete (EVar sacc)
-              (trigram_at (row_text (EVar tup)) (EVar pos)))
+              (trigram_at tri_text (EVar pos)))
            (ETernop OInsert (EVar sacc)
-              (trigram_at (row_text (EVar tup)) (EVar pos))
+              (trigram_at tri_text (EVar pos))
               tri_without_pk)).
 
     Definition tri_row_delete_body : expr :=
-      EFold (trigram_positions (row_text (EVar tup))) (EVar acc) pos sacc
-        tri_delete_body.
+      ELet (row_text (EVar tup)) tvar
+        (EFold (trigram_positions tri_text) (EVar acc) pos sacc
+           tri_delete_body).
 
     (* A table this index is for: a list of records carrying a string
        attribute to index and a key attribute to point at. *)
@@ -230,7 +252,7 @@ Section WithHole.
           type_of map.empty (map.put map.empty hole t) to_idx (idx_ty t).
       Proof.
         unfold is_tbl_ty, idx_ty, to_idx, tri_row_body, tri_insert_body,
-          row_text, row_pk, trigram_positions, trigram_at.
+          row_text, row_pk, tri_text, trigram_positions, trigram_at.
         intros * H_wf H_tbl.
         repeat destruct_match_hyp; try discriminate; subst.
         rewrite type_eqb_eq in H_tbl; subst.
@@ -247,19 +269,21 @@ Section WithHole.
         1:{ lookup_var. }
         1:{ apply TyEAtom; apply TyAEmptyDict';
             [ apply WFTString | apply WFTSet; assumption ]. }
+        (* the row's text, bound once, outside the position fold *)
+        eapply TyELet; [ text_ty | ].
         (* the inner fold, over the positions at which this row has a trigram *)
         eapply TyEFold.
         1:{ (* range 0 (strlen (tup.attr) - 2) *)
             eapply TyEBinop; [ apply TyORange | int_lit | ].
             eapply TyEBinop; [ apply TyOMinus | | int_lit ].
             eapply TyEUnop; [ apply TyOLengthString | ].
-            text_ty. }
+            lookup_var. }
         1:{ lookup_var. }
         (* insert the key under the trigram at this position *)
         eapply TyETernop; [ apply TyOInsert | lookup_var | | ].
         1:{ eapply TyETernop;
               [ apply TyOSubstring
-              | text_ty
+              | lookup_var
               | lookup_var
               | int_lit ]. }
         eapply TyEOptMatch.
@@ -267,7 +291,7 @@ Section WithHole.
             eapply TyEBinop; [ apply TyOLookup | lookup_var | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | text_ty
+              | lookup_var
               | lookup_var
               | int_lit ]. }
         1:{ (* nothing yet: the singleton of this row's key *)
@@ -293,23 +317,24 @@ Section WithHole.
         unfold tri_row_body, tri_insert_body, row_text, row_pk,
           trigram_positions, trigram_at.
         intros * H_ktwf E_attr E_key E_tup E_acc.
+        eapply TyELet; [ text_ty' | ].
         eapply TyEFold.
         1:{ eapply TyEBinop; [ apply TyORange | int_lit | ].
             eapply TyEBinop; [ apply TyOMinus | | int_lit ].
             eapply TyEUnop; [ apply TyOLengthString | ].
-            text_ty'. }
+            lookup_var'. }
         1:{ lookup_var'. }
         eapply TyETernop; [ apply TyOInsert | lookup_var' | | ].
         1:{ eapply TyETernop;
               [ apply TyOSubstring
-              | text_ty'
+              | lookup_var'
               | lookup_var'
               | int_lit ]. }
         eapply TyEOptMatch.
         1:{ eapply TyEBinop; [ apply TyOLookup | lookup_var' | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | text_ty'
+              | lookup_var'
               | lookup_var'
               | int_lit ]. }
         1:{ eapply TyEBinop; [ apply TyOSetInsert
@@ -330,21 +355,22 @@ Section WithHole.
           type_of Gstore Genv tri_row_delete_body (TDict Unranged TString (TSet kt)).
       Proof.
         unfold tri_row_delete_body, tri_delete_body, tri_without_pk,
-          row_text, row_pk, trigram_positions, trigram_at.
+          row_text, row_pk, tri_text, trigram_positions, trigram_at.
         intros * H_ktwf E_attr E_key E_tup E_acc.
+        eapply TyELet; [ text_ty' | ].
         (* the fold over the positions at which this row has a trigram *)
         eapply TyEFold.
         1:{ eapply TyEBinop; [ apply TyORange | int_lit | ].
             eapply TyEBinop; [ apply TyOMinus | | int_lit ].
             eapply TyEUnop; [ apply TyOLengthString | ].
-            text_ty'. }
+            lookup_var'. }
         1:{ lookup_var'. }
         eapply TyEOptMatch.
         1:{ (* what the bucket at this trigram holds, if anything *)
             eapply TyEBinop; [ apply TyOLookup | lookup_var' | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | text_ty'
+              | lookup_var'
               | lookup_var'
               | int_lit ]. }
         1:{ (* nothing there: the dictionary is unchanged *)
@@ -362,13 +388,13 @@ Section WithHole.
         1:{ eapply TyEBinop; [ apply TyODelete | lookup_var' | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | text_ty'
+              | lookup_var'
               | lookup_var'
               | int_lit ]. }
         1:{ eapply TyETernop; [ apply TyOInsert | lookup_var' | | ].
             1:{ eapply TyETernop;
                   [ apply TyOSubstring
-                  | text_ty'
+                  | lookup_var'
                   | lookup_var'
                   | int_lit ]. }
             1:{ eapply TyEBinop; [ apply TyOSetDiff | lookup_var' | ].
@@ -466,16 +492,32 @@ Section WithHole.
         cbn [interp_binop interp_atom]. reflexivity.
       Qed.
 
-      Lemma interp_trigram_positions : forall (store env : locals) r txt,
-          row_key attr r = VString txt ->
-          map.get env tup = Some r ->
-          interp_expr store env (trigram_positions (row_text (EVar tup)))
-          = VList (tri_positions (pad txt)).
+      Lemma interp_ELet : forall (store env : locals) e1 y e2,
+          interp_expr store env (ELet e1 y e2)
+          = interp_expr store (map.put env y (interp_expr store env e1)) e2.
+      Proof. reflexivity. Qed.
+
+      (* Everything under the binder reads the text out of the environment,
+         so these lemmas say nothing about the padding: the padding is in
+         the bound expression, discharged once by interp_row_text at the
+         ELet in interp_tri_row below. *)
+      Lemma interp_tri_text : forall (store env : locals) s,
+          map.get env tvar = Some (VString s) ->
+          interp_expr store env tri_text = VString s.
+      Proof.
+        unfold tri_text; intros * E_tvar.
+        rewrite interp_EVar; unfold get_local; rewrite E_tvar; reflexivity.
+      Qed.
+
+      Lemma interp_trigram_positions : forall (store env : locals) txt,
+          map.get env tvar = Some (VString txt) ->
+          interp_expr store env (trigram_positions tri_text)
+          = VList (tri_positions txt).
       Proof.
         unfold trigram_positions, tri_positions.
-        intros * H_txt E_tup.
+        intros * E_tvar.
         rewrite !interp_EBinop, interp_EUnop, !interp_EAtom.
-        rewrite (interp_row_text store env r txt H_txt E_tup).
+        rewrite (interp_tri_text store env txt E_tvar).
         cbn [interp_unop interp_binop interp_atom apply_int_binop].
         rewrite Z.sub_0_r. reflexivity.
       Qed.
@@ -501,50 +543,45 @@ Section WithHole.
       Proof. unfold pad; reflexivity. Qed.
 
       Lemma interp_tri_insert : forall (store env : locals) r txt p a,
-          row_key attr r = VString txt ->
+          map.get env tvar = Some (VString txt) ->
           map.get env tup = Some r ->
           map.get env pos = Some p ->
           map.get env sacc = Some a ->
           interp_expr store env tri_insert_body
-          = tri_step (pad txt) (row_key key r) p a.
+          = tri_step txt (row_key key r) p a.
       Proof.
-        (* row_text is deliberately NOT unfolded: left folded, cbn cannot see
-           a constructor under it and so leaves interp_expr applied to it
-           whole, which is exactly the shape interp_row_text rewrites.  All
-           three occurrences of the text go in one step. *)
-        unfold tri_insert_body, trigram_at, row_pk, tri_step.
-        intros * H_txt E_tup E_pos E_sacc.
-        pose proof (interp_row_text store env r txt H_txt E_tup) as E_text.
+        unfold tri_insert_body, trigram_at, row_pk, tri_step, tri_text.
+        intros * E_tvar E_tup E_pos E_sacc.
         cbn [interp_expr].
-        unfold get_local, row_key; rewrite E_tup, E_pos, E_sacc.
-        rewrite E_text, !interp_trigram_at_val.
+        unfold get_local, row_key; rewrite E_tvar, E_tup, E_pos, E_sacc.
+        rewrite !interp_trigram_at_val.
         destruct a as [ | | | | | | d | | | ]; try reflexivity.
         cbn [interp_binop interp_ternop].
-        destruct (dict_lookup (tri_key (pad txt) p) d) as [ bk | ];
+        destruct (dict_lookup (tri_key txt p) d) as [ bk | ];
           cbn [bucket_insert interp_atom].
         (* something already there: the key goes in beside it *)
-        1:{ rewrite map.get_put_same, map.get_put_diff by congruence.
-            rewrite E_tup. destruct bk; reflexivity. }
+        1:{ repeat rewrite_map_get_put_goal.
+            rewrite ?E_tvar, ?E_tup. destruct bk; reflexivity. }
         (* nothing yet: the singleton *)
         1: reflexivity.
       Qed.
 
       (* The inner fold, over the positions. *)
       Lemma interp_tri_fold : forall (store env : locals) r txt a l,
-          row_key attr r = VString txt ->
+          map.get env tvar = Some (VString txt) ->
           map.get env tup = Some r ->
           fold_right
             (fun p a' => interp_expr store
                            (map.put (map.put env pos p) sacc a') tri_insert_body)
             a l
-          = fold_right (tri_step (pad txt) (row_key key r)) a l.
+          = fold_right (tri_step txt (row_key key r)) a l.
       Proof.
-        intros * H_txt E_tup.
+        intros * E_tvar E_tup.
         induction l as [ | p l IH ]; cbn [fold_right]; [ reflexivity | ].
         rewrite IH.
-        apply interp_tri_insert; [ exact H_txt | | | apply map.get_put_same ].
-        1:{ rewrite map.get_put_diff by congruence.
-            rewrite map.get_put_diff by congruence. exact E_tup. }
+        apply interp_tri_insert; [ | | | apply map.get_put_same ].
+        1:{ rewrite !map.get_put_diff by congruence. exact E_tvar. }
+        1:{ rewrite !map.get_put_diff by congruence. exact E_tup. }
         1:{ rewrite map.get_put_diff by congruence. apply map.get_put_same. }
       Qed.
 
@@ -557,10 +594,15 @@ Section WithHole.
           = tri_row_step (pad txt) (row_key key r) a.
       Proof.
         intros * H_txt E_tup E_acc. unfold tri_row_body, tri_row_step.
+        rewrite interp_ELet.
+        rewrite (interp_row_text store env r txt H_txt E_tup).
         rewrite interp_EFold.
-        rewrite (interp_trigram_positions store env r txt H_txt E_tup).
-        rewrite interp_EVar; unfold get_local; rewrite E_acc.
-        apply interp_tri_fold; assumption.
+        rewrite (interp_trigram_positions store _ (pad txt))
+          by apply map.get_put_same.
+        rewrite interp_EVar; unfold get_local.
+        rewrite map.get_put_diff by congruence; rewrite E_acc.
+        apply interp_tri_fold; [ apply map.get_put_same | ].
+        rewrite map.get_put_diff by congruence. exact E_tup.
       Qed.
 
       (* The outer fold, over the rows.  Every row has to carry a string at
@@ -1365,27 +1407,28 @@ Section WithHole.
          alone, so the two agree only where every bucket is a set.
          ------------------------------------------------------------------ *)
       Lemma interp_tri_delete : forall (store env : locals) r txt p d,
-          row_key attr r = VString txt ->
+          map.get env tvar = Some (VString txt) ->
           map.get env tup = Some r ->
           map.get env pos = Some p ->
           map.get env sacc = Some (VDict d) ->
           tri_wf d ->
           interp_expr store env tri_delete_body
-          = VDict (tri_unstep_d (pad txt) (row_key key r) p d).
+          = VDict (tri_unstep_d txt (row_key key r) p d).
       Proof.
-        unfold tri_delete_body, tri_without_pk, trigram_at, row_text, row_pk.
-        intros * H_txt E_tup E_pos E_sacc [ _ H_ne ].
+        unfold tri_delete_body, tri_without_pk, trigram_at, tri_text, row_pk.
+        intros * E_tvar E_tup E_pos E_sacc [ _ H_ne ].
+        (* the interpreter reaches the key through the record, so the mirror's
+           row_key is unfolded to the same shape rather than folded back *)
+        unfold row_key.
         cbn [interp_expr].
-        unfold get_local; rewrite E_tup, E_pos, E_sacc.
-        unfold row_key in H_txt |- *.
-        destruct r as [ | | | | | rv | | | | ]; try discriminate.
-        rewrite H_txt, interp_pad_val, interp_trigram_at_val.
+        unfold get_local; rewrite ?E_tvar, ?E_tup, ?E_pos, ?E_sacc.
+        rewrite interp_trigram_at_val.
         (* the mirror is unfolded here so that its removal and the one the
            interpreter computes are the same term, and the test can be
            destructed once for both sides *)
         rewrite tri_unstep_d_eq; unfold bucket_remove.
         cbn [interp_binop].
-        destruct (dict_lookup (tri_key (pad txt) p) d) as [ bk | ] eqn:E_lk;
+        destruct (dict_lookup (tri_key txt p) d) as [ bk | ] eqn:E_lk;
           cbn [interp_atom]; [ | reflexivity ].
         (* the bucket is a set, by the invariant *)
         apply (Forall_dict_lookup _ _ _ _ H_ne) in E_lk as E_set.
@@ -1395,8 +1438,8 @@ Section WithHole.
         rewrite map.get_put_diff by congruence.
         rewrite map.get_put_diff by congruence.
         rewrite !map.get_put_diff by congruence.
-        rewrite E_tup, E_pos, E_sacc.
-        rewrite H_txt, ?pad_eq, interp_trigram_at_val.
+        rewrite ?E_tvar, ?E_tup, ?E_pos, ?E_sacc.
+        rewrite interp_trigram_at_val.
         cbn [interp_binop interp_atom].
         lazymatch goal with
         | |- context[if ?tst then _ else _] => destruct tst eqn:E_nil
@@ -1404,28 +1447,27 @@ Section WithHole.
         all: cbn [interp_expr interp_binop interp_ternop interp_atom].
         all: unfold get_local.
         all: rewrite ?map.get_put_diff by congruence.
-        all: rewrite ?E_tup, ?E_pos, ?E_sacc.
-        all: rewrite ?H_txt, ?pad_eq, ?interp_pad_val, ?interp_trigram_at_val.
+        all: rewrite ?E_tvar, ?E_tup, ?E_pos, ?E_sacc.
+        all: rewrite ?interp_trigram_at_val.
         all: reflexivity.
       Qed.
 
       Lemma interp_tri_delete_fold : forall (store env : locals) r txt d ps,
-          row_key attr r = VString txt ->
+          map.get env tvar = Some (VString txt) ->
           map.get env tup = Some r ->
           tri_wf d ->
           fold_right
             (fun p a' => interp_expr store
                            (map.put (map.put env pos p) sacc a') tri_delete_body)
             (VDict d) ps
-          = VDict (fold_right (tri_unstep_d (pad txt) (row_key key r)) d ps).
+          = VDict (fold_right (tri_unstep_d txt (row_key key r)) d ps).
       Proof.
-        intros * H_txt E_tup H_wf.
+        intros * E_tvar E_tup H_wf.
         induction ps as [ | p ps IH ]; cbn [fold_right]; [ reflexivity | ].
         rewrite IH.
-        apply interp_tri_delete;
-          [ exact H_txt | | | apply map.get_put_same | ].
-        1:{ rewrite map.get_put_diff by congruence.
-            rewrite map.get_put_diff by congruence. exact E_tup. }
+        apply interp_tri_delete; [ | | | apply map.get_put_same | ].
+        1:{ rewrite !map.get_put_diff by congruence. exact E_tvar. }
+        1:{ rewrite !map.get_put_diff by congruence. exact E_tup. }
         1:{ rewrite map.get_put_diff by congruence. apply map.get_put_same. }
         1: apply tri_unfold_d_preserve_tri_wf; exact H_wf.
       Qed.
@@ -1440,10 +1482,16 @@ Section WithHole.
       Proof.
         intros * H_txt E_tup E_acc H_wf.
         unfold tri_row_delete_body, tri_row_unstep_d.
+        rewrite interp_ELet.
+        rewrite (interp_row_text store env r txt H_txt E_tup).
         rewrite interp_EFold.
-        rewrite (interp_trigram_positions store env r txt H_txt E_tup).
-        rewrite interp_EVar; unfold get_local; rewrite E_acc.
-        apply interp_tri_delete_fold; assumption.
+        rewrite (interp_trigram_positions store _ (pad txt))
+          by apply map.get_put_same.
+        rewrite interp_EVar; unfold get_local.
+        rewrite map.get_put_diff by congruence; rewrite E_acc.
+        apply interp_tri_delete_fold;
+          [ apply map.get_put_same | | exact H_wf ].
+        rewrite map.get_put_diff by congruence. exact E_tup.
       Qed.
 
       Corollary tri_row_unstep_d_lookup_other : forall txt k d g,

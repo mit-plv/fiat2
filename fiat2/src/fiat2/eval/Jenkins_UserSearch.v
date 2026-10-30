@@ -316,20 +316,24 @@ Section WithConcreteMaps.
     EBinop ORange (EAtom (AInt 0))
       (EBinop OMinus (EUnop OLengthString text) (EAtom (AInt 2))).
 
-  (* the text the index keys on: padded, as TrigramIndexImpl.row_text is *)
+  (* the text the index keys on: padded, as TrigramIndexImpl.row_text is,
+     and BOUND ONCE per row, as tri_row_body's ELet does -- otherwise the
+     text is rebuilt at every position of every row *)
   Definition tup_text : expr :=
     EBinop OConcatString (EAtom (AString "  "))
       (EBinop OConcatString (EAccess (EVar "tup") "fullName")
          (EAtom (AString " "))).
+  Definition tup_txt : expr := EVar "txt".
   Definition tup_key : expr := EAccess (EVar "tup") "id".
 
   (* add one row's id to the bucket of every trigram of its text *)
   Definition post_row (acc : expr) : expr :=
-    EFold (positions tup_text) acc "pos" "sacc"
-      (ETernop OInsert (EVar "sacc") (tri_at tup_text (EVar "pos"))
-         (EOptMatch (EBinop OLookup (EVar "sacc") (tri_at tup_text (EVar "pos")))
-            (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key)
-            "bkt" (EBinop OSetInsert (EVar "bkt") tup_key))).
+    ELet tup_text "txt"
+      (EFold (positions tup_txt) acc "pos" "sacc"
+         (ETernop OInsert (EVar "sacc") (tri_at tup_txt (EVar "pos"))
+            (EOptMatch (EBinop OLookup (EVar "sacc") (tri_at tup_txt (EVar "pos")))
+               (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key)
+               "bkt" (EBinop OSetInsert (EVar "bkt") tup_key)))).
 
   Definition build_postings (src : expr) : expr :=
     EFold src (EAtom (AEmptyDict Unranged None)) "tup" "acc" (post_row (EVar "acc")).
@@ -461,17 +465,18 @@ Section WithConcreteMaps.
      text names, and dropping a bucket that empties.  Nothing is rebuilt and
      nothing scans the table. *)
   Definition unpost_row (acc : expr) : expr :=
-    EFold (positions tup_text) acc "pos" "sacc"
-      (EOptMatch (EBinop OLookup (EVar "sacc") (tri_at tup_text (EVar "pos")))
-         (EVar "sacc") "bkt"
-         (EIf (EBinop OEq
-                 (EBinop OSetDiff (EVar "bkt")
-                    (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key))
-                 (EAtom (AEmptySet None)))
-            (EBinop ODelete (EVar "sacc") (tri_at tup_text (EVar "pos")))
-            (ETernop OInsert (EVar "sacc") (tri_at tup_text (EVar "pos"))
-               (EBinop OSetDiff (EVar "bkt")
-                  (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key))))).
+    ELet tup_text "txt"
+      (EFold (positions tup_txt) acc "pos" "sacc"
+         (EOptMatch (EBinop OLookup (EVar "sacc") (tri_at tup_txt (EVar "pos")))
+            (EVar "sacc") "bkt"
+            (EIf (EBinop OEq
+                    (EBinop OSetDiff (EVar "bkt")
+                       (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key))
+                    (EAtom (AEmptySet None)))
+               (EBinop ODelete (EVar "sacc") (tri_at tup_txt (EVar "pos")))
+               (ETernop OInsert (EVar "sacc") (tri_at tup_txt (EVar "pos"))
+                  (EBinop OSetDiff (EVar "bkt")
+                     (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key)))))).
 
   Definition delete_expected : expr :=
     ERecord

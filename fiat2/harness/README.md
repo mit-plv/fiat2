@@ -709,7 +709,31 @@ The writes pay twice over, and only about half of it is the index:
   about 27 times per row where the old body chased a pointer. This is inferred from
   the gap between x2.02 of total work and x1.5 of key work, not measured directly.
 
-Binding the padded text once per row, with a `let` outside the position fold, should
-recover most of that. It is not done: it changes the shape of `tri_row_body`, which is
-spelled out in the maintenance rules' match pattern and in three examples' pins, and
-the gain is confined to the write path of one index.
+### Binding the text once, measured
+
+The recomputation above was inferred, so it was worth settling. The index's per-row
+body now binds the row's text with a `let` outside the position fold, and every read
+of the text inside the fold goes through that binder. Nothing about what the index
+*holds* changes, which is the whole point: it is a shape change, not a content change.
+
+| build phase, 1600 rows, `typed` | opt work | vs unpadded |
+| --- | --- | --- |
+| unpadded | 1,259,096 | -- |
+| padded, text rebuilt in the fold | 2,542,942 | x2.02 |
+| padded, text bound once | **1,834,142** | **x1.46** |
+
+So the binder removes 708,800 of the 1,283,846 the padding had cost, 55% of it, and
+what is left -- x1.46 -- is within noise of the x1.5 the index really grew by. The
+inference was right: essentially the whole remainder of the x2.02 was rebuilding a
+string, and essentially all of what survives is the three extra entries per row.
+
+Two numbers say the content did not move: comparisons stay at 145,846 and hashes at
+32,000, to the digit, and every read kind stays where it was. On the write side
+`remove` falls 42,466 -> 33,606, and the op-phase total falls 1,515,623 -> 1,506,763
+-- a difference of 8,860, exactly the `remove` delta, so again nothing else moved.
+`remove` stays above the unpadded 22,214 because the index really is bigger.
+
+The reason to do this now rather than later: the text is read three times inside the
+fold plus once in the range bound, so a text that is *computed* rather than read makes
+the write path quadratic in the field's length. Word-split extraction computes it.
+With the binder in place the transformation is paid once per row.

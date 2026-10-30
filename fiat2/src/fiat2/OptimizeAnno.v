@@ -298,10 +298,10 @@ Section WithConcreteMaps.
 
     Definition trigram_idx_wf :=
       (TrigramIndexImpl.idx_wf (locals := clocals) "hole" trigram_text_attr
-         trigram_key_attr "tup" "acc" "pos" "sacc" "bkt").
+         trigram_key_attr "tup" "acc" "pos" "sacc" "bkt" "txt").
     Instance ctrigram_idx : IndexInterface.index :=
       (trigram_idx "hole" trigram_text_attr trigram_key_attr
-         "tup" "acc" "pos" "sacc" "bkt").
+         "tup" "acc" "pos" "sacc" "bkt" "txt").
     Instance ctrigram_idx_ok : IndexInterface.ok ctrigram_idx trigram_idx_wf.
     apply trigram_idx_ok; discriminate.
     Qed.
@@ -322,7 +322,7 @@ Section WithConcreteMaps.
     Definition cons_to_tri_insert_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl]
                    (cons_to_tri_insert_head trigram_text_attr trigram_key_attr
-                      "tup" "acc" "pos" "sacc" "bkt").
+                      "tup" "acc" "pos" "sacc" "bkt" "txt").
 
     (* A filter-shaped delete: the row that goes is read out of the
        primary-key member, so this one is gated on the declaration too.
@@ -330,7 +330,7 @@ Section WithConcreteMaps.
        would be left behind in buckets this rule never visits. *)
     Definition tri_delete_gated_transf (pk_tag : string) (ds : list decl) :=
       tri_delete_gated trigram_text_attr trigram_key_attr
-        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" pk_tag ds.
+        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" pk_tag "txt" ds.
 
     (* What makes maintenance pay: the recomputation a maintenance rule
        leaves behind, over the part of the table that did not change, is the
@@ -338,7 +338,7 @@ Section WithConcreteMaps.
        member, so it needs no declaration. *)
     Definition tri_use_idx_transf' : string -> command -> command :=
       tri_use_idx_transf trigram_text_attr trigram_key_attr
-        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" tag.
+        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" tag "txt".
 
     Context (rep_ctag : collection_tag).
 
@@ -1219,6 +1219,8 @@ end.
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (String.of_nat (S init_tag)) "b" "k" "y"
                       "cpos" "cacc" ltac:(discriminate)
+                      "txt" ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             intros H_uq. unfold trigram_bridges.
@@ -1273,6 +1275,8 @@ end.
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       ltac:(discriminate) ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag)
+                      "txt" ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             unfold trigram_idx_bridges; split; [ | split ].
@@ -1309,6 +1313,8 @@ end.
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (String.of_nat (S init_tag))
                       ltac:(discriminate) ltac:(discriminate)
+                      "txt" ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             intros H_uq. unfold trigram_bridges.
@@ -1339,7 +1345,7 @@ end.
         1:{ unfold cons_to_tri_insert_transf.
             (* maintenance does not mention the hole, so it is not a
                parameter of this rule *)
-            eapply (cons_to_tri_insert_sound a ak "tup" "acc" "pos" "sacc" "bkt"
+            eapply (cons_to_tri_insert_sound a ak "tup" "acc" "pos" "sacc" "bkt" "txt"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             discriminate. }

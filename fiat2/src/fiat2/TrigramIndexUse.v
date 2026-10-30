@@ -298,8 +298,16 @@ Section WithIndexUse.
      had -- only the lemmas that mention these two acquire them. *)
   Context (cpos cacc : string).
   Context (H_cacc_cpos : cacc <> cpos).
+  (* The binder the index's own body uses for the row's text, bound once
+     per row outside the position fold.  Last again, for the same reason. *)
+  Context (tvar : string).
+  Context (H_tvar_tup : tvar <> tup).
+  Context (H_tvar_acc : tvar <> acc).
+  Context (H_tvar_pos : tvar <> pos).
+  Context (H_tvar_sacc : tvar <> sacc).
+  Context (H_tvar_bkt : tvar <> bkt).
 
-  Notation tridx := (trigram_idx hole attr key tup acc pos sacc bkt).
+  Notation tridx := (trigram_idx hole attr key tup acc pos sacc bkt tvar).
   Notation uidx := (unique_dict_idx hole key utup uacc).
 
   Section WithMap.
@@ -308,7 +316,7 @@ Section WithIndexUse.
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Notation tridx_wf :=
-      (TrigramIndexImpl.idx_wf hole attr key tup acc pos sacc bkt (locals := locals)).
+      (TrigramIndexImpl.idx_wf hole attr key tup acc pos sacc bkt tvar (locals := locals)).
     Notation uidx_wf := (UniqueDictIndexImpl.idx_wf hole key utup uacc (locals := locals)).
 
     (* The two invariants the rule reads off the store, each at its own tag.
@@ -386,7 +394,7 @@ Section WithIndexUse.
        ------------------------------------------------------------------ *)
 
     Notation tri_row_body' :=
-      (TrigramIndexImpl.tri_row_body attr key tup acc pos sacc bkt).
+      (TrigramIndexImpl.tri_row_body attr key tup acc pos sacc bkt tvar).
 
     Definition to_idx_at (d : expr) : expr :=
       EFold d (EAtom (AEmptyDict Unranged None)) tup acc tri_row_body'.
@@ -394,44 +402,40 @@ Section WithIndexUse.
     (* to_idx_at spelled out, so that the rule can match it.  Every binder
        and attribute occurrence is a pattern variable, and the guard checks
        that they are the ones this index uses. *)
-    Notation etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
-      pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1 d :=
+    Notation etri_idx tup0 tup1 tup2 tup3 acc0 acc1
+      pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
+      tv0 tv1 tv2 tv3 d :=
       (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
-         (EFold (EBinop ORange (EAtom (AInt 0))
-                   (EBinop OMinus
-                      (EUnop OLengthString
-                         (EBinop OConcatString (EAtom (AString "  "))
-                            (EBinop OConcatString (EAccess (EVar tup1) attr0)
-                               (EAtom (AString " ")))))
-                      (EAtom (AInt 2))))
-            (EVar acc1) pos0 sacc0
-            (ETernop OInsert (EVar sacc1)
-               (ETernop OSubstring
-                  (EBinop OConcatString (EAtom (AString "  "))
-                     (EBinop OConcatString (EAccess (EVar tup2) attr1)
-                        (EAtom (AString " "))))
-                  (EVar pos1) (EAtom (AInt 3)))
-               (EOptMatch
-                  (EBinop OLookup (EVar sacc2)
-                     (ETernop OSubstring
-                        (EBinop OConcatString (EAtom (AString "  "))
-                           (EBinop OConcatString (EAccess (EVar tup3) attr2)
-                              (EAtom (AString " "))))
-                        (EVar pos2) (EAtom (AInt 3))))
-                  (EBinop OSetInsert (EAtom (AEmptySet None))
-                     (EAccess (EVar tup4) key0))
-                  bkt0 (EBinop OSetInsert (EVar bkt1)
-                          (EAccess (EVar tup5) key1)))))).
+         (ELet (EBinop OConcatString (EAtom (AString "  "))
+                  (EBinop OConcatString (EAccess (EVar tup1) attr0)
+                     (EAtom (AString " "))))
+            tv0
+            (EFold (EBinop ORange (EAtom (AInt 0))
+                      (EBinop OMinus
+                         (EUnop OLengthString (EVar tv1))
+                         (EAtom (AInt 2))))
+               (EVar acc1) pos0 sacc0
+               (ETernop OInsert (EVar sacc1)
+                  (ETernop OSubstring (EVar tv2) (EVar pos1) (EAtom (AInt 3)))
+                  (EOptMatch
+                     (EBinop OLookup (EVar sacc2)
+                        (ETernop OSubstring (EVar tv3) (EVar pos2)
+                           (EAtom (AInt 3))))
+                     (EBinop OSetInsert (EAtom (AEmptySet None))
+                        (EAccess (EVar tup2) key0))
+                     bkt0 (EBinop OSetInsert (EVar bkt1)
+                             (EAccess (EVar tup3) key1))))))).
 
     Definition cons_to_tri_insert_head (e : expr) : expr :=
       match e with
-      | etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
-          pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1
+      | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
+          pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
+          tv0 tv1 tv2 tv3
           (EBinop OCons e1 e2) =>
-          if (all_eqb [(tup, [tup0; tup1; tup2; tup3; tup4; tup5]);
+          if (all_eqb [(tup, [tup0; tup1; tup2; tup3]);
                        (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
                        (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
-                       (attr, [attr0; attr1; attr2]); (key, [key0; key1])]
+                       (attr, [attr0]); (tvar, [tv0; tv1; tv2; tv3]); (key, [key0; key1])]
               && negb (free_immut_in acc e1))%bool
           then ELet (to_idx_at e2) acc (ELet e1 tup tri_row_body')
           else e
@@ -664,6 +668,7 @@ Section WithIndexUse.
            whose buckets are sets *)
         rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc pos sacc bkt
                    H_tup_acc H_tup_pos H_tup_sacc H_tup_bkt H_pos_sacc
+                   tvar H_tvar_tup H_tvar_acc H_tvar_pos H_tvar_sacc
                    (locals_ok := locals_ok) rows
                    (TrigramIndexImpl.typed_rows_have_text attr rows rt H_attr H_rows))
           in H_tri.
@@ -1998,13 +2003,14 @@ Section WithIndexUse.
          ------------------------------------------------------------------ *)
       Definition tri_use_idx_head (e : expr) : expr :=
         match e with
-        | etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
-            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1
+        | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
+            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
+            tv0 tv1 tv2 tv3
             (EAccess (ELoc tbl0) id_tag0) =>
-            if all_eqb [(tup, [tup0; tup1; tup2; tup3; tup4; tup5]);
+            if all_eqb [(tup, [tup0; tup1; tup2; tup3]);
                         (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
                         (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
-                        (attr, [attr0; attr1; attr2]); (key, [key0; key1]);
+                        (attr, [attr0]); (tvar, [tv0; tv1; tv2; tv3]); (key, [key0; key1]);
                         (tbl, [tbl0]); (id_tag, [id_tag0])]
             then tri_e
             else e
@@ -2045,6 +2051,7 @@ Section WithIndexUse.
         subst v_id.
         rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc pos sacc bkt
                    H_tup_acc H_tup_pos H_tup_sacc H_tup_bkt H_pos_sacc
+                   tvar H_tvar_tup H_tvar_acc H_tvar_pos H_tvar_sacc
                    (locals_ok := locals_ok) rows
                    (TrigramIndexImpl.typed_rows_have_text attr rows rt H_attr H_rows))
           in H_tri.
@@ -2134,7 +2141,15 @@ Section WithIndexUse.
         repeat lazymatch goal with
                  H: type_of_atom _ _ |- _ => inversion H; subst; clear H
                end.
-        rewrite E_tbl in H5; injection H5 as H5; subst tl5.
+        (* matched by SHAPE for the same reason as below: the table's own
+           record variable is generated, and binding the row's text moves
+           every generated name after it.  E_tbl has this shape too, so it
+           is skipped explicitly. *)
+        match goal with
+          H : map.get Gstore tbl = Some (TRecord ?TL) |- _ =>
+            tryif constr_eq H E_tbl then fail
+            else (rewrite E_tbl in H; injection H as H; subst TL)
+        end.
         (* matched by SHAPE, not by a generated name: padding the indexed
            text adds typing premises to this goal, and every H<n> after the
            insertion point moves when it does.  E_id has the same shape, so
@@ -2144,8 +2159,18 @@ Section WithIndexUse.
             tryif constr_eq H E_id then fail
             else (rewrite E_id in H; injection H as H; subst)
         end.
-        injection H0 as H0; subst tl0.
-        rewrite E_key in H15; injection H15 as H15; subst t9.
+        (* and the same for the row record and the key's type: every row
+           record the inversions produced is the table's own, and the key's
+           type is then the one the table's record fixes *)
+        repeat match goal with
+                 H : Some (TRecord rt) = Some (TRecord ?TL) |- _ =>
+                   injection H as H; subst TL
+               end.
+        match goal with
+          H : access_record rt key = Success ?T |- _ =>
+            tryif constr_eq H E_key then fail
+            else (rewrite E_key in H; injection H as H; subst T)
+        end.
         eapply TyEAccess;
           [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
           | exact E_tri ].
@@ -2164,18 +2189,19 @@ Section WithIndexUse.
          contributions are all it adds.
          ================================================================== *)
       Notation tri_row_delete_body' :=
-        (TrigramIndexImpl.tri_row_delete_body attr key tup acc pos sacc bkt).
+        (TrigramIndexImpl.tri_row_delete_body attr key tup acc pos sacc bkt tvar).
 
       Definition filter_neq_to_tri_delete_head (e : expr) : expr :=
         match e with
-        | etri_idx tup0 tup1 tup2 tup3 tup4 tup5 acc0 acc1
-            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 attr1 attr2 key0 key1
+        | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
+            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
+            tv0 tv1 tv2 tv3
             (flatmap_filter_list (EAccess (ELoc tbl0) id_tag0) y0
                (EUnop ONot (EBinop OEq (EAccess (EVar y1) key2) kexp)) y2 _ _) =>
-            if (all_eqb [(tup, [tup0; tup1; tup2; tup3; tup4; tup5]);
+            if (all_eqb [(tup, [tup0; tup1; tup2; tup3]);
                          (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
                          (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
-                         (attr, [attr0; attr1; attr2]);
+                         (attr, [attr0]); (tvar, [tv0; tv1; tv2; tv3]);
                          (key, [key0; key1; key2]);
                          (tbl, [tbl0]); (id_tag, [id_tag0]); (y0, [y1; y2])]
                 && negb (free_immut_in y0 kexp)
