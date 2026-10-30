@@ -678,18 +678,34 @@ Section WithConcreteMaps.
   Compute (soptimized (EAtom (AString "abc")) [DUnique "id"]).
   Compute (soptimized (EVar "p") [DUnique "id"]).
 
-  (* probe the bucket at g, resolve each key, recheck p *)
-  Definition sprobe (g p : expr) : expr :=
-    EFlatmap LikeSet
-      (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "0") g)
-         (EAtom (AEmptySet None)) "b" (EVar "b"))
-      "k"
+  (* the bucket a trigram names *)
+  Definition sbucket (g : expr) : expr :=
+    EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "0") g)
+      (EAtom (AEmptySet None)) "b" (EVar "b").
+
+  (* resolve each candidate key through the primary-key member, recheck p *)
+  Definition sprobe_from (cand p : expr) : expr :=
+    EFlatmap LikeSet cand "k"
       (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1")
                     (EVar "k"))
          (EAtom (AEmptySet None)) "y"
          (EIf (EBinop OStrContains (EAccess (EVar "y") "name") p)
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
+
+  (* one bucket's worth of candidates: the k = 1 case *)
+  Definition sprobe (g p : expr) : expr := sprobe_from (sbucket g) p.
+
+  (* and the general case: the buckets of every trigram of the pattern,
+     intersected by a fold over the pattern's own positions *)
+  Definition sall_cands (p : expr) : expr :=
+    EFold
+      (EBinop ORange (EAtom (AInt 0))
+         (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))))
+      (sbucket (ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3))))
+      "cpos" "cacc"
+      (EBinop OSetIntersect (EVar "cacc")
+         (sbucket (ETernop OSubstring p (EVar "cpos") (EAtom (AInt 3))))).
 
   (* The fallback: the source query, served from the primary-key member
      rather than from the table's list.  The key is declared, so that member
@@ -704,8 +720,14 @@ Section WithConcreteMaps.
          "r" (EBinop OStrContains (EAccess (EVar "r") "name") p) "r"
          (Some prow_ty) (Some prow_ty)).
 
-  (* A literal pattern that has a trigram: the trigram is computed at rewrite
-     time, and nothing of the scan is left. *)
+  (* A literal pattern that has a trigram: its trigrams are computed at
+     rewrite time, and nothing of the scan is left.
+
+     "abc" is exactly three characters, so it has exactly ONE trigram and the
+     chain of intersections is a single bucket.  That makes this pin a
+     witness of the subsumption as well as of the rewrite: the all-trigram
+     rule reproduces the single-bucket term, to the constructor, whenever the
+     pattern has one trigram. *)
   Lemma sliteral_probes : exists inst grd,
       soptimized (EAtom (AString "abc")) [DUnique "id"]
       = CLetMut inst "users"
@@ -732,9 +754,7 @@ Section WithConcreteMaps.
              (CAssign "out"
                 (EIf (EBinop OLess (EAtom (AInt 2))
                         (EUnop OLengthString (EVar "p")))
-                   (sprobe (ETernop OSubstring (EVar "p")
-                              (EAtom (AInt 0)) (EAtom (AInt 3)))
-                      (EVar "p"))
+                   (sprobe_from (sall_cands (EVar "p")) (EVar "p"))
                    (sscan (EVar "p"))))).
   Proof. do 2 eexists; reflexivity. Qed.
 
@@ -773,17 +793,29 @@ Section WithConcreteMaps.
 
   (* the probe, through this record's tags: the set is "0", so the trigram
      dictionary is "1" and the keys it points through are "2" *)
-  Definition vprobe (g p : expr) : expr :=
-    EFlatmap LikeSet
-      (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1") g)
-         (EAtom (AEmptySet None)) "b" (EVar "b"))
-      "k"
+  Definition vbucket (g : expr) : expr :=
+    EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1") g)
+      (EAtom (AEmptySet None)) "b" (EVar "b").
+
+  Definition vprobe_from (cand p : expr) : expr :=
+    EFlatmap LikeSet cand "k"
       (EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "2")
                     (EVar "k"))
          (EAtom (AEmptySet None)) "y"
          (EIf (EBinop OStrContains (EAccess (EVar "y") "name") p)
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
+
+  Definition vprobe (g p : expr) : expr := vprobe_from (vbucket g) p.
+
+  Definition vall_cands (p : expr) : expr :=
+    EFold
+      (EBinop ORange (EAtom (AInt 0))
+         (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))))
+      (vbucket (ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3))))
+      "cpos" "cacc"
+      (EBinop OSetIntersect (EVar "cacc")
+         (vbucket (ETernop OSubstring p (EVar "cpos") (EAtom (AInt 3))))).
 
   (* The fallback: literally sscan.  This configuration also stores the
      table's own set, at "0", so there are two members a scan could read --
@@ -810,9 +842,7 @@ Section WithConcreteMaps.
              (CAssign "out"
                 (EIf (EBinop OLess (EAtom (AInt 2))
                         (EUnop OLengthString (EVar "p")))
-                   (vprobe (ETernop OSubstring (EVar "p")
-                              (EAtom (AInt 0)) (EAtom (AInt 3)))
-                      (EVar "p"))
+                   (vprobe_from (vall_cands (EVar "p")) (EVar "p"))
                    (vscan (EVar "p"))))).
   Proof. do 4 eexists; reflexivity. Qed.
 

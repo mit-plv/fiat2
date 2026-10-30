@@ -2490,6 +2490,85 @@ Section WithIndexUse.
               assumption. } }
     Qed.
 
+    (* The all-trigram rules' soundness, by the same argument: the
+       bridges give the typing and the two invariants, and the two
+       obligations are already proved. *)
+    Lemma trigram_lookup_all_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_all_head.
+    Proof.
+      unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty1 [ H_aty2 [ H_is [ H_wf1 H_wf2 ] ] ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      apply H_is in H_is' as H_is_tri.
+      apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+      specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply trigram_lookup_all_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply trigram_lookup_all_head_preserve_sem; try eassumption.
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | split ].
+          1:{ eapply H_wf1; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. }
+          1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. } }
+    Qed.
+
+    Lemma trigram_lookup_all_guarded_head_sound :
+      forall is_tbl_ty' aux_ty (aux_wf : value -> Prop),
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_all_guarded_head.
+    Proof.
+      unfold trigram_bridges, aux_ty_for_idx, expr_aug_transf_sound.
+      intros * [ H_aty1 [ H_aty2 [ H_is [ H_wf1 H_wf2 ] ] ] ] *.
+      intros H_Gs H_Ge H_twf H_is' H_glob H_t.
+      unfold tenv_wf_with_globals in H_glob; invert_Forall2.
+      lazymatch goal with H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl end.
+      apply H_is in H_is' as H_is_tri.
+      apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
+      specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
+      repeat destruct_match_hyp; intuition idtac.
+      1:{ eapply trigram_lookup_all_guarded_head_preserve_ty; try eassumption.
+          apply H_is; exact H_is'. }
+      1:{ subst tbl_ty.
+          eapply trigram_lookup_all_guarded_head_preserve_sem; try eassumption.
+          lazymatch goal with
+            H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
+          end.
+          destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+          lazymatch goal with
+            H : holds_for_all_entries _ _ |- _ => specialize (H _ _ E_v)
+          end.
+          unfold value_wf_with_globals in *; invert_Forall.
+          lazymatch goal with
+            H : _ \/ _ |- _ => destruct H as [ H_neq | H_aw ]; [ congruence | ]
+          end.
+          split; [ assumption | split ].
+          1:{ eapply H_wf1; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. }
+          1:{ eapply H_wf2; [ exact H_twf | exact H_is' | | exact H_aw ].
+              lazymatch goal with E : aux_ty _ = _ |- _ => rewrite E end.
+              assumption. } }
+    Qed.
+
     (* The rules, applied everywhere below the installation. *)
     (* and the lookups' bridges include them *)
     Lemma trigram_bridges__idx_bridges : forall is_tbl_ty' aux_ty aux_wf,
@@ -2554,6 +2633,13 @@ Section WithIndexUse.
     Definition trigram_lookup_guarded_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl] (trigram_lookup_guarded_head tbl).
 
+    Definition trigram_lookup_all_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (trigram_lookup_all_head tbl).
+
+    Definition trigram_lookup_all_guarded_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (trigram_lookup_all_guarded_head tbl).
+
     Lemma trigram_lookup_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
         trigram_bridges is_tbl_ty' aux_ty aux_wf ->
         aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_transf.
@@ -2570,6 +2656,26 @@ Section WithIndexUse.
       intros * H_br. unfold trigram_lookup_guarded_transf.
       apply fold_command_with_globals_sound.
       apply trigram_lookup_guarded_head_sound; exact H_br.
+    Qed.
+
+    Lemma trigram_lookup_all_transf_sound : forall is_tbl_ty' aux_ty aux_wf,
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf trigram_lookup_all_transf.
+    Proof.
+      intros * H_br. unfold trigram_lookup_all_transf.
+      apply fold_command_with_globals_sound.
+      apply trigram_lookup_all_head_sound; exact H_br.
+    Qed.
+
+    Lemma trigram_lookup_all_guarded_transf_sound :
+      forall is_tbl_ty' aux_ty aux_wf,
+        trigram_bridges is_tbl_ty' aux_ty aux_wf ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf
+          trigram_lookup_all_guarded_transf.
+    Proof.
+      intros * H_br. unfold trigram_lookup_all_guarded_transf.
+      apply fold_command_with_globals_sound.
+      apply trigram_lookup_all_guarded_head_sound; exact H_br.
     Qed.
 
     Lemma filter_neq_to_tri_delete_head_sound :
@@ -2654,10 +2760,13 @@ Section WithIndexUse.
     (* The literal rule runs first, so a literal pattern gets the probe
        without a guard and the guarded rule then finds nothing left to do
        there.  A pattern that is not a literal is left to the guard. *)
+    (* The all-trigram rules, not the single-bucket ones: they have the same
+       shape and a narrower candidate set, so the narrow one is installed and
+       the single-bucket pair stays proved as the k = 1 instance it is. *)
     Definition trigram_lookup_gated (ds : list decl) : string -> command -> command :=
       if declares_unique key ds
-      then fun tbl => Basics.compose (trigram_lookup_guarded_transf tbl)
-                        (trigram_lookup_transf tbl)
+      then fun tbl => Basics.compose (trigram_lookup_all_guarded_transf tbl)
+                        (trigram_lookup_all_transf tbl)
       else fun _ => id.
 
     Lemma trigram_lookup_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
@@ -2667,8 +2776,8 @@ Section WithIndexUse.
       intros * H_br. unfold trigram_lookup_gated.
       destruct (declares_unique key ds) eqn:E_uq.
       1:{ apply aug_transf_sound_compose.
-          1: apply trigram_lookup_guarded_transf_sound, H_br; reflexivity.
-          1: apply trigram_lookup_transf_sound, H_br; reflexivity. }
+          1: apply trigram_lookup_all_guarded_transf_sound, H_br; reflexivity.
+          1: apply trigram_lookup_all_transf_sound, H_br; reflexivity. }
       1: unfold aug_transf_sound, id; intros; repeat split; auto.
     Qed.
   End WithMap.

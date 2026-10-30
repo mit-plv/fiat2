@@ -341,17 +341,37 @@ Section WithConcreteMaps.
       (EAtom (AEmptyBag None)) "y"
       (EBinop OBagInsert (EAtom (AEmptyBag None)) (EVar "y")).
 
-  (* probe the bucket at g, resolve each key through the key member, recheck *)
-  Definition tri_probe (tri_tag key_tag : string) (g : expr) : expr :=
-    EFlatmap LikeSet
-      (EOptMatch (EBinop OLookup (member tri_tag) g)
-         (EAtom (AEmptySet None)) "b" (EVar "b"))
-      "k"
+  (* the bucket a trigram names, absent and empty alike *)
+  Definition tri_bucket (tri_tag : string) (g : expr) : expr :=
+    EOptMatch (EBinop OLookup (member tri_tag) g)
+      (EAtom (AEmptySet None)) "b" (EVar "b").
+
+  (* Every trigram of the token has to be present for the token to occur, so
+     the candidates are the INTERSECTION of all their buckets -- a fold over
+     the token's own trigram positions, seeded with the first one's bucket.
+     The token's length is not known until run time, so this is a fold and
+     not a static chain. *)
+  Definition all_tri_candidates (tri_tag : string) : expr :=
+    EFold
+      (EBinop ORange (EAtom (AInt 0))
+         (EBinop OMinus (EUnop OLengthString token) (EAtom (AInt 2))))
+      (tri_bucket tri_tag (tri_at token (EAtom (AInt 0))))
+      "cpos" "cacc"
+      (EBinop OSetIntersect (EVar "cacc")
+         (tri_bucket tri_tag (tri_at token (EVar "cpos")))).
+
+  (* then each surviving key back to its row, with contains rechecked:
+     sharing every trigram is still not sufficient *)
+  Definition probe_from (key_tag : string) (cand : expr) : expr :=
+    EFlatmap LikeSet cand "k"
       (EOptMatch (EBinop OLookup (member key_tag) (EVar "k"))
          (EAtom (AEmptySet None)) "y"
          (EIf (EBinop OStrContains (EAccess (EVar "y") "fullName") token)
             (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "y"))
             (EAtom (AEmptySet None)))).
+
+  Definition tri_probe (tri_tag key_tag : string) : expr :=
+    probe_from key_tag (all_tri_candidates tri_tag).
 
   (* The source query, left as the fallback, served from the primary-key
      member.  The member's
@@ -388,15 +408,19 @@ Section WithConcreteMaps.
     find_of optimized = Some (EACFold AGCount (key_probe (member "1") token)).
   Proof. vm_compute; reflexivity. Qed.
 
-  (* suggest(token): the C3 half, and the reason this file exists.  One
-     trigram's bucket, each key resolved through the key member, contains
-     rechecked on the way out.  The guard is a soundness obligation: a
-     pattern shorter than three characters has no trigram, so the rule emits
-     the test and keeps the source query as the other branch. *)
-  Lemma suggest_is_a_guarded_trigram_probe :
+  (* suggest(token): the C3 half, and the reason this file exists.  The
+     buckets of EVERY trigram of the token are intersected, each surviving
+     key is resolved through the key member, and contains is rechecked on
+     the way out.  That is the shape gin_trgm_consistent gives a LIKE query,
+     derived here from a program that names no structure.
+
+     The guard is a soundness obligation, not a heuristic: a pattern shorter
+     than three characters has no trigram at all, so the rule emits the test
+     and keeps the source query as the other branch. *)
+  Lemma suggest_is_a_guarded_all_trigram_probe :
     suggest_of optimized
     = Some (EIf long_enough
-              (tri_probe "0" "1" (tri_at token (EAtom (AInt 0))))
+              (tri_probe "0" "1")
               (scan_the_member (member "1"))).
   Proof. vm_compute; reflexivity. Qed.
 
@@ -489,7 +513,7 @@ Section WithConcreteMaps.
   Lemma rep_suggest_also_uses_the_key_member :
     suggest_of optimized_rep
     = Some (EIf long_enough
-              (tri_probe "1" "2" (tri_at token (EAtom (AInt 0))))
+              (tri_probe "1" "2")
               (scan_the_member (member "2"))).
   Proof. vm_compute; reflexivity. Qed.
 
