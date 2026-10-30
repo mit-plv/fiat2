@@ -316,7 +316,11 @@ Section WithConcreteMaps.
     EBinop ORange (EAtom (AInt 0))
       (EBinop OMinus (EUnop OLengthString text) (EAtom (AInt 2))).
 
-  Definition tup_text : expr := EAccess (EVar "tup") "fullName".
+  (* the text the index keys on: padded, as TrigramIndexImpl.row_text is *)
+  Definition tup_text : expr :=
+    EBinop OConcatString (EAtom (AString "  "))
+      (EBinop OConcatString (EAccess (EVar "tup") "fullName")
+         (EAtom (AString " "))).
   Definition tup_key : expr := EAccess (EVar "tup") "id".
 
   (* add one row's id to the bucket of every trigram of its text *)

@@ -661,3 +661,55 @@ numbers quoted elsewhere in this file predate the rule swap, so its optimized wo
 figure; subject-level aggregates for `user_search` now cover six op kinds rather than
 five. The per-kind figures for every other subject and every other `user_search` kind
 are unchanged, since neither the source programs nor the cost model moved.
+
+### What the padding cost, measured
+
+Later the same day the index itself changed: the text it keys on is now padded, two
+spaces before and one after, as `pg_trgm` does. The point of the padding is that it is
+what makes a trigram index able to match approximately at all -- unpadded, `"Smith"`
+and `"Smyth"` share no trigram whatever -- and the point of measuring it is that it
+puts three more entries in the index per row and nothing in the reads.
+
+That is exactly what came out. At 1600 rows, `typed`, with the source side byte for
+byte identical in both runs:
+
+| phase | src | opt, unpadded | opt, padded | |
+| --- | --- | --- | --- | --- |
+| build | 28,553,312 | 1,259,096 | 2,542,942 | x2.02 |
+| ops | 4,004,936 | 1,495,371 | 1,515,623 | +1.35% |
+
+and per kind, in the op phase:
+
+| kind | opt, unpadded | opt, padded |
+| --- | --- | --- |
+| `byId` | 1,508 | 1,508 |
+| `suggest` | 5,893 | 5,893 |
+| `suggestMiss` | 704,980 | 704,980 |
+| `suggestShort` | 762,743 | 762,743 |
+| `suggestLong` | 6,687 | 6,687 |
+| `remove` | 22,214 | **42,466** |
+
+**Every read kind is unchanged to the digit**, and the whole op-phase difference is the
+one maintenance kind: 42,466 - 22,214 = 20,252, and 1,515,623 - 1,495,371 = 20,252.
+The arithmetic closes with nothing left over, which is the check that nothing else
+moved. The reads are unchanged because the lookup extracts the *pattern's* trigrams
+**unpadded** -- deliberately, since a substring may match mid-word where no padding
+applies -- so a probe asks for exactly the keys it asked for before, and padding only
+*adds* keys (`StringFacts.trigrams_pad`). Every bucket a probe reads has exactly the
+contents it had. It also means the one-bucket/all-trigram table above did not need
+re-running: both of its post-swap columns reproduce here unchanged.
+
+The writes pay twice over, and only about half of it is the index:
+
+- the real growth is **1.5x**: a name like `"user0042"` has 6 trigrams unpadded and 9
+  padded, and the key-work counters agree -- comparisons x1.57, hashes x1.43.
+- the rest is **recomputation**. `row_text` used to be a field read and is now a
+  concatenation, and it sits *inside* the fold over positions, where the range bound,
+  the inserted key and the bucket lookup each mention it. So an O(n) string gets built
+  about 27 times per row where the old body chased a pointer. This is inferred from
+  the gap between x2.02 of total work and x1.5 of key work, not measured directly.
+
+Binding the padded text once per row, with a `let` outside the position fold, should
+recover most of that. It is not done: it changes the shape of `tri_row_body`, which is
+spelled out in the maintenance rules' match pattern and in three examples' pins, and
+the gain is confined to the write path of one index.

@@ -62,7 +62,29 @@ Section WithHole.
        mentions a position under the bucket's binder. *)
     Context (H_pos_bkt : pos <> bkt).
 
-    Definition row_text (r : expr) : expr := EAccess r attr.
+    (* The text whose trigrams are indexed, PADDED: two spaces before and
+       one after, which is what pg_trgm does (LPADDING 2, RPADDING 1 in
+       trgm.h).  Padding is what makes the index able to answer a FUZZY
+       query at all -- unpadded, "Smith" and "Smyth" share no trigram
+       whatever, so no similarity threshold could ever relate them, while
+       padded they share three of nine (StringFacts.trigrams_pad_smith).
+
+       It lives here, in the one definition every body goes through, rather
+       than in each body, so that the insert body, the delete body and both
+       of their position ranges pad identically by construction.
+
+       The key stays a TString: a padded trigram is still three characters.
+       So idx_ty, every typing premise and every maintenance rule keep their
+       shape, and only WHICH strings occur as keys changes.
+
+       The PATTERN side is deliberately NOT padded -- see
+       StringFacts.trigrams_pad: padding only ADDS keys, so a lookup that
+       extracts the pattern's trigrams unpadded still finds every row it
+       should.  That is also what Postgres does, since a substring may match
+       in the middle of a word, where no padding applies. *)
+    Definition row_text (r : expr) : expr :=
+      EBinop OConcatString (EAtom (AString "  "))
+        (EBinop OConcatString (EAccess r attr) (EAtom (AString " "))).
     Definition row_pk (r : expr) : expr := EAccess r key.
 
     (* 0, 1, ... |s| - 3: the positions at which s has a trigram.  Empty when
@@ -178,6 +200,30 @@ Section WithHole.
         first [ rewrite map.get_put_same; reflexivity | eassumption ].
 
       Ltac int_lit := apply TyEAtom; apply TyAInt.
+      Ltac str_lit := apply TyEAtom; apply TyAString.
+
+      (* The padded text at attr.  Its type is TString for the same reason
+         the raw field's is -- concatenation with a literal preserves it --
+         so every occurrence of the text in the bodies below is discharged
+         by these same three steps. *)
+      Ltac text_ty :=
+        eapply TyEBinop;
+          [ apply TyOConcatString
+          | str_lit
+          | eapply TyEBinop;
+              [ apply TyOConcatString
+              | eapply TyEAccess; [ lookup_var | eassumption ]
+              | str_lit ] ].
+
+      (* the same, for the lemmas that look a binder up in Genv itself *)
+      Ltac text_ty' :=
+        eapply TyEBinop;
+          [ apply TyOConcatString
+          | str_lit
+          | eapply TyEBinop;
+              [ apply TyOConcatString
+              | eapply TyEAccess; [ lookup_var' | eassumption ]
+              | str_lit ] ].
 
       Lemma to_idx_ty : forall (t : type),
           type_wf t -> is_tbl_ty t = true ->
@@ -207,13 +253,13 @@ Section WithHole.
             eapply TyEBinop; [ apply TyORange | int_lit | ].
             eapply TyEBinop; [ apply TyOMinus | | int_lit ].
             eapply TyEUnop; [ apply TyOLengthString | ].
-            eapply TyEAccess; [ lookup_var | eassumption ]. }
+            text_ty. }
         1:{ lookup_var. }
         (* insert the key under the trigram at this position *)
         eapply TyETernop; [ apply TyOInsert | lookup_var | | ].
         1:{ eapply TyETernop;
               [ apply TyOSubstring
-              | eapply TyEAccess; [ lookup_var | eassumption ]
+              | text_ty
               | lookup_var
               | int_lit ]. }
         eapply TyEOptMatch.
@@ -221,7 +267,7 @@ Section WithHole.
             eapply TyEBinop; [ apply TyOLookup | lookup_var | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | eapply TyEAccess; [ lookup_var | eassumption ]
+              | text_ty
               | lookup_var
               | int_lit ]. }
         1:{ (* nothing yet: the singleton of this row's key *)
@@ -251,19 +297,19 @@ Section WithHole.
         1:{ eapply TyEBinop; [ apply TyORange | int_lit | ].
             eapply TyEBinop; [ apply TyOMinus | | int_lit ].
             eapply TyEUnop; [ apply TyOLengthString | ].
-            eapply TyEAccess; [ lookup_var' | eassumption ]. }
+            text_ty'. }
         1:{ lookup_var'. }
         eapply TyETernop; [ apply TyOInsert | lookup_var' | | ].
         1:{ eapply TyETernop;
               [ apply TyOSubstring
-              | eapply TyEAccess; [ lookup_var' | eassumption ]
+              | text_ty'
               | lookup_var'
               | int_lit ]. }
         eapply TyEOptMatch.
         1:{ eapply TyEBinop; [ apply TyOLookup | lookup_var' | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | eapply TyEAccess; [ lookup_var' | eassumption ]
+              | text_ty'
               | lookup_var'
               | int_lit ]. }
         1:{ eapply TyEBinop; [ apply TyOSetInsert
@@ -291,14 +337,14 @@ Section WithHole.
         1:{ eapply TyEBinop; [ apply TyORange | int_lit | ].
             eapply TyEBinop; [ apply TyOMinus | | int_lit ].
             eapply TyEUnop; [ apply TyOLengthString | ].
-            eapply TyEAccess; [ lookup_var' | eassumption ]. }
+            text_ty'. }
         1:{ lookup_var'. }
         eapply TyEOptMatch.
         1:{ (* what the bucket at this trigram holds, if anything *)
             eapply TyEBinop; [ apply TyOLookup | lookup_var' | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | eapply TyEAccess; [ lookup_var' | eassumption ]
+              | text_ty'
               | lookup_var'
               | int_lit ]. }
         1:{ (* nothing there: the dictionary is unchanged *)
@@ -316,13 +362,13 @@ Section WithHole.
         1:{ eapply TyEBinop; [ apply TyODelete | lookup_var' | ].
             eapply TyETernop;
               [ apply TyOSubstring
-              | eapply TyEAccess; [ lookup_var' | eassumption ]
+              | text_ty'
               | lookup_var'
               | int_lit ]. }
         1:{ eapply TyETernop; [ apply TyOInsert | lookup_var' | | ].
             1:{ eapply TyETernop;
                   [ apply TyOSubstring
-                  | eapply TyEAccess; [ lookup_var' | eassumption ]
+                  | text_ty'
                   | lookup_var'
                   | int_lit ]. }
             1:{ eapply TyEBinop; [ apply TyOSetDiff | lookup_var' | ].
@@ -385,8 +431,16 @@ Section WithHole.
       Definition row_str (r : value) : string :=
         match row_key attr r with VString s => s | _ => EmptyString end.
 
+      (* The string the index KEYS ON: the row's text with the padding.
+         Deliberately a different name from row_str, which is the text the
+         PREDICATE reads -- the recheck has to see the row's real text, and
+         the two must not be confused.  Every lemma below that is about the
+         index's contents says row_tri; every lemma about what a row
+         contains says row_str. *)
+      Definition row_tri (r : value) : string := pad (row_str r).
+
       Definition tri_entries (l : list value) : value :=
-        fold_right (fun r a => tri_row_step (row_str r) (row_key key r) a)
+        fold_right (fun r a => tri_row_step (row_tri r) (row_key key r) a)
           (VDict nil) l.
 
       (* The store is universally quantified in this group of lemmas: none of
@@ -394,19 +448,34 @@ Section WithHole.
          the same whatever store it is computed in.  The maintenance rules
          need that, since they recompute the index where the table's own
          store is in scope. *)
+      (* The text the index actually keys on: the row's field with the
+         padding around it.  Proved once here so that the padding appears in
+         exactly one proof, and every lemma below reads the text through
+         this one equation. *)
+      Lemma interp_row_text : forall (store env : locals) r txt,
+          row_key attr r = VString txt ->
+          map.get env tup = Some r ->
+          interp_expr store env (row_text (EVar tup)) = VString (pad txt).
+      Proof.
+        unfold row_text, row_key, pad in *.
+        intros * H_txt E_tup.
+        rewrite !interp_EBinop, interp_EAccess, interp_EVar, !interp_EAtom.
+        unfold get_local; rewrite E_tup.
+        destruct r; try discriminate.
+        rewrite H_txt.
+        cbn [interp_binop interp_atom]. reflexivity.
+      Qed.
+
       Lemma interp_trigram_positions : forall (store env : locals) r txt,
           row_key attr r = VString txt ->
           map.get env tup = Some r ->
           interp_expr store env (trigram_positions (row_text (EVar tup)))
-          = VList (tri_positions txt).
+          = VList (tri_positions (pad txt)).
       Proof.
-        unfold trigram_positions, row_text, tri_positions, row_key in *.
+        unfold trigram_positions, tri_positions.
         intros * H_txt E_tup.
-        rewrite !interp_EBinop, interp_EUnop, interp_EAccess, !interp_EVar,
-          !interp_EAtom.
-        unfold get_local; rewrite E_tup.
-        destruct r; try discriminate.
-        rewrite H_txt.
+        rewrite !interp_EBinop, interp_EUnop, !interp_EAtom.
+        rewrite (interp_row_text store env r txt H_txt E_tup).
         cbn [interp_unop interp_binop interp_atom apply_int_binop].
         rewrite Z.sub_0_r. reflexivity.
       Qed.
@@ -415,24 +484,43 @@ Section WithHole.
           interp_ternop OSubstring (VString txt) p (VInt 3) = tri_key txt p.
       Proof. unfold tri_key; intros; destruct p; reflexivity. Qed.
 
+      (* The padding at the value level, for the proofs that push interp_expr
+         through the two concatenations by hand rather than reading the text
+         through interp_row_text.  The delete body needs this: it re-reads the
+         text under the bucket binder, where the environment is no longer the
+         one interp_row_text was instantiated at. *)
+      (* and the same padding once cbn has already done the two
+         concatenations, which is how it reaches the later branches *)
+      Lemma pad_eq : forall s : string, ("  " ++ s ++ " ")%string = pad s.
+      Proof. reflexivity. Qed.
+
+      Lemma interp_pad_val : forall s : string,
+          interp_binop OConcatString (interp_atom (AString "  "))
+            (interp_binop OConcatString (VString s) (interp_atom (AString " ")))
+          = VString (pad s).
+      Proof. unfold pad; reflexivity. Qed.
+
       Lemma interp_tri_insert : forall (store env : locals) r txt p a,
           row_key attr r = VString txt ->
           map.get env tup = Some r ->
           map.get env pos = Some p ->
           map.get env sacc = Some a ->
           interp_expr store env tri_insert_body
-          = tri_step txt (row_key key r) p a.
+          = tri_step (pad txt) (row_key key r) p a.
       Proof.
-        unfold tri_insert_body, trigram_at, row_text, row_pk, tri_step.
+        (* row_text is deliberately NOT unfolded: left folded, cbn cannot see
+           a constructor under it and so leaves interp_expr applied to it
+           whole, which is exactly the shape interp_row_text rewrites.  All
+           three occurrences of the text go in one step. *)
+        unfold tri_insert_body, trigram_at, row_pk, tri_step.
         intros * H_txt E_tup E_pos E_sacc.
+        pose proof (interp_row_text store env r txt H_txt E_tup) as E_text.
         cbn [interp_expr].
-        unfold get_local; rewrite E_tup, E_pos, E_sacc.
-        unfold row_key in H_txt |- *.
-        destruct r as [ | | | | | rv | | | | ]; try discriminate.
-        rewrite H_txt, !interp_trigram_at_val.
+        unfold get_local, row_key; rewrite E_tup, E_pos, E_sacc.
+        rewrite E_text, !interp_trigram_at_val.
         destruct a as [ | | | | | | d | | | ]; try reflexivity.
         cbn [interp_binop interp_ternop].
-        destruct (dict_lookup (tri_key txt p) d) as [ bk | ];
+        destruct (dict_lookup (tri_key (pad txt) p) d) as [ bk | ];
           cbn [bucket_insert interp_atom].
         (* something already there: the key goes in beside it *)
         1:{ rewrite map.get_put_same, map.get_put_diff by congruence.
@@ -449,7 +537,7 @@ Section WithHole.
             (fun p a' => interp_expr store
                            (map.put (map.put env pos p) sacc a') tri_insert_body)
             a l
-          = fold_right (tri_step txt (row_key key r)) a l.
+          = fold_right (tri_step (pad txt) (row_key key r)) a l.
       Proof.
         intros * H_txt E_tup.
         induction l as [ | p l IH ]; cbn [fold_right]; [ reflexivity | ].
@@ -466,7 +554,7 @@ Section WithHole.
           map.get env tup = Some r ->
           map.get env acc = Some a ->
           interp_expr store env tri_row_body
-          = tri_row_step txt (row_key key r) a.
+          = tri_row_step (pad txt) (row_key key r) a.
       Proof.
         intros * H_txt E_tup E_acc. unfold tri_row_body, tri_row_step.
         rewrite interp_EFold.
@@ -483,15 +571,15 @@ Section WithHole.
             (fun r a' => interp_expr store
                            (map.put (map.put env tup r) acc a') tri_row_body)
             a l
-          = fold_right (fun r a' => tri_row_step (row_str r) (row_key key r) a') a l.
+          = fold_right (fun r a' => tri_row_step (row_tri r) (row_key key r) a') a l.
       Proof.
         intros store env l a H_all.
         induction l as [ | r l IH ]; cbn [fold_right]; [ reflexivity | ].
         invert_Forall.
         rewrite IH by assumption.
         lazymatch goal with H : exists _, _ |- _ => destruct H as [ txt H_txt ] end.
-        assert (E_str : row_str r = txt)
-          by (unfold row_str; rewrite H_txt; reflexivity).
+        assert (E_str : row_tri r = pad txt)
+          by (unfold row_tri, row_str; rewrite H_txt; reflexivity).
         rewrite E_str.
         apply interp_tri_row; [ exact H_txt | | apply map.get_put_same ].
         rewrite map.get_put_diff by congruence. apply map.get_put_same.
@@ -607,7 +695,7 @@ Section WithHole.
       Lemma tri_entries_buckets : forall l a,
           buckets_are_sets a ->
           buckets_are_sets
-            (fold_right (fun r a' => tri_row_step (row_str r) (row_key key r) a') a l).
+            (fold_right (fun r a' => tri_row_step (row_tri r) (row_key key r) a') a l).
       Proof.
         intros * H; induction l as [ | r l IH ]; cbn [fold_right]; [ exact H | ].
         unfold tri_row_step; apply tri_fold_buckets, IH.
@@ -639,7 +727,7 @@ Section WithHole.
       Lemma tri_entries_monotone : forall g k l a,
           key_at g k a ->
           key_at g k
-            (fold_right (fun r a' => tri_row_step (row_str r) (row_key key r) a') a l).
+            (fold_right (fun r a' => tri_row_step (row_tri r) (row_key key r) a') a l).
       Proof.
         intros * H; induction l as [ | r l IH ]; cbn [fold_right]; [ exact H | ].
         unfold tri_row_step; apply tri_fold_monotone, IH.
@@ -743,14 +831,13 @@ Section WithHole.
             apply In_eval_range. lia. }
       Qed.
 
-      (* The claim, for ANY trigram of the row's own text: the row's key is
-         in that trigram's bucket.  Stated this way rather than for the
-         pattern's first trigram, because the all-trigram lookup needs one
-         bucket per trigram of the pattern and they are all instances of
-         this. *)
-      Theorem tri_lookup_complete_at : forall (l : list value) r g,
+      (* The claim, for ANY trigram of the string the index KEYS ON -- the
+         row's padded text.  Stated this way rather than for the pattern's
+         first trigram, because the all-trigram lookup needs one bucket per
+         trigram of the pattern and they are all instances of this. *)
+      Theorem tri_lookup_complete_at_padded : forall (l : list value) r g,
           In r l ->
-          In g (trigrams (row_str r)) ->
+          In g (trigrams (row_tri r)) ->
           key_at (VString g) (row_key key r) (tri_entries l).
       Proof.
         intros l r g H_in H_tri.
@@ -762,6 +849,23 @@ Section WithHole.
         cbn [fold_right]; unfold tri_row_step.
         apply tri_fold_establishes; [ | exact H_tri ].
         apply tri_entries_buckets. cbn [buckets_are_sets]. constructor.
+      Qed.
+
+      (* And the same for a trigram of the row's RAW text, which is what
+         every lookup rule has in hand: a pattern occurring in the row gives
+         trigrams of the row's own text, not of its padded form.  This is
+         the whole reason padding costs the lookup side nothing --
+         trigrams_pad says padding only ADDS keys, so a bucket that held the
+         row before padding holds it still.  Every rule proved against the
+         unpadded index is therefore sound against this one, unchanged. *)
+      Theorem tri_lookup_complete_at : forall (l : list value) r g,
+          In r l ->
+          In g (trigrams (row_str r)) ->
+          key_at (VString g) (row_key key r) (tri_entries l).
+      Proof.
+        intros l r g H_in H_tri.
+        apply tri_lookup_complete_at_padded; [ exact H_in | ].
+        unfold row_tri. apply trigrams_pad. exact H_tri.
       Qed.
 
       (* A row whose text contains the pattern has its key in the bucket of
@@ -854,7 +958,7 @@ Section WithHole.
         fold_right (tri_step_d txt k) d (tri_positions txt).
 
       Definition tri_dict (l : list value) : list (value * value) :=
-        fold_right (fun r d => tri_row_step_d (row_str r) (row_key key r) d) nil l.
+        fold_right (fun r d => tri_row_step_d (row_tri r) (row_key key r) d) nil l.
 
       Lemma tri_row_step_VDict : forall txt k d,
           tri_row_step txt k (VDict d) = VDict (tri_row_step_d txt k d).
@@ -886,7 +990,7 @@ Section WithHole.
       (* and the keys the index ought to hold at g: those of the rows whose
          text has g among its trigrams *)
       Definition keys_at (g : value) (l : list value) : list value :=
-        fold_right (fun r b => if set_mem g (tri_keys (row_str r))
+        fold_right (fun r b => if set_mem g (tri_keys (row_tri r))
                                then set_insert (row_key key r) b
                                else b) nil l.
 
@@ -1033,12 +1137,12 @@ Section WithHole.
          induction below never has to unfold them *)
       Lemma tri_dict_cons : forall r l,
           tri_dict (r :: l)
-          = tri_row_step_d (row_str r) (row_key key r) (tri_dict l).
+          = tri_row_step_d (row_tri r) (row_key key r) (tri_dict l).
       Proof. reflexivity. Qed.
 
       Lemma keys_at_cons : forall g r l,
           keys_at g (r :: l)
-          = if set_mem g (tri_keys (row_str r))
+          = if set_mem g (tri_keys (row_tri r))
             then set_insert (row_key key r) (keys_at g l)
             else keys_at g l.
       Proof. reflexivity. Qed.
@@ -1056,7 +1160,7 @@ Section WithHole.
         intros l g.
         induction l as [ | r l IH ]; [ reflexivity | ].
         rewrite tri_dict_cons, keys_at_cons.
-        destruct (set_mem g (tri_keys (row_str r))) eqn:E_mem.
+        destruct (set_mem g (tri_keys (row_tri r))) eqn:E_mem.
         1:{ rewrite (tri_row_step_d_lookup_same _ _ _ _ (tri_dict_tri_wf l) E_mem).
             unfold bucket_of; rewrite IH.
             destruct (keys_at g l) as [ | v b ] eqn:E_b.
@@ -1267,7 +1371,7 @@ Section WithHole.
           map.get env sacc = Some (VDict d) ->
           tri_wf d ->
           interp_expr store env tri_delete_body
-          = VDict (tri_unstep_d txt (row_key key r) p d).
+          = VDict (tri_unstep_d (pad txt) (row_key key r) p d).
       Proof.
         unfold tri_delete_body, tri_without_pk, trigram_at, row_text, row_pk.
         intros * H_txt E_tup E_pos E_sacc [ _ H_ne ].
@@ -1275,13 +1379,13 @@ Section WithHole.
         unfold get_local; rewrite E_tup, E_pos, E_sacc.
         unfold row_key in H_txt |- *.
         destruct r as [ | | | | | rv | | | | ]; try discriminate.
-        rewrite H_txt, interp_trigram_at_val.
+        rewrite H_txt, interp_pad_val, interp_trigram_at_val.
         (* the mirror is unfolded here so that its removal and the one the
            interpreter computes are the same term, and the test can be
            destructed once for both sides *)
         rewrite tri_unstep_d_eq; unfold bucket_remove.
         cbn [interp_binop].
-        destruct (dict_lookup (tri_key txt p) d) as [ bk | ] eqn:E_lk;
+        destruct (dict_lookup (tri_key (pad txt) p) d) as [ bk | ] eqn:E_lk;
           cbn [interp_atom]; [ | reflexivity ].
         (* the bucket is a set, by the invariant *)
         apply (Forall_dict_lookup _ _ _ _ H_ne) in E_lk as E_set.
@@ -1292,7 +1396,7 @@ Section WithHole.
         rewrite map.get_put_diff by congruence.
         rewrite !map.get_put_diff by congruence.
         rewrite E_tup, E_pos, E_sacc.
-        rewrite H_txt, interp_trigram_at_val.
+        rewrite H_txt, ?pad_eq, interp_trigram_at_val.
         cbn [interp_binop interp_atom].
         lazymatch goal with
         | |- context[if ?tst then _ else _] => destruct tst eqn:E_nil
@@ -1301,7 +1405,7 @@ Section WithHole.
         all: unfold get_local.
         all: rewrite ?map.get_put_diff by congruence.
         all: rewrite ?E_tup, ?E_pos, ?E_sacc.
-        all: rewrite ?H_txt, ?interp_trigram_at_val.
+        all: rewrite ?H_txt, ?pad_eq, ?interp_pad_val, ?interp_trigram_at_val.
         all: reflexivity.
       Qed.
 
@@ -1313,7 +1417,7 @@ Section WithHole.
             (fun p a' => interp_expr store
                            (map.put (map.put env pos p) sacc a') tri_delete_body)
             (VDict d) ps
-          = VDict (fold_right (tri_unstep_d txt (row_key key r)) d ps).
+          = VDict (fold_right (tri_unstep_d (pad txt) (row_key key r)) d ps).
       Proof.
         intros * H_txt E_tup H_wf.
         induction ps as [ | p ps IH ]; cbn [fold_right]; [ reflexivity | ].
@@ -1332,7 +1436,7 @@ Section WithHole.
           map.get env acc = Some (VDict d) ->
           tri_wf d ->
           interp_expr store env tri_row_delete_body
-          = VDict (tri_row_unstep_d txt (row_key key r) d).
+          = VDict (tri_row_unstep_d (pad txt) (row_key key r) d).
       Proof.
         intros * H_txt E_tup E_acc H_wf.
         unfold tri_row_delete_body, tri_row_unstep_d.
@@ -1382,14 +1486,14 @@ Section WithHole.
 
       Lemma In_keys_at : forall g l (v : value),
           In v (keys_at g l)
-          <-> exists r, In r l /\ set_mem g (tri_keys (row_str r)) = true
+          <-> exists r, In r l /\ set_mem g (tri_keys (row_tri r)) = true
                         /\ row_key key r = v.
       Proof.
         intros g l v; induction l as [ | r l IH ].
         1:{ rewrite keys_at_nil; split;
             [ intros [] | intros [ r [ [] _ ] ] ]. }
         rewrite keys_at_cons.
-        destruct (set_mem g (tri_keys (row_str r))) eqn:E_mem; split.
+        destruct (set_mem g (tri_keys (row_tri r))) eqn:E_mem; split.
         1:{ intro H_in; apply set_insert_incl in H_in.
             destruct H_in as [ E | H_in ].
             1: exists r; split;
@@ -1411,7 +1515,7 @@ Section WithHole.
       Proof.
         intros g l; induction l as [ | r l IH ].
         1: rewrite keys_at_nil; constructor.
-        rewrite keys_at_cons; destruct (set_mem g (tri_keys (row_str r)));
+        rewrite keys_at_cons; destruct (set_mem g (tri_keys (row_tri r)));
           [ apply set_insert_preserve_SSorted; exact IH | exact IH ].
       Qed.
 
@@ -1419,7 +1523,7 @@ Section WithHole.
       Proof.
         intros g l; induction l as [ | r l IH ].
         1: rewrite keys_at_nil; constructor.
-        rewrite keys_at_cons; destruct (set_mem g (tri_keys (row_str r)));
+        rewrite keys_at_cons; destruct (set_mem g (tri_keys (row_tri r)));
           [ apply set_insert_preserve_NoDup; [ exact IH | apply keys_at_SSorted ]
           | exact IH ].
       Qed.
@@ -1470,7 +1574,7 @@ Section WithHole.
       Lemma keys_at_filter_neq_other : forall l (r : value) (k : value) g,
           NoDup (List.map (row_key key) l) ->
           In r l -> row_key key r = k ->
-          set_mem g (tri_keys (row_str r)) = false ->
+          set_mem g (tri_keys (row_tri r)) = false ->
           keys_at g (filter (fun r' => negb (value_eqb (row_key key r') k)) l)
           = keys_at g l.
       Proof.
@@ -1501,7 +1605,7 @@ Section WithHole.
           NoDup (List.map (row_key key) l) ->
           In r l -> row_key key r = k ->
           tri_dict (filter (fun r' => negb (value_eqb (row_key key r') k)) l)
-          = tri_row_unstep_d (row_str r) k (tri_dict l).
+          = tri_row_unstep_d (row_tri r) k (tri_dict l).
       Proof.
         intros l r k H_nd H_in E_k.
         apply dict_wf_lookup_ext.
@@ -1510,7 +1614,7 @@ Section WithHole.
             apply (proj1 (tri_unfold_d_preserve_tri_wf _ _ _ _ (tri_dict_tri_wf l))). }
         intros g.
         rewrite !tri_dict_lookup.
-        destruct (set_mem g (tri_keys (row_str r))) eqn:E_mem.
+        destruct (set_mem g (tri_keys (row_tri r))) eqn:E_mem.
         1:{ rewrite (tri_row_unstep_d_lookup_same _ _ _ _ (tri_dict_tri_wf l) E_mem).
             (* the stored bucket at g is the keys the table owes it *)
             assert (E_b : bucket_of g (tri_dict l) = keys_at g l).

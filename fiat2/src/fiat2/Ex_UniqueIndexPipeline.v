@@ -512,14 +512,20 @@ Section WithConcreteMaps.
      fold over rows, the fold over the positions at which the row's text has
      a trigram, and the read-modify-write of the bucket at that trigram.
      ------------------------------------------------------------------ *)
+  (* the text the index keys on: padded, as TrigramIndexImpl.row_text is *)
+  Definition ptup_text : expr :=
+    EBinop OConcatString (EAtom (AString "  "))
+      (EBinop OConcatString (EAccess (EVar "tup") "name")
+         (EAtom (AString " "))).
+
   Definition ptri_at (p : expr) : expr :=
-    ETernop OSubstring (EAccess (EVar "tup") "name") p (EAtom (AInt 3)).
+    ETernop OSubstring ptup_text p (EAtom (AInt 3)).
 
   Definition ptrigram_of (tbl : expr) : expr :=
     EFold tbl (EAtom (AEmptyDict Unranged None)) "tup" "acc"
       (EFold (EBinop ORange (EAtom (AInt 0))
                 (EBinop OMinus
-                   (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                   (EUnop OLengthString ptup_text)
                    (EAtom (AInt 2))))
          (EVar "acc") "pos" "sacc"
          (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
@@ -566,7 +572,7 @@ Section WithConcreteMaps.
       (ELet row "tup"
          (EFold (EBinop ORange (EAtom (AInt 0))
                    (EBinop OMinus
-                      (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                      (EUnop OLengthString ptup_text)
                       (EAtom (AInt 2))))
             (EVar "acc") "pos" "sacc"
             (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
@@ -942,7 +948,7 @@ Section WithConcreteMaps.
          (EVar "acc") "tup"
          (EFold (EBinop ORange (EAtom (AInt 0))
                    (EBinop OMinus
-                      (EUnop OLengthString (EAccess (EVar "tup") "name"))
+                      (EUnop OLengthString ptup_text)
                       (EAtom (AInt 2))))
             (EVar "acc") "pos" "sacc"
             (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))

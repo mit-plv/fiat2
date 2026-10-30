@@ -399,16 +399,25 @@ Section WithIndexUse.
       (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
          (EFold (EBinop ORange (EAtom (AInt 0))
                    (EBinop OMinus
-                      (EUnop OLengthString (EAccess (EVar tup1) attr0))
+                      (EUnop OLengthString
+                         (EBinop OConcatString (EAtom (AString "  "))
+                            (EBinop OConcatString (EAccess (EVar tup1) attr0)
+                               (EAtom (AString " ")))))
                       (EAtom (AInt 2))))
             (EVar acc1) pos0 sacc0
             (ETernop OInsert (EVar sacc1)
-               (ETernop OSubstring (EAccess (EVar tup2) attr1) (EVar pos1)
-                  (EAtom (AInt 3)))
+               (ETernop OSubstring
+                  (EBinop OConcatString (EAtom (AString "  "))
+                     (EBinop OConcatString (EAccess (EVar tup2) attr1)
+                        (EAtom (AString " "))))
+                  (EVar pos1) (EAtom (AInt 3)))
                (EOptMatch
                   (EBinop OLookup (EVar sacc2)
-                     (ETernop OSubstring (EAccess (EVar tup3) attr2) (EVar pos2)
-                        (EAtom (AInt 3))))
+                     (ETernop OSubstring
+                        (EBinop OConcatString (EAtom (AString "  "))
+                           (EBinop OConcatString (EAccess (EVar tup3) attr2)
+                              (EAtom (AString " "))))
+                        (EVar pos2) (EAtom (AInt 3))))
                   (EBinop OSetInsert (EAtom (AEmptySet None))
                      (EAccess (EVar tup4) key0))
                   bkt0 (EBinop OSetInsert (EVar bkt1)
@@ -2126,7 +2135,15 @@ Section WithIndexUse.
                  H: type_of_atom _ _ |- _ => inversion H; subst; clear H
                end.
         rewrite E_tbl in H5; injection H5 as H5; subst tl5.
-        rewrite E_id in H45; injection H45 as H45; subst t1.
+        (* matched by SHAPE, not by a generated name: padding the indexed
+           text adds typing premises to this goal, and every H<n> after the
+           insertion point moves when it does.  E_id has the same shape, so
+           it is skipped explicitly and match backtracks past it. *)
+        match goal with
+          H : access_record tl id_tag = Success (TList _) |- _ =>
+            tryif constr_eq H E_id then fail
+            else (rewrite E_id in H; injection H as H; subst)
+        end.
         injection H0 as H0; subst tl0.
         rewrite E_key in H15; injection H15 as H15; subst t9.
         eapply TyEAccess;
