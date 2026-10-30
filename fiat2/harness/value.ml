@@ -238,6 +238,41 @@ end = struct
         let c = cmp x y in
         if c <> 0 then c else list_compare cmp l1 l2
 
+  (* THE CHARACTERS A STRING COMPARISON REALLY EXAMINES.
+
+     [compare] charges one unit per value node it walks, which priced a
+     string -- however long -- at one.  That was an UNDER-count, and
+     count.ml used to carry it as a caveat in prose: honest only because the
+     generators keep keys short, with the one subject whose keys are long
+     strings reported under that caveat.  A tree descent on a string key
+     really compares the prefix the two keys share, once per level, and a
+     scan over string keys really does the same.
+
+     So the characters are charged here, by the same rule str_contains uses
+     for its scan: the common prefix, PLUS the one position where the two
+     differ, because that is where a byte comparison stops.  Equal strings
+     cost their whole length; two strings differing in the first character
+     cost one.  [hash] below charges the full length, because a hash cannot
+     stop early -- that asymmetry is the two operations' real difference,
+     not a convention.
+
+     The sign is what every caller reads (Map, Set, the sorts and the
+     leb/ltb derived from it), and this returns the same sign as
+     String.compare at every input: equal prefixes fall through to the
+     lengths, a difference returns the differing bytes compared as unsigned
+     numbers, which is what Rocq's String.compare does on Ascii codes and
+     what OCaml's does on bytes.  The differential test against the Gallina
+     oracle is what checks it. *)
+  let string_compare (a : string) (b : string) : int =
+    let la = String.length a and lb = String.length b in
+    let n = if la < lb then la else lb in
+    let rec go i =
+      if i = n then (Count.chars n; Int.compare la lb)
+      else if Char.equal a.[i] b.[i] then go (i + 1)
+      else (Count.chars (i + 1); Char.compare a.[i] b.[i])
+    in
+    go 0
+
   (* cardinality, needed by [compare] below and so needed INSIDE the knot;
      dcardinal and scardinal outside are these under their public names *)
   let dsize = function DTree m -> VMap.cardinal m | DHash h -> VTrie.cardinal h
@@ -253,7 +288,7 @@ end = struct
     match a, b with
     | VInt a, VInt b -> Int.compare a b
     | VBool a, VBool b -> Bool.compare a b
-    | VString a, VString b -> String.compare a b
+    | VString a, VString b -> string_compare a b
     | VOption a, VOption b ->
         (match a, b with
          | None, None -> 0
@@ -340,9 +375,13 @@ end = struct
 
   (* The hash a hashed store actually uses, and therefore the hash the
      counters actually count: one unit per value node, charged HERE, as
-     [compare] charges one per node it walks.  So `comparisons + hashing`
-     stays one figure for the work done on keys, and under a hashed store
-     that figure is now measured rather than modelled.
+     [compare] charges one per node it walks -- plus, for a string, its
+     bytes, to [strings], because a hash reads every one of them where a
+     comparison stops at the first difference.  That asymmetry is the two
+     operations' real difference and is why the charge is not symmetric.
+     So the work a KEY costs is `comparisons + hashing + strings`, measured
+     rather than modelled, and comparable across a tree and a trie because
+     both now pay for the bytes they touch.
 
      It must agree with [equal], which cannot see the order of a bag, a set
      or a dictionary -- so those combine their elements COMMUTATIVELY, with
@@ -352,7 +391,8 @@ end = struct
     match v with
     | VInt n -> Hashtbl.hash n
     | VBool b -> Hashtbl.hash b
-    | VString s -> Hashtbl.hash s
+    (* every byte, because a hash cannot stop early where a comparison can *)
+    | VString s -> Count.chars (String.length s); Hashtbl.hash s
     | VUnit -> 17
     | VOption None -> 19
     | VOption (Some v) -> 23 + (31 * hash v)

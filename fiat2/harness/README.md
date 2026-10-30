@@ -235,8 +235,10 @@ entries into `interp_expr` and `overhead` counts this interpreter's own bookkeep
 hand-written OCaml has neither. Charging them to our side and to nothing on theirs would
 make the comparison a measurement of the harness. So the tables that cross the boundary
 use **data work**, which is complete for everything the two sides both do, and the gap
-between the two figures is named rather than hidden. A string comparison counts as one,
-and so does a string hash, which is honest only because the generators keep keys short.
+between the two figures is named rather than hidden. A string key costs one comparison
+or one hash **plus its bytes**, charged to `strings`: the prefix a comparison shares
+before it stops, or the whole length when a hash walks it. So the work a key costs is
+`cmps + hashing + strings`, and a long key costs what it costs.
 
 **"Once per nesting level" is not "once",** and it has nothing to do with the phases of
 the optimizer -- this harness never runs the optimizer, it runs the extracted terms. It

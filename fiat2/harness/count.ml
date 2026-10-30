@@ -19,11 +19,11 @@
                   entries on sub-values.  This is where the cost of a
                   dictionary, bag or set operation lives: a probe into a
                   balanced tree is logarithmically many of them, a scan is
-                  linearly many.  A string comparison counts as one, which is
-                  honest only because the generators keep keys short; the one
-                  subject whose keys are long strings (the trigram one) is
-                  also the one where the counts are reported with that
-                  caveat.
+                  linearly many.  A string comparison is ONE of these plus
+                  the characters it examines, which go to [strings]: see
+                  value.ml's string_compare.  So a long key costs what it
+                  costs, and the caveat this line used to carry -- honest
+                  only because the generators keep keys short -- is retired.
 
      hashing      value nodes walked in order to HASH a key, one per node,
                   by exactly the rule [comparisons] uses for the nodes walked
@@ -46,7 +46,9 @@
      strings      characters a string primitive examines or produces: the
                   positions a naive substring scan really compares, the bytes
                   a substring copies, the bytes a concatenation writes, the
-                  digits an int-to-string emits.  It exists because the
+                  digits an int-to-string emits -- and the bytes a string KEY
+                  costs a structure, which is the prefix a comparison shares
+                  before it stops, or the whole length when a hash walks it.  It exists because the
                   dispatch of OStrContains is one step whatever the two
                   strings are, which made the one subject that is ABOUT string
                   matching the one subject whose characteristic cost was
