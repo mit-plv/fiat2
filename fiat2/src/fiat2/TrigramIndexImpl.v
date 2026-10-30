@@ -743,19 +743,17 @@ Section WithHole.
             apply In_eval_range. lia. }
       Qed.
 
-      (* The claim: a row whose text contains the pattern has its key in the
-         bucket of the pattern's first trigram. *)
-      Theorem tri_lookup_complete : forall (l : list value) r p,
+      (* The claim, for ANY trigram of the row's own text: the row's key is
+         in that trigram's bucket.  Stated this way rather than for the
+         pattern's first trigram, because the all-trigram lookup needs one
+         bucket per trigram of the pattern and they are all instances of
+         this. *)
+      Theorem tri_lookup_complete_at : forall (l : list value) r g,
           In r l ->
-          3 <= String.length p ->
-          String.index 0 p (row_str r) <> None ->
-          key_at (VString (String.substring 0 3 p)) (row_key key r) (tri_entries l).
+          In g (trigrams (row_str r)) ->
+          key_at (VString g) (row_key key r) (tri_entries l).
       Proof.
-        intros l r p H_in H_len H_occ.
-        (* the pattern's first trigram is one of the row's text's trigrams *)
-        destruct (String.index 0 p (row_str r)) as [ m | ] eqn:E_idx;
-          [ | contradiction ].
-        pose proof (occurrence_first_trigram p (row_str r) m H_len E_idx) as H_tri.
+        intros l r g H_in H_tri.
         apply In_trigrams_tri_key in H_tri.
         (* split the table at the row *)
         apply in_split in H_in as [ l1 [ l2 E_l ] ]; subst l.
@@ -764,6 +762,38 @@ Section WithHole.
         cbn [fold_right]; unfold tri_row_step.
         apply tri_fold_establishes; [ | exact H_tri ].
         apply tri_entries_buckets. cbn [buckets_are_sets]. constructor.
+      Qed.
+
+      (* A row whose text contains the pattern has its key in the bucket of
+         the pattern's FIRST trigram -- the fact the single-probe rule uses. *)
+      Theorem tri_lookup_complete : forall (l : list value) r p,
+          In r l ->
+          3 <= String.length p ->
+          String.index 0 p (row_str r) <> None ->
+          key_at (VString (String.substring 0 3 p)) (row_key key r) (tri_entries l).
+      Proof.
+        intros l r p H_in H_len H_occ.
+        destruct (String.index 0 p (row_str r)) as [ m | ] eqn:E_idx;
+          [ | contradiction ].
+        apply tri_lookup_complete_at; [ exact H_in | ].
+        eapply occurrence_first_trigram; [ exact H_len | exact E_idx ].
+      Qed.
+
+      (* And in the bucket of EVERY trigram of the pattern -- the fact the
+         all-trigram rule uses, so that intersecting the buckets keeps the
+         row.  No length hypothesis: a pattern shorter than three characters
+         has no trigrams, so the premise is unsatisfiable rather than false. *)
+      Theorem tri_lookup_complete_all : forall (l : list value) r p g,
+          In r l ->
+          String.index 0 p (row_str r) <> None ->
+          In g (trigrams p) ->
+          key_at (VString g) (row_key key r) (tri_entries l).
+      Proof.
+        intros l r p g H_in H_occ H_tri.
+        destruct (String.index 0 p (row_str r)) as [ m | ] eqn:E_idx;
+          [ | contradiction ].
+        apply tri_lookup_complete_at; [ exact H_in | ].
+        eapply occurrence_all_trigrams; [ exact E_idx | exact H_tri ].
       Qed.
 
       (* And the hypothesis above is exactly what a substring query's filter
