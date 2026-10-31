@@ -705,15 +705,14 @@ Section WithConcreteMaps.
   Definition sprobe (g p : expr) : expr := sprobe_from (sbucket g) p.
 
   (* and the general case: the buckets of every trigram of the pattern,
-     intersected by a fold over the pattern's own positions *)
+     collected by OTrigrams and intersected by an aggregate -- no seed, and
+     no reading of the pattern by position *)
   Definition sall_cands (p : expr) : expr :=
-    EFold
-      (EBinop ORange (EAtom (AInt 1))
-         (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))))
-      (sbucket (ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3))))
-      "cpos" "cacc"
-      (EBinop OSetIntersect (EVar "cacc")
-         (sbucket (ETernop OSubstring p (EVar "cpos") (EAtom (AInt 3))))).
+    EOptMatch
+      (EACIFold AGIntersect
+         (EFlatmap LikeSet (EUnop OSetOfList (EUnop OTrigrams p)) "cgram"
+            (EBinop OSetInsert (EAtom (AEmptySet None)) (sbucket (EVar "cgram")))))
+      (EAtom (AEmptySet None)) "b" (EVar "b").
 
   (* The fallback: the source query, served from the primary-key member
      rather than from the table's list.  The key is declared, so that member
@@ -822,13 +821,11 @@ Section WithConcreteMaps.
   Definition vprobe (g p : expr) : expr := vprobe_from (vbucket g) p.
 
   Definition vall_cands (p : expr) : expr :=
-    EFold
-      (EBinop ORange (EAtom (AInt 1))
-         (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))))
-      (vbucket (ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3))))
-      "cpos" "cacc"
-      (EBinop OSetIntersect (EVar "cacc")
-         (vbucket (ETernop OSubstring p (EVar "cpos") (EAtom (AInt 3))))).
+    EOptMatch
+      (EACIFold AGIntersect
+         (EFlatmap LikeSet (EUnop OSetOfList (EUnop OTrigrams p)) "cgram"
+            (EBinop OSetInsert (EAtom (AEmptySet None)) (vbucket (EVar "cgram")))))
+      (EAtom (AEmptySet None)) "b" (EVar "b").
 
   (* The fallback: literally sscan.  This configuration also stores the
      table's own set, at "0", so there are two members a scan could read --

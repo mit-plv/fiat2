@@ -299,12 +299,6 @@ Section WithIndexUse.
      delete rule needs these two, since the delete body is the only one that
      reads a position and a bucket under each other's binders *)
   Context (H_sacc_bkt : sacc <> bkt) (H_gvar_bkt : gvar <> bkt).
-  (* The all-trigram probe's own two binders: the position the candidate
-     fold is at, and the candidate set it has narrowed so far.  Added after
-     everything above so that the existing lemmas keep the arguments they
-     had -- only the lemmas that mention these two acquire them. *)
-  Context (cpos cacc : string).
-  Context (H_cacc_cpos : cacc <> cpos).
   (* The separators the index tokenizes on, and the two binders of the
      fold over a row's WORDS: the word itself, and the index built from the
      words before it.  Last again, for the same reason. *)
@@ -318,6 +312,11 @@ Section WithIndexUse.
   Context (H_wacc_sacc : wacc <> sacc).
   Context (H_wacc_bkt : wacc <> bkt).
   Context (H_wacc_wrd : wacc <> wrd).
+  (* The all-trigram probe's one binder, which replaces the cpos/cacc pair:
+     the aggregate carries no accumulator, so the only name the rewritten
+     candidate set introduces is the trigram it is looking up.  Last again,
+     so the lemmas above keep the arguments they had. *)
+  Context (cgram : string).
 
   Notation tridx :=
     (trigram_idx hole attr key tup acc gvar sacc bkt seps wrd wacc).
@@ -1143,143 +1142,203 @@ Section WithIndexUse.
       Qed.
 
       (* ------------------------------------------------------------------
-         The candidate set of a pattern known only at run time.
+         The candidate set, as an AGGREGATE over the set of buckets.
 
-         A literal hands over its trigram list at rewrite time; a pattern
-         that is a variable does not, so the chain of intersections becomes
-         a FOLD over the pattern's own trigram positions.  Seeded with the
-         first trigram's bucket, which is what makes the empty-narrowing
-         case the single-bucket probe.
+         Every trigram of the pattern must be present for the pattern to
+         occur, so the candidates are the intersection of all their buckets.
+         The old form above folded OSetIntersect over ORange 1 (|p| - 2),
+         reading each trigram out of the string with OSubstring.  That shape
+         paid twice: intersection has no identity over an unknown universe,
+         so the fold needed a SEED, and the seed had to be the bucket of a
+         trigram named by POSITION.  AGIntersect is associative, commutative
+         and idempotent, so the aggregate commits to no order, needs no seed,
+         and answers at TOption -- and its None, the empty set of buckets, is
+         exactly the case in which the index says nothing.
          ------------------------------------------------------------------ *)
-      Definition tri_at (p pe : expr) : expr :=
-        ETernop OSubstring p pe (EAtom (AInt 3)).
 
-      (* 1, 2, ... |p| - 3: the positions AFTER the first, because the fold
-         is seeded with the first trigram's bucket.  Starting at 0 instead
-         would look the first bucket up twice and intersect it with itself,
-         which costs a second probe and a whole set walk for nothing -- and
-         for a pattern of exactly three characters, where there is only one
-         trigram, that waste is the entire rewrite.  Starting at 1 makes the
-         one-trigram case an EMPTY fold, so the rewritten term reduces to the
-         single-bucket probe. *)
-      Definition tri_positions (p : expr) : expr :=
-        EBinop ORange (EAtom (AInt 1))
-          (EBinop OMinus (EUnop OLengthString p) (EAtom (AInt 2))).
+      (* One bucket per trigram of the pattern, as a SET of buckets.  The
+         coercion deduplicates, which costs nothing in answers because
+         intersection is idempotent, and saves a probe whenever a pattern
+         repeats a trigram -- pad "aaaa" contains "aaa" twice. *)
+      Definition tri_buckets (p : expr) : expr :=
+        EFlatmap LikeSet (EUnop OSetOfList (EUnop OTrigrams p)) cgram
+          (EBinop OSetInsert (EAtom (AEmptySet None)) (tri_bucket_e (EVar cgram))).
 
-      Definition cands_body (p : expr) : expr :=
-        EBinop OSetIntersect (EVar cacc) (tri_bucket_e (tri_at p (EVar cpos))).
+      Definition dyn_cands' (p : expr) : expr :=
+        EOptMatch (EACIFold AGIntersect (tri_buckets p))
+          (EAtom (AEmptySet None)) b (EVar b).
 
-      Definition dyn_cands (p : expr) : expr :=
-        EFold (tri_positions p) (tri_bucket_e (tri_at p (EAtom (AInt 0))))
-          cpos cacc (cands_body p).
+      (* The Gallina side, written to match what the interpreter produces
+         rather than to be canonical: the outer list_to_set is EFlatmap
+         LikeSet's, the inner one OSetOfList's. *)
+      Definition bucket_set (pv : string) (d : value) : list value :=
+        list_to_set
+          (flat_map (fun gv => [VSet (tri_bucket gv d)])
+             (list_to_set (List.map VString (trigrams pv)))).
 
-      (* The trigram a position names, at the value level.  A position that
-         is not an integer names nothing, on both sides. *)
-      Definition tri_str (pv : string) (iv : value) : value :=
-        match iv with
-        | VInt i => VString (String.substring (Z.to_nat i) 3 pv)
-        | _ => VUnit
-        end.
+      Definition inter_all (bs : list value) : value :=
+        fold_right (snd (interp_aci_aggr AGIntersect))
+          (fst (interp_aci_aggr AGIntersect)) bs.
 
-      Definition cands_g (l : list value) (pv : string) (d : value)
-        (sl : list value) : list value :=
-        fold_right
-          (fun iv a => filter (fun v => set_mem v (tri_bucket (tri_str pv iv) d)) a)
-          sl l.
-
-      (* Completeness of the fold: a key in the seed and in every position's
-         bucket survives.  That is all the rule needs; soundness is the
-         recheck's business. *)
-      Lemma In_cands_g : forall l pv (d v : value) sl,
-          In v sl ->
-          (forall iv, In iv l -> In v (tri_bucket (tri_str pv iv) d)) ->
-          In v (cands_g l pv d sl).
+      (* The ONLY fact the rule needs about the aggregate, and it mentions
+         no order: a key survives the intersection exactly when it is in
+         every bucket.  That is why no permutation argument is needed even
+         though OSetOfList has sorted and deduplicated the trigrams -- the
+         characterization is order-free because the operation is. *)
+      Lemma inter_all_chara :
+        forall bs,
+          bs <> nil ->
+          Forall (fun s => exists l, s = VSet l) bs ->
+          exists l, inter_all bs = VOption (Some (VSet l)) /\
+                      (forall v, In v l <-> (forall l', In (VSet l') bs -> In v l')).
       Proof.
-        unfold cands_g; induction l as [ | iv l IH ];
-          intros pv d v sl H_sl H_all; cbn [fold_right].
-        1: exact H_sl.
-        apply filter_In; split.
-        1:{ apply IH; [ exact H_sl | ].
-            intros iv' H_in; apply H_all; right; exact H_in. }
-        1: apply set_mem_true_iff, H_all; left; reflexivity.
+        unfold inter_all; cbn [interp_aci_aggr].
+        induction bs as [ | s bs IH ]; intros H_ne H_sets; [ congruence | ].
+        invert_Forall.
+        lazymatch goal with H: exists _, s = VSet _ |- _ =>
+          destruct H as [ l0 E_s ]; subst s end.
+        destruct bs as [ | s' bs ].
+        (* one bucket: it IS the answer, with no seed to supply *)
+        1:{ exists l0; cbn [fold_right]; split; [ reflexivity | ].
+            intros v; split.
+            1:{ intros H_in l' [ E | [] ]. injection E as E; subst l'. exact H_in. }
+            1: intros H_all; apply H_all; left; reflexivity. }
+        (* at least two: narrow the tail's answer by this bucket *)
+        1:{ destruct (IH ltac:(discriminate) ltac:(assumption)) as [ a [ E_a H_a ] ].
+            cbn [fold_right] in *. rewrite E_a.
+            exists (filter (fun x => set_mem x a) l0); split; [ reflexivity | ].
+            intros v; split.
+            1:{ intros H_in; apply filter_In in H_in as [ H_l0 H_mem ].
+                apply set_mem_true_iff in H_mem.
+                intros l' [ E | H_in' ].
+                1:{ injection E as E; subst l'; exact H_l0. }
+                1: apply (proj1 (H_a v) H_mem); exact H_in'. }
+            1:{ intros H_all; apply filter_In; split.
+                1: apply H_all; left; reflexivity.
+                1:{ apply set_mem_true_iff, (proj2 (H_a v)).
+                    intros l' H_in'; apply H_all; right; exact H_in'. } } }
       Qed.
 
-      (* The inverse of In_eval_range: every element of a range really is
-         an integer at a position below the length. *)
-      Lemma In_eval_range_inv : forall n lo (iv : value),
-          In iv (eval_range lo n) ->
-          exists i, (i < n)%nat /\ iv = VInt (lo + Z.of_nat i).
+      (* What the rule needs about the set of buckets: which buckets are in
+         it (both directions, since completeness reads one way and the
+         subset argument the other), that they are all sets, and that there
+         is at least one. *)
+      Lemma In_bucket_set_inv : forall pv d l,
+          In (VSet l) (bucket_set pv d) ->
+          exists g, In g (trigrams pv) /\
+                      l = tri_bucket (VString g) d.
       Proof.
-        induction n as [ | n IH ]; intros lo iv H_in; cbn [eval_range] in H_in.
-        1: contradiction.
-        destruct H_in as [ E | H_in ].
-        1: exists 0%nat; split; [ lia | subst; f_equal; lia ].
-        1:{ destruct (IH (lo + 1)%Z iv H_in) as [ i [ H_lt E ] ].
-            exists (S i); split; [ lia | subst; f_equal; lia ]. }
+        unfold bucket_set; intros pv d l H_in.
+        apply list_to_set_incl, in_flat_map in H_in as [ gv [ H_gv [ E | [] ] ] ].
+        injection E as E; subst l.
+        apply list_to_set_incl, in_map_iff in H_gv as [ g [ E_g H_g ] ].
+        exists g; split; [ exact H_g | rewrite E_g; reflexivity ].
       Qed.
 
-      (* One narrowing step of the fold. *)
-      Lemma interp_cands_step :
-        forall (store env : locals) (p : expr) (pv : string) (iv : value)
-               (al : list value) (td : list (value * value)),
+      Lemma In_bucket_set : forall pv d g,
+          In g (trigrams pv) ->
+          In (VSet (tri_bucket (VString g) d)) (bucket_set pv d).
+      Proof.
+        unfold bucket_set; intros pv d g H_g.
+        apply list_to_set_incl_r, in_flat_map.
+        exists (VString g); split; [ | left; reflexivity ].
+        apply list_to_set_incl_r, in_map_iff.
+        exists g; split; [ reflexivity | exact H_g ].
+      Qed.
+
+      Lemma bucket_set_VSet : forall pv d,
+          Forall (fun s => exists l, s = VSet l) (bucket_set pv d).
+      Proof.
+        intros pv d; rewrite Forall_forall; intros s H_in.
+        unfold bucket_set in H_in.
+        apply list_to_set_incl, in_flat_map in H_in as [ gv [ _ [ E | [] ] ] ].
+        exists (tri_bucket gv d); congruence.
+      Qed.
+
+      Lemma bucket_set_not_nil : forall pv d,
+          (3 <= String.length pv)%nat -> bucket_set pv d <> nil.
+      Proof.
+        intros pv d H_len E_nil.
+        destruct (trigrams pv) as [ | g gs ] eqn:E_tg.
+        1: apply (trigrams_not_nil _ H_len); exact E_tg.
+        pose proof (In_bucket_set pv d g) as H.
+        rewrite E_nil in H. apply H. rewrite E_tg; left; reflexivity.
+      Qed.
+
+      (* The emitted set of buckets computes the Gallina one.  The pattern is
+         read in the OUTER environment -- it sits under no binder here, which
+         is the second thing the positional fold cost: there, the pattern had
+         to read the same under both of the fold's binders. *)
+      Lemma interp_tri_buckets :
+        forall (store env : locals) (p : expr) (pv : string)
+               (td : list (value * value)),
           interp_expr store env tri_e = VDict td ->
           Forall (fun e : value * value =>
                     match snd e with VSet _ => True | _ => False end) td ->
-          interp_expr store (map.put (map.put env cpos iv) cacc (VSet al)) p
-          = VString pv ->
-          interp_expr store (map.put (map.put env cpos iv) cacc (VSet al))
-            (cands_body p)
-          = VSet (filter (fun v => set_mem v (tri_bucket (tri_str pv iv) (VDict td)))
-                    al).
+          interp_expr store env p = VString pv ->
+          interp_expr store env (tri_buckets p)
+          = VSet (bucket_set pv (VDict td)).
       Proof.
-        intros store env p pv iv al td E_tri H_sets H_p.
-        assert (H_tri' : interp_expr store
-                           (map.put (map.put env cpos iv) cacc (VSet al)) tri_e
-                         = VDict td).
+        intros store env p pv td E_tri H_sets E_p.
+        unfold tri_buckets, bucket_set.
+        rewrite interp_EFlatmap_set, interp_EUnop, interp_EUnop, E_p.
+        cbn [interp_unop]. do 2 f_equal.
+        apply flat_map_ext; intros gv.
+        assert (H_tri' : interp_expr store (map.put env cgram gv) tri_e = VDict td).
         1:{ rewrite (interp_tbl_access_env_irrel store _ env aux_tag tri_tag).
             exact E_tri. }
-        assert (H_g : interp_expr store
-                        (map.put (map.put env cpos iv) cacc (VSet al))
-                        (tri_at p (EVar cpos)) = tri_str pv iv).
-        1:{ unfold tri_at. rewrite interp_ETernop, H_p, interp_EVar, interp_EAtom.
-            unfold get_local.
-            rewrite map.get_put_diff by congruence.
-            rewrite map.get_put_same.
-            destruct iv as [ i | | | | | | | | | ];
-              cbn [interp_atom interp_ternop tri_str]; reflexivity. }
-        unfold cands_body.
-        rewrite interp_EBinop, interp_EVar.
-        unfold get_local; rewrite map.get_put_same.
-        rewrite (interp_tri_bucket_e store _ _ _ td H_g H_tri' H_sets).
-        cbn [interp_binop]. reflexivity.
+        rewrite interp_EBinop, interp_EAtom.
+        rewrite (interp_tri_bucket_e store _ _ gv td
+                   ltac:(rewrite interp_EVar; unfold get_local;
+                         rewrite map.get_put_same; reflexivity)
+                   H_tri' H_sets).
+        cbn [interp_atom interp_binop set_insert]. reflexivity.
       Qed.
 
-      (* And the whole fold.  The pattern must read the same under the
-         fold's two binders, which the rule's guard checks syntactically. *)
-      Lemma interp_cands_fold :
-        forall (l : list value) (store env : locals) (p e1 seed : expr)
-               (pv : string) (sl : list value) (td : list (value * value)),
-          interp_expr store env e1 = VList l ->
-          interp_expr store env seed = VSet sl ->
+      Lemma interp_EACIFold : forall (store env : locals) ag e,
+          interp_expr store env (EACIFold ag e) =
+            let '(zr, op) := interp_aci_aggr ag in
+            match interp_expr store env e with
+            | VSet l => fold_right op zr l
+            | _ => VUnit
+            end.
+      Proof. reflexivity. Qed.
+
+      (* The whole candidate set.  Under the rule's guard the bucket set is
+         nonempty, so the aggregate's None branch -- the scan fallback -- is
+         unreachable and the answer is always the intersection.  No seed, no
+         position, and the characterization is by membership alone. *)
+      Lemma interp_dyn_cands' :
+        forall (store env : locals) (p : expr) (pv : string)
+               (td : list (value * value)),
           interp_expr store env tri_e = VDict td ->
           Forall (fun e : value * value =>
                     match snd e with VSet _ => True | _ => False end) td ->
-          (forall (iv a : value),
-              interp_expr store (map.put (map.put env cpos iv) cacc a) p
-              = VString pv) ->
-          interp_expr store env (EFold e1 seed cpos cacc (cands_body p))
-          = VSet (cands_g l pv (VDict td) sl).
+          interp_expr store env p = VString pv ->
+          (3 <= String.length pv)%nat ->
+          exists cl,
+            interp_expr store env (dyn_cands' p) = VSet cl /\
+              (forall v, In v cl <->
+                           (forall g, In g (trigrams pv) ->
+                                      In v (tri_bucket (VString g) (VDict td)))).
       Proof.
-        intros l store env p e1 seed pv sl td E_e1 E_seed E_tri H_sets H_p.
-        rewrite interp_EFold, E_e1, E_seed.
-        (* E_e1 mentions l, so the induction would carry it into the IH as a
-           premise and the rewrite below would leave a side goal *)
-        clear E_e1.
-        unfold cands_g.
-        induction l as [ | iv l IH ]; cbn [fold_right].
-        1: reflexivity.
-        rewrite IH.
-        apply interp_cands_step; [ exact E_tri | exact H_sets | apply H_p ].
+        intros store env p pv td E_tri H_sets E_p H_len.
+        destruct (inter_all_chara (bucket_set pv (VDict td))
+                    (bucket_set_not_nil _ _ H_len)
+                    (bucket_set_VSet _ _)) as [ cl [ E_ia H_cl ] ].
+        exists cl; split.
+        1:{ unfold dyn_cands'.
+            rewrite interp_EOptMatch, interp_EACIFold,
+              (interp_tri_buckets store env p pv td E_tri H_sets E_p).
+            unfold inter_all in E_ia.
+            cbn [interp_aci_aggr fst snd] in E_ia |- *.
+            rewrite E_ia, interp_EVar.
+            unfold get_local; rewrite map.get_put_same. reflexivity. }
+        1:{ intros v; rewrite H_cl; split.
+            1: intros H_all g H_g; apply H_all, In_bucket_set; exact H_g.
+            1:{ intros H_all l' H_in.
+                apply In_bucket_set_inv in H_in as [ g [ H_g E_l ] ]; subst l'.
+                apply H_all; exact H_g. } }
       Qed.
 
       (* ==================================================================
@@ -1787,8 +1846,11 @@ Section WithIndexUse.
          the guarded rule above -- same shape, same runtime length test,
          same fallback to the scan, same recheck.
 
-         The extra two freshness conditions are for the fold's binders: the
-         pattern is read under them, so it must not mention them.
+         The pattern is read under probe_from's two binders, so it must not
+         mention them.  It is read under NO binder of the candidate set --
+         the aggregate has no accumulator and the pattern sits outside the
+         flatmap's binder -- so the two freshness conditions the positional
+         fold needed for cpos and cacc are gone.
          ================================================================== *)
       Definition trigram_lookup_all_guarded_head (e : expr) : expr :=
         match e with
@@ -1799,52 +1861,36 @@ Section WithIndexUse.
                          (id_tag, [id_tag0])]
                 && negb (free_immut_in x0 p)
                 && negb (free_immut_in k p)
-                && negb (free_immut_in y p)
-                && negb (free_immut_in cpos p)
-                && negb (free_immut_in cacc p))%bool
-            then EIf (pattern_has_trigram p) (probe_from (dyn_cands p) p) e
+                && negb (free_immut_in y p))%bool
+            then EIf (pattern_has_trigram p) (probe_from (dyn_cands' p) p) e
             else e
         | _ => e
         end.
 
-      Lemma dyn_cands_ty : forall (Gstore Genv : tenv) tl ctl kt p,
+      Lemma dyn_cands'_ty : forall (Gstore Genv : tenv) tl ctl kt p,
           map.get Gstore tbl = Some (TRecord tl) ->
           access_record tl aux_tag = Success (TRecord ctl) ->
           access_record ctl tri_tag = Success (TDict Unranged TString (TSet kt)) ->
           type_wf kt ->
-          free_immut_in cpos p = false ->
-          free_immut_in cacc p = false ->
           type_of Gstore Genv p TString ->
-          type_of Gstore Genv (dyn_cands p) (TSet kt).
+          type_of Gstore Genv (dyn_cands' p) (TSet kt).
       Proof.
-        intros * E_tbl E_aux E_tri H_ktwf H_cpos H_cacc H_p.
-        unfold dyn_cands.
-        eapply TyEFold with (t1 := TInt).
-        1:{ (* the pattern's trigram positions *)
-            unfold tri_positions.
-            eapply TyEBinop; [ apply TyORange | apply TyEAtom; apply TyAInt | ].
-            eapply TyEBinop; [ apply TyOMinus | | apply TyEAtom; apply TyAInt ].
-            eapply TyEUnop; [ apply TyOLengthString | exact H_p ]. }
-        1:{ (* the seed: the first trigram's bucket *)
-            eapply tri_bucket_e_ty;
-              [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | ].
-            unfold tri_at.
-            eapply TyETernop; [ apply TyOSubstring | exact H_p
-                              | apply TyEAtom; apply TyAInt
-                              | apply TyEAtom; apply TyAInt ]. }
-        1:{ (* one narrowing step *)
-            unfold cands_body.
-            eapply TyEBinop; [ apply TyOSetIntersect | | ].
-            1: apply TyEVar; rewrite map.get_put_same; reflexivity.
-            1:{ eapply tri_bucket_e_ty;
-                  [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | ].
-                unfold tri_at.
-                eapply TyETernop; [ apply TyOSubstring | | | ].
-                1:{ apply not_free_immut_put_ty2; [ exact H_cacc | ].
-                    apply not_free_immut_put_ty2; [ exact H_cpos | exact H_p ]. }
-                1:{ apply TyEVar. rewrite map.get_put_diff by congruence.
-                    rewrite map.get_put_same; reflexivity. }
-                1: apply TyEAtom; apply TyAInt. } }
+        intros * E_tbl E_aux E_tri H_ktwf H_p.
+        assert (H_skwf : type_wf (TSet kt)) by (constructor; exact H_ktwf).
+        unfold dyn_cands'.
+        eapply TyEOptMatch with (t1 := TSet kt).
+        1:{ eapply TyEACIFold; [ apply TyAGIntersect | ].
+            unfold tri_buckets.
+            eapply TyEFlatmap_Set with (t1 := TString).
+            1:{ eapply TyEUnop; [ apply TyOSetOfList | ].
+                eapply TyEUnop; [ apply TyOTrigrams | exact H_p ]. }
+            1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+                1: apply TyEAtom; apply TyAEmptySet'; exact H_skwf.
+                1:{ eapply tri_bucket_e_ty;
+                      [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | ].
+                    apply TyEVar; rewrite map.get_put_same; reflexivity. } } }
+        1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
+        1: apply TyEVar; rewrite map.get_put_same; reflexivity.
       Qed.
 
       Lemma trigram_lookup_all_guarded_head_preserve_ty :
@@ -1909,9 +1955,9 @@ Section WithIndexUse.
         repeat (rewrite_l_to_r; do_injection2).
         unfold probe_from.
         eapply TyEFlatmap_Set with (t1 := kt).
-        1:{ eapply dyn_cands_ty;
+        1:{ eapply dyn_cands'_ty;
               [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf
-              | assumption | assumption | exact H_pty ]. }
+              | exact H_pty ]. }
         1:{ eapply TyEOptMatch.
             1:{ eapply TyEBinop; [ apply TyOLookup | | ].
                 1:{ eapply TyEAccess;
@@ -1994,15 +2040,6 @@ Section WithIndexUse.
               by assumption.
             rewrite <- (not_free_immut_put_sem pat k store env v) by assumption.
             exact E_pv. }
-        assert (H_pv_c : forall (iv a : value),
-                   interp_expr store (map.put (map.put env cpos iv) cacc a) pat
-                   = VString pv).
-        1:{ intros iv a.
-            rewrite <- (not_free_immut_put_sem pat cacc store
-                          (map.put env cpos iv) a) by assumption.
-            rewrite <- (not_free_immut_put_sem pat cpos store env iv)
-              by assumption.
-            exact E_pv. }
         assert (H_tri_e : interp_expr store env
                             (EAccess (EAccess (ELoc tbl) aux_tag) tri_tag) = VDict td)
           by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_tri ]).
@@ -2010,27 +2047,13 @@ Section WithIndexUse.
                            (EAccess (EAccess (ELoc tbl) aux_tag) pk_tag)
                          = VDict (UniqueDictIndexImpl.idx_entries key rows))
           by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_pk ]).
-        (* the seed: the bucket of the pattern's first trigram *)
-        assert (H_seed : interp_expr store env
-                           (tri_bucket_e (tri_at pat (EAtom (AInt 0))))
-                         = VSet (tri_bucket (VString (String.substring 0 3 pv))
-                                   (VDict td))).
-        1:{ eapply interp_tri_bucket_e; [ | exact H_tri_e | exact H_sets ].
-            unfold tri_at. rewrite interp_ETernop, E_pv.
-            cbn [interp_expr interp_atom interp_ternop]. reflexivity. }
-        (* the positions the fold runs over *)
-        assert (H_pos : interp_expr store env (tri_positions pat)
-                        = VList (eval_range 1
-                                   (Z.to_nat (Z.of_nat (String.length pv) - 2 - 1)))).
-        1:{ unfold tri_positions.
-            rewrite interp_EBinop, interp_EBinop, interp_EUnop, E_pv, !interp_EAtom.
-            cbn [interp_unop interp_binop interp_atom]. reflexivity. }
-        (* so the candidate set is the intersection of every bucket *)
-        unfold dyn_cands.
-        rewrite (interp_probe_from store env _ _ _ pv _
-                   (interp_cands_fold _ store env pat _ _ pv _ td
-                      H_pos H_seed H_tri_e H_sets H_pv_c)
-                   H_pv' H_pk_e).
+        (* the candidate set is the intersection of EVERY trigram's bucket.
+           No seed to establish and no position to name: the guard's length
+           test makes the bucket set nonempty, which is all interp_dyn_cands'
+           needs to rule out the aggregate's None. *)
+        destruct (interp_dyn_cands' store env pat pv td H_tri_e H_sets E_pv H_len)
+          as [ cl [ E_cands H_cl ] ].
+        rewrite (interp_probe_from store env _ _ _ pv _ E_cands H_pv' H_pk_e).
         (* the scan side *)
         rewrite interp_flatmap_filter_set, interp_ESetOf,
           interp_EAccess, interp_ELoc.
@@ -2043,35 +2066,21 @@ Section WithIndexUse.
             rewrite <- (not_free_immut_put_sem pat x store env w) by assumption.
             rewrite E_pv.
             unfold contains_test, row_key. reflexivity. }
-        (* completeness: a row that contains the pattern survives the seed
-           and every narrowing step *)
+        (* completeness: a row that contains the pattern shares every one of
+           its trigrams, so it is in every bucket, so it survives the
+           intersection -- which is exactly what the characterization says,
+           with no induction over positions. *)
         assert (H_compl : forall (r : value),
                    In r rows -> contains_test attr pv r = true ->
-                   In (row_key key r)
-                     (cands_g
-                        (eval_range 1
-                           (Z.to_nat (Z.of_nat (String.length pv) - 2 - 1)))
-                        pv (VDict td)
-                        (tri_bucket (VString (String.substring 0 3 pv))
-                           (VDict td)))).
-        1:{ intros r H_in H_p. apply In_cands_g.
-            1:{ apply key_at__In_tri_bucket. rewrite <- E_te.
-                apply (TrigramIndexImpl.tri_lookup_complete attr key seps);
-                  [ exact H_in | exact H_free | exact H_len
-                  | apply contains_test_true__occurrence; exact H_p ]. }
-            1:{ intros iv H_iv.
-                apply In_eval_range_inv in H_iv as [ i [ H_lt E_iv ] ]; subst iv.
-                cbn [tri_str].
-                replace (Z.to_nat (1 + Z.of_nat i)) with (S i) by lia.
-                apply key_at__In_tri_bucket. rewrite <- E_te.
-                apply (TrigramIndexImpl.tri_lookup_complete_all attr key seps
-                         _ _ pv (String.substring (S i) 3 pv));
-                  [ exact H_in | exact H_free | | | ].
-                1:{ destruct pv; [ cbn [String.length] in H_len; lia
-                                 | discriminate ]. }
-                1: apply contains_test_true__occurrence; exact H_p.
-                unfold trigrams. apply in_map_iff.
-                exists (S i); split; [ reflexivity | ]. apply in_seq. lia. } }
+                   In (row_key key r) cl).
+        1:{ intros r H_in H_p. apply (proj2 (H_cl _)). intros g H_g.
+            apply key_at__In_tri_bucket. rewrite <- E_te.
+            apply (TrigramIndexImpl.tri_lookup_complete_all attr key seps
+                     _ _ pv g);
+              [ exact H_in | exact H_free | | | exact H_g ].
+            1:{ destruct pv; [ cbn [String.length] in H_len; lia
+                             | discriminate ]. }
+            1: apply contains_test_true__occurrence; exact H_p. }
         rewrite (probe_recheck_cands_eq attr key rows pv _ H_nd H_compl).
         unfold probe_body. reflexivity.
       Qed.

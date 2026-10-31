@@ -324,7 +324,7 @@ Section WithConcreteMaps.
        the index's own fold, run on one more row. *)
     Definition trigram_lookup_gated_transf (pk_tag : string) (ds : list decl) :=
       trigram_lookup_gated trigram_text_attr trigram_key_attr "id_tag" "aux_tag"
-        tag pk_tag "b" "k" "y" "cpos" "cacc" trigram_seps ds.
+        tag pk_tag "b" "k" "y" trigram_seps "cgram" ds.
 
     Definition cons_to_tri_insert_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl]
@@ -1228,9 +1228,9 @@ end.
                       "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (String.of_nat (S init_tag)) "b" "k" "y"
-                      "cpos" "cacc" ltac:(discriminate)
                       trigram_seps "wrd" "wacc"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      "cgram"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             intros H_uq. unfold trigram_bridges.

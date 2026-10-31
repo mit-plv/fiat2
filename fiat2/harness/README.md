@@ -743,10 +743,10 @@ With the binder in place the transformation is paid once per row.
 The index now keys on **words**, not on the whole field: `pg_trgm`'s `generate_trgm`
 runs `find_word` over the text and slides a three-window over each word padded on its
 own, so the per-row body is two nested folds and the two string operators `OWords` and
-`OTrigrams` stand for its two loops. The pattern side is unchanged -- it still reads
-the pattern's trigrams by position, unpadded -- with one addition: the rules now
-require the pattern to hold **no separator**, because a window straddling one, `"h J"`
-against `"Smith Jones"`, is a trigram of the text and is in no bucket.
+`OTrigrams` stand for its two loops. The rules also now require the pattern to hold
+**no separator**, because a window straddling one, `"h J"` against `"Smith Jones"`, is
+a trigram of the text and is in no bucket. The pattern side went through `OTrigrams`
+too, in a second step recorded below.
 
 On the names this generator builds, `"user0042"`, there is exactly one word, so the
 tokenized index holds **exactly the keys the padded whole-string index held**. That
@@ -796,6 +796,61 @@ of our witnesses have one -- Jenkins's `User.getFullName()` fixtures are `Fred S
 `Foo Bar`, `The User`; Wagtail's `title_text` is a `" ".join`. Changing the generator
 to a two-word name is a separate decision, because it moves every published
 `user_search` figure, so it is not folded in here.
+
+#### The pattern side, and what an aggregate costs an interpreter
+
+The all-trigram read used to intersect the buckets with a fold seeded at the bucket of
+a trigram named by position:
+
+```
+EFold (ORange 1 (|p| - 2)) (bucket (OSubstring p 0 3)) cpos cacc
+  (OSetIntersect cacc (bucket (OSubstring p cpos 3)))
+```
+
+Two warts in one term. The seed is there because intersection has **no identity** over
+an unknown universe, so there is no zero to start from; and the seed had to name a
+trigram, which it did by reaching into the string by position -- the same
+`ORange`-plus-`OSubstring` idiom that `OTrigrams` had just removed from the index body.
+`AGUnion` and `AGIntersect` retire both: an aggregate needs no seed and answers at
+`TOption`, whose `None` -- the empty bucket set -- is exactly the scan fallback.
+
+```
+EOptMatch (EACIFold AGIntersect
+            (EFlatmap LikeSet (OSetOfList (OTrigrams p)) cgram
+               (OSetInsert {} (bucket cgram))))
+          <fallback> b b
+```
+
+Both sides of the read now tokenize through the same operator, `tri_at` is gone from
+the subject, the rule's guard lost two freshness conditions (the pattern is read under
+*no* binder of the candidate set, where the fold read it under both of its own), and
+the completeness argument fell from 28 lines to 12 with no induction over positions --
+it is now one order-free membership characterization, `inter_all_chara`.
+
+Counted, it is a regression, confined to the kinds that reach the probe:
+
+| 1600 rows, `typed` | seeded fold | aggregate | delta |
+| --- | --- | --- | --- |
+| build work, build cmp + hash | 1,638,942 / 145,846 + 32,000 | identical | **0** |
+| `byId`, `suggestMiss`, `suggestShort`, `remove` | 1,508 / 705,460 / 763,223 / 31,166 | identical | **0** |
+| `suggest` (1 trigram) | 6,433 | 6,573 | +140 (+2.2%) |
+| `suggestLong` (3 trigrams) | 7,347 | **8,870** | **+1,523 (+20.7%)** |
+
+The two fallback kinds do not move because the guard fails before the probe is
+evaluated. The cost is entirely the **set of buckets**: `EACIFold` takes a set, so the
+term materializes a `TSet (TSet k)`, and canonicalizing it compares buckets -- whole
+key-sets -- element by element. The signature is in the delta: one trigram inserts one
+bucket into an empty set and compares nothing (+2.2%), three buckets compare pairwise
+(+20.7%).
+
+That cost is a property of **materializing an intermediate**, not of the shape. The
+set of buckets is built and immediately consumed by one consumer, and
+`EACIFold`'s set argument is a *demand declaration* -- it says this read observes
+neither order nor multiplicity. That declaration is what makes the interpreter pay the
+dedup, and it is also exactly the licence a compiler needs to fuse the build into the
+fold and skip the collection altogether. Being an ACI aggregate further licenses
+*reordering*, so a backend may intersect smallest-bucket-first, which a seeded fold
+would have pinned. The interpreter pays for the declaration; a compiler is paid by it.
 
 #### A side experiment: what a two-word name would do
 

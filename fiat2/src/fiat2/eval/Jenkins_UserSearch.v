@@ -307,12 +307,6 @@ Section WithConcreteMaps.
   Definition token : expr := EAccess (EVar "q") "k".
   Definition no_rows : expr := EAtom (ANil (Some row_ty)).
 
-  (* the trigram starting at pos of a text.  The PATTERN side still reads
-     trigrams out of a string by position -- it is the INDEX side that
-     tokenizes -- so this stays. *)
-  Definition tri_at (text pos : expr) : expr :=
-    ETernop OSubstring text pos (EAtom (AInt 3)).
-
   (* What the index keys on, as pg_trgm's generate_trgm does it: the row's
      text is split into WORDS, and each word is padded on its own.  The
      cross-word windows a whole-string extraction would produce are not
@@ -356,20 +350,20 @@ Section WithConcreteMaps.
       (EAtom (AEmptySet None)) "b" (EVar "b").
 
   (* Every trigram of the token has to be present for the token to occur, so
-     the candidates are the INTERSECTION of all their buckets: seeded with
-     the first trigram's bucket, then narrowed at each LATER position.  The
-     token's length is not known until run time, so this is a fold and not a
-     static chain -- and the range starts at 1, so a token of exactly three
-     characters has an empty fold and the term reduces to the single-bucket
-     probe. *)
+     the candidates are the INTERSECTION of all their buckets.  The token is
+     not known until run time, so the buckets are collected by OTrigrams --
+     the same operator the index body uses, so both sides of the read
+     tokenize the same way -- and intersected by an AGGREGATE.  Because
+     intersection is associative, commutative and idempotent the fold
+     commits to no order and needs no seed; its None is the empty bucket
+     set, which the guard rules out. *)
   Definition all_tri_candidates (tri_tag : string) : expr :=
-    EFold
-      (EBinop ORange (EAtom (AInt 1))
-         (EBinop OMinus (EUnop OLengthString token) (EAtom (AInt 2))))
-      (tri_bucket tri_tag (tri_at token (EAtom (AInt 0))))
-      "cpos" "cacc"
-      (EBinop OSetIntersect (EVar "cacc")
-         (tri_bucket tri_tag (tri_at token (EVar "cpos")))).
+    EOptMatch
+      (EACIFold AGIntersect
+         (EFlatmap LikeSet (EUnop OSetOfList (EUnop OTrigrams token)) "cgram"
+            (EBinop OSetInsert (EAtom (AEmptySet None))
+               (tri_bucket tri_tag (EVar "cgram")))))
+      (EAtom (AEmptySet None)) "b" (EVar "b").
 
   (* then each surviving key back to its row, with contains rechecked:
      sharing every trigram is still not sufficient *)

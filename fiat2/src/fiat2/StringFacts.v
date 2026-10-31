@@ -251,6 +251,18 @@ Proof.
   cbn [trigrams String.length Nat.sub List.seq List.map] in H; contradiction.
 Qed.
 
+(* The converse direction, and what a length guard buys: three characters are
+   exactly enough for one window.  The all-trigram lookup needs this to know
+   that the set of buckets it intersects is nonempty, which is what rules out
+   the aggregate's None. *)
+Lemma trigrams_not_nil : forall s,
+    (3 <= String.length s)%nat -> trigrams s <> nil.
+Proof.
+  intros s H_len; unfold trigrams.
+  destruct (String.length s - 2)%nat eqn:E; [ lia | ].
+  cbn [List.seq List.map]. discriminate.
+Qed.
+
 Lemma In_trigrams_length : forall s g, In g (trigrams s) -> String.length g = 3.
 Proof.
   unfold trigrams; intros s g H_in.
