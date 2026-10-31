@@ -130,7 +130,8 @@ Inductive binop : Type :=
 | OSetMem
 | OStrContains
 | OLookup
-| ODelete.
+| ODelete
+| OWords.
 
 (* Ternary operators *)
 Inductive ternop : Set :=

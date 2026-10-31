@@ -1633,9 +1633,14 @@ Section WithWord.
              cbn. constructor. }
         14:{ (* OStrContains *)
              repeat apply_type_sound_IH. cbn. constructor. }
-        (* OBagDiff.  Last in type_of_binop, so it arrives here once the
-           block above has taken OStrContains out of position 14. *)
+        (* OBagDiff, then OWords.  These two are last in type_of_binop, so
+           they arrive here once the block above has taken OStrContains out
+           of position 14. *)
         14:{ repeat apply_type_sound_IH. cbn. apply bag_diff_sound; constructor; auto. }
+        14:{ (* OWords: every element of the result is one of the words *)
+             repeat apply_type_sound_IH. cbn. constructor.
+             apply Forall_forall; intros v H_in.
+             apply in_map_iff in H_in as [ w [ E_w _ ] ]; subst v. constructor. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).

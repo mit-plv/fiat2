@@ -59,7 +59,7 @@ let operators (c : command) : string list =
     | OSetUnion -> "OSetUnion" | OSetIntersect -> "OSetIntersect"
     | OSetDiff -> "OSetDiff" | OSetMem -> "OSetMem"
     | OStrContains -> "OStrContains" | OLookup -> "OLookup"
-    | ODelete -> "ODelete" in
+    | ODelete -> "ODelete" | OWords -> "OWords" in
   let ternop = function
     | OInsert -> "OInsert" | OSubstring -> "OSubstring"
     | ODictRange -> "ODictRange" | ODictRangeDelete -> "ODictRangeDelete" in

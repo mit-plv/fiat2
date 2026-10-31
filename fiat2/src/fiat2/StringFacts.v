@@ -311,3 +311,56 @@ Proof.
   - rewrite substring_app_r, substring_app_l by lia. exact E_g.
   - apply in_seq. rewrite !length_append. lia.
 Qed.
+
+(* ==================================================================
+   WORDS
+
+   pg_trgm splits a text into the maximal runs of word characters and
+   trigrams each one separately, padded (trgm_op.c, find_word and
+   generate_trgm_only).  The separator class is a PARAMETER here, given as
+   the string of separator characters, because that is what the language
+   can compute: there is no ordering on characters, so ISWORDCHR's
+   "alphanumeric" -- the complement of an unbounded set -- is not
+   expressible, while membership in a literal alphabet is one
+   OStrContains.  pg_trgm's own class is a build-time choice
+   (KEEPONLYALNUM), so this narrows a parameter rather than changing the
+   design.  For the text the corpus actually holds -- human names -- the
+   separator set is the single space.
+   ================================================================== *)
+
+Definition is_sep (seps : string) (c : ascii) : bool :=
+  match String.index 0 (String c EmptyString) seps with
+  | Some _ => true
+  | None => false
+  end.
+
+(* The accumulator carries the word being built.  Written this way rather
+   than as "longest non-separator prefix, then recurse on the rest" because
+   the rest is not a structural subterm, which would cost a fuel argument
+   or a well-founded recursion for no gain in clarity. *)
+Fixpoint words_acc (seps cur s : string) : list string :=
+  match s with
+  | EmptyString => if String.eqb cur EmptyString then [] else [cur]
+  | String c s' =>
+      if is_sep seps c
+      then (if String.eqb cur EmptyString then [] else [cur])
+             ++ words_acc seps EmptyString s'
+      else words_acc seps (cur ++ String c EmptyString) s'
+  end.
+
+Definition words (seps s : string) : list string := words_acc seps EmptyString s.
+
+Example words_two : words " " "Fred Smith" = [ "Fred"; "Smith" ].
+Proof. reflexivity. Qed.
+
+Example words_runs_collapse : words " -" "Smith--Jones" = [ "Smith"; "Jones" ].
+Proof. reflexivity. Qed.
+
+Example words_edges : words " " "  lead trail  " = [ "lead"; "trail" ].
+Proof. reflexivity. Qed.
+
+Example words_none : words " " "user0042" = [ "user0042" ].
+Proof. reflexivity. Qed.
+
+Example words_empty : words " " "" = [].
+Proof. reflexivity. Qed.

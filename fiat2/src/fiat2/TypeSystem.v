@@ -192,10 +192,12 @@ Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOSetDiff t : type_of_binop OSetDiff (TSet t) (TSet t) (TSet t)
 | TyOSetMem t : type_of_binop OSetMem (TSet t) t TBool
 | TyOStrContains : type_of_binop OStrContains TString TString TBool
-(* Last on purpose: TypeSound.v selects the binop goals by POSITION, so a rule
-   added anywhere else renumbers every selector in that proof.  The order here
-   is already independent of the order in Language.v. *)
-| TyOBagDiff t : type_of_binop OBagDiff (TBag t) (TBag t) (TBag t).
+(* These two are last on purpose: TypeSound.v selects the binop goals by
+   POSITION, so a rule added anywhere else renumbers every selector in that
+   proof.  The order here is already independent of the order in Language.v,
+   so a new rule goes at the END of this list and nowhere else. *)
+| TyOBagDiff t : type_of_binop OBagDiff (TBag t) (TBag t) (TBag t)
+| TyOWords : type_of_binop OWords TString TString (TList TString).
 
 Inductive type_of_ternop : ternop -> type -> type -> type -> type -> Prop :=
 | TyOInsert dk kt vt : type_of_ternop OInsert (TDict dk kt vt) kt vt (TDict dk kt vt)
@@ -561,6 +563,7 @@ Definition binop_types (o : binop) : (type * type * type) :=
   | OPlus | OMinus | OTimes | ODiv | OMod => (TInt, TInt, TInt)
   | OConcatString => (TString, TString, TString)
   | OStrContains => (TString, TString, TBool)
+  | OWords => (TString, TString, TList TString)
   | OAnd | OOr => (TBool, TBool, TBool)
   | OLess => (TInt, TInt, TBool)
   | ORange => (TInt, TInt, TList TInt)

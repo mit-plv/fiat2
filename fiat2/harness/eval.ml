@@ -271,6 +271,28 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
   (* a contains b *)
   | OStrContains ->
       (match a, b with VString s, VString p -> VBool (str_contains s p) | _ -> VUnit)
+  (* the maximal runs of characters that are not separators, as pg_trgm's
+     find_word walks them.  Charged as the scan plus the bytes copied into
+     the words -- the class test is ONE step per character, as ISWORDCHR is,
+     not a search of the separator alphabet, which is what a backend and
+     pg_trgm both do. *)
+  | OWords ->
+      (match a, b with
+       | VString seps, VString s ->
+           Count.chars (String.length s);
+           let out = ref [] and buf = Buffer.create 16 in
+           let flush () =
+             if Buffer.length buf > 0 then begin
+               Count.chars (Buffer.length buf);
+               out := VString (Buffer.contents buf) :: !out;
+               Buffer.clear buf
+             end in
+           String.iter
+             (fun c -> if String.contains seps c then flush () else Buffer.add_char buf c)
+             s;
+           flush ();
+           VList (List.rev !out)
+       | _ -> VUnit)
   | OLookup ->
       (match a with
        | VDict (_, d) -> VOption (Value.dfind b d)

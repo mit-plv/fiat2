@@ -1,5 +1,5 @@
 From Stdlib Require Import ZArith String List DecimalString.
-Require Import fiat2.Language fiat2.Value.
+Require Import fiat2.Language fiat2.Value fiat2.StringFacts.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 
 Local Open Scope Z_scope.
@@ -229,6 +229,14 @@ Section WithWord.
                  | VDict d, k => VDict (dict_delete k d)
                  | _, _ => VUnit
                  end
+    (* the maximal runs of non-separator characters, as pg_trgm's find_word
+       walks them.  One operator, because the index's per-row body is then
+       literally generate_trgm_only's two loops. *)
+    | OWords => match a, b with
+                | VString seps, VString str =>
+                    VList (List.map VString (words seps str))
+                | _, _ => VUnit
+                end
     end.
 
   (* A bound is an OPTION because a key type need not have a least or a greatest

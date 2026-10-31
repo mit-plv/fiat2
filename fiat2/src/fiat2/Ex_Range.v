@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.SumAgg fiat2.MinAgg fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf
-  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno fiat2.ToPython.
+  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith.
 
@@ -151,6 +151,3 @@ Section WithConcreteMaps.
     lazymatch goal with H: In _ [] |- _ => apply in_nil in H; intuition idtac end.
   Qed.
 End WithConcreteMaps.
-
-Compute program_py prog.
-Compute map program_py prog_transformed.
