@@ -1582,7 +1582,11 @@ Section WithMap.
         repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
         lazymatch goal with
           H: type_of_aci_aggr _ _ _ |- _ => inversion H; subst
-        end; auto. }
+        end; auto;
+        (* AGUnion/AGIntersect read their element type out of the folded
+           expression's synthesized type, so the two agree only through the
+           equation the IH leaves behind *)
+        congruence. }
     1:{ generalize dependent tl. generalize dependent tl'.
         generalize dependent t'. revert e'.
         unfold record_type_from in *. induction l; intros.

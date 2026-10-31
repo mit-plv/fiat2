@@ -412,19 +412,37 @@ let interp_ac_fold (ag : aggr) (b : value list) : value =
         (VInt 0) b
   | AGCount -> VInt (List.length b)
 
-(* min and max are picked by COMPARISON, so the order the store hands them
-   over in cannot change the answer and is not paid for *)
+(* Every aci_aggr is picked by an operation that is associative, commutative
+   AND idempotent, so the order the store hands the elements over in cannot
+   change the answer and is not paid for.  What IS paid for is one walk of
+   the folded set, plus -- for the two set-level aggregates -- whatever
+   Value.sunion / Value.sinter charge, which is exactly what interp_binop
+   charges for OSetUnion / OSetIntersect.  The aggregate therefore costs the
+   same as the fold of the binop it replaces, and the saving is the seed. *)
 let interp_aci_fold (ag : aci_aggr) (s : Value.sstore) : value =
   Count.walk (Value.scardinal s);
-  let pick = match ag with AGMin -> min | AGMax -> max in
-  List.fold_right
-    (fun v acc ->
-       match acc with
-       | VOption None -> VOption (Some v)
-       | VOption (Some (VInt v')) ->
-           (match v with VInt z -> VOption (Some (VInt (pick z v'))) | _ -> VUnit)
-       | _ -> VUnit)
-    (Value.selements_unordered s) (VOption None)
+  let elems = Value.selements_unordered s in
+  match ag with
+  | AGMin | AGMax ->
+      let pick = match ag with AGMin -> min | _ -> max in
+      List.fold_right
+        (fun v acc ->
+           match acc with
+           | VOption None -> VOption (Some v)
+           | VOption (Some (VInt v')) ->
+               (match v with VInt z -> VOption (Some (VInt (pick z v'))) | _ -> VUnit)
+           | _ -> VUnit)
+        elems (VOption None)
+  | AGUnion | AGIntersect ->
+      let combine = match ag with AGUnion -> Value.sunion | _ -> Value.sinter in
+      List.fold_right
+        (fun v acc ->
+           match acc with
+           | VOption None -> VOption (Some v)
+           | VOption (Some (VSet a)) ->
+               (match v with VSet b -> VOption (Some (VSet (combine b a))) | _ -> VUnit)
+           | _ -> VUnit)
+        elems (VOption None)
 
 (* ---------- records ---------- *)
 

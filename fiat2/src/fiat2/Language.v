@@ -156,7 +156,19 @@ Inductive collection_tag := LikeSet | LikeBag | LikeList.
 
 Inductive aggr := AGSum | AGCount.
 
-Inductive aci_aggr := AGMin | AGMax.
+(* An associative, commutative, IDEMPOTENT operation folded over a set.
+   Because the operation has all three properties the fold commits to no
+   order, so no direction appears in the syntax and none has to be proved
+   unobservable -- contrast EFold, whose direction is part of its meaning.
+
+   AGUnion and AGIntersect are the set-level pair.  They exist because a
+   read that intersects one bucket per trigram had to be written as an
+   EFold seeded at the FIRST bucket: intersection has no identity over an
+   unknown universe, so there was no zero to start from and the seed became
+   a positional wart.  An aci_aggr answers at TOption instead, and None --
+   the empty input -- is exactly the case in which the caller must fall
+   back to a scan. *)
+Inductive aci_aggr := AGMin | AGMax | AGUnion | AGIntersect.
 
 (* Expressions *)
 Inductive expr : Type :=

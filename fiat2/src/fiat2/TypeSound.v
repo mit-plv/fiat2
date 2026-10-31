@@ -86,7 +86,13 @@ Section WithWord.
           repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
       (* ternary operators: the result type is the first operand's, or a string *)
       1: inversion H; subst; first [ apply IHtype_of1; auto | constructor ].
-      1: inversion H; repeat constructor; auto.
+      (* EACIFold: AGMin/AGMax answer at TOption TInt, whose element type is
+         closed; AGUnion/AGIntersect answer at TOption of the folded set's
+         element type, which sits one layer inside the IH and has to be
+         peeled out of it. *)
+      1: inversion H; subst; constructor;
+          first [ now constructor
+                | apply_type_of__type_wf_IH_hyp; invert_type_wf; auto ].
       1:{ constructor; auto.
           + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
           + apply Permutation_map with (f := snd), Permutation_sym in H2.
@@ -1001,22 +1007,6 @@ Section WithWord.
         end; cbn; constructor.
   Qed.
 
-  Lemma type_of_aci_aggr_sound : forall ag t1 t2,
-      type_of_aci_aggr ag t1 t2 ->
-      match interp_aci_aggr ag with
-      | (zr, op) => type_of_value zr t2 /\
-                      forall v acc,
-                        type_of_value v t1 -> type_of_value acc t2 ->
-                        type_of_value (op v acc) t2
-      end.
-  Proof.
-    intros; invert_type_of_agg; cbn in *.
-    all: split; [ constructor | ]; intros;
-    repeat lazymatch goal with
-          H: type_of_value _ _ |- _ =>
-            inversion H; subst; clear H
-        end; cbn; repeat constructor.
-  Qed.
 
   Ltac apply_Forall_In :=
     lazymatch goal with
@@ -1518,6 +1508,40 @@ Section WithWord.
     - rewrite Forall_forall; intros ? H_in.
       apply filter_In in H_in as [ H_in _ ].
       apply_Forall_In.
+  Qed.
+
+  (* Stated here rather than beside type_of_aggr_sound because AGUnion and
+     AGIntersect need set_union_sound and set_filter_sound, the same two
+     lemmas that type OSetUnion and OSetIntersect. *)
+  Lemma type_of_aci_aggr_sound : forall ag t1 t2,
+      type_of_aci_aggr ag t1 t2 ->
+      match interp_aci_aggr ag with
+      | (zr, op) => type_of_value zr t2 /\
+                      forall v acc,
+                        type_of_value v t1 -> type_of_value acc t2 ->
+                        type_of_value (op v acc) t2
+      end.
+  Proof.
+    intros; invert_type_of_agg; cbn in *.
+    (* AGMin, AGMax: both operands are integers, so inverting the two typing
+       hypotheses decides every case of the step function *)
+    1,2: split; [ constructor | ]; intros;
+         repeat lazymatch goal with
+               H: type_of_value _ _ |- _ =>
+                 inversion H; subst; clear H
+             end; cbn; repeat constructor.
+    (* AGUnion, AGIntersect: the step function IS the one interp_binop gives
+       OSetUnion / OSetIntersect, so the lemmas that type those binops type
+       these aggregates too.  The None accumulator is the empty input, which
+       is where a caller has to fall back to a scan. *)
+    all: split; [ constructor | ]; intros * H_v H_acc;
+      inversion H_v; subst; inversion H_acc; subst; cbn;
+      [ repeat constructor; auto | ].
+    all: lazymatch goal with
+         | H: type_of_value _ (TSet _) |- _ => inversion H; subst
+         end; constructor.
+    - apply set_union_sound; auto.
+    - apply set_filter_sound; auto.
   Qed.
 
   (* Restricting a well-typed dictionary to a range of keys keeps it well-typed *)

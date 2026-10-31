@@ -323,6 +323,27 @@ Section WithWord.
                                                end
                                            | _ => VUnit
                                            end)
+    (* The step functions below are the SAME functions interp_binop gives
+       OSetUnion and OSetIntersect, so a fold of the binop and the aggregate
+       agree by unfolding rather than by a lemma. *)
+    | AGUnion => (VOption None, fun v acc => match acc with
+                                             | VOption None => VOption (Some v)
+                                             | VOption (Some (VSet a)) =>
+                                                 match v with
+                                                 | VSet s => VOption (Some (VSet (fold_right set_insert a s)))
+                                                 | _ => VUnit
+                                                 end
+                                             | _ => VUnit
+                                             end)
+    | AGIntersect => (VOption None, fun v acc => match acc with
+                                                 | VOption None => VOption (Some v)
+                                                 | VOption (Some (VSet a)) =>
+                                                     match v with
+                                                     | VSet s => VOption (Some (VSet (filter (fun x => set_mem x a) s)))
+                                                     | _ => VUnit
+                                                     end
+                                                 | _ => VUnit
+                                                 end)
     end.
 
   Definition record_proj (s : string) (l : list (string * value)) : value :=

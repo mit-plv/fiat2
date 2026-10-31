@@ -222,7 +222,12 @@ Inductive type_of_aggr : aggr -> type -> type -> Prop :=
 
 Inductive type_of_aci_aggr : aci_aggr -> type -> type -> Prop :=
 | TyAGMin : type_of_aci_aggr AGMin TInt (TOption TInt)
-| TyAGMax : type_of_aci_aggr AGMax TInt (TOption TInt).
+| TyAGMax : type_of_aci_aggr AGMax TInt (TOption TInt)
+(* Polymorphic in the element type, and no well-formedness premise is
+   needed: t appears in TyEACIFold's own type_of premise for the folded
+   expression, which already carries it. *)
+| TyAGUnion : forall t, type_of_aci_aggr AGUnion (TSet t) (TOption (TSet t))
+| TyAGIntersect : forall t, type_of_aci_aggr AGIntersect (TSet t) (TOption (TSet t)).
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
@@ -857,6 +862,18 @@ Section WithMap.
                                  then l' <- analyze_expr Gstore Genv (TSet TInt) l ;;
                                       Success (EACIFold ag l')
                                  else error:(e "has type" (TOption TInt) "but expected" expected)
+                      | AGUnion => match expected with
+                                   | TOption (TSet t) =>
+                                       l' <- analyze_expr Gstore Genv (TSet (TSet t)) l ;;
+                                       Success (EACIFold ag l')
+                                   | expected => error:(e "has an option-of-set type but expected" expected)
+                                   end
+                      | AGIntersect => match expected with
+                                       | TOption (TSet t) =>
+                                           l' <- analyze_expr Gstore Genv (TSet (TSet t)) l ;;
+                                           Success (EACIFold ag l')
+                                       | expected => error:(e "has an option-of-set type but expected" expected)
+                                       end
                       end
     | ERecord l => match expected with
                    | TRecord tl =>
@@ -1118,6 +1135,18 @@ Section WithMap.
                            | AGMax =>
                                l' <- analyze_expr Gstore Genv (TSet TInt) l ;;
                                Success (TOption TInt, EACIFold ag l')
+                           | AGUnion =>
+                               '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                               match t1 with
+                               | TSet (TSet t) => Success (TOption (TSet t), EACIFold ag l')
+                               | t1 => error:(l "has type" t1 "but expected a set of sets")
+                               end
+                           | AGIntersect =>
+                               '(t1, l') <- synthesize_expr Gstore Genv l ;;
+                               match t1 with
+                               | TSet (TSet t) => Success (TOption (TSet t), EACIFold ag l')
+                               | t1 => error:(l "has type" t1 "but expected a set of sets")
+                               end
                            end
          | ERecord l => record_type_from (List.map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l)
          | EAccess e s => '(t, e') <- synthesize_expr Gstore Genv e ;;
