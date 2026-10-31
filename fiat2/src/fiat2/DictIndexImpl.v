@@ -434,6 +434,32 @@ Section WithHole.
           destruct H_in as [ <- | H_in ]; [ eexists; reflexivity | eauto ].
         Qed.
 
+        (* The index's KEYS are exactly the attribute values present, as a
+           canonical set.  An EQUALITY and not a permutation, which is the
+           point: both sides are built by the same insertion discipline
+           (map_fst_dict_insert), so they come out sorted and duplicate-free in
+           the same order.  A minimum read off the index's keys is therefore
+           the same value as a minimum read off the set of the table's
+           attribute values -- which is what a rule serving EACIFold AGMin
+           from ODictMinKey needs, since both answer the HEAD of a sorted
+           list. *)
+        Lemma map_fst_gallina_to_idx : forall l d,
+            Forall (fun r => exists rc, r = VRecord rc) l ->
+            gallina_to_idx (VList l) = VDict d ->
+            List.map fst d
+            = list_to_set (List.map (fun v => match v with
+                                              | VRecord r => record_proj attr r
+                                              | _ => VUnit
+                                              end) l).
+        Proof.
+          intros l d H_l. revert d.
+          induction H_l as [ | r l [ rc -> ] H_l IH ]; intros d H_d.
+          - cbn in H_d. injection H_d as <-. reflexivity.
+          - cbn [gallina_to_idx fold_right] in H_d. injection H_d as <-.
+            cbn [List.map list_to_set fold_right].
+            rewrite map_fst_dict_insert, (IH _ eq_refl). reflexivity.
+        Qed.
+
         (* Selecting the rows whose attr passes a test on the KEY gives the rows in
            the buckets that same test selects from the index, up to order.
 

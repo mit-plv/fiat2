@@ -1367,6 +1367,22 @@ Section WithWord.
         1: apply_Forall_In. }
   Qed.
 
+  (* A dictionary's KEYS after an insert are its keys before with that key
+     set-inserted.  The two insertion disciplines differ on the equal-key
+     branch -- dict_insert replaces the entry, set_insert returns the list
+     untouched -- and agree there anyway, because both leave the key SEQUENCE
+     alone.  This is what lets a minimum read off a dictionary's keys be
+     compared with one read off a set of the same values. *)
+  Lemma map_fst_dict_insert : forall k v (d : list (value * value)),
+      List.map fst (dict_insert k v d) = set_insert k (List.map fst d).
+  Proof.
+    intros k v d. induction d as [ | [ k' v' ] d IH ]; cbn [dict_insert set_insert List.map fst]; auto.
+    destruct (value_ltb k k') eqn:E1; cbn [List.map fst]; auto.
+    destruct (value_eqb k k') eqn:E2; cbn [List.map fst].
+    - apply value_eqb_eq in E2; subst. reflexivity.
+    - rewrite IH. reflexivity.
+  Qed.
+
   Lemma list_to_set_SSorted : forall (l : list value),
       StronglySorted value_leb (list_to_set l).
   Proof.
