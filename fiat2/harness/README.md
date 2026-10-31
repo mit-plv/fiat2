@@ -796,3 +796,54 @@ of our witnesses have one -- Jenkins's `User.getFullName()` fixtures are `Fred S
 `Foo Bar`, `The User`; Wagtail's `title_text` is a `" ".join`. Changing the generator
 to a two-word name is a separate decision, because it moves every published
 `user_search` figure, so it is not folded in here.
+
+#### A side experiment: what a two-word name would do
+
+Run once, with `gen.ml`'s `user_search` row changed to `"user%04d grp%02d"` and
+**reverted afterwards** -- the field is 14 characters instead of 8, two words, and the
+second word is low-cardinality so its buckets are large. Everything else held fixed,
+1600 rows, `typed`:
+
+| | one word, `"user0042"` | two words, `"user0042 grp02"` |
+| --- | --- | --- |
+| build, src | 28,553,312 | 28,553,312 |
+| build, opt | 1,638,942 | 2,688,362 |
+| build cmp + hash | 145,846 + 32,000 | 262,134 + 51,200 |
+| ops, src | 4,004,936 | 4,803,135 |
+| ops, opt | 1,506,483 | 1,935,435 |
+| `byId` | 1,508 | 1,508 |
+| `suggest` | 6,433 | **6,433** |
+| `suggestLong` | 7,347 | 7,401 |
+| `suggestMiss` | 705,460 | 897,460 |
+| `suggestShort` | 763,223 | 980,668 |
+| `remove` | 31,166 | 53,146 |
+
+Three things are worth taking from it.
+
+**`suggest` does not move at all.** The generated tokens are digits, which occur only
+in the first word, so their buckets hold exactly the rows they held -- the second word
+adds keys the probe never asks for. The headline read figure is insensitive to the
+change; what moves is the *source*, 648,937 -> 847,274, because the author's scan runs
+`contains` on a field twice as long. So the ratio moves in our favour for a reason that
+has nothing to do with indexing, which is exactly the kind of movement to be wary of.
+
+**Tokenizing does not change how many keys a row contributes.** For single-character
+separators the two extractions produce the *same count*: whole-string padding gives
+`L+1` windows on a field of length `L`, and tokenizing gives `sum(|w_i| + 1)`, which is
+`(L - (k-1)) + k = L+1` for `k` words. Checked: `"user0042 grp02"` gives 15 either way,
+and 15 distinct either way. The separator's three cross-boundary windows are traded for
+three padding windows, one for one. So the index is the same size and holds different
+things -- which is the whole content of the change, and why the `+480` guard is the only
+read-side cost anywhere in this file.
+
+**The write path grows with the field, not with the tokenizing.** Build opt goes up
+1.64x where the per-row key count goes up 15/9 = 1.67x, and comparisons go up 1.80x
+because the dictionary itself is bigger (more distinct trigrams, so more comparisons per
+insert). `remove` tracks the same 1.7x.
+
+The two fallback kinds go up about 27% on both sides together: they scan and `contains`
+a field twice as long, and the source pays it too.
+
+Not folded in, because it moves every published `user_search` figure and the decision of
+whether the evaluation's names should be multi-word is not the harness's to make. The
+case for it is in `real-workload-sizes`: both witnesses' indexed fields are multi-word.
