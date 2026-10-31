@@ -82,6 +82,11 @@ Section WithWord.
                  | VList l => VInt (Z.of_nat (List.length l))
                  | _ => VUnit
                  end
+    (* the three-character windows, in order; see Language.OTrigrams *)
+    | OTrigrams => match v with
+                   | VString s => VList (List.map VString (trigrams s))
+                   | _ => VUnit
+                   end
     | OLengthString => match v with
                        | VString s => VInt (Z.of_nat (String.length s))
                        | _ => VUnit

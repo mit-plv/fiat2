@@ -46,6 +46,7 @@ let operators (c : command) : string list =
   let unop = function
     | ONeg -> "ONeg" | ONot -> "ONot" | OLength -> "OLength"
     | OLengthString -> "OLengthString" | OStringOfInt -> "OStringOfInt"
+    | OTrigrams -> "OTrigrams"
     | OSome -> "OSome" | ODictValues -> "ODictValues"
     | OSetOfBag -> "OSetOfBag"
     | OBagOfList -> "OBagOfList" | OSetOfList -> "OSetOfList" in

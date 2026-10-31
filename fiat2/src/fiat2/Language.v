@@ -99,7 +99,16 @@ Inductive unop : Type :=
    an order-insensitive read served from a dictionary could not deliver a set. *)
 | OSetOfBag
 | OBagOfList
-| OSetOfList.
+| OSetOfList
+(* The three-character windows of a string, in order.  A LIST, not a set:
+   the index folds them into a dictionary, and EFold is list-only because
+   a foreign accumulator over a set would need the step to commute.
+   Duplicates are harmless -- set_insert is idempotent.
+
+   Deliberately NOT parameterized by padding widths: pg_trgm's LPADDING and
+   RPADDING stay out of the language, written at the call site as ordinary
+   concatenation, so that trigrams_pad keeps doing visible work. *)
+| OTrigrams.
 
 (* Binary operators *)
 Inductive binop : Type :=

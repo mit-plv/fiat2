@@ -167,7 +167,10 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyODictValues dk kt vt : type_of_unop ODictValues (TDict dk kt vt) (TBag vt)
 | TyOSetOfBag t : type_of_unop OSetOfBag (TBag t) (TSet t)
 | TyOBagOfList t : type_of_unop OBagOfList (TList t) (TBag t)
-| TyOSetOfList t : type_of_unop OSetOfList (TList t) (TSet t).
+| TyOSetOfList t : type_of_unop OSetOfList (TList t) (TSet t)
+(* Last, for the same reason the binop list says: TypeSound selects these
+   goals positionally once its catch-alls have run. *)
+| TyOTrigrams : type_of_unop OTrigrams TString (TList TString).
 
 Inductive type_of_binop : binop -> type -> type -> type -> Prop :=
 | TyOPlus : type_of_binop OPlus TInt TInt TInt
@@ -554,6 +557,7 @@ Definition unop_types (o : unop) : (type * type) :=
   | ONeg => (TInt, TInt)
   | ONot => (TBool, TBool)
   | OLengthString => (TString, TInt)
+  | OTrigrams => (TString, TList TString)
   | OStringOfInt => (TInt, TString)
   | _ => (TUnit, TUnit) (* unused *)
   end.

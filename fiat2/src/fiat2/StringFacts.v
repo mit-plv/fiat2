@@ -364,3 +364,135 @@ Proof. reflexivity. Qed.
 
 Example words_empty : words " " "" = [].
 Proof. reflexivity. Qed.
+
+(* ==================================================================
+   WORDS AND OCCURRENCES
+
+   The fact the whole tokenized lookup rests on: an occurrence that
+   contains no separator lies inside a single WORD of the text.  A
+   word-split index can therefore answer a substring query -- the pattern
+   never straddles a word boundary, so one word contains it, and that
+   word's padded trigrams are in the index.
+   ================================================================== *)
+Lemma append_nil_r : forall s, (s ++ "")%string = s.
+Proof. induction s as [ | c s IH ]; cbn [append]; congruence. Qed.
+
+Lemma append_assoc : forall s t u, ((s ++ t) ++ u)%string = (s ++ (t ++ u))%string.
+Proof. induction s as [ | c s IH ]; intros; cbn [append]; congruence. Qed.
+
+(* a string with no separator in it: one whole word, or empty *)
+Fixpoint sep_free (seps s : string) : bool :=
+  match s with
+  | EmptyString => true
+  | String c s' => negb (is_sep seps c) && sep_free seps s'
+  end.
+
+(* W1: a separator-free accumulator may be pushed back into the input *)
+Lemma words_acc_absorb : forall seps cur pre s,
+    sep_free seps cur = true ->
+    words_acc seps (pre ++ cur) s = words_acc seps pre (cur ++ s).
+Proof.
+  induction cur as [ | c cur IH ]; intros pre s H_free.
+  1:{ rewrite append_nil_r. reflexivity. }
+  cbn [sep_free] in H_free. rewrite Bool.andb_true_iff in H_free.
+  destruct H_free as [ H_c H_cur ]. rewrite Bool.negb_true_iff in H_c.
+  cbn [append words_acc]. rewrite H_c.
+  rewrite <- (IH (pre ++ String c EmptyString) s H_cur).
+  rewrite append_assoc. reflexivity.
+Qed.
+
+(* W2: with a non-empty accumulator the first word emitted extends it *)
+Lemma words_acc_head : forall seps s cur,
+    cur <> EmptyString ->
+    exists t rest, words_acc seps cur s = (cur ++ t) :: rest.
+Proof.
+  intros seps s; induction s as [ | c s IH ]; intros cur H_ne.
+  1:{ cbn [words_acc]. destruct (String.eqb cur EmptyString) eqn:E.
+      1: apply String.eqb_eq in E; contradiction.
+      exists EmptyString, nil. rewrite append_nil_r. reflexivity. }
+  cbn [words_acc]. destruct (is_sep seps c) eqn:E_sep.
+  1:{ destruct (String.eqb cur EmptyString) eqn:E.
+      1: apply String.eqb_eq in E; contradiction.
+      exists EmptyString, (words_acc seps EmptyString s).
+      rewrite append_nil_r. reflexivity. }
+  destruct (IH (cur ++ String c EmptyString)) as [ t [ rest E ] ].
+  1:{ destruct cur; [ contradiction | discriminate ]. }
+  exists (String c EmptyString ++ t), rest. rewrite E, append_assoc. reflexivity.
+Qed.
+
+Lemma sep_free_app : forall seps s t,
+    sep_free seps s = true -> sep_free seps t = true ->
+    sep_free seps (s ++ t) = true.
+Proof.
+  induction s as [ | c s IH ]; intros t H_s H_t; cbn [sep_free append] in *;
+    [ exact H_t | ].
+  rewrite Bool.andb_true_iff in *. intuition auto.
+Qed.
+
+(* THE lemma the tokenized lookup rests on: an occurrence that contains no
+   separator lies inside a single WORD of the text.  That is what makes a
+   word-split index answer a substring query -- the pattern never straddles
+   a word boundary, so some one word contains it, and that word's padded
+   trigrams are in the index.
+
+   Generalized over the accumulator, which is what makes the induction on
+   the prefix go through: a word character before the occurrence does not
+   restart the word, it extends it. *)
+Lemma sep_free_inside_word_acc : forall seps a w pre b,
+    sep_free seps w = true ->
+    w <> EmptyString ->
+    sep_free seps pre = true ->
+    exists w' x y, In w' (words_acc seps pre (a ++ w ++ b)) /\ w' = x ++ w ++ y.
+Proof.
+  intros seps a; induction a as [ | c a IH ]; intros w pre b H_w H_ne H_pre.
+  - cbn [append].
+    rewrite <- (words_acc_absorb seps w pre b H_w).
+    destruct (words_acc_head seps b (pre ++ w)) as [ t [ rest E ] ].
+    1:{ destruct pre as [ | c pre ]; cbn [append]; [ exact H_ne | discriminate ]. }
+    rewrite E. exists ((pre ++ w) ++ t), pre, t; split; [ left; reflexivity | ].
+    rewrite append_assoc. reflexivity.
+  - cbn [append words_acc]. destruct (is_sep seps c) eqn:E_sep.
+    + destruct (IH w EmptyString b H_w H_ne eq_refl)
+        as [ w' [ x [ y [ H_in E ] ] ] ].
+      exists w', x, y; split; [ | exact E ].
+      destruct (String.eqb pre EmptyString); cbn [app];
+        [ exact H_in | right; exact H_in ].
+    + apply (IH w (pre ++ String c EmptyString) b H_w H_ne).
+      apply sep_free_app; [ exact H_pre | ].
+      cbn [sep_free]. rewrite E_sep. reflexivity.
+Qed.
+
+Theorem sep_free_inside_word : forall seps w a b,
+    sep_free seps w = true ->
+    w <> EmptyString ->
+    exists w' x y, In w' (words seps (a ++ w ++ b)) /\ w' = x ++ w ++ y.
+Proof.
+  intros seps w a b H_free H_ne. unfold words.
+  apply sep_free_inside_word_acc; [ exact H_free | exact H_ne | reflexivity ].
+Qed.
+
+(* and therefore, in the form the index wants it: every trigram a
+   separator-free pattern demands is a trigram of some word's PADDED text,
+   which is exactly what the word-split index keys on.  trigrams_factor
+   carries the trigram from the pattern to the containing word, and
+   trigrams_pad carries it from the word to the word's padded form. *)
+Corollary trigrams_inside_word : forall seps w a b g,
+    sep_free seps w = true ->
+    w <> EmptyString ->
+    In g (trigrams w) ->
+    exists w', In w' (words seps (a ++ w ++ b)) /\ In g (trigrams (pad w')).
+Proof.
+  intros seps w a b g H_free H_ne H_tri.
+  destruct (sep_free_inside_word seps w a b H_free H_ne)
+    as [ w' [ x [ y [ H_in E ] ] ] ].
+  exists w'; split; [ exact H_in | ]. subst w'.
+  apply trigrams_pad, trigrams_factor. exact H_tri.
+Qed.
+
+(* the two shapes agree on a word: a word of a string is separator-free and
+   non-empty, which is what the corollary above asks for *)
+Example sep_free_word : sep_free " " "Smith" = true.
+Proof. reflexivity. Qed.
+
+Example sep_free_not : sep_free " " "Smith Jones" = false.
+Proof. reflexivity. Qed.

@@ -168,6 +168,18 @@ let interp_unop (o : unop) (v : value) : value =
   | OSome -> VOption (Some v)
   (* an OCaml string carries its length, so this reads a header word *)
   | OLengthString -> (match v with VString s -> VInt (String.length s) | _ -> VUnit)
+  (* the three-character windows, in order.  Charged as 3 characters per
+     window -- the bytes each one copies -- which is exactly what the old
+     per-position OSubstring fold was charged, so the two index shapes stay
+     comparable across the change. *)
+  | OTrigrams ->
+      (match v with
+       | VString s ->
+           let n = String.length s in
+           let k = max 0 (n - 2) in
+           Count.chars (3 * k);
+           VList (List.init k (fun i -> VString (String.sub s i 3)))
+       | _ -> VUnit)
   | OLength -> (match v with VList l -> let n = List.length l in Count.walk n; VInt n | _ -> VUnit)
   | OStringOfInt ->
       (match v with

@@ -1563,7 +1563,12 @@ Section WithWord.
         auto using SSorted_nil, Forall_nil, NoDup_nil.
       - (* TyEUnop *)
         inversion H; apply_type_sound_IH; try discriminate;
-          try solve [ repeat constructor; auto ].
+          try solve [ repeat constructor; auto ];
+          (* OTrigrams: every window is a string.  Solved here rather than by
+             a positional selector below, so the selectors keep their places. *)
+          try solve [ constructor; apply Forall_forall; intros ? H_in;
+                      apply in_map_iff in H_in as [ ? [ E ? ] ]; subst;
+                      constructor ].
         (* ODictValues: the values of a well-typed dictionary form a well-typed bag *)
         1:{ lazymatch goal with H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst end.
             apply list_to_bag_sound.
