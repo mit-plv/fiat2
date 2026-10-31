@@ -5,7 +5,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
-  fiat2.Ex_RangeDelete.
+  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
   extraction.ExtrOcamlNativeString.
@@ -85,6 +85,7 @@ Module KCl := Kafka_Cluster.
 Module KWS := Kafka_WindowStore.
 Module JID := Jenkins_ItemDeletion.
 Module ERD := Ex_RangeDelete.
+Module EMD := Ex_MinDelete.
 Module S4J := Sat4j_LiteralStorage.
 Module JDP := Jenkins_DependentPlugins.
 
@@ -98,6 +99,7 @@ Definition user_search_src : command := Eval vm_compute in JU.elaborated JU.decl
 Definition cluster_src : command := Eval vm_compute in KCl.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
 Definition range_delete_src : command := Eval vm_compute in ERD.prog.
+Definition min_delete_src : command := Eval vm_compute in EMD.prog.
 Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
 (* the nested-loop join: the one subject whose SOURCE is quadratic *)
 Definition dependent_plugins_src : command := Eval vm_compute in JDP.elaborated.
@@ -127,6 +129,16 @@ Definition window_store_opt : command :=
   Eval vm_compute in nth 1 KWS.prog_transformed CSkip.
 Definition range_delete_opt : command :=
   Eval vm_compute in nth 0 ERD.prog_transformed CSkip.
+
+(* Ex_MinDelete offers TWO configurations and the pair is the measurement:
+   config 0 pairs a set index on the attribute with the min aggregation, so the
+   recompute branch reads the SET of distinct prices; config 1 has the min
+   aggregation alone, so the recompute goes back to the table.  The guard rule
+   is identical in both -- only the cost of the branch it takes differs. *)
+Definition min_delete_opt : command :=
+  Eval vm_compute in nth 0 EMD.prog_transformed CSkip.
+Definition min_delete_opt_noset : command :=
+  Eval vm_compute in nth 1 EMD.prog_transformed CSkip.
 Definition item_deletion_opt : command := Eval vm_compute in JID.optimized_rep.
 (* the selector's own configuration for this one, which now includes the
    bag-level split (selector_emits_the_split_and_declines_set_mem) *)
@@ -178,6 +190,7 @@ Definition subjects : list (string * command * command) :=
   ; ("cluster", cluster_src, cluster_opt)
   ; ("window_store", window_store_src, window_store_opt)
   ; ("range_delete", range_delete_src, range_delete_opt)
+  ; ("min_delete", min_delete_src, min_delete_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
   ; ("sat4j", sat4j_src, sat4j_opt)
   ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].
@@ -193,6 +206,9 @@ Definition alternatives : list (string * command) :=
      can use it, so this measures what PromoteGuard is worth *)
   ; ("dependent_plugins/unpromoted", dependent_plugins_unpromoted)
   (* and one unconditional transposition, which reaches one read of the two *)
-  ; ("dependent_plugins/transposed", dependent_plugins_transposed) ].
+  ; ("dependent_plugins/transposed", dependent_plugins_transposed)
+  (* the min aggregation WITHOUT the set index beside it: the recompute branch
+     goes back to the table, which is what the set index is there to avoid *)
+  ; ("min_delete/noset", min_delete_opt_noset) ].
 
 Extraction "extracted.ml" subjects alternatives ref_run.

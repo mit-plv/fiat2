@@ -298,6 +298,41 @@ let range_delete =
         ("deleteBand", fun _ j -> q 2 j (j + 1) (row 0)) ];
     mutating = [ "insert"; "deleteBand" ] }
 
+(* ---------- min delete: a cached minimum under deletes that do and do not
+   remove it ----------
+
+   Ex_MinDelete's guard rule keeps the cached minimum unless the delete removes
+   it, and RECOMPUTES when it does.  The two delete kinds separate those two
+   branches, which is the whole measurement -- a blended figure would hide
+   both:
+
+     deleteMin     always removes the current minimum, so always pays the
+                   recompute.  Prices are 0..rows-1 and the j-th op removes
+                   price j, which IS the minimum once 0..j-1 are gone, because
+                   the ops accumulate within one run (Bench.secs_per_op_of
+                   never scales a mutating kind, exactly so that this holds).
+     deleteOther   removes from the TOP end, where it can never be the
+                   minimum, so the cached value survives and the rule pays one
+                   comparison.
+
+   readMin is the read the index exists for, and insert is the write the
+   choice costs.  With ops_per_kind = 20 against rows in the thousands,
+   deleteMin cannot exhaust the table. *)
+
+let min_delete =
+  let row j = rcd [ ("id", i j); ("price", i j) ] in
+  let q typ price order =
+    rcd [ ("type", i typ); ("price", i price); ("new_order", order) ] in
+  { queries_var = "queries"; store = outputs_only;
+    table = (fun rows -> [ ("orders_tbl", VList (List.init rows row)) ]);
+    build = no_build;
+    kinds =
+      [ ("readMin", fun _ _ -> q 2 0 (row 0));
+        ("insert", fun rows j -> q 1 0 (row (rows + j)));
+        ("deleteMin", fun _ j -> q 0 j (row 0));
+        ("deleteOther", fun rows j -> q 0 (rows - 1 - j) (row 0)) ];
+    mutating = [ "insert"; "deleteMin"; "deleteOther" ] }
+
 (* ---------- item deletion: whole-row membership over a preloaded table ----------
 
    ItemDeletion.registrations is a Set<Item> asked contains(item), so the
@@ -431,6 +466,7 @@ let specs =
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("window_store", window_store); ("range_delete", range_delete);
+    ("min_delete", min_delete);
     ("item_deletion", item_deletion); ("sat4j", sat4j);
     ("dependent_plugins", dependent_plugins) ]
 
