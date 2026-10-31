@@ -49,7 +49,8 @@ let operators (c : command) : string list =
     | OTrigrams -> "OTrigrams"
     | OSome -> "OSome" | ODictValues -> "ODictValues"
     | OSetOfBag -> "OSetOfBag"
-    | OBagOfList -> "OBagOfList" | OSetOfList -> "OSetOfList" in
+    | OBagOfList -> "OBagOfList" | OSetOfList -> "OSetOfList"
+    | OSetSize -> "OSetSize" in
   let binop = function
     | OPlus -> "OPlus" | OMinus -> "OMinus" | OTimes -> "OTimes"
     | ODiv -> "ODiv" | OMod -> "OMod" | OAnd -> "OAnd" | OOr -> "OOr"

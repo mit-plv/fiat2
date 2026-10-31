@@ -168,6 +168,7 @@ Inductive type_of_unop : unop -> type -> type -> Prop :=
 | TyOSetOfBag t : type_of_unop OSetOfBag (TBag t) (TSet t)
 | TyOBagOfList t : type_of_unop OBagOfList (TList t) (TBag t)
 | TyOSetOfList t : type_of_unop OSetOfList (TList t) (TSet t)
+| TyOSetSize t : type_of_unop OSetSize (TSet t) TInt
 (* Last, for the same reason the binop list says: TypeSound selects these
    goals positionally once its catch-alls have run. *)
 | TyOTrigrams : type_of_unop OTrigrams TString (TList TString).
@@ -668,6 +669,13 @@ Section WithMap.
                                                 Success (EUnop o e1')
                                     | t => error:(e "is a set but expected" t)
                                     end
+                    | OSetSize => '(t, e') <- synthesize_expr Gstore Genv e1 ;;
+                                  match t with
+                                  | TSet _ => if type_eqb expected TInt
+                                              then Success (EUnop o e')
+                                              else error:(e "has type" TInt "but expected" expected)
+                                  | _ => error:(e1 "has type" t "but expected a set")
+                                  end
                     | o => let '(t1, t2) := unop_types o in
                            if type_eqb expected t2
                            then e1' <- analyze_expr Gstore Genv t1 e1 ;;
@@ -960,6 +968,11 @@ Section WithMap.
                                         | TList t1 => Success (TSet t1, EUnop o e')
                                         | t => error:(e "has type" t "but expected a list")
                                         end
+                        | OSetSize => '(t, e') <- synthesize_expr Gstore Genv e ;;
+                                      match t with
+                                      | TSet _ => Success (TInt, EUnop o e')
+                                      | t => error:(e "has type" t "but expected a set")
+                                      end
                         | o => let '(t1, t2) := unop_types o in
                                e' <- analyze_expr Gstore Genv t1 e ;; Success (t2, EUnop o e')
                         end

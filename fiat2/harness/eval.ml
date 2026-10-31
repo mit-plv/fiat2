@@ -181,6 +181,15 @@ let interp_unop (o : unop) (v : value) : value =
            VList (List.init k (fun i -> VString (String.sub s i 3)))
        | _ -> VUnit)
   | OLength -> (match v with VList l -> let n = List.length l in Count.walk n; VInt n | _ -> VUnit)
+  (* |A| for a set.  Charged as a TRAVERSAL, like OLength's, not as a cached
+     size field -- which is what makes it cheaper than the ESort it replaces
+     (n walks instead of n log n comparisons) rather than free.  If a backend
+     ever keeps a size on the structure, this is the line that should change
+     and the column that would show it. *)
+  | OSetSize ->
+      (match v with
+       | VSet s -> let n = Value.scardinal s in Count.walk n; VInt n
+       | _ -> VUnit)
   | OStringOfInt ->
       (match v with
        | VInt z -> let s = string_of_int z in Count.chars (String.length s); VString s

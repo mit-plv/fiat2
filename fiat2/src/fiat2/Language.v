@@ -100,6 +100,23 @@ Inductive unop : Type :=
 | OSetOfBag
 | OBagOfList
 | OSetOfList
+(* A set's cardinality.
+
+   NOT an overload of OLength, which stays list-only on purpose.
+   CollectionTransf.annotate_collection rewrites EUnop OLength l into
+   EACFold AGCount (EUnop OBagOfList l), and it is a SYNTACTIC rule with no
+   type to consult, so an OLength that also typed at TSet would make that
+   rewrite emit OBagOfList of a set, which does not typecheck.  The two reads
+   want opposite things anyway: a list's length is an order-insensitive read
+   that SHOULD be relaxed to a bag count, while a set is already the relaxed
+   form and has nothing left to declare.
+
+   Before this operator the only way to ask a set its size was OLength of
+   ESort LikeSet, which pays n log n to canonicalize a representation the
+   answer never looks at.  Deliberately NOT given at the bag level: a bag's
+   size is the SUM of its multiplicities rather than the length of its entry
+   list, and nothing asks for it. *)
+| OSetSize
 (* The three-character windows of a string, in order.  A LIST, not a set:
    the index folds them into a dictionary, and EFold is list-only because
    a foreign accumulator over a set would need the step to commute.

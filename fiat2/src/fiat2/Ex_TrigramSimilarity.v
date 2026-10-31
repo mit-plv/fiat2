@@ -14,9 +14,14 @@ Local Open Scope string_scope.
    computes as CALCSML(count, len1, len2) = count / (len1 + len2 - count).
    The point of this file is that writing that predicate needs NO new type
    and NO new operator: the trigram set is a fold over a range inserting
-   substrings, the cardinalities are OLength of ESort, the intersection is
+   substrings, the cardinalities are OLength of ESort (card_via_sort below,
+   kept compiled as the witness for exactly this claim), the intersection is
    OSetIntersect, and the threshold is a cross-multiplied comparison of two
    products.  Everything here already existed for other reasons.
+
+   OSetSize was added LATER and `card` now uses it.  That does not weaken the
+   claim: it buys the cost of |A|, one traversal instead of a sort, and
+   card_agrees_with_the_sort_form pins that the answers are identical.
 
    So "support similarity search" is not a question about the LANGUAGE.  It
    is a question about which rule can serve the predicate from an index,
@@ -52,11 +57,21 @@ Definition tri_set (s : expr) : expr :=
     (EBinop OSetInsert (EVar "acc")
        (ETernop OSubstring s (EVar "i") (EAtom (AInt 3)))).
 
-(* Cardinality.  A set has no length operator of its own -- OLength is for
-   lists -- so this goes through ESort, which is the operator that reads a
-   set's canonical representation and is charged for doing so.  Paying a
-   traversal for |A| is the right cost, not a workaround. *)
-Definition card (a : expr) : expr := EUnop OLength (ESort LikeSet a).
+(* Cardinality, two ways, and the pair is the point.
+
+   card_via_sort is how this file was first written, when a set had no size
+   operator of its own: OLength of ESort LikeSet.  It is kept because it is
+   the WITNESS for the claim above -- the predicate needed no new operator to
+   be written -- and `card_agrees_with_the_sort_form` below pins that the two
+   give the same answer.
+
+   But it is not the cost one wants: ESort reads a set's canonical
+   representation, so asking |A| this way pays n log n to build an ordering
+   the answer never looks at.  OSetSize is one traversal on any representation
+   a set could have.  So the operator buys COST, not expressiveness, and the
+   two definitions standing side by side are what says so. *)
+Definition card_via_sort (a : expr) : expr := EUnop OLength (ESort LikeSet a).
+Definition card (a : expr) : expr := EUnop OSetSize a.
 
 (* pg_trgm's padding, LPADDING 2 and RPADDING 1, with a space. *)
 Definition padded (s : expr) : expr :=
@@ -208,6 +223,25 @@ Section WithConcreteMaps.
     /\ interp_expr map.empty smithsonian
          (card (EBinop OSetIntersect (tri_set ps) (tri_set pq))) = VInt 5.
   Proof. repeat split; vm_compute; reflexivity. Qed.
+
+  (* OSetSize answers what the sort answered.  Pinned on all three of the
+     counts above, including the intersection, so the operator is checked
+     against the form it replaces rather than only against a literal. *)
+  Lemma card_agrees_with_the_sort_form :
+    interp_expr map.empty smithsonian (card (tri_set pq))
+    = interp_expr map.empty smithsonian (card_via_sort (tri_set pq))
+    /\ interp_expr map.empty smithsonian (card (tri_set ps))
+       = interp_expr map.empty smithsonian (card_via_sort (tri_set ps))
+    /\ interp_expr map.empty smithsonian
+         (card (EBinop OSetIntersect (tri_set ps) (tri_set pq)))
+       = interp_expr map.empty smithsonian
+           (card_via_sort (EBinop OSetIntersect (tri_set ps) (tri_set pq))).
+  (* `repeat apply conj`, NOT `repeat split`: = is a one-constructor inductive,
+     so split applies eq_refl to each equation and forces ordinary conversion
+     on two interp_expr calls instead of leaving them to vm_compute.  The pins
+     above get away with repeat split only because their right-hand sides are
+     literals. *)
+  Proof. repeat apply conj; vm_compute; reflexivity. Qed.
 
   (* the index's test, on those counts: 5 * 10 >= 3 * 6 *)
   Lemma smithsonian_passes_the_index_test : 5 * 10 >= 3 * 6.
