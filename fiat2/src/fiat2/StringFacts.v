@@ -243,6 +243,14 @@ Proof.
   cbn [substring String.length] in *. apply IH. lia.
 Qed.
 
+(* and the pattern a trigram came from is not empty, which is what the
+   tokenized index's completeness theorems ask for *)
+Lemma In_trigrams_nonempty : forall s g, In g (trigrams s) -> s <> EmptyString.
+Proof.
+  intros s g H; destruct s as [ | c s ]; [ | discriminate ].
+  cbn [trigrams String.length Nat.sub List.seq List.map] in H; contradiction.
+Qed.
+
 Lemma In_trigrams_length : forall s g, In g (trigrams s) -> String.length g = 3.
 Proof.
   unfold trigrams; intros s g H_in.
@@ -428,6 +436,41 @@ Proof.
     [ exact H_t | ].
   rewrite Bool.andb_true_iff in *. intuition auto.
 Qed.
+
+(* Every word the splitter produces is separator-free -- which is what
+   makes a RUNTIME test for "this pattern is one word" possible: the rule
+   cannot evaluate sep_free, but it can compare the pattern's word list
+   with the one-element list holding the pattern, and that comparison is
+   an ordinary expression. *)
+Lemma Forall_sep_free_words_acc : forall seps s cur,
+    sep_free seps cur = true ->
+    Forall (fun w => sep_free seps w = true) (words_acc seps cur s).
+Proof.
+  induction s as [ | c s IH ]; intros cur H_cur; cbn [words_acc].
+  1:{ destruct (String.eqb cur EmptyString); [ constructor | ].
+      constructor; [ exact H_cur | constructor ]. }
+  destruct (is_sep seps c) eqn:E_sep.
+  1:{ apply Forall_app; split; [ | apply IH; reflexivity ].
+      destruct (String.eqb cur EmptyString); [ constructor | ].
+      constructor; [ exact H_cur | constructor ]. }
+  1:{ apply IH. apply sep_free_app; [ exact H_cur | ].
+      cbn [sep_free]; rewrite E_sep; reflexivity. }
+Qed.
+
+Lemma Forall_sep_free_words : forall seps s,
+    Forall (fun w => sep_free seps w = true) (words seps s).
+Proof. intros; apply Forall_sep_free_words_acc; reflexivity. Qed.
+
+(* and so the runtime test is sound: a string that is its own only word
+   has no separator in it *)
+Lemma words_singleton__sep_free : forall seps s,
+    words seps s = [s] -> sep_free seps s = true.
+Proof.
+  intros seps s E.
+  pose proof (Forall_sep_free_words seps s) as H.
+  rewrite E in H. inversion H; assumption.
+Qed.
+
 
 (* THE lemma the tokenized lookup rests on: an occurrence that contains no
    separator lies inside a single WORD of the text.  That is what makes a

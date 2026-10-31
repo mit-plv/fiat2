@@ -29,11 +29,11 @@ Import ListNotations.
    Two things are worth being clear about before any of it.
 
    First, nothing here needs the index to be PRECISE.  The only fact used
-   about the index is tri_lookup_complete_at_padded: a trigram of a row's
-   text puts the row's key in that trigram's bucket.  A bucket may hold
-   keys for other reasons -- it does, since a key is filed under every
-   trigram of its text -- and that only makes the count bigger, which only
-   makes the candidate set bigger.  Soundness comes from the recheck, as it
+   about the index is tri_lookup_complete_at_word: a trigram of one of the
+   row's padded words puts the row's key in that trigram's bucket.  A
+   bucket may hold keys for other reasons -- it does, since a key is filed
+   under every trigram of every word of its text -- and that only makes the
+   count bigger, which only makes the candidate set bigger.  Soundness comes from the recheck, as it
    does for every other lookup rule here.
 
    Second, this is a count over a LIST of the query's trigrams, and which
@@ -46,6 +46,16 @@ Import ListNotations.
 
 Section WithAttrs.
   Context (attr key : string).
+  (* the separators the index tokenizes on *)
+  Context (seps : string).
+
+  (* pg_trgm's generate_trgm: a text's trigram set is the union over its
+     WORDS, each padded.  Both sides of the similarity predicate are over
+     this set in Postgres -- similarity() tokenizes its arguments by the
+     same find_word loop the index does -- so it is the right notion here
+     too, and it is exactly what the index keys on. *)
+  Definition tri_set (s : string) : list string :=
+    flat_map (fun w => trigrams (pad w)) (words seps s).
 
   (* The keys filed under one trigram, read out of an index VALUE. *)
   Definition bucket (idx : value) (g : string) : list value :=
@@ -61,8 +71,8 @@ Section WithAttrs.
 
   (* And how many of them the row's text really has: the c of the Jaccard
      predicate, when gs is duplicate-free. *)
-  Definition inter_count (gs : list string) (txt : string) : nat :=
-    List.length (List.filter (fun g => List.existsb (String.eqb g) (trigrams txt)) gs).
+  Definition inter_count (gs ts : list string) : nat :=
+    List.length (List.filter (fun g => List.existsb (String.eqb g) ts) gs).
 
   (* A pointwise implication between two tests is a <= between the lengths
      they filter to.  The standard library relates filter to In and to
@@ -97,10 +107,23 @@ Section WithAttrs.
   (* THE BRIDGE: whatever the row really shares with the query, the index
      reports at least that much.  No hypothesis about the threshold, and
      none about the index being precise. *)
+  (* A trigram of the row's own set is a trigram of one of its padded
+     words, which is a key the index files the row under. *)
+  Lemma In_tri_set__key_at : forall (l : list value) r g,
+      In r l ->
+      In g (tri_set (row_str attr r)) ->
+      key_at (VString g) (row_key key r) (tri_entries attr key seps l).
+  Proof.
+    unfold tri_set; intros l r g H_in H_g.
+    apply in_flat_map in H_g as [ w [ H_w H_g ] ].
+    eapply tri_lookup_complete_at_word; [ exact H_in | | exact H_g ].
+    unfold row_wrds; exact H_w.
+  Qed.
+
   Theorem index_sees_the_intersection : forall (l : list value) r gs,
       In r l ->
-      inter_count gs (row_tri attr r)
-      <= tri_count (tri_entries attr key l) gs (row_key key r).
+      inter_count gs (tri_set (row_str attr r))
+      <= tri_count (tri_entries attr key seps l) gs (row_key key r).
   Proof.
     unfold inter_count, tri_count; intros l r gs H_in.
     apply filter_length_mono.
@@ -109,7 +132,7 @@ Section WithAttrs.
     apply existsb_exists in H_has as [ g' [ H_in' E_eq ] ].
     apply String.eqb_eq in E_eq; subst g'.
     apply set_mem_true_iff, key_at_In_bucket.
-    apply tri_lookup_complete_at_padded; [ exact H_in | exact H_in' ].
+    apply In_tri_set__key_at; [ exact H_in | exact H_in' ].
   Qed.
 
   (* THE ARITHMETIC: a row the real predicate accepts passes the index's
@@ -201,28 +224,28 @@ Section WithAttrs.
      conditions come from: with a threshold of zero every row qualifies,
      but the pool holds only rows that share something, so the rewrite
      would LOSE rows.  0 < tn is not a technicality. *)
-  Lemma qualifying_shares_a_trigram : forall gs txt a b c tn td,
+  Lemma qualifying_shares_a_trigram : forall gs ts a b c tn td,
       a = List.length gs ->
       0 < tn -> 0 < td -> 0 < a + b - c ->
       c * td >= tn * (a + b - c) ->
-      c <= inter_count gs txt ->
-      exists g, In g gs /\ In g (trigrams txt).
+      c <= inter_count gs ts ->
+      exists g, In g gs /\ In g ts.
   Proof.
-    intros gs txt a b c tn td _ H_tn H_td H_ab H_jac H_c.
+    intros gs ts a b c tn td _ H_tn H_td H_ab H_jac H_c.
     (* the threshold forces at least one shared trigram *)
     assert (H_ge1 : 1 <= tn * (a + b - c)).
     1:{ apply Nat.le_trans with (m := 1 * (a + b - c));
           [ lia | apply Nat.mul_le_mono_r; lia ]. }
     assert (H_cd : 1 <= c * td) by lia.
     assert (H_c1 : 1 <= c) by (destruct c; [ cbn in H_cd; lia | lia ]).
-    assert (H_ic : 1 <= inter_count gs txt) by lia.
+    assert (H_ic : 1 <= inter_count gs ts) by lia.
     (* so the filter is not empty, and its head is such a trigram *)
     unfold inter_count in H_ic.
-    destruct (List.filter (fun g => List.existsb (String.eqb g) (trigrams txt)) gs)
+    destruct (List.filter (fun g => List.existsb (String.eqb g) ts) gs)
       as [ | g rest ] eqn:E_f.
     1:{ cbn [List.length] in H_ic; lia. }
     assert (H_in : In g (List.filter
-                           (fun g => List.existsb (String.eqb g) (trigrams txt)) gs))
+                           (fun g => List.existsb (String.eqb g) ts) gs))
       by (rewrite E_f; left; reflexivity).
     apply filter_In in H_in as [ H_g H_has ].
     apply existsb_exists in H_has as [ g' [ H_in' E_eq ] ].
@@ -235,7 +258,7 @@ Section WithAttrs.
      candidate set loses nothing, and the recheck that follows restores
      precision.  Nothing here assumes the index is precise, and nothing
      assumes a primary key: the only index fact used is
-     tri_lookup_complete_at_padded. *)
+     tri_lookup_complete_at_word. *)
   Theorem threshold_candidates_complete :
     forall (l : list value) r gs a b c tn td,
       In r l ->
@@ -243,21 +266,22 @@ Section WithAttrs.
       c <= a -> c <= b ->
       0 < tn -> 0 < td -> 0 < a + b - c ->
       c * td >= tn * (a + b - c) ->
-      c <= inter_count gs (row_tri attr r) ->
-      In (row_key key r) (tri_keep (tri_entries attr key l) gs tn td).
+      c <= inter_count gs (tri_set (row_str attr r)) ->
+      In (row_key key r) (tri_keep (tri_entries attr key seps l) gs tn td).
   Proof.
     intros l r gs a b c tn td H_in E_a H_ca H_cb H_tn H_td H_ab H_jac H_c.
     unfold tri_keep. apply filter_In; split.
     (* in the pool, because it shares a trigram *)
-    1:{ destruct (qualifying_shares_a_trigram gs (row_tri attr r) a b c tn td
-                    E_a H_tn H_td H_ab H_jac H_c) as [ g [ H_g H_tri ] ].
+    1:{ destruct (qualifying_shares_a_trigram gs (tri_set (row_str attr r))
+                    a b c tn td E_a H_tn H_td H_ab H_jac H_c)
+          as [ g [ H_g H_tri ] ].
         eapply In_tri_cands; [ exact H_g | ].
         apply key_at_In_bucket.
-        apply tri_lookup_complete_at_padded; [ exact H_in | exact H_tri ]. }
+        apply In_tri_set__key_at; [ exact H_in | exact H_tri ]. }
     (* and passes the count test *)
     1:{ unfold passes. rewrite Nat.leb_le, <- E_a.
-        apply (candidate_test_passes (tri_entries attr key l) gs (row_key key r)
-                 a b c tn td E_a H_ca H_cb H_jac).
+        apply (candidate_test_passes (tri_entries attr key seps l) gs
+                 (row_key key r) a b c tn td E_a H_ca H_cb H_jac).
         eapply Nat.le_trans; [ exact H_c | ].
         apply index_sees_the_intersection; exact H_in. }
   Qed.

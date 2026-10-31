@@ -307,31 +307,32 @@ Section WithConcreteMaps.
   Definition token : expr := EAccess (EVar "q") "k".
   Definition no_rows : expr := EAtom (ANil (Some row_ty)).
 
-  (* the trigram starting at pos of a text, and the positions at which a text
-     has one -- 0 .. len-2, which is why a pattern shorter than three
-     characters has none *)
+  (* the trigram starting at pos of a text.  The PATTERN side still reads
+     trigrams out of a string by position -- it is the INDEX side that
+     tokenizes -- so this stays. *)
   Definition tri_at (text pos : expr) : expr :=
     ETernop OSubstring text pos (EAtom (AInt 3)).
-  Definition positions (text : expr) : expr :=
-    EBinop ORange (EAtom (AInt 0))
-      (EBinop OMinus (EUnop OLengthString text) (EAtom (AInt 2))).
 
-  (* the text the index keys on: padded, as TrigramIndexImpl.row_text is,
-     and BOUND ONCE per row, as tri_row_body's ELet does -- otherwise the
-     text is rebuilt at every position of every row *)
-  Definition tup_text : expr :=
+  (* What the index keys on, as pg_trgm's generate_trgm does it: the row's
+     text is split into WORDS, and each word is padded on its own.  The
+     cross-word windows a whole-string extraction would produce are not
+     keys, which is why a pattern holding a separator cannot be probed for
+     (TrigramIndexImpl.tri_lookup_complete's sep_free premise). *)
+  Definition tup_words : expr :=
+    EBinop OWords (EAtom (AString " ")) (EAccess (EVar "tup") "fullName").
+  Definition word_text : expr :=
     EBinop OConcatString (EAtom (AString "  "))
-      (EBinop OConcatString (EAccess (EVar "tup") "fullName")
-         (EAtom (AString " "))).
-  Definition tup_txt : expr := EVar "txt".
+      (EBinop OConcatString (EVar "wrd") (EAtom (AString " "))).
+  Definition word_tris : expr := EUnop OTrigrams word_text.
   Definition tup_key : expr := EAccess (EVar "tup") "id".
 
-  (* add one row's id to the bucket of every trigram of its text *)
+  (* add one row's id to the bucket of every trigram of every word of its
+     text: two nested folds, generate_trgm_only's own two loops *)
   Definition post_row (acc : expr) : expr :=
-    ELet tup_text "txt"
-      (EFold (positions tup_txt) acc "pos" "sacc"
-         (ETernop OInsert (EVar "sacc") (tri_at tup_txt (EVar "pos"))
-            (EOptMatch (EBinop OLookup (EVar "sacc") (tri_at tup_txt (EVar "pos")))
+    EFold tup_words acc "wrd" "wacc"
+      (EFold word_tris (EVar "wacc") "gvar" "sacc"
+         (ETernop OInsert (EVar "sacc") (EVar "gvar")
+            (EOptMatch (EBinop OLookup (EVar "sacc") (EVar "gvar"))
                (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key)
                "bkt" (EBinop OSetInsert (EVar "bkt") tup_key)))).
 
@@ -395,8 +396,16 @@ Section WithConcreteMaps.
          (EBinop OStrContains (EAccess (EVar "r") "fullName") token)
          "r" (Some row_ty) (Some row_ty)).
 
+  (* The runtime guard the lookup rule emits: the token is long enough to
+     have a trigram, AND it is one word.  The second half is a comparison
+     rather than a test, since the token is a parameter: a string is
+     separator-free exactly when splitting it hands back the one-element
+     list holding it. *)
   Definition long_enough : expr :=
-    EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString token).
+    EBinop OAnd
+      (EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString token))
+      (EBinop OEq (EBinop OWords (EAtom (AString " ")) token)
+         (EBinop OCons token (EAtom (ANil (Some TString))))).
 
   (* ==================== configuration 0: the trigram pair ============== *)
 
@@ -465,16 +474,16 @@ Section WithConcreteMaps.
      text names, and dropping a bucket that empties.  Nothing is rebuilt and
      nothing scans the table. *)
   Definition unpost_row (acc : expr) : expr :=
-    ELet tup_text "txt"
-      (EFold (positions tup_txt) acc "pos" "sacc"
-         (EOptMatch (EBinop OLookup (EVar "sacc") (tri_at tup_txt (EVar "pos")))
+    EFold tup_words acc "wrd" "wacc"
+      (EFold word_tris (EVar "wacc") "gvar" "sacc"
+         (EOptMatch (EBinop OLookup (EVar "sacc") (EVar "gvar"))
             (EVar "sacc") "bkt"
             (EIf (EBinop OEq
                     (EBinop OSetDiff (EVar "bkt")
                        (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key))
                     (EAtom (AEmptySet None)))
-               (EBinop ODelete (EVar "sacc") (tri_at tup_txt (EVar "pos")))
-               (ETernop OInsert (EVar "sacc") (tri_at tup_txt (EVar "pos"))
+               (EBinop ODelete (EVar "sacc") (EVar "gvar"))
+               (ETernop OInsert (EVar "sacc") (EVar "gvar")
                   (EBinop OSetDiff (EVar "bkt")
                      (EBinop OSetInsert (EAtom (AEmptySet None)) tup_key)))))).
 

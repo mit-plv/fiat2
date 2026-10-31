@@ -512,26 +512,26 @@ Section WithConcreteMaps.
      fold over rows, the fold over the positions at which the row's text has
      a trigram, and the read-modify-write of the bucket at that trigram.
      ------------------------------------------------------------------ *)
-  (* the text the index keys on: padded, as TrigramIndexImpl.row_text is *)
-  Definition ptup_text : expr :=
-    EBinop OConcatString (EAtom (AString "  "))
-      (EBinop OConcatString (EAccess (EVar "tup") "name")
-         (EAtom (AString " "))).
+  (* the row's words, as TrigramIndexImpl.row_words is: pg_trgm's find_word
+     loop, on a space *)
+  Definition pwords : expr :=
+    EBinop OWords (EAtom (AString " ")) (EAccess (EVar "tup") "name").
 
-  (* read through the binder the index's own body binds it to *)
-  Definition ptri_at (p : expr) : expr :=
-    ETernop OSubstring (EVar "txt") p (EAtom (AInt 3)).
+  (* and one of those words, padded, as TrigramIndexImpl.word_text is *)
+  Definition pword_text : expr :=
+    EBinop OConcatString (EAtom (AString "  "))
+      (EBinop OConcatString (EVar "wrd") (EAtom (AString " "))).
+
+  (* the windows of one padded word, which the inner fold runs over *)
+  Definition pword_tris : expr := EUnop OTrigrams pword_text.
 
   Definition ptrigram_of (tbl : expr) : expr :=
     EFold tbl (EAtom (AEmptyDict Unranged None)) "tup" "acc"
-      (ELet ptup_text "txt"
-         (EFold (EBinop ORange (EAtom (AInt 0))
-                   (EBinop OMinus
-                      (EUnop OLengthString (EVar "txt"))
-                      (EAtom (AInt 2))))
-            (EVar "acc") "pos" "sacc"
-            (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
-               (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+      (EFold pwords (EVar "acc") "wrd" "wacc"
+         (EFold pword_tris
+            (EVar "wacc") "gvar" "sacc"
+            (ETernop OInsert (EVar "sacc") (EVar "gvar")
+               (EOptMatch (EBinop OLookup (EVar "sacc") (EVar "gvar"))
                   (EBinop OSetInsert (EAtom (AEmptySet None))
                      (EAccess (EVar "tup") "id"))
                   "bkt"
@@ -573,14 +573,11 @@ Section WithConcreteMaps.
   Definition ptri_add (idx_e row : expr) : expr :=
     ELet idx_e "acc"
       (ELet row "tup"
-         (ELet ptup_text "txt"
-            (EFold (EBinop ORange (EAtom (AInt 0))
-                      (EBinop OMinus
-                         (EUnop OLengthString (EVar "txt"))
-                         (EAtom (AInt 2))))
-               (EVar "acc") "pos" "sacc"
-               (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
-                  (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+         (EFold pwords (EVar "acc") "wrd" "wacc"
+            (EFold pword_tris
+               (EVar "wacc") "gvar" "sacc"
+               (ETernop OInsert (EVar "sacc") (EVar "gvar")
+                  (EOptMatch (EBinop OLookup (EVar "sacc") (EVar "gvar"))
                      (EBinop OSetInsert (EAtom (AEmptySet None))
                         (EAccess (EVar "tup") "id"))
                      "bkt"
@@ -588,7 +585,8 @@ Section WithConcreteMaps.
                         (EAccess (EVar "tup") "id"))))))).
 
   Lemma tri_insert_is_incremental :
-    cons_to_tri_insert_head "name" "id" "tup" "acc" "pos" "sacc" "bkt" "txt"
+    cons_to_tri_insert_head "name" "id" "tup" "acc" "gvar" "sacc" "bkt"
+      " " "wrd" "wacc"
       (ptrigram_of (EBinop OCons (EVar "u") (EAccess (ELoc "users") "id_tag")))
     = ptri_add (ptrigram_of (EAccess (ELoc "users") "id_tag")) (EVar "u").
   Proof. reflexivity. Qed.
@@ -762,8 +760,13 @@ Section WithConcreteMaps.
       = CLetMut inst "users"
           (CSeq grd
              (CAssign "out"
-                (EIf (EBinop OLess (EAtom (AInt 2))
-                        (EUnop OLengthString (EVar "p")))
+                (EIf (EBinop OAnd
+                        (EBinop OLess (EAtom (AInt 2))
+                           (EUnop OLengthString (EVar "p")))
+                        (EBinop OEq
+                           (EBinop OWords (EAtom (AString " ")) (EVar "p"))
+                           (EBinop OCons (EVar "p")
+                              (EAtom (ANil (Some TString))))))
                    (sprobe_from (sall_cands (EVar "p")) (EVar "p"))
                    (sscan (EVar "p"))))).
   Proof. do 2 eexists; reflexivity. Qed.
@@ -850,8 +853,13 @@ Section WithConcreteMaps.
           "users"
           (CSeq grd
              (CAssign "out"
-                (EIf (EBinop OLess (EAtom (AInt 2))
-                        (EUnop OLengthString (EVar "p")))
+                (EIf (EBinop OAnd
+                        (EBinop OLess (EAtom (AInt 2))
+                           (EUnop OLengthString (EVar "p")))
+                        (EBinop OEq
+                           (EBinop OWords (EAtom (AString " ")) (EVar "p"))
+                           (EBinop OCons (EVar "p")
+                              (EAtom (ANil (Some TString))))))
                    (vprobe_from (vall_cands (EVar "p")) (EVar "p"))
                    (vscan (EVar "p"))))).
   Proof. do 4 eexists; reflexivity. Qed.
@@ -950,21 +958,18 @@ Section WithConcreteMaps.
          (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "1")
             (EVar "k"))
          (EVar "acc") "tup"
-         (ELet ptup_text "txt"
-            (EFold (EBinop ORange (EAtom (AInt 0))
-                      (EBinop OMinus
-                         (EUnop OLengthString (EVar "txt"))
-                         (EAtom (AInt 2))))
-               (EVar "acc") "pos" "sacc"
-               (EOptMatch (EBinop OLookup (EVar "sacc") (ptri_at (EVar "pos")))
+         (EFold pwords (EVar "acc") "wrd" "wacc"
+            (EFold pword_tris
+               (EVar "wacc") "gvar" "sacc"
+               (EOptMatch (EBinop OLookup (EVar "sacc") (EVar "gvar"))
                   (EVar "sacc") "bkt"
                   (EIf (EBinop OEq
                           (EBinop OSetDiff (EVar "bkt")
                              (EBinop OSetInsert (EAtom (AEmptySet None))
                                 (EAccess (EVar "tup") "id")))
                           (EAtom (AEmptySet None)))
-                     (EBinop ODelete (EVar "sacc") (ptri_at (EVar "pos")))
-                     (ETernop OInsert (EVar "sacc") (ptri_at (EVar "pos"))
+                     (EBinop ODelete (EVar "sacc") (EVar "gvar"))
+                     (ETernop OInsert (EVar "sacc") (EVar "gvar")
                         (EBinop OSetDiff (EVar "bkt")
                            (EBinop OSetInsert (EAtom (AEmptySet None))
                               (EAccess (EVar "tup") "id"))))))))).

@@ -30,6 +30,9 @@ Section WithWord.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
   (* the text attribute the index is built on, and the table's primary key *)
   Context (attr key : string).
+  (* the separators the index tokenizes on: the same ones to_idx was built
+     with, since a pattern that straddles two words is in no bucket *)
+  Context (seps : string).
 
   (* The bucket a trigram names, as the list the probe iterates.  A bucket
      that is absent and a bucket that is empty behave alike, which is what
@@ -99,14 +102,15 @@ Section WithWord.
   Lemma probe_recheck_eq :
     forall (rows : list value) (p : string),
       3 <= String.length p ->
+      sep_free seps p = true ->
       NoDup (List.map (row_key key) rows) ->
       list_to_set (filter (contains_test p) (list_to_set rows))
       = list_to_set
           (flat_map (probe_body rows p)
              (tri_bucket (VString (String.substring 0 3 p))
-                (TrigramIndexImpl.tri_entries attr key rows))).
+                (TrigramIndexImpl.tri_entries attr key seps rows))).
   Proof.
-    intros rows p H_len H_nd.
+    intros rows p H_len H_free H_nd.
     apply NoDup_SSorted_double_incl_eq;
       auto using list_to_set_NoDup, list_to_set_SSorted.
     1:{ (* every row the scan keeps is a row the probe finds and rechecks *)
@@ -118,8 +122,8 @@ Section WithWord.
         1:{ apply key_at__In_tri_bucket.
             (* word_ok is implicit but not found by instance search from
                outside the section, so it is named here and below *)
-            apply (TrigramIndexImpl.tri_lookup_complete attr key);
-              [ exact H_in | exact H_len
+            apply (TrigramIndexImpl.tri_lookup_complete attr key seps);
+              [ exact H_in | exact H_free | exact H_len
               | apply contains_test_true__occurrence; exact H_p ]. }
         1:{ unfold probe_body.
             rewrite (UniqueDictIndexImpl.idx_lookup_Some key
@@ -245,26 +249,29 @@ Section WithWord.
   Lemma probe_recheck_all_eq :
     forall (rows : list value) (p g0 : string) (gs : list string),
       In g0 (trigrams p) ->
+      sep_free seps p = true ->
       (forall g, In g gs -> In g (trigrams p)) ->
       NoDup (List.map (row_key key) rows) ->
       list_to_set (filter (contains_test p) (list_to_set rows))
       = list_to_set
           (flat_map (probe_body rows p)
              (tri_inter
-                (tri_bucket (VString g0) (TrigramIndexImpl.tri_entries attr key rows))
-                gs (TrigramIndexImpl.tri_entries attr key rows))).
+                (tri_bucket (VString g0)
+                   (TrigramIndexImpl.tri_entries attr key seps rows))
+                gs (TrigramIndexImpl.tri_entries attr key seps rows))).
   Proof.
-    intros rows p g0 gs H_g0 H_gs H_nd.
+    intros rows p g0 gs H_g0 H_free H_gs H_nd.
+    pose proof (In_trigrams_nonempty _ _ H_g0) as H_pne.
     apply probe_recheck_cands_eq; [ exact H_nd | ].
     intros r H_in H_p. apply In_tri_inter; split.
     1:{ apply key_at__In_tri_bucket.
-        apply (TrigramIndexImpl.tri_lookup_complete_all attr key _ _ p g0);
-          [ exact H_in
+        apply (TrigramIndexImpl.tri_lookup_complete_all attr key seps _ _ p g0);
+          [ exact H_in | exact H_free | exact H_pne
           | apply contains_test_true__occurrence; exact H_p
           | exact H_g0 ]. }
     1:{ intros g H_g. apply key_at__In_tri_bucket.
-        apply (TrigramIndexImpl.tri_lookup_complete_all attr key _ _ p g);
-          [ exact H_in
+        apply (TrigramIndexImpl.tri_lookup_complete_all attr key seps _ _ p g);
+          [ exact H_in | exact H_free | exact H_pne
           | apply contains_test_true__occurrence; exact H_p
           | apply H_gs; exact H_g ]. }
   Qed.
@@ -273,9 +280,9 @@ End WithWord.
 
 Section WithIndexUse.
   (* the trigram index's own binders *)
-  Context (hole attr key tup acc pos sacc bkt : string).
-  Context (H_tup_acc : tup <> acc) (H_tup_pos : tup <> pos)
-    (H_tup_sacc : tup <> sacc) (H_tup_bkt : tup <> bkt) (H_pos_sacc : pos <> sacc).
+  Context (hole attr key tup acc gvar sacc bkt : string).
+  Context (H_tup_acc : tup <> acc) (H_tup_gvar : tup <> gvar)
+    (H_tup_sacc : tup <> sacc) (H_tup_bkt : tup <> bkt) (H_gvar_sacc : gvar <> sacc).
   (* The primary-key index's binders.  Its attribute is the trigram index's
      key: the buckets hold keys, so only this index can turn them back into
      rows, and the two have to agree on which attribute that is. *)
@@ -291,23 +298,29 @@ Section WithIndexUse.
   (* last, so that the lemmas above keep the arguments they had: only the
      delete rule needs these two, since the delete body is the only one that
      reads a position and a bucket under each other's binders *)
-  Context (H_sacc_bkt : sacc <> bkt) (H_pos_bkt : pos <> bkt).
+  Context (H_sacc_bkt : sacc <> bkt) (H_gvar_bkt : gvar <> bkt).
   (* The all-trigram probe's own two binders: the position the candidate
      fold is at, and the candidate set it has narrowed so far.  Added after
      everything above so that the existing lemmas keep the arguments they
      had -- only the lemmas that mention these two acquire them. *)
   Context (cpos cacc : string).
   Context (H_cacc_cpos : cacc <> cpos).
-  (* The binder the index's own body uses for the row's text, bound once
-     per row outside the position fold.  Last again, for the same reason. *)
-  Context (tvar : string).
-  Context (H_tvar_tup : tvar <> tup).
-  Context (H_tvar_acc : tvar <> acc).
-  Context (H_tvar_pos : tvar <> pos).
-  Context (H_tvar_sacc : tvar <> sacc).
-  Context (H_tvar_bkt : tvar <> bkt).
+  (* The separators the index tokenizes on, and the two binders of the
+     fold over a row's WORDS: the word itself, and the index built from the
+     words before it.  Last again, for the same reason. *)
+  Context (seps wrd wacc : string).
+  Context (H_wrd_tup : wrd <> tup).
+  Context (H_wrd_gvar : wrd <> gvar).
+  Context (H_wrd_sacc : wrd <> sacc).
+  Context (H_wrd_bkt : wrd <> bkt).
+  Context (H_wacc_tup : wacc <> tup).
+  Context (H_wacc_gvar : wacc <> gvar).
+  Context (H_wacc_sacc : wacc <> sacc).
+  Context (H_wacc_bkt : wacc <> bkt).
+  Context (H_wacc_wrd : wacc <> wrd).
 
-  Notation tridx := (trigram_idx hole attr key tup acc pos sacc bkt tvar).
+  Notation tridx :=
+    (trigram_idx hole attr key tup acc gvar sacc bkt seps wrd wacc).
   Notation uidx := (unique_dict_idx hole key utup uacc).
 
   Section WithMap.
@@ -316,7 +329,8 @@ Section WithIndexUse.
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Notation tridx_wf :=
-      (TrigramIndexImpl.idx_wf hole attr key tup acc pos sacc bkt tvar (locals := locals)).
+      (TrigramIndexImpl.idx_wf hole attr key tup acc gvar sacc bkt seps wrd wacc
+         (locals := locals)).
     Notation uidx_wf := (UniqueDictIndexImpl.idx_wf hole key utup uacc (locals := locals)).
 
     (* The two invariants the rule reads off the store, each at its own tag.
@@ -394,7 +408,8 @@ Section WithIndexUse.
        ------------------------------------------------------------------ *)
 
     Notation tri_row_body' :=
-      (TrigramIndexImpl.tri_row_body attr key tup acc pos sacc bkt tvar).
+      (TrigramIndexImpl.tri_row_body attr key tup acc gvar sacc bkt
+         seps wrd wacc).
 
     Definition to_idx_at (d : expr) : expr :=
       EFold d (EAtom (AEmptyDict Unranged None)) tup acc tri_row_body'.
@@ -403,24 +418,20 @@ Section WithIndexUse.
        and attribute occurrence is a pattern variable, and the guard checks
        that they are the ones this index uses. *)
     Notation etri_idx tup0 tup1 tup2 tup3 acc0 acc1
-      pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
-      tv0 tv1 tv2 tv3 d :=
+      wrd0 wrd1 wacc0 wacc1 gvar0 gvar1 gvar2 sacc0 sacc1 sacc2
+      bkt0 bkt1 attr0 key0 key1 seps0 d :=
       (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
-         (ELet (EBinop OConcatString (EAtom (AString "  "))
-                  (EBinop OConcatString (EAccess (EVar tup1) attr0)
-                     (EAtom (AString " "))))
-            tv0
-            (EFold (EBinop ORange (EAtom (AInt 0))
-                      (EBinop OMinus
-                         (EUnop OLengthString (EVar tv1))
-                         (EAtom (AInt 2))))
-               (EVar acc1) pos0 sacc0
-               (ETernop OInsert (EVar sacc1)
-                  (ETernop OSubstring (EVar tv2) (EVar pos1) (EAtom (AInt 3)))
+         (EFold (EBinop OWords (EAtom (AString seps0))
+                   (EAccess (EVar tup1) attr0))
+            (EVar acc1) wrd0 wacc0
+            (EFold (EUnop OTrigrams
+                      (EBinop OConcatString (EAtom (AString "  "))
+                         (EBinop OConcatString (EVar wrd1)
+                            (EAtom (AString " ")))))
+               (EVar wacc1) gvar0 sacc0
+               (ETernop OInsert (EVar sacc1) (EVar gvar1)
                   (EOptMatch
-                     (EBinop OLookup (EVar sacc2)
-                        (ETernop OSubstring (EVar tv3) (EVar pos2)
-                           (EAtom (AInt 3))))
+                     (EBinop OLookup (EVar sacc2) (EVar gvar2))
                      (EBinop OSetInsert (EAtom (AEmptySet None))
                         (EAccess (EVar tup2) key0))
                      bkt0 (EBinop OSetInsert (EVar bkt1)
@@ -429,13 +440,14 @@ Section WithIndexUse.
     Definition cons_to_tri_insert_head (e : expr) : expr :=
       match e with
       | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
-          pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
-          tv0 tv1 tv2 tv3
+          wrd0 wrd1 wacc0 wacc1 gvar0 gvar1 gvar2 sacc0 sacc1 sacc2
+          bkt0 bkt1 attr0 key0 key1 seps0
           (EBinop OCons e1 e2) =>
           if (all_eqb [(tup, [tup0; tup1; tup2; tup3]);
-                       (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
+                       (acc, [acc0; acc1]); (wrd, [wrd0; wrd1]);
+                       (wacc, [wacc0; wacc1]); (gvar, [gvar0; gvar1; gvar2]);
                        (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
-                       (attr, [attr0]); (tvar, [tv0; tv1; tv2; tv3]); (key, [key0; key1])]
+                       (attr, [attr0]); (key, [key0; key1]); (seps, [seps0])]
               && negb (free_immut_in acc e1))%bool
           then ELet (to_idx_at e2) acc (ELet e1 tup tri_row_body')
           else e
@@ -551,7 +563,7 @@ Section WithIndexUse.
         Forall (fun r => type_of_value r (TRecord rt)) rows ->
         interp_expr store env d = VList rows ->
         interp_expr store env (to_idx_at d)
-        = TrigramIndexImpl.tri_entries attr key rows.
+        = TrigramIndexImpl.tri_entries attr key seps rows.
     Proof.
       intros * H_attr H_rows E_d.
       unfold to_idx_at, TrigramIndexImpl.tri_entries.
@@ -630,7 +642,7 @@ Section WithIndexUse.
             /\ record_proj tri_tag rv_aux = VDict td
             /\ record_proj pk_tag rv_aux
                = VDict (UniqueDictIndexImpl.idx_entries key rows)
-            /\ TrigramIndexImpl.tri_entries attr key rows = VDict td
+            /\ TrigramIndexImpl.tri_entries attr key seps rows = VDict td
             /\ Forall (fun e : value * value =>
                          match snd e with VSet _ => True | _ => False end) td
             /\ NoDup (List.map (row_key key) rows).
@@ -666,18 +678,19 @@ Section WithIndexUse.
         cbn [UniqueDictIndexImpl.keys_distinct] in H_kd.
         (* the trigram dictionary is the Gallina mirror, hence a dictionary
            whose buckets are sets *)
-        rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc pos sacc bkt
-                   H_tup_acc H_tup_pos H_tup_sacc H_tup_bkt H_pos_sacc
-                   tvar H_tvar_tup H_tvar_acc H_tvar_pos H_tvar_sacc
+        rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc
+                   gvar sacc bkt
+                   H_tup_acc H_tup_gvar H_tup_sacc H_tup_bkt H_gvar_sacc
+                   seps wrd wacc H_wrd_tup H_wacc_tup H_wacc_wrd
                    (locals_ok := locals_ok) rows
                    (TrigramIndexImpl.typed_rows_have_text attr rows rt H_attr H_rows))
           in H_tri.
         assert (H_bs : TrigramIndexImpl.buckets_are_sets
-                         (TrigramIndexImpl.tri_entries attr key rows)).
+                         (TrigramIndexImpl.tri_entries attr key seps rows)).
         1:{ unfold TrigramIndexImpl.tri_entries.
-            apply (TrigramIndexImpl.tri_entries_buckets attr key).
+            apply (TrigramIndexImpl.tri_entries_buckets attr key seps).
             constructor. }
-        destruct (TrigramIndexImpl.tri_entries attr key rows) as
+        destruct (TrigramIndexImpl.tri_entries attr key seps rows) as
           [ | | | | | | td | | | ] eqn:E_te;
           cbn [TrigramIndexImpl.buckets_are_sets] in H_bs; try contradiction.
         (* and the primary-key dictionary is its own mirror *)
@@ -909,13 +922,19 @@ Section WithIndexUse.
 
          The pattern is kept as an expression here and tested separately,
          so that the rule's shape stays shallow: a literal of at least three
-         characters hands over its first trigram at rewrite time, and
-         anything else leaves the program alone.
-         ------------------------------------------------------------------ *)
+         characters that holds no separator hands over its first trigram at
+         rewrite time, and anything else leaves the program alone.
+
+         The separator test is the second half of the condition, and it is
+         not a technicality.  The index keys on WORDS, so a pattern
+         straddling a separator -- "h J" against "Smith Jones" -- is in no
+         bucket at all, and probing for it would lose the row.  On a
+         literal the test is decided here, by evaluating sep_free; the
+         runtime form below has to emit it as an expression. *)
       Definition literal_trigram (e : expr) : option expr :=
         match e with
         | EAtom (AString s) =>
-            if Nat.leb 3 (String.length s)
+            if (Nat.leb 3 (String.length s) && sep_free seps s)%bool
             then Some (EAtom (AString (String.substring 0 3 s)))
             else None
         | _ => None
@@ -925,16 +944,19 @@ Section WithIndexUse.
           literal_trigram p = Some g ->
           exists s, p = EAtom (AString s)
                     /\ 3 <= String.length s
+                    /\ sep_free seps s = true
                     /\ g = EAtom (AString (String.substring 0 3 s)).
       Proof.
         unfold literal_trigram; intros p g H.
         destruct p as [ | | a | | | | | | | | | | | | | ]; try discriminate.
         destruct a as [ | | str | | | | | | ]; try discriminate.
-        destruct (Nat.leb 3 (String.length str)) eqn:E_len; [ | discriminate ].
+        destruct (Nat.leb 3 (String.length str) && sep_free seps str)%bool
+          eqn:E_len; [ | discriminate ].
+        rewrite Bool.andb_true_iff in E_len; destruct E_len as [ E_len E_free ].
         injection H as H; subst.
-        exists str. split.
-        1: reflexivity.
-        1:{ split; [ apply Nat.leb_le; exact E_len | reflexivity ]. }
+        exists str; split; [ reflexivity | ].
+        split; [ apply Nat.leb_le; exact E_len | ].
+        split; [ exact E_free | reflexivity ].
       Qed.
 
       (* [row <- set(tbl[id_tag]), check(contains(row.attr, p)), ret row]
@@ -999,7 +1021,8 @@ Section WithIndexUse.
         repeat (rewrite eqb_eq in *; subst).
         (* destruct_subexpr introduces auto-named strings, so the pattern's
            own string gets a name of its own here *)
-        apply literal_trigram_Some in E_lit as [ pstr [ E_p [ H_len E_g ] ] ].
+        apply literal_trigram_Some in E_lit
+          as [ pstr [ E_p [ H_len [ H_free E_g ] ] ] ].
         (* the pattern and its trigram are literals from here on: both are
            substituted away, since destruct_subexpr named the pattern itself *)
         subst.
@@ -1031,7 +1054,7 @@ Section WithIndexUse.
             rewrite interp_EBinop, interp_EAccess, interp_EVar, interp_EAtom.
             unfold get_local; rewrite map.get_put_same.
             unfold contains_test, row_key. cbn [interp_atom]. reflexivity. }
-        rewrite (probe_recheck_eq attr key rows pstr H_len H_nd), E_te.
+        rewrite (probe_recheck_eq attr key seps rows pstr H_len H_free H_nd), E_te.
         unfold probe_body. reflexivity.
       Qed.
 
@@ -1076,7 +1099,8 @@ Section WithIndexUse.
         cbn [all_eqb all_eqb' andb] in *.
         repeat rewrite Bool.andb_true_iff in *; intuition idtac.
         repeat (rewrite eqb_eq in *; subst).
-        apply literal_trigram_Some in E_lit as [ pstr [ E_p [ H_len E_g ] ] ].
+        apply literal_trigram_Some in E_lit
+          as [ pstr [ E_p [ H_len [ H_free E_g ] ] ] ].
         subst.
         (* the source's type is the set of rows, which the target also has *)
         repeat invert_type_of_clear; repeat invert_type_of_op_clear.
@@ -1276,23 +1300,28 @@ Section WithIndexUse.
       Definition literal_trigrams (e : expr) : option (string * list string) :=
         match e with
         | EAtom (AString s) =>
-            match trigrams s with
-            | nil => None
-            | g0 :: gs => Some (g0, gs)
-            end
+            if sep_free seps s
+            then match trigrams s with
+                 | nil => None
+                 | g0 :: gs => Some (g0, gs)
+                 end
+            else None
         | _ => None
         end.
 
       Lemma literal_trigrams_Some : forall p g0 gs,
           literal_trigrams p = Some (g0, gs) ->
-          exists s, p = EAtom (AString s) /\ trigrams s = g0 :: gs.
+          exists s, p = EAtom (AString s)
+                    /\ sep_free seps s = true
+                    /\ trigrams s = g0 :: gs.
       Proof.
         unfold literal_trigrams; intros p g0 gs H.
         destruct p as [ | | a | | | | | | | | | | | | | ]; try discriminate.
         destruct a as [ | | str | | | | | | ]; try discriminate.
+        destruct (sep_free seps str) eqn:E_free; [ | discriminate ].
         destruct (trigrams str) as [ | h t ] eqn:E_tri; [ discriminate | ].
         injection H as E1 E2; subst.
-        exists str; split; [ reflexivity | exact E_tri ].
+        exists str; split; [ reflexivity | split; [ exact E_free | exact E_tri ] ].
       Qed.
 
       (* [row <- set(tbl[id_tag]), check(contains(row.attr, p)), ret row]
@@ -1391,7 +1420,7 @@ Section WithIndexUse.
         cbn [all_eqb all_eqb' andb] in *.
         repeat rewrite Bool.andb_true_iff in *; intuition idtac.
         repeat (rewrite eqb_eq in *; subst).
-        apply literal_trigrams_Some in E_lit as [ pstr [ E_p E_tris ] ].
+        apply literal_trigrams_Some in E_lit as [ pstr [ E_p [ H_free E_tris ] ] ].
         subst.
         repeat invert_type_of_clear; repeat invert_type_of_op_clear.
         repeat rewrite_map_get_put_hyp.
@@ -1453,7 +1482,7 @@ Section WithIndexUse.
         cbn [all_eqb all_eqb' andb] in *.
         repeat rewrite Bool.andb_true_iff in *; intuition idtac.
         repeat (rewrite eqb_eq in *; subst).
-        apply literal_trigrams_Some in E_lit as [ pstr [ E_p E_tris ] ].
+        apply literal_trigrams_Some in E_lit as [ pstr [ E_p [ H_free E_tris ] ] ].
         subst.
         assert (H_tri_e : interp_expr store env
                             (EAccess (EAccess (ELoc tbl) aux_tag) tri_tag) = VDict td)
@@ -1489,8 +1518,8 @@ Section WithIndexUse.
             rewrite interp_EBinop, interp_EAccess, interp_EVar, interp_EAtom.
             unfold get_local; rewrite map.get_put_same.
             unfold contains_test, row_key. cbn [interp_atom]. reflexivity. }
-        rewrite (probe_recheck_all_eq attr key rows pstr g0 gs
-                   H_g0in H_gsin H_nd), E_te.
+        rewrite (probe_recheck_all_eq attr key seps rows pstr g0 gs
+                   H_g0in H_free H_gsin H_nd), E_te.
         unfold probe_body. reflexivity.
       Qed.
 
@@ -1503,8 +1532,39 @@ Section WithIndexUse.
          soundness obligation, not a heuristic: probe_recheck_eq does not
          hold without it, so the fallback cannot be dropped.
          ------------------------------------------------------------------ *)
+      (* The runtime guard, in two halves, both necessary.  The pattern
+         must have a trigram at all, and it must hold no separator: the
+         index keys on WORDS, so a pattern straddling one is in no bucket
+         and probing for it would lose rows.
+
+         The second half cannot be evaluated here, since the pattern is not
+         known until run time, so it is EMITTED as a comparison: a string
+         is separator-free exactly when splitting it hands back the
+         one-element list holding it (StringFacts.words_singleton__sep_free),
+         and both sides of that are ordinary expressions.  The literal
+         forms above decide the same condition at rewrite time. *)
+      Definition pattern_is_word (p : expr) : expr :=
+        EBinop OEq (EBinop OWords (EAtom (AString seps)) p)
+          (EBinop OCons p (EAtom (ANil (Some TString)))).
+
       Definition pattern_has_trigram (p : expr) : expr :=
-        EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString p).
+        EBinop OAnd
+          (EBinop OLess (EAtom (AInt 2)) (EUnop OLengthString p))
+          (pattern_is_word p).
+
+      (* and what the emitted comparison tells the proof *)
+      Lemma guard_word__sep_free : forall (pv : string),
+          value_eqb (VList (List.map VString (words seps pv)))
+            (VList [VString pv]) = true ->
+          sep_free seps pv = true.
+      Proof.
+        intros pv H. apply value_eqb_eq in H. injection H as H.
+        apply words_singleton__sep_free.
+        destruct (words seps pv) as [ | w ws ]; [ discriminate | ].
+        cbn [List.map] in H. injection H as E_w E_ws.
+        destruct ws as [ | w2 ws ]; [ | cbn [List.map] in E_ws; discriminate ].
+        subst w; reflexivity.
+      Qed.
 
       Definition first_trigram (p : expr) : expr :=
         ETernop OSubstring p (EAtom (AInt 0)) (EAtom (AInt 3)).
@@ -1572,9 +1632,18 @@ Section WithIndexUse.
         unfold pattern_has_trigram, first_trigram, trigram_probe.
         eapply TyEIf.
         3: exact H_t.
-        1:{ (* the guard: 2 < strlen(pattern) *)
-            eapply TyEBinop; [ apply TyOLess | apply TyEAtom; apply TyAInt | ].
-            eapply TyEUnop; [ apply TyOLengthString | exact H_pty ]. }
+        1:{ (* the guard: a trigram's worth of characters, and one word *)
+            unfold pattern_is_word.
+            eapply TyEBinop; [ apply TyOAnd | | ].
+            1:{ eapply TyEBinop;
+                [ apply TyOLess | apply TyEAtom; apply TyAInt | ].
+                eapply TyEUnop; [ apply TyOLengthString | exact H_pty ]. }
+            1:{ eapply TyEBinop; [ apply TyOEq | | ].
+                1:{ eapply TyEBinop;
+                    [ apply TyOWords | apply TyEAtom; apply TyAString
+                    | exact H_pty ]. }
+                1:{ eapply TyEBinop; [ apply TyOCons | exact H_pty | ].
+                    apply TyEAtom; apply TyANil; constructor. } } }
         1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
             repeat rewrite_map_get_put_hyp.
             repeat (clear_refl; repeat do_injection2).
@@ -1658,11 +1727,16 @@ Section WithIndexUse.
             all: inversion H_pval. }
         destruct H_pstr as [ pv E_pv ].
         (* the guard *)
-        unfold pattern_has_trigram, first_trigram.
-        rewrite interp_EIf, interp_EBinop, interp_EUnop, interp_EAtom, E_pv.
-        cbn [interp_unop interp_binop interp_atom].
-        destruct (Z.ltb 2 (Z.of_nat (String.length pv))) eqn:E_long.
+        unfold pattern_has_trigram, pattern_is_word, first_trigram.
+        rewrite interp_EIf, !interp_EBinop, interp_EUnop, !interp_EAtom, E_pv.
+        cbn [interp_unop interp_binop interp_atom apply_bool_binop].
+        destruct (Z.ltb 2 (Z.of_nat (String.length pv))) eqn:E_long;
+          cbn [andb].
         2: reflexivity.
+        destruct (value_eqb (VList (List.map VString (words seps pv)))
+                    (VList [VString pv])) eqn:E_word.
+        2: reflexivity.
+        pose proof (guard_word__sep_free pv E_word) as H_free.
         assert (H_len : 3 <= String.length pv)
           by (apply Z.ltb_lt in E_long; lia).
         (* the probe, as in the literal case, with the trigram taken at run
@@ -1700,7 +1774,7 @@ Section WithIndexUse.
             rewrite <- (not_free_immut_put_sem pat x store env w) by assumption.
             rewrite E_pv.
             unfold contains_test, row_key. reflexivity. }
-        rewrite (probe_recheck_eq attr key rows pv H_len H_nd), E_te.
+        rewrite (probe_recheck_eq attr key seps rows pv H_len H_free H_nd), E_te.
         unfold probe_body. reflexivity.
       Qed.
 
@@ -1816,9 +1890,17 @@ Section WithIndexUse.
         1:{ repeat invert_type_of_clear; repeat invert_type_of_op_clear.
             eapply not_free_immut_put_ty; [ eassumption | eassumption ]. }
         eapply TyEIf.
-        1:{ unfold pattern_has_trigram.
-            eapply TyEBinop; [ apply TyOLess | apply TyEAtom; apply TyAInt | ].
-            eapply TyEUnop; [ apply TyOLengthString | exact H_pty ]. }
+        1:{ unfold pattern_has_trigram, pattern_is_word.
+            eapply TyEBinop; [ apply TyOAnd | | ].
+            1:{ eapply TyEBinop;
+                [ apply TyOLess | apply TyEAtom; apply TyAInt | ].
+                eapply TyEUnop; [ apply TyOLengthString | exact H_pty ]. }
+            1:{ eapply TyEBinop; [ apply TyOEq | | ].
+                1:{ eapply TyEBinop;
+                    [ apply TyOWords | apply TyEAtom; apply TyAString
+                    | exact H_pty ]. }
+                1:{ eapply TyEBinop; [ apply TyOCons | exact H_pty | ].
+                    apply TyEAtom; apply TyANil; constructor. } } }
         2: exact H_t.
         (* the probe's own type is the set of rows, which the source has *)
         repeat invert_type_of_clear; repeat invert_type_of_op_clear.
@@ -1891,11 +1973,16 @@ Section WithIndexUse.
             all: inversion H_pval. }
         destruct H_pstr as [ pv E_pv ].
         (* the runtime guard *)
-        unfold pattern_has_trigram.
-        rewrite interp_EIf, interp_EBinop, interp_EUnop, interp_EAtom, E_pv.
-        cbn [interp_unop interp_binop interp_atom].
-        destruct (Z.ltb 2 (Z.of_nat (String.length pv))) eqn:E_long.
+        unfold pattern_has_trigram, pattern_is_word.
+        rewrite interp_EIf, !interp_EBinop, interp_EUnop, !interp_EAtom, E_pv.
+        cbn [interp_unop interp_binop interp_atom apply_bool_binop].
+        destruct (Z.ltb 2 (Z.of_nat (String.length pv))) eqn:E_long;
+          cbn [andb].
         2: reflexivity.
+        destruct (value_eqb (VList (List.map VString (words seps pv)))
+                    (VList [VString pv])) eqn:E_word.
+        2: reflexivity.
+        pose proof (guard_word__sep_free pv E_word) as H_free.
         assert (H_len : 3 <= String.length pv)
           by (apply Z.ltb_lt in E_long; lia).
         (* the pattern reads the same under every binder the probe adds *)
@@ -1969,18 +2056,20 @@ Section WithIndexUse.
                            (VDict td)))).
         1:{ intros r H_in H_p. apply In_cands_g.
             1:{ apply key_at__In_tri_bucket. rewrite <- E_te.
-                apply (TrigramIndexImpl.tri_lookup_complete attr key);
-                  [ exact H_in | exact H_len
+                apply (TrigramIndexImpl.tri_lookup_complete attr key seps);
+                  [ exact H_in | exact H_free | exact H_len
                   | apply contains_test_true__occurrence; exact H_p ]. }
             1:{ intros iv H_iv.
                 apply In_eval_range_inv in H_iv as [ i [ H_lt E_iv ] ]; subst iv.
                 cbn [tri_str].
                 replace (Z.to_nat (1 + Z.of_nat i)) with (S i) by lia.
                 apply key_at__In_tri_bucket. rewrite <- E_te.
-                apply (TrigramIndexImpl.tri_lookup_complete_all attr key _ _ pv
-                         (String.substring (S i) 3 pv));
-                  [ exact H_in
-                  | apply contains_test_true__occurrence; exact H_p | ].
+                apply (TrigramIndexImpl.tri_lookup_complete_all attr key seps
+                         _ _ pv (String.substring (S i) 3 pv));
+                  [ exact H_in | exact H_free | | | ].
+                1:{ destruct pv; [ cbn [String.length] in H_len; lia
+                                 | discriminate ]. }
+                1: apply contains_test_true__occurrence; exact H_p.
                 unfold trigrams. apply in_map_iff.
                 exists (S i); split; [ reflexivity | ]. apply in_seq. lia. } }
         rewrite (probe_recheck_cands_eq attr key rows pv _ H_nd H_compl).
@@ -2004,13 +2093,14 @@ Section WithIndexUse.
       Definition tri_use_idx_head (e : expr) : expr :=
         match e with
         | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
-            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
-            tv0 tv1 tv2 tv3
+            wrd0 wrd1 wacc0 wacc1 gvar0 gvar1 gvar2 sacc0 sacc1 sacc2
+            bkt0 bkt1 attr0 key0 key1 seps0
             (EAccess (ELoc tbl0) id_tag0) =>
             if all_eqb [(tup, [tup0; tup1; tup2; tup3]);
-                        (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
+                        (acc, [acc0; acc1]); (wrd, [wrd0; wrd1]);
+                        (wacc, [wacc0; wacc1]); (gvar, [gvar0; gvar1; gvar2]);
                         (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
-                        (attr, [attr0]); (tvar, [tv0; tv1; tv2; tv3]); (key, [key0; key1]);
+                        (attr, [attr0]); (seps, [seps0]); (key, [key0; key1]);
                         (tbl, [tbl0]); (id_tag, [id_tag0])]
             then tri_e
             else e
@@ -2031,7 +2121,7 @@ Section WithIndexUse.
             /\ record_proj aux_tag rv = VRecord rv_aux
             /\ Forall (fun r => type_of_value r (TRecord rt)) rows
             /\ record_proj tri_tag rv_aux
-               = TrigramIndexImpl.tri_entries attr key rows.
+               = TrigramIndexImpl.tri_entries attr key seps rows.
       Proof.
         unfold aux_wf_for_idx, TrigramIndexImpl.idx_wf.
         intros tl rt v H_attr E_id.
@@ -2049,9 +2139,10 @@ Section WithIndexUse.
           by (eapply type_of_value_field; [ exact H_vty | exact E_vid | exact E_id ]).
         apply type_of_value_TList_inv in H_idty as [ rows [ E_rows H_rows ] ].
         subst v_id.
-        rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc pos sacc bkt
-                   H_tup_acc H_tup_pos H_tup_sacc H_tup_bkt H_pos_sacc
-                   tvar H_tvar_tup H_tvar_acc H_tvar_pos H_tvar_sacc
+        rewrite (TrigramIndexImpl.fiat2_gallina_to_idx hole attr key tup acc
+                   gvar sacc bkt
+                   H_tup_acc H_tup_gvar H_tup_sacc H_tup_bkt H_gvar_sacc
+                   seps wrd wacc H_wrd_tup H_wacc_tup H_wacc_wrd
                    (locals_ok := locals_ok) rows
                    (TrigramIndexImpl.typed_rows_have_text attr rows rt H_attr H_rows))
           in H_tri.
@@ -2171,6 +2262,13 @@ Section WithIndexUse.
             tryif constr_eq H E_key then fail
             else (rewrite E_key in H; injection H as H; subst T)
         end.
+        (* the key type of the dictionary the inner fold builds, which the
+           two nested folds leave as a unification variable until the
+           trigram operator's own typing pins it *)
+        repeat match goal with
+               | H : Some TString = Some ?T |- _ =>
+                   is_var T; injection H as H; subst T
+               end.
         eapply TyEAccess;
           [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
           | exact E_tri ].
@@ -2189,19 +2287,21 @@ Section WithIndexUse.
          contributions are all it adds.
          ================================================================== *)
       Notation tri_row_delete_body' :=
-        (TrigramIndexImpl.tri_row_delete_body attr key tup acc pos sacc bkt tvar).
+        (TrigramIndexImpl.tri_row_delete_body attr key tup acc gvar sacc bkt
+           seps wrd wacc).
 
       Definition filter_neq_to_tri_delete_head (e : expr) : expr :=
         match e with
         | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
-            pos0 pos1 pos2 sacc0 sacc1 sacc2 bkt0 bkt1 attr0 key0 key1
-            tv0 tv1 tv2 tv3
+            wrd0 wrd1 wacc0 wacc1 gvar0 gvar1 gvar2 sacc0 sacc1 sacc2
+            bkt0 bkt1 attr0 key0 key1 seps0
             (flatmap_filter_list (EAccess (ELoc tbl0) id_tag0) y0
                (EUnop ONot (EBinop OEq (EAccess (EVar y1) key2) kexp)) y2 _ _) =>
             if (all_eqb [(tup, [tup0; tup1; tup2; tup3]);
-                         (acc, [acc0; acc1]); (pos, [pos0; pos1; pos2]);
+                         (acc, [acc0; acc1]); (wrd, [wrd0; wrd1]);
+                         (wacc, [wacc0; wacc1]); (gvar, [gvar0; gvar1; gvar2]);
                          (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
-                         (attr, [attr0]); (tvar, [tv0; tv1; tv2; tv3]);
+                         (attr, [attr0]); (seps, [seps0]);
                          (key, [key0; key1; key2]);
                          (tbl, [tbl0]); (id_tag, [id_tag0]); (y0, [y1; y2])]
                 && negb (free_immut_in y0 kexp)
@@ -2350,7 +2450,7 @@ Section WithIndexUse.
         lazymatch goal with
         | |- _ = interp_expr store env ?src =>
             assert (E_src : interp_expr store env src
-                            = VDict (TrigramIndexImpl.tri_dict attr key
+                            = VDict (TrigramIndexImpl.tri_dict attr key seps
                                        (filter (fun r =>
                                                   negb (value_eqb (row_key key r)
                                                           (interp_expr store env kexp)))

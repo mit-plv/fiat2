@@ -296,12 +296,19 @@ Section WithConcreteMaps.
 
     Context (trigram_text_attr trigram_key_attr : string).
 
+    (* The separators the index tokenizes on.  pg_trgm's find_word splits
+       on every non-alphanumeric character; a space is the one that matters
+       for the subjects here, and it is written at this one place so that
+       the index and every rule that reads it agree. *)
+    Definition trigram_seps : string := " ".
+
     Definition trigram_idx_wf :=
       (TrigramIndexImpl.idx_wf (locals := clocals) "hole" trigram_text_attr
-         trigram_key_attr "tup" "acc" "pos" "sacc" "bkt" "txt").
+         trigram_key_attr "tup" "acc" "gvar" "sacc" "bkt"
+         trigram_seps "wrd" "wacc").
     Instance ctrigram_idx : IndexInterface.index :=
       (trigram_idx "hole" trigram_text_attr trigram_key_attr
-         "tup" "acc" "pos" "sacc" "bkt" "txt").
+         "tup" "acc" "gvar" "sacc" "bkt" trigram_seps "wrd" "wacc").
     Instance ctrigram_idx_ok : IndexInterface.ok ctrigram_idx trigram_idx_wf.
     apply trigram_idx_ok; discriminate.
     Qed.
@@ -317,12 +324,13 @@ Section WithConcreteMaps.
        the index's own fold, run on one more row. *)
     Definition trigram_lookup_gated_transf (pk_tag : string) (ds : list decl) :=
       trigram_lookup_gated trigram_text_attr trigram_key_attr "id_tag" "aux_tag"
-        tag pk_tag "b" "k" "y" "cpos" "cacc" ds.
+        tag pk_tag "b" "k" "y" "cpos" "cacc" trigram_seps ds.
 
     Definition cons_to_tri_insert_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl]
                    (cons_to_tri_insert_head trigram_text_attr trigram_key_attr
-                      "tup" "acc" "pos" "sacc" "bkt" "txt").
+                      "tup" "acc" "gvar" "sacc" "bkt"
+                      trigram_seps "wrd" "wacc").
 
     (* A filter-shaped delete: the row that goes is read out of the
        primary-key member, so this one is gated on the declaration too.
@@ -330,7 +338,8 @@ Section WithConcreteMaps.
        would be left behind in buckets this rule never visits. *)
     Definition tri_delete_gated_transf (pk_tag : string) (ds : list decl) :=
       tri_delete_gated trigram_text_attr trigram_key_attr
-        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" pk_tag "txt" ds.
+        "tup" "acc" "gvar" "sacc" "bkt" "id_tag" "aux_tag" pk_tag
+        trigram_seps "wrd" "wacc" ds.
 
     (* What makes maintenance pay: the recomputation a maintenance rule
        leaves behind, over the part of the table that did not change, is the
@@ -338,7 +347,8 @@ Section WithConcreteMaps.
        member, so it needs no declaration. *)
     Definition tri_use_idx_transf' : string -> command -> command :=
       tri_use_idx_transf trigram_text_attr trigram_key_attr
-        "tup" "acc" "pos" "sacc" "bkt" "id_tag" "aux_tag" tag "txt".
+        "tup" "acc" "gvar" "sacc" "bkt" "id_tag" "aux_tag" tag
+        trigram_seps "wrd" "wacc".
 
     Context (rep_ctag : collection_tag).
 
@@ -1212,15 +1222,15 @@ end.
                 1: split; [ apply H_Q; exact H_Qv
                           | apply H_decl with (a := ak); assumption ]. } }
         1:{ unfold trigram_lookup_gated_transf.
-            eapply (trigram_lookup_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
+            eapply (trigram_lookup_gated_sound "hole" a ak "tup" "acc" "gvar" "sacc" "bkt"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       ltac:(discriminate) ltac:(discriminate)
                       "tup" "acc" ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (String.of_nat (S init_tag)) "b" "k" "y"
                       "cpos" "cacc" ltac:(discriminate)
-                      "txt" ltac:(discriminate) ltac:(discriminate)
-                      ltac:(discriminate) ltac:(discriminate)
+                      trigram_seps "wrd" "wacc"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             intros H_uq. unfold trigram_bridges.
@@ -1271,12 +1281,12 @@ end.
         (* the use rule: one member, and no declaration -- the trigram
            member's invariant holds of any table it was installed on *)
         1:{ unfold tri_use_idx_transf'.
-            eapply (tri_use_idx_transf_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
+            eapply (tri_use_idx_transf_sound "hole" a ak "tup" "acc" "gvar" "sacc" "bkt"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       ltac:(discriminate) ltac:(discriminate)
                       "id_tag" "aux_tag" (String.of_nat init_tag)
-                      "txt" ltac:(discriminate) ltac:(discriminate)
-                      ltac:(discriminate) ltac:(discriminate)
+                      trigram_seps "wrd" "wacc"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             unfold trigram_idx_bridges; split; [ | split ].
@@ -1304,7 +1314,7 @@ end.
                 eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
         (* the delete rule: both members, and the declaration *)
         1:{ unfold tri_delete_gated_transf.
-            eapply (tri_delete_gated_sound "hole" a ak "tup" "acc" "pos" "sacc" "bkt"
+            eapply (tri_delete_gated_sound "hole" a ak "tup" "acc" "gvar" "sacc" "bkt"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       ltac:(discriminate) ltac:(discriminate)
                       "tup" "acc" ltac:(discriminate)
@@ -1313,7 +1323,7 @@ end.
                       "id_tag" "aux_tag" (String.of_nat init_tag)
                       (String.of_nat (S init_tag))
                       ltac:(discriminate) ltac:(discriminate)
-                      "txt" ltac:(discriminate) ltac:(discriminate)
+                      trigram_seps "wrd" "wacc"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
@@ -1345,7 +1355,8 @@ end.
         1:{ unfold cons_to_tri_insert_transf.
             (* maintenance does not mention the hole, so it is not a
                parameter of this rule *)
-            eapply (cons_to_tri_insert_sound a ak "tup" "acc" "pos" "sacc" "bkt" "txt"
+            eapply (cons_to_tri_insert_sound a ak "tup" "acc" "gvar" "sacc" "bkt"
+                      trigram_seps "wrd" "wacc"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             discriminate. }

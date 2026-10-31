@@ -737,3 +737,62 @@ The reason to do this now rather than later: the text is read three times inside
 fold plus once in the range bound, so a text that is *computed* rather than read makes
 the write path quadratic in the field's length. Word-split extraction computes it.
 With the binder in place the transformation is paid once per row.
+
+### Tokenizing the index, measured
+
+The index now keys on **words**, not on the whole field: `pg_trgm`'s `generate_trgm`
+runs `find_word` over the text and slides a three-window over each word padded on its
+own, so the per-row body is two nested folds and the two string operators `OWords` and
+`OTrigrams` stand for its two loops. The pattern side is unchanged -- it still reads
+the pattern's trigrams by position, unpadded -- with one addition: the rules now
+require the pattern to hold **no separator**, because a window straddling one, `"h J"`
+against `"Smith Jones"`, is a trigram of the text and is in no bucket.
+
+On the names this generator builds, `"user0042"`, there is exactly one word, so the
+tokenized index holds **exactly the keys the padded whole-string index held**. That
+makes this a clean reading of what the shape change costs, with the content pinned:
+
+| 1600 rows, `typed` | padded, text bound once | tokenized |
+| --- | --- | --- |
+| build work | 1,834,142 | **1,638,942** |
+| build cmp + hash | 145,846 + 32,000 | **145,846 + 32,000** |
+| ops work | 1,506,763 | 1,506,483 |
+
+Comparisons and hashes are identical **to the digit**, which is the check that the
+index really does hold the same thing. The build is **10.6% cheaper**: `OTrigrams`
+replaces a fold over `ORange 0 (len-2)` whose body called `OSubstring` twice per
+position, so the range list, the index arithmetic and the per-position fold
+scaffolding all go, and what is left is one operator that walks the padded word once.
+Tokenizing the index made the write path *cheaper*, not dearer, at equal content.
+
+Per kind in the op phase:
+
+| kind | padded, bound once | tokenized | delta |
+| --- | --- | --- | --- |
+| `byId` | 1,508 | 1,508 | 0 |
+| `suggest` | 5,893 | 6,433 | +540 |
+| `suggestMiss` | 704,980 | 705,460 | +480 |
+| `suggestShort` | 762,743 | 763,223 | +480 |
+| `suggestLong` | 6,687 | 7,347 | +660 |
+| `remove` | 33,606 | **31,166** | -2,440 |
+
+`byId` does not touch the trigram member and does not move. Every kind that does pays
+a flat **+480 to +660**, and it is all one thing: the new half of the runtime guard.
+The rule cannot evaluate `sep_free` on a pattern it will not see until run time, so it
+*emits* the test -- a string is separator-free exactly when splitting it hands back
+the one-element list holding it (`StringFacts.words_singleton__sep_free`) -- and the
+emitted form is `OWords` on the token plus a list comparison. The charge therefore
+grows with the token: three characters for `suggest`, `suggestMiss` and
+`suggestShort`, five for `suggestLong`, and the deltas order the same way. Note that
+the two fallback kinds pay it too: the guard is evaluated before the branch is chosen,
+which is why a *scan* got 480 units dearer.
+
+`remove` is the write side of the same shape change as the build, and falls 7.3% for
+the same reason.
+
+What this table does **not** show is what tokenizing is *for*, because a one-word
+field cannot show it. The index's content only differs on a multi-word name, and both
+of our witnesses have one -- Jenkins's `User.getFullName()` fixtures are `Fred Smith`,
+`Foo Bar`, `The User`; Wagtail's `title_text` is a `" ".join`. Changing the generator
+to a two-word name is a separate decision, because it moves every published
+`user_search` figure, so it is not folded in here.
