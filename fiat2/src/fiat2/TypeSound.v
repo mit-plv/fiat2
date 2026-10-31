@@ -1572,6 +1572,39 @@ Section WithWord.
     - apply filter_preserve_SSorted; assumption.
   Qed.
 
+  (* The least key of a well-typed dictionary has the key type.  Stated on
+     TyVDict's Forall premise rather than on type_of_value (VDict d) _, because
+     that premise is the only thing the proof uses -- the kind, NoDup and
+     StronglySorted play no part -- and because it is the form the context is
+     already in where this is applied. *)
+  Lemma dict_min_key_sound : forall (d : list (value * value)) kt vt,
+      Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) d ->
+      type_of_value (VOption (dict_min_key d)) (TOption kt).
+  Proof.
+    intros * H. destruct d as [ | [ k v ] d ]; cbn.
+    - constructor.
+    - constructor. inversion H as [ | ? ? Hhd ? ]. apply Hhd.
+  Qed.
+
+  (* And it really is the least: dict_min_key takes the HEAD, which is the
+     minimum exactly because TyVDict makes every well-typed dictionary
+     StronglySorted by dict_entry_leb.  This is what licenses the projection in
+     Interpret.dict_min_key -- without it the operator would have to fold. *)
+  Lemma dict_min_key_is_least : forall (d : list (value * value)) k,
+      StronglySorted dict_entry_leb d ->
+      dict_min_key d = Some k ->
+      Forall (fun p => value_leb k (fst p) = true) d.
+  Proof.
+    intros * Hss Hmin. destruct d as [ | [ k0 v0 ] d ]; cbn in Hmin.
+    - discriminate.
+    - inversion Hmin; subst. inversion Hss as [ | ? ? ? Hall ]; subst.
+      constructor.
+      + cbn. unfold value_leb, leb_from_compare. rewrite value_compare_refl. reflexivity.
+      + rewrite Forall_forall in *; intros p Hp.
+        specialize (Hall p Hp). unfold dict_entry_leb in Hall. cbn in Hall.
+        exact Hall.
+  Qed.
+
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1621,6 +1654,23 @@ Section WithWord.
          1:{ lazymatch goal with H: TList _ = TList _ |- _ => inversion H; subst end.
              cbn. constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
              eapply incl_Forall; [ apply list_to_set_incl | ]; auto. }
+         (* ODictMinKey: the least key of a well-typed dictionary has the key
+            type.  TyVDict has already been inverted here, so its three
+            premises are loose in the context; [constructor] repacks them for
+            dict_min_key_sound, which is the lemma that does the work.  The
+            kind is Ranged because the typing rule pins it there. *)
+         (* ODictMinKey: the least key of a well-typed dictionary has the key
+            type.  TyVDict has already been inverted here, so its Forall
+            premise -- the only one dict_min_key_sound needs -- is in context. *)
+         (* ODictMinKey: the least key of a well-typed dictionary has the key
+            type.  TyVDict has already been inverted here, so its Forall
+            premise -- the only one dict_min_key_sound needs -- is in context,
+            but the dictionary type equation is not, and it is what identifies
+            that premise's key type with kt. *)
+         1:{ lazymatch goal with
+               H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst
+             end.
+             eapply dict_min_key_sound; eauto. }
       - (* TyEBinop *)
         inversion H; subst.
         16:{ (* OLookup.  The kind occurs only in the premise, never in the

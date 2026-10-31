@@ -486,6 +486,28 @@ let dremove (k : t) (d : dstore) : dstore =
 let dcardinal (d : dstore) : int =
   match d with DTree m -> VMap.cardinal m | DHash h -> VTrie.cardinal h
 
+(* The LEAST key, or None when the dictionary is empty.
+
+   On a tree this is a leftmost descent, and it calls [compare] ZERO times --
+   a balanced map's min_binding only follows left pointers.  So it charges no
+   key work, which is honest for a model that counts key work: the cost of a
+   minimum is pointer hops, not comparisons, and nothing here estimates a
+   depth from a log (see Count's note on measuring rather than estimating).
+
+   A trie has NO least key, which is precisely why TyODictMinKey pins
+   TDict Ranged -- a Ranged dictionary is a tree in every column.  The DHash
+   arm therefore should not be reachable, and if it ever is it pays a full
+   canonicalisation and the counter says so: the same stance [selements]
+   takes for a set it should never have to sort. *)
+let dmin_key (d : dstore) : t option =
+  match d with
+  | DTree m -> (match VMap.min_binding_opt m with None -> None | Some (k, _) -> Some k)
+  | DHash h ->
+      incr Count.canonicalisations;
+      (match List.sort (fun (k1, _) (k2, _) -> compare k1 k2) (VTrie.to_list h) with
+       | [] -> None
+       | (k, _) :: _ -> Some k)
+
 (* The bindings in CANONICAL order.  A tree is already in it; a trie is not,
    and producing it is the cost the semantics can observe, so it is charged
    exactly where [compare] charges it. *)

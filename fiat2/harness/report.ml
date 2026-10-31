@@ -50,7 +50,7 @@ let operators (c : command) : string list =
     | OSome -> "OSome" | ODictValues -> "ODictValues"
     | OSetOfBag -> "OSetOfBag"
     | OBagOfList -> "OBagOfList" | OSetOfList -> "OSetOfList"
-    | OSetSize -> "OSetSize" in
+    | OSetSize -> "OSetSize" | ODictMinKey -> "ODictMinKey" in
   let binop = function
     | OPlus -> "OPlus" | OMinus -> "OMinus" | OTimes -> "OTimes"
     | ODiv -> "ODiv" | OMod -> "OMod" | OAnd -> "OAnd" | OOr -> "OOr"

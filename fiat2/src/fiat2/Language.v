@@ -117,6 +117,20 @@ Inductive unop : Type :=
    size is the SUM of its multiplicities rather than the length of its entry
    list, and nothing asks for it. *)
 | OSetSize
+(* The least key of a dictionary, or None when it is empty.
+
+   Pinned at TDict Ranged, exactly as ODictRange is, and for the same reason:
+   a hash table has no least key, so letting this type at Unranged would let a
+   term demand a minimum from a structure that can only scan for it.  With this
+   operator the kind reads as "the key order is READ" -- a range query is one
+   way to read it and a minimum is another -- which is what Count's third
+   classifier already says in prose.
+
+   Note it is definable on either kind: TyVDict makes every well-typed
+   dictionary StronglySorted by dict_entry_leb, so the least key is the HEAD's
+   whatever the kind.  Pinning it is therefore a deliberate REFUSAL, not a
+   consequence. *)
+| ODictMinKey
 (* The three-character windows of a string, in order.  A LIST, not a set:
    the index folds them into a dictionary, and EFold is list-only because
    a foreign accumulator over a set would need the step to commute.

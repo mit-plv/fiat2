@@ -190,6 +190,17 @@ let interp_unop (o : unop) (v : value) : value =
       (match v with
        | VSet s -> let n = Value.scardinal s in Count.walk n; VInt n
        | _ -> VUnit)
+  (* The least key.  Charged by the store itself, like every other dictionary
+     access here -- and on a tree that charge is NOTHING, because a leftmost
+     descent follows pointers and compares no keys.  See Value.dmin_key: a
+     hash table has no least key at all, which is why TyODictMinKey pins
+     TDict Ranged.  The consequence for the measurement is worth naming: a
+     cached minimum (MinAgg) and a tree's minimum are BOTH free in a key-work
+     model, so the two indexes differ only on the DELETE path. *)
+  | ODictMinKey ->
+      (match v with
+       | VDict (_, d) -> VOption (Value.dmin_key d)
+       | _ -> VUnit)
   | OStringOfInt ->
       (match v with
        | VInt z -> let s = string_of_int z in Count.chars (String.length s); VString s

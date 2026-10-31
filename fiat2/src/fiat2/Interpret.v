@@ -68,6 +68,15 @@ Section WithWord.
   Definition list_to_set : list value -> list value :=
     fold_right set_insert nil.
 
+  (* The least key of a dictionary.  A PROJECTION, not a fold: a well-typed
+     dictionary is StronglySorted by dict_entry_leb (TypeSound.TyVDict), so the
+     head's key is already the least one -- dict_min_key_is_least says so. *)
+  Definition dict_min_key (d : list (value * value)) : option value :=
+    match d with
+    | nil => None
+    | (k, _) :: _ => Some k
+    end.
+
   Definition interp_unop (o : unop) (v : value) : value :=
     match o with
     | ONeg => match v with
@@ -87,6 +96,10 @@ Section WithWord.
                   | VSet l => VInt (Z.of_nat (List.length l))
                   | _ => VUnit
                   end
+    | ODictMinKey => match v with
+                     | VDict d => VOption (dict_min_key d)
+                     | _ => VUnit
+                     end
     (* the three-character windows, in order; see Language.OTrigrams *)
     | OTrigrams => match v with
                    | VString s => VList (List.map VString (trigrams s))
