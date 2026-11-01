@@ -2,6 +2,14 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.IndexInterface fiat2.CollectionTransf fiat2.Utils fiat2.TransfSound fiat2.TransfUtils
   fiat2.Substitute fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
+(* NOT Import: this file defines to_idx, idx_ty, is_tbl_ty and gallina_to_idx
+   of its own, and importing would shadow them.  What is wanted from here is
+   the handful of lemmas about dict_insert, dict_lookup and bag_insert that say
+   nothing about any index -- they happen to live there, and the comment at
+   DictIndexImpl.v:348 states the convention under which they belong in Utils
+   instead.  Moving them is the right cleanup and would drop this dependency;
+   it touches the whole build, so it is noted rather than done in passing. *)
+Require fiat2.DictIndexImpl.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
@@ -400,66 +408,6 @@ Section WithHole.
             repeat (case_match; auto). }
       Qed.
 
-      (* ---- facts about dict_insert, dict_lookup and bag_insert ----
-
-         These five say nothing about any index: they are properties of the
-         canonical dictionary and bag operations.  DictIndexImpl proves the
-         same five for itself, and the comment at DictIndexImpl.v:348 states
-         the convention they violate -- lemmas about dict_insert and
-         dict_delete rather than about an index belong in Utils.  Moving them
-         there is the right cleanup and would remove this duplication; it
-         touches DictIndexImpl and the whole build, so it is flagged here
-         rather than done in passing. *)
-
-      Lemma value_eqb_iff_eq : forall (v v' : value),
-          value_eqb v v' = true <-> v = v'.
-      Proof.
-        split; intros; subst; auto using value_eqb_eq, value_eqb_refl.
-      Qed.
-
-      Lemma value_compare_Eq_iff_eq : forall (v v' : value),
-          value_compare v v' = Eq <-> v = v'.
-      Proof.
-        split; intros; subst; auto using value_compare_Eq_eq, value_compare_refl.
-      Qed.
-
-      Lemma dict_lookup_insert_diff : forall k k' (v : value) d,
-          k <> k' -> dict_lookup k (dict_insert k' v d) = dict_lookup k d.
-      Proof.
-        intros; induction d; cbn.
-        1:{ rewrite <- value_eqb_iff_eq, Bool.not_true_iff_false in *.
-            rewrite_l_to_r; auto. }
-        1:{ case_match; cbn; unfold value_ltb, value_eqb.
-            case_match; cbn; unfold value_ltb, value_eqb;
-              rewrite <- value_compare_Eq_iff_eq in *.
-            1:{ rewrite value_compare_Eq_iff_eq in *; subst.
-                rewrite <- value_compare_Eq_iff_eq in *.
-                case_match; intuition auto. }
-            all: case_match; intuition auto. }
-      Qed.
-
-      Lemma dict_lookup_insert_same : forall k (v : value) d,
-          dict_lookup k (dict_insert k v d) = Some v.
-      Proof.
-        induction d; cbn; intros.
-        1: rewrite value_eqb_refl; trivial.
-        1:{ case_match. unfold value_ltb, value_eqb.
-            case_match; cbn.
-            1,2: rewrite value_eqb_refl; trivial.
-            unfold value_eqb. rewrite_l_to_r. assumption. }
-      Qed.
-
-      Lemma bag_to_list_insert_Permutation : forall (v : value) b,
-          Permutation (bag_to_list (bag_insert v b)) (v :: bag_to_list b).
-      Proof.
-        intros. pose proof (bag_to_list__bag_insert v b).
-        repeat destruct_exists; destruct_and; subst.
-        rewrite_l_to_r.
-        eapply perm_trans.
-        1: apply Permutation_sym, Permutation_middle.
-        rewrite bag_to_list_app. auto.
-      Qed.
-
       (* ---- what the index means ----
 
          The bucket at a key holds exactly the rows whose COMPOSITE key is
@@ -542,6 +490,86 @@ Section WithHole.
         - intros [ -> -> ]. reflexivity.
       Qed.
 
+      (* THE BRIDGE the lookup rule runs over.  What the conjunctive filter's
+         predicate computes on a row is exactly the test idx_chara filters by:
+         whether the row's composite key equals the key the probe builds.  The
+         right-hand sides are evaluated OUTSIDE the row binder, which is what
+         the rule's two freshness conditions buy. *)
+      Lemma interp_conj_pred : forall (store env : locals) x0 e1 e2 rc,
+          attr1 <> attr2 ->
+          free_immut_in x0 e1 = false ->
+          free_immut_in x0 e2 = false ->
+          match interp_expr store (map.put env x0 (VRecord rc))
+                  (EBinop OAnd (EBinop OEq (EAccess (EVar x0) attr1) e1)
+                          (EBinop OEq (EAccess (EVar x0) attr2) e2)) with
+          | VBool bb => bb
+          | _ => false
+          end
+          = value_eqb (ckey rc)
+              (VRecord (record_sort [(attr1, interp_expr store env e1);
+                                     (attr2, interp_expr store env e2)])).
+      Proof.
+        intros store env x0 e1 e2 rc Hne H1 H2.
+        cbn [interp_expr]. unfold get_local. rewrite map.get_put_same.
+        cbn [interp_binop apply_bool_binop].
+        erewrite <- (not_free_immut_put_sem e1) by assumption.
+        erewrite <- (not_free_immut_put_sem e2) by assumption.
+        apply Bool.eq_iff_eq_true. rewrite Bool.andb_true_iff.
+        rewrite !DictIndexImpl.value_eqb_iff_eq.
+        symmetry. apply ckey_eq_iff; assumption.
+      Qed.
+
+      (* Every row of a well-typed table is a record.  In its own lemma so that
+         the inversion has exactly one hypothesis to choose from; inside the
+         rule's proof there are three type_of_value hypotheses and the
+         inversion tactic picks the wrong one. *)
+      Lemma Forall_VRecord_of_list : forall (l : list value) rt,
+          type_of_value (VList l) (TList (TRecord rt)) ->
+          Forall (fun v => exists rc, v = VRecord rc) l.
+      Proof.
+        intros l rt H. invert_type_of_value_clear.
+        (* tie the hypothesis's list to the goal's: inversion may have
+           substituted l away, in which case naming it is ill-typed *)
+        lazymatch goal with
+          HF: Forall _ ?ll |- Forall _ ?ll => eapply Forall_impl; [ | exact HF ]
+        end.
+        (* cbn first: Forall_impl hands the premise back as a beta-redex, which
+           the inversion tactic's pattern does not match *)
+        intros v Hv; cbn beta in Hv.
+        invert_type_of_value_clear. eexists; reflexivity.
+      Qed.
+
+      (* The filter the SOURCE performs and the filter idx_chara describes are
+         the same filter.  Separated out so the rule's own proof is about the
+         index and not about evaluating a conjunction. *)
+      Lemma filter_conj_eq_filter_ckey :
+        forall (store env : locals) x0 e1 e2 (l : list value),
+          attr1 <> attr2 ->
+          free_immut_in x0 e1 = false ->
+          free_immut_in x0 e2 = false ->
+          Forall (fun v => exists rc, v = VRecord rc) l ->
+          filter (fun v => match interp_expr store (map.put env x0 v)
+                                   (EBinop OAnd
+                                      (EBinop OEq (EAccess (EVar x0) attr1) e1)
+                                      (EBinop OEq (EAccess (EVar x0) attr2) e2)) with
+                           | VBool bb => bb
+                           | _ => false
+                           end) l
+          = filter (fun v => match v with
+                             | VRecord rc =>
+                                 value_eqb (ckey rc)
+                                   (VRecord (record_sort
+                                               [(attr1, interp_expr store env e1);
+                                                (attr2, interp_expr store env e2)]))
+                             | _ => false
+                             end) l.
+      Proof.
+        intros store env x0 e1 e2 l Hne H1 H2 Hrec.
+        apply In_filter_ext; intros v Hin.
+        rewrite Forall_forall in Hrec. apply Hrec in Hin as [ rc -> ].
+        apply interp_conj_pred; assumption.
+      Qed.
+
       Lemma idx_wf__idx_chara : forall (t : type) (tbl_v idx_v : value),
           type_wf t -> is_tbl_ty t = true ->
           type_of_value tbl_v t ->
@@ -559,11 +587,11 @@ Section WithHole.
         invert_type_of_value_clear.
         case_match.
         1:{ apply value_eqb_eq in E; subst.
-            rewrite dict_lookup_insert_same.
-            rewrite bag_to_list_insert_Permutation.
+            rewrite DictIndexImpl.dict_lookup_insert_same.
+            rewrite DictIndexImpl.bag_to_list_insert_Permutation.
             apply perm_skip; auto. }
-        1:{ rewrite dict_lookup_insert_diff; auto.
-            rewrite <- value_eqb_iff_eq, Bool.not_true_iff_false in *;
+        1:{ rewrite DictIndexImpl.dict_lookup_insert_diff; auto.
+            rewrite <- DictIndexImpl.value_eqb_iff_eq, Bool.not_true_iff_false in *;
               eauto using value_eqb_sym. }
       Qed.
 
@@ -611,6 +639,57 @@ Section WithHole.
                 else e
             | _ => e
             end.
+
+          (* Reading the table and the index out through the tags.  Two lines
+             each, but stated rather than inlined: the matches have to be
+             reduced in order, and doing it inside the rule's proof buries
+             that in a replace-by tactic. *)
+          Lemma interp_tbl_bag : forall (store env : locals) rv v,
+              map.get store tbl = Some (VRecord rv) ->
+              access_record rv id_tag = Success (VList v) ->
+              interp_expr store env (EUnop OBagOfList (EAccess (ELoc tbl) id_tag))
+              = VBag (list_to_bag v).
+          Proof.
+            intros store env rv v Hget Hacc.
+            cbn [interp_expr]. unfold get_local, record_proj.
+            rewrite Hget. cbn. rewrite Hacc. reflexivity.
+          Qed.
+
+          Lemma interp_idx_at_tag : forall (store env : locals) rv rav d,
+              map.get store tbl = Some (VRecord rv) ->
+              access_record rv aux_tag = Success (VRecord rav) ->
+              access_record rav idx_tag = Success d ->
+              interp_expr store env (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) = d.
+          Proof.
+            intros store env rv rav d Hget Haux Hidx.
+            cbn [interp_expr]. unfold get_local, record_proj.
+            rewrite Hget. cbn. rewrite Haux. cbn. rewrite Hidx. reflexivity.
+          Qed.
+
+          (* What the emitted probe computes.  Stated whole rather than built up
+             inside the rule's proof: the tag accesses have to be reduced in
+             order, and the SOME branch's binder has to be discharged after the
+             lookup is case-split, not before. *)
+          Lemma interp_probe : forall (store env : locals) rv rav d k,
+              map.get store tbl = Some (VRecord rv) ->
+              access_record rv aux_tag = Success (VRecord rav) ->
+              access_record rav idx_tag = Success (VDict d) ->
+              interp_expr store env
+                (EOptMatch (EBinop OLookup
+                              (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag) k)
+                   (EAtom (AEmptyBag None)) b (EVar b))
+              = match dict_lookup (interp_expr store env k) d with
+                | Some w => w
+                | None => VBag nil
+                end.
+          Proof.
+            intros store env rv rav d k Hget Haux Hidx.
+            cbn [interp_expr]. unfold get_local, record_proj.
+            rewrite Hget. cbn. rewrite Haux. cbn. rewrite Hidx. cbn.
+            destruct (dict_lookup (interp_expr store env k) d) eqn:E; cbn.
+            - unfold get_local. rewrite map.get_put_same. reflexivity.
+            - reflexivity.
+          Qed.
 
           Lemma composite_eq_filter_to_lookup_head_preserve_ty :
             forall tl t aux_tl (Gstore : tenv),
@@ -669,6 +748,90 @@ Section WithHole.
                   H: access_record _ attr2 = Success _ |- _ => rewrite H
                 end.
                 eapply not_free_immut_put_ty; eassumption. }
+          Qed.
+          Lemma composite_eq_filter_to_lookup_head_preserve_sem :
+            forall (Gstore : tenv) (store : locals) tl t aux_tl,
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              match map.get store tbl with
+              | Some v => aux_wf_for_idx v
+              | _ => False
+              end ->
+              preserve_sem Gstore store composite_eq_filter_to_lookup_head.
+          Proof.
+            unfold preserve_sem, aux_wf_for_idx; intros.
+            unfold is_tbl_ty, idx_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            (* the table's list and the index's dictionary, with their types *)
+            assert (Htblv : type_of_value a (TList (TRecord l1))).
+            { invert_type_of_value_clear.
+              lazymatch goal with
+                HF: Forall2 _ _ tl |- _ =>
+                  pose proof (Forall2_access_record _ _ _ _ _ _ _ _ HF E1 H2)
+              end; auto. }
+            assert (Hidxv : type_of_value a1
+                              (TDict Unranged (key_ty l1) (TBag (TRecord l1)))).
+            { invert_type_of_value_clear.
+              lazymatch goal with
+                HF: Forall2 _ _ tl |- _ =>
+                  pose proof (Forall2_access_record _ _ _ _ _ _ _ _ HF E2 H3)
+              end.
+              invert_type_of_value_clear.
+              lazymatch goal with
+                HF: Forall2 _ _ aux_tl |- _ =>
+                  pose proof (Forall2_access_record _ _ _ _ _ _ _ _ HF E4 H4)
+              end; auto. }
+            assert (Hchara : idx_chara a a1)
+              by (eapply idx_wf__idx_chara with (t := TList (TRecord l1)); eauto).
+            unfold idx_chara in Hchara.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            pose proof (Forall_VRecord_of_list _ _ Htblv) as Hrows.
+            repeat destruct_subexpr.
+            unfold composite_eq_filter_to_lookup_head.
+            cbv beta iota; case_match; auto.
+            cbn [all_eqb all_eqb' andb] in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite !Bool.negb_true_iff in *.
+            repeat (rewrite eqb_eq in *; subst).
+            (* the SOURCE side: a filter over the table's rows *)
+            rewrite interp_flatmap_filter_bag.
+            erewrite interp_tbl_bag by eassumption.
+            cbv beta iota.
+            rewrite list_to_bag_filter_list_to_bag.
+            erewrite filter_conj_eq_filter_ckey; try eassumption.
+            2: rewrite <- String.eqb_neq; assumption.
+            (* the OPTIMIZED side: one probe *)
+            erewrite interp_probe by eassumption.
+            cbn [interp_expr List.map].
+            lazymatch goal with
+              |- context[dict_lookup ?k l3] => specialize (Hchara k)
+            end.
+            (* destruct substitutes into Hchara as well, so no rewrite is
+               needed -- its bucket becomes a match on w. *)
+            destruct (dict_lookup _ l3) as [ w | ] eqn:Elk.
+            - (* the bucket exists; it is a bag, and it is the filtered rows *)
+              assert (Hw : type_of_value w (TBag (TRecord l1))).
+              { apply DictIndexImpl.dict_lookup_Some_In in Elk.
+                clear Htblv. invert_type_of_value_clear.
+                lazymatch goal with
+                  HF: Forall _ l3 |- _ =>
+                    rewrite Forall_forall in HF; apply HF in Elk
+                end.
+                cbn in Elk; intuition idtac. }
+              (* beta and iota ONLY: a bare cbn unfolds record_sort into its
+                 mergesort implementation and the filter stops matching *)
+              inversion Hw; subst. cbv beta iota in Hchara.
+              apply Permutation_list_to_bag_eq in Hchara.
+              rewrite Hchara, DictIndexImpl.bag_to_list_to_bag by assumption.
+              reflexivity.
+            - (* no bucket: the filter is empty *)
+              cbv beta iota in Hchara. cbn [bag_to_list] in Hchara.
+              apply Permutation_sym, Permutation_nil in Hchara.
+              rewrite Hchara. reflexivity.
           Qed.
         End composite_eq_filter_to_lookup.
       End WithTags.
