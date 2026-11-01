@@ -27,6 +27,40 @@ Import ListNotations.
      the collection itself is NEVER STORED.  Cluster has fields for every
      map and no field for `partitions`.
 
+   What the composite key measured (harness alternatives, typed,
+   200/400/800/1600 rows; work at 1600 and the fitted exponent).  Every row
+   below is against configuration 0, the selector's pick -- SplitIf with the
+   two single-attribute dictionaries:
+
+                       build   forTopic  forNode  onePartition  available
+     chosen (cfg 0)   151289       1260     1322          5000       4488
+                      a=1.02     a=0.00   a=0.00        a=0.00     a=0.00
+     cfg 1 unsplit    151293       1260     1322       1388320    1162568
+                      a=1.02     a=0.00   a=0.00        a=1.00     a=1.00
+     cfg 2 composite  250927       1280     1342          1800    1162568
+                      a=1.01     a=0.00   a=0.00        a=0.01     a=1.00
+     cfg 3 cmp+split  250923       1280     1342          5020       4508
+                      a=1.01     a=0.00   a=0.00        a=0.00     a=0.00
+
+   Read it against configuration 1, not against 0: 1 and 2 differ ONLY in the
+   composite index, so that pair isolates it.  On onePartition the scan
+   becomes a probe -- 1388320 to 1800, 771x, and the exponent from 1.00 to
+   0.01.  It costs 1.66x to build, which is the third member.
+
+   Against configuration 0 the same read is only 2.8x better (5000 to 1800),
+   and that is a CONSTANT, not an exponent.  THE CAVEAT TO REPEAT WHENEVER
+   THAT NUMBER IS USED: the generator keeps one topic per 8 rows
+   (gen.ml bucket_size), so the residual filter configuration 0 leaves scans
+   8 rows however large the table is.  What the composite key saves against a
+   SPLIT conjunction is that filter, so its advantage there grows with bucket
+   size and is small here by construction.  What it saves against an UNSPLIT
+   conjunction is the whole scan, which is the exponent above.
+
+   And configuration 3 is the hazard with a price on it: identical to
+   configuration 0 on every read, to within the one extra record field, while
+   paying configuration 2's 1.7x build.  An index installed, maintained in
+   the install, and never read.
+
    Pattern
      A1a, built once, multi-index.  Unlike Keycloak_CachedRealm the keys are
      not unique: each map is key-to-many, so each bucket is a bag of rows.
