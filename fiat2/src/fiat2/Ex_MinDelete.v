@@ -61,17 +61,40 @@ Definition prog :=
                             (EAtom (AString "\n")))))
                    (ELoc "outputs"))))))).
 
-(* Two configurations, to show what the set index is for.  The guard rule is the
-   same in both: it keeps the cached minimum unless the delete removes it.  What
-   differs is the cost of the branch that does not keep it -- with a set index on
-   the same attribute it reads that set, and without one it goes back to the
-   table.  The set index must be listed first, so that the min aggregation wins
-   the race for the read of the minimum. *)
+(* Three configurations.
+
+   0 and 1 show what the set index is for.  The guard rule is the same in both:
+   it keeps the cached minimum unless the delete removes it.  What differs is
+   the cost of the branch that does not keep it -- with a set index on the same
+   attribute it reads that set, and without one it goes back to the table.  The
+   set index must be listed first, so that the min aggregation wins the race for
+   the read of the minimum.
+
+   2 asks for the other structure that can answer a minimum: an ORDERED
+   dictionary keyed on the same attribute.  It is here because the delete in
+   this program is a point delete on that attribute, so the dictionary serves
+   the delete outright -- one ODelete, no correction term and no recompute,
+   which is the whole cost the min aggregation pays in configuration 0.
+
+   What it does NOT serve is the READ of the minimum, and the reason is worth
+   stating because it is the one thing this file measures that is a gap rather
+   than a result: no rule takes AGMin over the attribute's values to
+   ODictMinKey of the dictionary that is keyed on them.  So the read stays a
+   scan, and because that scan is the id_tag list's last reader, the list
+   survives and the delete keeps rewriting it.  The two facts such a rule needs
+   are proved (TypeSound.map_fst_dict_insert and
+   DictIndexImpl.map_fst_gallina_to_idx); the rule is not written.
+
+   This makes the comparison a TRADE and not a dominance, which is why the
+   selector has no basis to prefer either: 2 is cheaper on the delete and
+   dearer on the read.  The rule would turn it into a dominance. *)
 Definition heuristics :=
   [ AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
       [[SetAgg "price"; MinAgg "price"]];
     AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
-      [[MinAgg "price"]]
+      [[MinAgg "price"]];
+    AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap]
+      [[RangedDictIdx "price"]]
   ].
 
 Definition row_ty_orders :=

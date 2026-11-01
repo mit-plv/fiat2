@@ -5,7 +5,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
-  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete.
+  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.eval.MinIndexProbe.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
   extraction.ExtrOcamlNativeString.
@@ -87,6 +87,7 @@ Module JID := Jenkins_ItemDeletion.
 Module ERD := Ex_RangeDelete.
 Module EMD := Ex_MinDelete.
 Module S4J := Sat4j_LiteralStorage.
+Module MIP := MinIndexProbe.
 Module JDP := Jenkins_DependentPlugins.
 
 (* ---- the scan form each subject starts from ---- *)
@@ -139,6 +140,31 @@ Definition min_delete_opt : command :=
   Eval vm_compute in nth 0 EMD.prog_transformed CSkip.
 Definition min_delete_opt_noset : command :=
   Eval vm_compute in nth 1 EMD.prog_transformed CSkip.
+
+(* Configuration 2: an ordered dictionary keyed on the same attribute instead
+   of the min aggregation.  Verified like the other two.  It serves the point
+   DELETE as one ODelete, which is the cost configuration 0 pays by recomputing
+   -- but no rule serves the READ of the minimum, so that stays a scan over
+   id_tag and the list therefore survives the delete.  A trade, not a win. *)
+Definition min_delete_opt_ranged : command :=
+  Eval vm_compute in nth 2 EMD.prog_transformed CSkip.
+
+(* THE ONE UNVERIFIED TERM IN THIS FILE.  Configuration 2 with the missing rule
+   applied by hand: AGMin over the attribute's values becomes ODictMinKey of the
+   dictionary keyed on them.  See eval/MinIndexProbe.v for what is and is not
+   proved about it -- the rewrite is pinned to fire and to preserve the read's
+   type, and its SEMANTICS rest on the differential test alone.  It is here to
+   price a rule before paying for its proof, so any number measured from this
+   row is a projection and must be reported as one. *)
+Definition min_delete_probe_dictmin : command :=
+  Eval vm_compute in MIP.probed.
+
+(* and the same with the list the rewrite orphaned actually dropped, by the
+   pipeline's own verified erase_dead_field.  Pinned in MinIndexProbe to fire
+   only AFTER the rewrite, so this row is the rule's full cascade and the row
+   above is the read alone. *)
+Definition min_delete_probe_dictmin_erased : command :=
+  Eval vm_compute in MIP.probed_erased.
 Definition item_deletion_opt : command := Eval vm_compute in JID.optimized_rep.
 (* the selector's own configuration for this one, which now includes the
    bag-level split (selector_emits_the_split_and_declines_set_mem) *)
@@ -209,6 +235,14 @@ Definition alternatives : list (string * command) :=
   ; ("dependent_plugins/transposed", dependent_plugins_transposed)
   (* the min aggregation WITHOUT the set index beside it: the recompute branch
      goes back to the table, which is what the set index is there to avoid *)
-  ; ("min_delete/noset", min_delete_opt_noset) ].
+  ; ("min_delete/noset", min_delete_opt_noset)
+  (* the ordered dictionary in place of the aggregation: cheaper delete,
+     dearer read, because the read has no rule *)
+  ; ("min_delete/rangeddict", min_delete_opt_ranged)
+  (* and the same with the missing rule applied UNVERIFIED, which is what
+     isolates the rule from the index choice *)
+  ; ("min_delete/dictmin", min_delete_probe_dictmin)
+  (* and with the orphaned list erased, which is the cascade the rule buys *)
+  ; ("min_delete/dictmin-erased", min_delete_probe_dictmin_erased) ].
 
 Extraction "extracted.ml" subjects alternatives ref_run.

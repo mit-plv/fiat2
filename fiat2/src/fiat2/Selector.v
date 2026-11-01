@@ -774,6 +774,36 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
    claim it first and the coercion left for this phase to see is of an
    ATTRIBUTE's values. *)
 
-(* MinAgg.  Emitted when the program asks for it, but no eval subject does.
-   The corpus witnesses for a minimum are per-key counters held in a
-   dictionary -- the dictionary-of-aggregates shape, which is deferred. *)
+(* MinAgg.  Asked for by one eval subject, Ex_MinDelete (pinned in
+   eval/SelectorTests as ex_min_delete), and by no other.
+
+   The corpus witnesses for a minimum come in three shapes, and NONE of them
+   is a single extreme element.  This was checked against the source rather
+   than assumed, because an index-served minimum measures very well and the
+   temptation is to build it anyway (eval/MinIndexProbe prices it: it would
+   dominate this configuration on all five measured kinds).
+
+     RANGE-shaped.  A retention that prunes everything below a bound.  Kafka's
+     removeExpiredSegments is segmentMap.headMap(minLiveTime, false).clear(),
+     so it asks for a RangedDictIdx and the range rule serves it already; see
+     eval/Kafka_WindowStore.
+
+     RANK-shaped, conjoined with a range.  Keycloak's password-history
+     retention, in PasswordCredentialProvider.createCredential, sorts the
+     history by createdDate descending, skips expiredPasswordsPolicyValue - 1
+     of them, and deletes those of the remainder older than
+     now - passwordAgeInDays.  Both the ordering and the filter read the ONE
+     field createdDate -- comparingByStartDateDesc reads getCreatedDate and
+     there is no startDate field, the comparator's name is a misnomer.  So it
+     is a rank bound AND a one-sided range bound on a single attribute.  The
+     range conjunct is served; the rank conjunct is a top-N, which no operator
+     here expresses and which ODictMinKey does not give, since the N-th
+     largest key is not the least one.
+
+     PER-KEY counters held in a dictionary, which is the dictionary-of-
+     aggregates shape and is deferred.
+
+   The consequence for a min-from-the-index rule is sharper than "no witness":
+   on the rank-shaped witness the unservable conjunct keeps the list alive, so
+   the erasure that is the whole measured payoff would not fire there even if
+   the rule existed. *)

@@ -39,6 +39,58 @@ let same (a : (string * Value.value) list) (b : (string * Value.value) list) : b
 let show (l : (string * Value.value) list) : string =
   String.concat "; " (List.map (fun (k, v) -> k ^ " = " ^ Value.to_string v) l)
 
+let subject_of (name : string) : string =
+  match String.index_opt name '/' with
+  | Some i -> String.sub name 0 i
+  | None -> name
+
+(* The alternatives, which the subject loop does not reach.
+
+   For a verified alternative this is belt and braces -- its own file proves it
+   equal to its source.  For an UNVERIFIED one it is the only semantic evidence
+   there is, so it is checked twice over: against the oracle running the same
+   term (which is what the subject loop checks, i.e. eval.ml on this shape) and
+   against the oracle running the SOURCE (which is the equivalence a rule would
+   have had to prove).  The small sizes are the point here rather than a
+   concession: rows=0 is the empty table, and an index-served minimum is most
+   likely to be wrong exactly there. *)
+let alternatives_pass () =
+  let failures = ref 0 and checks = ref 0 in
+  List.iter
+    (fun (name, alt) ->
+       let subj = subject_of name in
+       match List.find_opt (fun ((n, _), _) -> n = subj) subjects with
+       | None -> Printf.eprintf "  (no extracted subject named %s)\n" subj
+       | Some ((_, src), _) ->
+           let sp = List.assoc subj Gen.specs in
+           List.iter
+             (fun rows ->
+                List.iter
+                  (fun ops ->
+                     let w = Gen.workload sp ~rows ~ops ~only:None in
+                     let m = mine alt w and t = theirs alt w in
+                     let s = theirs src w in
+                     checks := !checks + 2;
+                     if not (same m t) then begin
+                       incr failures;
+                       Printf.printf
+                         "MISMATCH %s (evaluator vs oracle) at rows=%d ops=%d\n\
+                          evaluator: %s\n  oracle:    %s\n"
+                         name rows ops (show m) (show t)
+                     end;
+                     if not (same t s) then begin
+                       incr failures;
+                       Printf.printf
+                         "MISMATCH %s (not equal to its source) at rows=%d ops=%d\n\
+                          alternative: %s\n  source:      %s\n"
+                         name rows ops (show t) (show s)
+                     end)
+                  op_counts)
+             sizes;
+           Printf.printf "  %-26s ok\n" name)
+    alternatives;
+  (!checks, !failures)
+
 let run () =
   Printf.printf
     "Each subject, source and optimized, against the Gallina interpreter.\n\
@@ -69,5 +121,9 @@ let run () =
          sizes;
        Printf.printf "  %-16s ok\n" name)
     subjects;
-  Printf.printf "\n%d configurations checked, %d mismatches\n" !checks !failures;
-  if !failures > 0 then exit 1
+  Printf.printf "\nand each alternative, against the oracle on the same term\n\
+                  and against the oracle on its subject's source:\n";
+  let alt_checks, alt_failures = alternatives_pass () in
+  Printf.printf "\n%d configurations checked, %d mismatches\n"
+    (!checks + alt_checks) (!failures + alt_failures);
+  if !failures + alt_failures > 0 then exit 1
