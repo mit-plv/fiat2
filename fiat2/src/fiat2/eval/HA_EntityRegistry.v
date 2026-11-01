@@ -57,46 +57,56 @@ Import ListNotations.
    work at 1600 rows and the fitted exponent).  Every row is against
    configuration 0, the one the selector can emit today:
 
-                        build   getEntry  forDevice  getEntityId
-     0 chosen          239297       1248       1566       112315
-                       a=1.01     a=0.01    a=-0.00       a=0.96
-     1 unsplit         239301       1248       1566      2386452
-                       a=1.01     a=0.01    a=-0.00       a=1.00
-     2 composite       402364       1268       1586         2260
-                       a=1.01     a=0.01    a=-0.00       a=0.01
-     3 cmp + split     402364       1268       1586       112335
-                       a=1.01     a=0.01    a=-0.00       a=0.96
-     4 triple          323334       1268       1586         2260
-                       a=1.01     a=0.01    a=-0.00       a=0.01
+                        build  getEntry forDevice getEntityId  register
+     0 chosen          239297      1248      1566      116555      5434
+                       a=1.01    a=0.01   a=-0.00      a=0.95    a=0.00
+     1 unsplit         239301      1248      1566     2450692      5794
+                       a=1.01    a=0.01   a=-0.00      a=1.00    a=0.00
+     2 composite       402364      1268      1586        2540      7970
+                       a=1.01    a=0.01   a=-0.00      a=0.01    a=0.00
+     3 cmp + split     402364      1268      1586      116575      7970
+                       a=1.01    a=0.01   a=-0.00      a=0.95    a=0.00
+     4 triple          323334      1268      1586        2540      6386
+                       a=1.01    a=0.01   a=-0.00      a=0.01    a=0.00
 
    THE NUMBER TO READ IS THE EXPONENT, NOT THE RATIO.  Configuration 0 can
    probe only the first conjunct, so its read is one domain's bucket -- and a
    domain's bucket GROWS WITH THE TABLE, because the number of domains is a
    property of Home Assistant and not of the installation's size (see the
-   note in harness/gen.ml).  So 0.96 is linear, and the composite key takes it
-   to 0.01: 49.7x at 1600 rows and widening.  Against configuration 1, the
-   pair that isolates the index, 1056x.  This is where the composite key
+   note in harness/gen.ml).  So 0.95 is linear, and the composite key takes it
+   to 0.01: 45.9x at 1600 rows and widening.  Against configuration 1, the
+   pair that isolates the index, 965x.  This is where the composite key
    differs from eval/Kafka_Cluster, where the same index bought 2.8x and a
    constant because that generator's buckets are bounded by construction.
+
+   AND THE WRITE STAYS CONSTANT, which is the other half of the claim: every
+   configuration's `register` is a=0.00, so the composite index is MAINTAINED
+   and not rebuilt.  That takes two rules working as a pair -- the insert rule
+   turns rebuilding the index of `row :: rest` into building the index of
+   `rest` and inserting one row, and the use rule replaces that `index of
+   rest` by the member already stored.  Either alone leaves the O(n) rebuild
+   it found; see insert_maintains_every_member for what the pair produces.
+   The composite member costs 1.2x per insert against configuration 0 (a
+   three-field record key is about three comparisons where a string key is
+   one) and 1.4x on the build, both constants.
 
    WHAT IT COSTS, AND THE ONE THING THAT SURPRISED.  Configuration 4 installs
    THREE members, the same number as configuration 0 -- the composite index
    replaces the dictionary on `domain` rather than joining it -- and it still
-   costs 1.4x to build.  That is not an extra structure, it is KEY WORK: a key
-   that is a record of three strings costs about three comparisons where a
-   string key costs one, on every insert and every probe.  So the trade is
-   1.4x on the build against an exponent on the read, which is a trade a
-   selector should take and is not a dominance.  Configuration 2, which keeps
-   the dead `domain` dictionary as well, costs 1.7x and buys nothing more.
+   costs 1.4x to build.  That is not an extra structure, it is KEY WORK.  So
+   the trade is a constant on the build and on each insert against an exponent
+   on the read, which is a trade a selector should take and is not a
+   dominance.  Configuration 2, which keeps the dead `domain` dictionary as
+   well, costs 1.7x and 1.5x and buys nothing more.
 
    And configuration 3 is the hazard with a price on it: identical to
    configuration 0 on all three reads, to within the one extra record field,
-   while paying configuration 2's 1.7x build.  An index installed, maintained
-   in the install, and never read.
+   while paying configuration 2's build and insert.  An index installed,
+   maintained on every write, and never read.
 
-   Against the scan form the whole op phase is 3914160 work for the source and
-   115129 for configuration 0, 34x; wall-clock agrees on the exponent, with
-   getEntityId growing 7.1x across the four sizes in configuration 0.
+   Against the scan form the whole op phase is 4002998 work for the source and
+   125431 for configuration 0, 32x; wall-clock agrees on the exponent, with
+   getEntityId growing 19.8x across the six sizes in configuration 0.
 
    Pattern
      A1a, built once, multi-index.  D4 composite key at arity three, served.
@@ -133,15 +143,18 @@ Import ListNotations.
        the rewrite's.  Same note as HA_AreaRegistry.
      * The reads return rows and here they are counted, as in the other files,
        because the output channel is a list of strings.
-     * THE WRITES ARE OUT OF SCOPE HERE, and that is a limitation and not a
-       simplification: EntityRegistryItems maintains all six of its indexes on
-       every insert and every delete, and the composite index has no
-       maintenance rule, so a configuration that installed it on a written
-       table would rebuild it from the row list at every write.  The
-       maintained writes of this registry family are carried by
-       HA_AreaRegistry, which models the same two hooks on single-attribute
-       indexes.  Nothing is added here: this program only reads, and the table
-       is initialised from an input collection.
+     * THE INSERT IS MODELLED AND THE DELETE IS NOT, and the reason is exact
+       rather than general: the composite index has an insert maintenance rule
+       and no delete rule, so a row-removing write would rebuild it from the
+       row list -- sound, and O(n).  _index_entry is therefore here and
+       _unindex_entry is not.  HA_AreaRegistry carries this family's
+       maintained DELETE, on single-attribute indexes.
+     * The insert prepends the row.  The source stores into dicts keyed by
+       entity_id and by the tuple, so it names no position in a sequence of
+       rows, and nothing here observes row order -- see the note on row order
+       in this directory's README.
+     * Nothing else is added: the table is initialised from an input
+       collection, as the registry's own loader does.
 
    Expected
      Three members installed off the input collection; get_entry and
@@ -152,6 +165,11 @@ Import ListNotations.
      best available is a probe on one attribute and a residual filter on the
      other two; without the index AND without SplitIf it is a full scan, and
      then the row list survives because that scan reads it.
+
+     The insert maintains every member incrementally -- one OInsert each, no
+     rebuild -- and because nothing reads the row list any more the list is
+     erased even though the program writes: the table IS its three indexes,
+     across a write.
    ============================================================ *)
 
 Definition row_ty :=
@@ -163,7 +181,8 @@ Definition row_ty :=
 Definition query_ty :=
   TRecord (record_sort
              [("kind", TInt); ("eid", TString); ("dom", TString);
-              ("plat", TString); ("uid", TString); ("dev", TString)]).
+              ("plat", TString); ("uid", TString); ("dev", TString);
+              ("new_entry", row_ty)]).
 
 Section WithConcreteMaps.
 
@@ -216,7 +235,11 @@ Section WithConcreteMaps.
       (CForeach (EVar "queries") "q"
          (dispatch 0 (report (filt by_id))            (* get_entry (:1070) *)
             (dispatch 1 (report (filt by_device))     (* ...for_device_id (:1074) *)
-               (report (filt by_triple))))).          (* get_entity_id (:1062) *)
+               (dispatch 2 (report (filt by_triple))  (* get_entity_id (:1062) *)
+                  (* _index_entry (:1015), reached by async_get_or_create *)
+                  (CAssign "entries"
+                     (EBinop OCons (EAccess (EVar "q") "new_entry")
+                        (ELoc "entries"))))))).
 
   Definition init_Gstore : ctenv :=
     map.put map.empty "outputs" (TList TString).
@@ -287,6 +310,13 @@ Section WithConcreteMaps.
   Definition query_at (n : nat) (c : command) : option expr :=
     match c with
     | CLetMut _ _ (CForeach _ _ b) => branch n b
+    | _ => None
+    end.
+
+  Definition write_of (c : command) : option expr :=
+    match c with
+    | CLetMut _ _ (CForeach _ _ (CIf _ _ (CIf _ _ (CIf _ _ (CAssign _ e))))) =>
+        Some e
     | _ => None
     end.
 
@@ -440,6 +470,53 @@ Section WithConcreteMaps.
   Lemma composite_unused_when_split :
     query_at 2 (nth 3 prog_transformed CSkip)
     = Some (EACFold AGCount (refine (probe "3" dom_key) rest_eq)).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ================= the write: _index_entry, derived ================= *)
+
+  (* THE POINT OF THE MAINTENANCE RULES, and they only work as a pair: the
+     insert rule turns rebuilding the index of `row :: rest` into building the
+     index of `rest` and inserting one row, and the use rule then replaces
+     that `index of rest` by the member already stored.  Either alone leaves
+     an O(n) rebuild where it found one.
+
+     What is left is ONE OInsert PER MEMBER -- which is _index_entry's own
+     three assignments, line for line -- and because nothing reads the row
+     list any more it is gone.  The table IS its three indexes ACROSS A WRITE,
+     which is what EntityRegistryItems is: a UserDict whose `data` is one of
+     the indexes rather than a list beside them. *)
+
+  Definition member (i : string) : expr :=
+    EAccess (EAccess (ELoc "entries") "aux_tag") i.
+  Definition new_entry : expr := EAccess (EVar "q") "new_entry".
+
+  (* the composite member: the key is a record built from the inserted row,
+     and the row binder is the fold's own, which is what lets the rule reuse
+     the matched body verbatim *)
+  Definition composite_bucket_add : expr :=
+    ELet new_entry "tup"
+      (ELet (member "0") "acc"
+         (ETernop OInsert (EVar "acc") row_triple
+            (EBinop OBagInsert
+               (EOptMatch (EBinop OLookup (EVar "acc") row_triple)
+                  (EAtom (AEmptyBag None)) "x" (EVar "x"))
+               (EVar "tup")))).
+
+  (* a single-attribute member, maintained by DictIndexImpl's own rules *)
+  Definition dict_bucket_add (i attr : string) : expr :=
+    ELet (member i) "y"
+      (ETernop OInsert (EVar "y") (EAccess new_entry attr)
+         (EBinop OBagInsert
+            (EOptMatch (EBinop OLookup (EVar "y") (EAccess new_entry attr))
+               (EAtom (AEmptyBag None)) "x" (EVar "x"))
+            new_entry)).
+
+  Lemma insert_maintains_every_member :
+    write_of (nth 4 prog_transformed CSkip)
+    = Some (ERecord [("aux_tag",
+                       ERecord [("0", composite_bucket_add);
+                                ("1", dict_bucket_add "1" "id");
+                                ("2", dict_bucket_add "2" "device_id")])]).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ================= soundness ================= *)

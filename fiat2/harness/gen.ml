@@ -280,26 +280,31 @@ let entity_registry =
           ("unique_id", s (Printf.sprintf "u%d" j));
           ("device_id", if j mod 5 = 0 then VOption None
                         else VOption (Some (s (Printf.sprintf "dv%d" (j mod buckets rows))))) ] in
-  let q kind eid dm pl uid dev =
+  let q rows kind eid dm pl uid dev fresh =
     rcd [ ("kind", i kind); ("eid", s eid); ("dom", s dm); ("plat", s pl);
-          ("uid", s uid); ("dev", s dev) ] in
+          ("uid", s uid); ("dev", s dev);
+          ("new_entry", row rows fresh) ] in
   { queries_var = "queries"; store = outputs_only;
     table = (fun rows -> [ ("entries_tbl", VList (List.init rows (row rows))) ]);
     build = no_build;
     kinds =
       [ (* get_entry(id) (:1070) *)
         ("getEntry", fun rows j ->
-           q 0 (Printf.sprintf "i%d" (spread rows j)) "" "" "" "");
+           q rows 0 (Printf.sprintf "i%d" (spread rows j)) "" "" "" "" 0);
         (* get_entries_for_device_id(device_id) (:1074) *)
         ("forDevice", fun rows j ->
-           q 1 "" "" "" "" (Printf.sprintf "dv%d" (j mod buckets rows)));
+           q rows 1 "" "" "" "" (Printf.sprintf "dv%d" (j mod buckets rows)) 0);
         (* async_get_entity_id(domain, platform, unique_id) (:1264), asked
            about an entity that IS registered, which is what both of its
            callers do *)
         ("getEntityId", fun rows j ->
            let p = spread rows j in
-           q 2 "" (dom p) (plat p) (Printf.sprintf "u%d" p) "") ];
-    mutating = [] }
+           q rows 2 "" (dom p) (plat p) (Printf.sprintf "u%d" p) "" 0);
+        (* _index_entry (:1015), reached by async_get_or_create.  The entity
+           is a FRESH one -- registering an entity that already exists takes
+           the update path, which is not modelled. *)
+        ("register", fun rows j -> q rows 3 "" "" "" "" "" (rows + j)) ];
+    mutating = [ "register" ] }
 
 (* ---------- window store: a range, a key, and an expiry ---------- *)
 

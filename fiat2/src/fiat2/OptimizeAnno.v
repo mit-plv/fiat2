@@ -276,6 +276,20 @@ Section WithConcreteMaps.
                    (CDI.composite_eq_filter_to_lookup_head
                       cdi_attrs "id_tag" "aux_tag" tag "b" tbl).
 
+    (* MAINTENANCE.  The two go together and neither is useful alone: the
+       insert rule turns rebuilding the index of `row :: rest` into building
+       the index of `rest` and inserting one row, and the use rule then
+       replaces that `index of rest` by the member already stored.  Without
+       the second the first leaves an O(n) rebuild where it found one. *)
+    Definition composite_dict_use_idx_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (CDI.composite_use_idx_head cdi_attrs "tup" "acc" "x"
+                      "id_tag" "aux_tag" tag tbl).
+
+    Definition cons_to_composite_insert_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (CDI.cons_to_composite_insert_head cdi_attrs).
+
     Context (set_agg_attr : string).
 
     Definition set_agg_wf := (SetAgg.idx_wf (locals:=clocals) "hole" set_agg_attr "x").
@@ -475,17 +489,19 @@ Section WithConcreteMaps.
           S cur_tag)
     | DictIdx attr => mk_dict_idx Unranged attr cur_tag reps
     | RangedDictIdx attr => mk_dict_idx Ranged attr cur_tag reps
-    (* read rule only.  A composite index has no maintenance rules yet, so
-       asking for one on a table that is WRITTEN leaves the index stale --
-       which the pipeline does not permit silently: without a maintenance
-       rule the write keeps its list form and the index is simply not used
-       there.  The subject that wants this choice (eval/Kafka_Cluster) only
-       reads.  Said plainly rather than left to be discovered. *)
+    (* A read rule and an INSERT, maintained.  There is no delete rule yet, so
+       a row-removing write on a table with a composite index rebuilds it --
+       sound, and O(n).  Said plainly rather than left to be discovered.
+       First in the list is LAST to run, so the order below applies the
+       insert, then the use rule that collapses its rebuild, then the read
+       rule. *)
     | CompositeDictIdx attrs =>
         ([(String.of_nat cur_tag,
             ccomposite_dict_idx attrs,
             composite_dict_idx_wf attrs)],
-          [composite_dict_lookup_transf (String.of_nat cur_tag) attrs],
+          [composite_dict_lookup_transf (String.of_nat cur_tag) attrs;
+           composite_dict_use_idx_transf (String.of_nat cur_tag) attrs;
+           cons_to_composite_insert_transf attrs],
           S cur_tag)
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
@@ -1565,8 +1581,8 @@ end.
         all: apply expr_transf_sound__expr_aug_transf_sound.
         1: eapply filter_neq_to_count_sub_head_sound; auto using ctenv_ok, clocals_ok.
         1: eapply cons_to_incr_head_sound. }
-    (* the composite dictionary: one read rule, and nothing else to be sound
-       about -- it installs no maintenance, so there is no write-side goal *)
+    (* the composite dictionary: a read rule, the rule that uses the member
+       already stored, and the insert that maintains it *)
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply CDI.composite_eq_filter_to_lookup_head_sound;
@@ -1579,7 +1595,20 @@ end.
             | prove_NoDup_map_fst_sort_map
             | prove_In_map_fst_sort_map ].
             1: prove_is_tbl_ty.
-            1: prove_idx_wf. } }
+            1: prove_idx_wf. }
+        1:{ eapply CDI.composite_use_idx_head_sound;
+              auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        all: apply expr_transf_sound__expr_aug_transf_sound.
+        1: eapply CDI.cons_to_composite_insert_head_sound;
+          auto using ctenv_ok, clocals_ok. }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)

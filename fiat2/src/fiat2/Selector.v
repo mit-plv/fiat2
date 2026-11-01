@@ -725,12 +725,20 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    installs the composite index INSTEAD OF the single-attribute dictionary the
    split conjunction would have probed, so it has the same NUMBER of members
    as the configuration the selector can emit today, and it still costs 1.4x
-   to build: a key that is a record of three strings costs about three
-   comparisons where a string key costs one, on every insert and every probe.
-   So the choice is a trade in every configuration measured -- a constant on
-   the build against an exponent on the read, linear to constant -- and what
-   this list needs before it can emit the choice is not a dominance but a cost
-   model that can weigh those against each other. *)
+   to build and 1.2x per insert: a key that is a record of three strings costs
+   about three comparisons where a string key costs one, on every insert and
+   every probe.  So the choice is a trade in every configuration measured -- a
+   constant on the build and on each write against an exponent on the read,
+   linear to constant -- and what this list needs before it can emit the
+   choice is not a dominance but a cost model that can weigh those against
+   each other.
+
+   WHAT IS NO LONGER A REASON TO DECLINE IT: being written.  The composite
+   index is maintained across an INSERT, incrementally, by a pair of rules
+   (eval/HA_EntityRegistry.insert_maintains_every_member pins the result), so
+   a table that is inserted into is as good a candidate as one that is only
+   read.  A row-REMOVING write is still a reason: there is no delete rule, so
+   a filter-shaped write rebuilds the index from the row list. *)
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in

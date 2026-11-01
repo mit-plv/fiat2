@@ -132,7 +132,9 @@ another's rewrite: a declared uniqueness making a single-row lookup sound
 available (`HA_LookinFunctions`).
 
 **What the writes cost** -- `HA_AreaRegistry`, `Kafka_NamedCache`. These are the two
-whose writes are their own; the other four build once.
+whose writes are their own AND whose maintenance is the subject's point;
+`HA_EntityRegistry` writes too, and what its write measures is the composite index's
+maintenance (see **What a key can be**).
 
 `HA_AreaRegistry` maintains a secondary index. `delete_is_incremental` pins a delete
 that probes the primary member for the leaving row and rewrites only the one bucket
@@ -160,8 +162,8 @@ something that is not an attribute: the key is a RECORD of three attributes, and
 read that uses it is an ordinary conjunction of three equalities, written right-nested
 as a reader would write it. Read it against `Kafka_Cluster`, which has the same shape at
 arity two: there the composite key bought 2.8x and a constant, because the generator's
-buckets are bounded by construction, and here it buys an exponent -- 0.90 to 0.01 over the six sizes this
-file fits, 0.96 to 0.01 over the four the file's own header reports --
+buckets are bounded by construction, and here it buys an exponent -- 0.89 to 0.01 over the six sizes this
+file fits, 0.95 to 0.01 over the four the file's own header reports --
 because the attribute a split conjunction can probe is the entity DOMAIN, of which Home
 Assistant has a few dozen however many entities an installation holds. Same rule, same
 index, two code bases, and the difference between a constant and an exponent is a
@@ -176,6 +178,14 @@ dictionary the split would have probed, so it has the same number of members as 
 configuration the selector can emit today -- and it still costs 1.4x to build, because a
 record key costs about three comparisons where a string key costs one. The choice is a
 trade in every configuration measured, which is why the selector still does not make it.
+
+And it is the file where the composite index is MAINTAINED: its `register` is HA's
+`_index_entry`, and under configuration 4 it comes out as one `OInsert` per member with
+no rebuild, which takes two rules working as a pair -- the insert rule and the rule that
+replaces its `index of the old table` by the member already stored. Because every member
+is maintained and nothing reads the row list, the list is erased even though the program
+writes: the table IS its three indexes, across a write (`insert_maintains_every_member`).
+The write stays `a` = 0.00 and costs 1.2x the chosen configuration's.
 
 **What the order asks for** -- `Kafka_WindowStore`. The only file whose index is
 `Ranged`, and so the only one that obliges a backend to provide a structure that can
@@ -507,15 +517,15 @@ reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the 
 ratio between two sizes would not settle the question it looks like it settles: over an
 8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
-Forty-five reads and writes across the twelve programs the harness runs -- the eleven
+Forty-six reads and writes across the twelve programs the harness runs -- the eleven
 files above plus `Ex_RangeDelete` -- by the exponent of their STEP count:
 
 | | source | optimized |
 |---|---|---|
-| **quadratic**, `a` = 2.00 | **1 of 45** | 0 of 45 |
-| linear in the table, `a` = 0.87 to 1.05 | 39 of 45 | 4 of 45 |
-| independent of it, `a` = -0.01 to 0.02 | 5 of 45 | 40 of 45 |
-| sublinear, `a` = 0.19 | 0 of 45 | 1 of 45 |
+| **quadratic**, `a` = 2.00 | **1 of 46** | 0 of 46 |
+| linear in the table, `a` = 0.87 to 1.05 | 39 of 46 | 4 of 46 |
+| independent of it, `a` = -0.01 to 0.02 | 6 of 46 | 41 of 46 |
+| sublinear, `a` = 0.19 | 0 of 46 | 1 of 46 |
 
 The quadratic row is new and is the only one of its kind:
 `Jenkins_DependentPlugins`'s `resolveAll`, which is
@@ -540,22 +550,22 @@ the reason to report the subject rather than only the rule it found. The low end
 source band, `a` = 0.87, is its `size()`, a whole-table count whose per-row cost carries
 a constant offset.
 
-Five in the source column do not grow in steps, and they are two different things.
-Three are genuinely O(1) writes -- `window_store/put`, `range_delete/insert` and
-`item_deletion/register` -- because a prepend is a prepend whether or not anything is
-indexed. The other two are `Jenkins_ItemDeletion`'s two membership reads, which are one
+Six in the source column do not grow in steps, and they are two different things.
+Four are genuinely O(1) writes -- `window_store/put`, `range_delete/insert`,
+`item_deletion/register` and `entity_registry/register` -- because a prepend is a
+prepend whether or not anything is indexed. The other two are `Jenkins_ItemDeletion`'s two membership reads, which are one
 `OSetMem` step over a collection the step counter does not walk and whose cost is
 therefore entirely in COMPARISONS, at `a` = 1.22. That is not a blind spot in the
 instrument but where `count.ml` puts a tree operation's cost, and it is why the table
 below that subject reports comparisons.
 
-The forty independent ones in the optimized column are not merely flatter, they
+The forty-one independent ones in the optimized column are not merely flatter, they
 are flat: the
 Lookin membership test, to take one, costs **exactly 300 steps at every one of the six
 sizes**. Their comparison counts are where the index shows through, at `a` = 0.08 to
 0.31, which is `log n` appearing as the weak power law it is -- the same subject's
 comparison count goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling
-across twenty queries. Three of the forty do no comparisons at all (`a` = 0.00):
+across twenty queries. Three of the forty-one do no comparisons at all (`a` = 0.00):
 `getRequiredActionProviderList`'s count, `sizeInBytes` and `sat4j/size`, which are
 maintained aggregates and so are field reads, cheaper than a probe.
 
@@ -563,13 +573,14 @@ maintained aggregates and so are field reads, cheaper than a probe.
 answer rather than a cost.** Their exponents are 0.98, 0.98, 0.19 and 0.90.
 
 The fourth is the exception and it IS a cost: `HA_EntityRegistry`'s `getEntityId`,
-`a` = 0.90. The read is a conjunction of three equalities and the chosen configuration can
+`a` = 0.89. The read is a conjunction of three equalities and the chosen configuration can
 probe only the first of them, so it scans one entity domain's bucket -- and a domain's
 bucket grows with the table, because the number of domains is a property of Home Assistant
 and not of the installation's size. The index that answers it in one probe EXISTS and is
 verified; what does not exist is a selector that asks for it, and that is the whole of why
 this row is here. `HA_EntityRegistry.v`'s configuration 4 is the same read at
-`a` = 0.01, 112315 steps against 2260 at 1600 rows, for 1.4x on the build. So unlike the
+`a` = 0.01, 116555 steps against 2540 at 1600 rows, for 1.4x on the build and 1.2x on
+each insert. So unlike the
 two substring fallbacks below, this entry is a note about `Selector.v` and not about what a
 scan has to cost.
 * `Jenkins_UserSearch`'s `suggestMiss` and `suggestShort`, `a` = 0.98 each. These are the
@@ -802,6 +813,7 @@ that found it rather than described in prose:
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key, POINT on every attribute | was `Cluster.partition(topic, partition)`; **closed** -- `CompositeDictIndexImpl` serves a conjunction of n equalities at any arity, and both halves are pinned in `Kafka_Cluster.v` (arity two) and `HA_EntityRegistry.v` (arity three) | `one_partition_probes_composite`, `get_entity_id_probes_triple`. What remains open is the SELECTOR: `choices_of` cannot emit the choice, so the chosen column is still `one_partition_probes_then_filters` / `get_entity_id_probes_then_filters` |
+| a row-REMOVING write on a composite index | not exhibited here; `HA_EntityRegistry` models `_index_entry` and not `_unindex_entry` for exactly this reason | not pinned. The composite index has an INSERT rule (`cons_to_composite_insert_head`, with `composite_use_idx_head` to collapse its rebuild -- `insert_maintains_every_member` pins the pair) and no delete rule, so a filter-shaped write rebuilds it from the row list. Sound, and O(n) |
 | composite key, a point AND a range | `WindowStore.fetch(key, lo, hi)` | `fetch_key_probes_split`. Not closed by the above and not closable by it: `record_compare` orders a record by sorted field NAME, so a range over a composite key would range on whichever attribute sorts first, which is why that index is `Unranged` |
 | the conjuncts in an order the index was not declared in | not exhibited here; both subjects' reads list them in the order the key was built | not pinned: the rule checks the collected names against the index's attribute list IN ORDER. Association is free -- the matcher collects conjuncts from any tree -- but a permuted conjunction is not matched, and lifting that means normalising the collected pairs into declared order |
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |

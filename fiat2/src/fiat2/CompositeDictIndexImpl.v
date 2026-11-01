@@ -102,6 +102,49 @@ Proof.
   constructor; [ apply all_neqb'_not_In; assumption | apply IHal; assumption ].
 Qed.
 
+Lemma all_neqb'_of_not_In : forall s al, ~ In s al -> all_neqb' s al = true.
+Proof.
+  induction al; cbn; intros H; auto.
+  rewrite Bool.andb_true_iff, Bool.negb_true_iff, String.eqb_neq.
+  intuition auto.
+Qed.
+
+Lemma NoDup_all_neqb : forall al, NoDup al -> all_neqb al = true.
+Proof.
+  induction al; cbn; intros H; auto.
+  invert_NoDup. rewrite Bool.andb_true_iff.
+  split; [ apply all_neqb'_of_not_In | apply IHal ]; assumption.
+Qed.
+
+(* ---- recognising the index's own key literal ----
+
+   The maintenance rule matches the index-building FOLD, whose key is a record
+   literal computed from attrs rather than written out, so a pattern cannot
+   bind it positionally.  This checks it instead. *)
+Fixpoint keys_match (t : string) (al : list string) (kl : list (string * expr))
+  : bool :=
+  match al, kl with
+  | [], [] => true
+  | a :: al, (b, EAccess (EVar t') c) :: kl =>
+      (String.eqb a b && String.eqb a c && String.eqb t t'
+       && keys_match t al kl)%bool
+  | _, _ => false
+  end.
+
+Lemma keys_match_eq : forall t al kl,
+    keys_match t al kl = true ->
+    kl = List.map (fun a => (a, EAccess (EVar t) a)) al.
+Proof.
+  induction al as [ | a al IH ]; destruct kl as [ | p kl ];
+    cbn [keys_match List.map]; intros H; try discriminate; auto.
+  destruct p as [ b e ].
+  repeat (destruct_match_hyp; try discriminate).
+  repeat rewrite Bool.andb_true_iff in H.
+  rewrite !String.eqb_eq in H.
+  destruct H as [ [ [ Hab Hac ] Htt ] Hrest ]; subst.
+  f_equal. apply IH; assumption.
+Qed.
+
 Lemma access_record_get_attr_type : forall rt a,
     In a (List.map fst rt) ->
     access_record rt a = Success (get_attr_type rt a).
@@ -412,15 +455,20 @@ Section WithHole.
     Definition composite_key (r : expr) : expr :=
       ERecord (List.map (fun a => (a, EAccess r a)) attrs).
 
-    Definition to_idx : expr :=
+    (* The index-building fold, over an ARBITRARY collection expression.  The
+       index interface wants it over the hole; the maintenance rule below
+       needs the same fold over the TAIL of a cons, and both are this one. *)
+    Definition to_idx_from (d : expr) : expr :=
       let k := composite_key (EVar tup) in
-      EFold (EVar hole) (EAtom (AEmptyDict Unranged None)) tup acc
+      EFold d (EAtom (AEmptyDict Unranged None)) tup acc
         (ETernop OInsert (EVar acc) k
            (EBinop OBagInsert
               (EOptMatch (EBinop OLookup (EVar acc) k)
                  (EAtom (AEmptyBag None))
                  x (EVar x))
               (EVar tup))).
+
+    Definition to_idx : expr := to_idx_from (EVar hole).
 
     (* The key attributes must all be present AND PAIRWISE DISTINCT.
        Distinctness is not fussiness: a record literal with a repeated field
@@ -570,6 +618,107 @@ Section WithHole.
         constructor; [ exact Hty | apply IH; assumption ].
       Qed.
 
+      (* ---- reading the index's side conditions OUT of a matched term ----
+
+         The maintenance rules below match the index-building FOLD, and the
+         `use the index you already have` one has to know that the type the
+         fold was given IS idx_ty -- otherwise it cannot replace the fold by
+         the stored member.  There is no is_tbl_ty premise to lean on, so the
+         facts are recovered from the matched term's own typing, and they are
+         all there: the key literal's field names ARE attrs, so TyERecord's
+         NoDup premise makes them distinct; each field is an access on the
+         row, so each access's typing makes the attribute present; and the key
+         type is then forced, because a sorted permutation of a list with
+         distinct names is unique (record_sort_Permutation_eq's lemma). *)
+      Lemma accesses_Forall2_inv : forall (Gstore Genv : tenv) (r : string) rt tl,
+          map.get Genv r = Some (TRecord rt) ->
+          Forall2 (type_of Gstore Genv)
+            (List.map (fun a => EAccess (EVar r) a) (List.map fst tl))
+            (List.map snd tl) ->
+          Forall (fun a => inb String.eqb a (List.map fst rt) = true)
+            (List.map fst tl)
+          /\ tl = List.map (fun a => (a, get_attr_type rt a)) (List.map fst tl).
+      Proof.
+        induction tl as [ | [ b T ] tl IH ]; cbn [List.map fst snd];
+          intros Hget HF.
+        - split; [ constructor | reflexivity ].
+        - inversion HF as [ | u w l1 l2 Hhd Htl ]; subst.
+          specialize (IH Hget Htl) as [ IH1 IH2 ].
+          inversion Hhd; subst.
+          lazymatch goal with
+            H : type_of _ _ (EVar r) _ |- _ => inversion H; subst
+          end.
+          (* the row's type arrives twice, once from the hypothesis and once
+             from the access's own derivation; congruence closes the gap
+             whether or not they are already the same term *)
+          assert (Hacc : access_record rt b = Success T).
+          { lazymatch goal with
+              H2 : access_record ?r2 b = Success T |- _ =>
+                enough (r2 = rt) by (subst; exact H2)
+            end.
+            congruence. }
+          split.
+          + constructor; [ | assumption ].
+            rewrite inb_true_iff.
+            apply access_record_sound in Hacc as Hin0.
+            apply (in_map fst) in Hin0; cbn in Hin0; exact Hin0.
+          + cbn [List.map]. rewrite <- IH2. do 2 f_equal.
+            unfold get_attr_type. rewrite Hacc. reflexivity.
+      Qed.
+
+      Lemma EVar_ty_inv : forall (Gstore Genv : tenv) y t,
+          type_of Gstore Genv (EVar y) t -> map.get Genv y = Some t.
+      Proof.
+        intros Gstore Genv y t H. inversion H; subst; assumption.
+      Qed.
+
+      Lemma key_lit_inv : forall (Gstore Genv : tenv) (r : string) rt kt,
+          map.get Genv r = Some (TRecord rt) ->
+          type_of Gstore Genv
+            (ERecord (List.map (fun a => (a, EAccess (EVar r) a)) attrs)) kt ->
+          is_tbl_ty (TList (TRecord rt)) = true /\ kt = key_ty rt.
+      Proof.
+        intros Gstore Genv r rt kt Hget H.
+        (* only TyERecord can conclude at an ERecord, so this is one case; its
+           premises are then picked out by SHAPE rather than by the names the
+           inversion happened to give them *)
+        inversion H; subst.
+        lazymatch goal with
+          Hfst : List.map fst (List.map _ attrs) = _ |- _ =>
+            rewrite map_fst_pairs in Hfst
+        end.
+        lazymatch goal with
+          Hty : Forall2 _ (List.map snd (List.map _ attrs)) _ |- _ =>
+            rewrite map_snd_pairs in Hty
+        end.
+        lazymatch goal with
+          Hfst : attrs = List.map fst ?tl0,
+          Hty : Forall2 _ _ (List.map snd ?tl0) |- _ =>
+            rewrite Hfst in Hty;
+            pose proof (accesses_Forall2_inv _ _ r rt tl0 Hget Hty) as [ Hin Htl ];
+            rewrite <- Hfst in Hin, Htl
+        end.
+        lazymatch goal with
+          Hfst : attrs = List.map fst ?tl0, Hnd : NoDup (List.map fst ?tl0) |- _ =>
+            assert (Hndattrs : NoDup attrs) by (rewrite Hfst; assumption)
+        end.
+        split.
+        - cbn. rewrite Bool.andb_true_iff. split.
+          + rewrite forallb_forall; intros a Ha.
+            rewrite Forall_forall in Hin; apply Hin; assumption.
+          + apply NoDup_all_neqb; assumption.
+        - unfold key_ty. f_equal.
+          symmetry. apply StronglySorted_NoDup_Permutation_eq.
+          + apply StronglySorted_record_sort.
+          + assumption.
+          + eapply Permutation_NoDup;
+              [ apply Permutation_map, Permuted_record_sort | ].
+            rewrite map_fst_pairs; assumption.
+          + eapply perm_trans;
+              [ apply Permutation_sym, Permuted_record_sort | ].
+            rewrite <- Htl; assumption.
+      Qed.
+
       Corollary composite_key_ty : forall (Gstore Genv : tenv) rt r,
           is_tbl_ty (TList (TRecord rt)) = true ->
           type_of Gstore Genv r (TRecord rt) ->
@@ -589,37 +738,47 @@ Section WithHole.
       Definition ckey (rc : list (string * value)) : value :=
         VRecord (record_sort (List.map (fun a => (a, record_proj a rc)) attrs)).
 
-      Lemma interp_key_fields : forall (store env : locals) y rc al,
-          map.get env y = Some (VRecord rc) ->
+      Lemma interp_key_fields : forall (store env : locals) r rc al,
+          interp_expr store env r = VRecord rc ->
           List.map (fun '(s, e) => (s, interp_expr store env e))
-            (List.map (fun a => (a, EAccess (EVar y) a)) al)
+            (List.map (fun a => (a, EAccess r a)) al)
           = List.map (fun a => (a, record_proj a rc)) al.
       Proof.
-        induction al; cbn [List.map]; intros Hget; auto.
-        cbn [interp_expr]. unfold get_local; rewrite Hget.
+        induction al; cbn [List.map]; intros Hr; auto.
+        cbn [interp_expr]. rewrite Hr.
         f_equal. apply IHal; assumption.
       Qed.
 
-      (* What the key expression COMPUTES, in any environment that binds the
-         row.  Stated on its own because the characterisation below rewrites
-         with it under a fold, where the environment is not the literal one. *)
-      Lemma interp_composite_key : forall (store env : locals) y rc,
-          map.get env y = Some (VRecord rc) ->
-          interp_expr store env (composite_key (EVar y)) = ckey rc.
+      (* What the key expression COMPUTES, over ANY expression that evaluates
+         to a row.  Stated on its own because the characterisation below
+         rewrites with it under a fold, where the environment is not the
+         literal one -- and because the maintenance rule builds the key out of
+         the inserted row, which is an expression and not a variable. *)
+      Lemma interp_composite_key : forall (store env : locals) r rc,
+          interp_expr store env r = VRecord rc ->
+          interp_expr store env (composite_key r) = ckey rc.
       Proof.
-        intros store env y rc Hget.
+        intros store env r rc Hr.
         unfold composite_key, ckey. cbn [interp_expr].
         do 2 f_equal. apply interp_key_fields; assumption.
       Qed.
 
+      Corollary interp_composite_key_var : forall (store env : locals) y rc,
+          map.get env y = Some (VRecord rc) ->
+          interp_expr store env (composite_key (EVar y)) = ckey rc.
+      Proof.
+        intros store env y rc Hget. apply interp_composite_key.
+        cbn [interp_expr]. unfold get_local; rewrite Hget; reflexivity.
+      Qed.
+
       (* The fold's step, stated separately so the assembly below does not have
          to interleave the record-literal premises with the dictionary ones. *)
-      Lemma to_idx_body_ty : forall rt (Genv : tenv),
+      Lemma to_idx_body_ty : forall rt (Gstore Genv : tenv),
           type_wf (TRecord rt) ->
           is_tbl_ty (TList (TRecord rt)) = true ->
           map.get Genv tup = Some (TRecord rt) ->
           map.get Genv acc = Some (TDict Unranged (key_ty rt) (TBag (TRecord rt))) ->
-          type_of map.empty Genv
+          type_of Gstore Genv
             (ETernop OInsert (EVar acc) (composite_key (EVar tup))
                (EBinop OBagInsert
                   (EOptMatch (EBinop OLookup (EVar acc) (composite_key (EVar tup)))
@@ -627,7 +786,7 @@ Section WithHole.
                   (EVar tup)))
             (TDict Unranged (key_ty rt) (TBag (TRecord rt))).
       Proof.
-        intros rt Genv Hrt Htbl Htup Hacc.
+        intros rt Gstore Genv Hrt Htbl Htup Hacc.
         eapply TyETernop.
         1: apply TyOInsert.
         - apply TyEVar; assumption.
@@ -646,22 +805,35 @@ Section WithHole.
           + apply TyEVar; eassumption.
       Qed.
 
-      Lemma to_idx_ty : forall (t : type),
+      (* The fold is well typed over any well-typed collection, which is what
+         the maintenance rule's OUTPUT needs: it rebuilds the fold over the
+         tail of the cons it matched. *)
+      Lemma to_idx_from_ty : forall (Gstore Genv : tenv) d t,
           type_wf t -> is_tbl_ty t = true ->
-          type_of map.empty (map.put map.empty hole t) to_idx (idx_ty t).
+          type_of Gstore Genv d t ->
+          type_of Gstore Genv (to_idx_from d) (idx_ty t).
       Proof.
-        intros t Hwf Htbl. unfold to_idx.
+        intros Gstore Genv d t Hwf Htbl Hd. unfold to_idx_from.
         destruct t; try discriminate. destruct t; try discriminate.
         cbn [idx_ty].
         assert (Hrt : type_wf (TRecord l)) by (invert_type_wf; assumption).
         eapply TyEFold.
-        - apply TyEVar. rewrite map.get_put_same; reflexivity.
+        - exact Hd.
         - apply TyEAtom, TyAEmptyDict'.
           + apply key_ty_wf; assumption.
           + constructor; assumption.
         - apply to_idx_body_ty; auto.
           + rewrite map.get_put_diff, map.get_put_same; [ reflexivity | use_is_NoDup ].
           + rewrite map.get_put_same; reflexivity.
+      Qed.
+
+      Lemma to_idx_ty : forall (t : type),
+          type_wf t -> is_tbl_ty t = true ->
+          type_of map.empty (map.put map.empty hole t) to_idx (idx_ty t).
+      Proof.
+        intros t Hwf Htbl. unfold to_idx.
+        apply to_idx_from_ty; auto.
+        apply TyEVar. rewrite map.get_put_same; reflexivity.
       Qed.
 
       Definition idx_wf (tbl_v idx_v : value) : Prop :=
@@ -689,7 +861,7 @@ Section WithHole.
           type_of_value (ckey rc) (key_ty rt).
       Proof.
         intros rt rc Hrt Htbl Hrc.
-        erewrite <- interp_composite_key
+        erewrite <- interp_composite_key_var
           with (env := map.put map.empty tup (VRecord rc)) (store := map.empty).
         2: apply map.get_put_same.
         eapply type_sound with (Genv := map.put map.empty tup (TRecord rt)).
@@ -721,18 +893,21 @@ Section WithHole.
         | _ => VDict nil
         end.
 
-      Lemma fiat2_gallina_to_idx : forall (v : value) t,
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          interp_expr map.empty (map.put map.empty hole v) to_idx = gallina_to_idx v.
+      (* What the fold COMPUTES, over any collection expression and in any
+         environment.  The index interface's own equation is the instance at
+         the hole; the maintenance rule needs the instance at the tail of a
+         cons, and the proof is the same proof. *)
+      Lemma interp_to_idx_from :
+        forall (store env : locals) d l (l0 : list value),
+          type_wf (TRecord l) ->
+          is_tbl_ty (TList (TRecord l)) = true ->
+          Forall (fun v => type_of_value v (TRecord l)) l0 ->
+          interp_expr store env d = VList l0 ->
+          interp_expr store env (to_idx_from d) = gallina_to_idx (VList l0).
       Proof.
-        intros v t Hwf Htbl Hv.
-        assert (Htbl' := Htbl). unfold is_tbl_ty in Htbl.
-        repeat destruct_match_hyp; try discriminate.
-        assert (Hrt : type_wf (TRecord l)) by (invert_type_wf; assumption).
-        invert_type_of_value_clear.
-        unfold to_idx; cbn [interp_expr interp_atom].
-        unfold get_local; rewrite_map_get_put_goal.
+        intros store env d l l0 Hrt Htbl' Hrows Hd.
+        unfold to_idx_from; cbn [interp_expr interp_atom].
+        unfold get_local. rewrite Hd.
         erewrite In_fold_right_ext with
           (P := fun a => type_of_value a (TDict Unranged (key_ty l) (TBag (TRecord l))))
           (g := fun b a =>
@@ -756,7 +931,7 @@ Section WithHole.
             invert_type_of_value_clear.
             apply_Forall_In. invert_type_of_value_clear.
             cbn [interp_expr].
-            erewrite !interp_composite_key with (rc := l2) by
+            erewrite !interp_composite_key_var with (rc := l2) by
               (rewrite map.get_put_diff, map.get_put_same;
                [ reflexivity | use_is_NoDup ]).
             repeat rewrite_map_get_put_goal; try now use_is_NoDup.
@@ -792,9 +967,48 @@ Section WithHole.
                    it. *)
                 1: clear Htbl'; rewrite_l_to_r; constructor; auto.
                 1: apply_Forall_In. } }
-        1:{ induction l0; cbn; auto. invert_Forall. erewrite IHl0; auto.
+        (* Hd mentions the row list, so it has to go before the induction or
+           it comes back as an extra premise on the hypothesis. *)
+        1:{ clear Hd. revert Hrows.
+            induction l0 as [ | a l0 IH ]; intros Hrows; cbn; auto.
+            invert_Forall. erewrite IH; auto.
             invert_type_of_value_clear. cbn [gallina_to_idx]. do 3 f_equal.
             repeat (case_match; auto). }
+      Qed.
+
+      Corollary fiat2_gallina_to_idx : forall (v : value) t,
+          type_wf t -> is_tbl_ty t = true ->
+          type_of_value v t ->
+          interp_expr map.empty (map.put map.empty hole v) to_idx = gallina_to_idx v.
+      Proof.
+        intros v t Hwf Htbl Hv. unfold to_idx.
+        assert (Htbl' := Htbl). unfold is_tbl_ty in Htbl.
+        repeat destruct_match_hyp; try discriminate.
+        assert (Hrt : type_wf (TRecord l)) by (invert_type_wf; assumption).
+        invert_type_of_value_clear.
+        eapply interp_to_idx_from; eauto.
+        cbn [interp_expr]. unfold get_local.
+        rewrite map.get_put_same; reflexivity.
+      Qed.
+
+      (* The index the fold builds is well typed.  Obtained from the fold's
+         own typing through type_sound rather than by an invariant argument
+         over the fold -- the single-attribute development proves this with a
+         bespoke fold_right_invariant, and it does not need to. *)
+      Lemma gallina_to_idx_sound : forall v t,
+          type_wf t -> is_tbl_ty t = true ->
+          type_of_value v t ->
+          type_of_value (gallina_to_idx v) (idx_ty t).
+      Proof.
+        intros v t Hwf Htbl Hv.
+        erewrite <- fiat2_gallina_to_idx by eassumption.
+        eapply type_sound with (Gstore := map.empty)
+                               (Genv := map.put map.empty hole t).
+        - apply to_idx_ty; assumption.
+        - apply tenv_wf_empty.
+        - apply tenv_wf_step; [ apply tenv_wf_empty | assumption ].
+        - apply locals_wf_empty.
+        - apply locals_wf_step; [ apply locals_wf_empty | assumption ].
       Qed.
 
 
@@ -950,6 +1164,134 @@ Section WithHole.
         IndexInterface.Build_ok composite_dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
 
+      (* ============================================================
+         MAINTENANCE: one inserted row, one insert.
+
+         The install leaves `to_idx (row :: rest)` on the write path.  This
+         rule turns it into "build the index of the tail, then insert the one
+         row", which is the fold's own step -- and it is written so that the
+         OUTPUT REUSES THE MATCHED BODY VERBATIM.  That is the whole trick and
+         it is worth stating, because the single-attribute rule does not do it:
+         binding the row to the fold's own binder and the tail's index to the
+         fold's own accumulator makes the output's body LITERALLY the matched
+         body, in LITERALLY the environment the matched term typed it in.  So
+         preserve_ty reuses the matched derivation instead of rebuilding it,
+         and preserve_sem is the fold's unfolding plus one map.put_put_same --
+         no appeal to type soundness of the key, no dictionary lemmas, and no
+         substitution plumbing.
+
+         The index's key is a record literal COMPUTED from attrs, so a pattern
+         cannot bind it positionally; keys_match checks it instead. *)
+      Notation ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1 d :=
+        (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
+           (ETernop OInsert (EVar acc1) (ERecord kl0)
+              (EBinop OBagInsert
+                 (EOptMatch (EBinop OLookup (EVar acc2) (ERecord kl1))
+                    (EAtom (AEmptyBag None)) x0 (EVar x1))
+                 (EVar tup1)))).
+
+      Definition cons_to_composite_insert_head (e : expr) :=
+        match e with
+        | ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1
+            (EBinop OCons e1 e2) =>
+            let body :=
+              ETernop OInsert (EVar acc0) (ERecord kl0)
+                (EBinop OBagInsert
+                   (EOptMatch (EBinop OLookup (EVar acc0) (ERecord kl1))
+                      (EAtom (AEmptyBag None)) x0 (EVar x0))
+                   (EVar tup0)) in
+            if (all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1]); (x0, [x1])]
+                && all_neqb [acc0; tup0; x0]
+                && keys_match tup0 attrs kl0
+                && keys_match tup0 attrs kl1
+                && negb (free_immut_in tup0 e2))%bool
+            then
+              ELet e1 tup0
+                (ELet (EFold e2 (EAtom (AEmptyDict Unranged None)) tup0 acc0 body)
+                   acc0 body)
+            else e
+        | _ => e
+        end.
+
+      Lemma cons_to_composite_insert_head_preserve_ty : forall (Gstore : tenv),
+          preserve_ty Gstore cons_to_composite_insert_head.
+      Proof.
+        unfold preserve_ty; intros Gstore e t Genv Hgs Hge He.
+        unfold cons_to_composite_insert_head.
+        repeat (case_match; auto; []).
+        cbn [all_eqb all_eqb' all_neqb all_neqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        rewrite !Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        (* the matched fold's three sub-derivations, and the cons's two.  The
+           inversions are aimed: invert_type_of_clear picks whichever shape it
+           finds first, and the fold leaves three to choose from. *)
+        invert_type_of_clear.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        invert_type_of_op_clear.
+        eapply TyELet; [ eassumption | ].
+        eapply TyELet.
+        - eapply TyEFold.
+          + eapply not_free_immut_put_ty2; eassumption.
+          + eapply not_free_immut_put_ty2; [ reflexivity | eassumption ].
+          + rewrite Properties.map.put_put_same. eassumption.
+        - eassumption.
+      Qed.
+
+      Lemma cons_to_composite_insert_head_preserve_sem :
+        forall (Gstore : tenv) (store : locals),
+          preserve_sem Gstore store cons_to_composite_insert_head.
+      Proof.
+        unfold preserve_sem; intros Gstore store e t Genv env Hgs Hge He Hsw Hew.
+        unfold cons_to_composite_insert_head.
+        repeat (case_match; auto; []).
+        cbn [all_eqb all_eqb' all_neqb all_neqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        rewrite !Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        invert_type_of_clear.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        invert_type_of_op_clear.
+        (* the tail is a list, so the matched fold unfolds on a cons *)
+        lazymatch goal with
+          H : type_of Gstore Genv ?b (TList _) |- _ => apply_type_sound b
+        end.
+        invert_type_of_value_clear.
+        (* ONE let step at a time, so that the inner fold is not expanded
+           before its environment has been dealt with *)
+        assert (E_Let : forall (env' : locals) a b x0,
+                   interp_expr store env' (ELet a x0 b)
+                   = interp_expr store (map.put env' x0 (interp_expr store env' a)) b)
+          by reflexivity.
+        rewrite !E_Let.
+        (* THE STEP THAT MAKES THIS CHEAP.  The inner fold BINDS the row name
+           itself, so the outer let's binding of that name cannot reach it and
+           the fold has the same value in either environment.  Without it the
+           two sides differ by a put_put_same UNDER a binder, which would need
+           a Proper instance for map.put that does not exist. *)
+        erewrite <- (not_free_immut_put_sem (EFold _ _ _ _ _))
+          by (cbn [free_immut_in]; rewrite String.eqb_refl; cbn [negb andb];
+              rewrite !Bool.orb_false_r; assumption).
+        cbn [interp_expr interp_binop].
+        lazymatch goal with
+          H : VList ?l2 = interp_expr store env ?b |- _ => rewrite <- H
+        end.
+        cbn [fold_right]. reflexivity.
+      Qed.
+
+      Lemma cons_to_composite_insert_head_sound :
+        expr_transf_sound (locals:=locals) cons_to_composite_insert_head.
+      Proof.
+        unfold expr_transf_sound; split; intros.
+        1: eapply cons_to_composite_insert_head_preserve_ty; eauto.
+        eapply cons_to_composite_insert_head_preserve_sem;
+          resolve_locals_wf; eauto.
+      Qed.
+
       (* Every row of a well-typed table is a record.  In its own lemma so that
          the inversion has exactly one hypothesis to choose from; inside the
          rule's proof there are three type_of_value hypotheses and the
@@ -1048,6 +1390,214 @@ Section WithHole.
 
         Notation aux_ty_for_idx := (aux_ty_for_idx id_tag aux_tag idx_tag idx_ty).
         Notation aux_wf_for_idx := (aux_wf_for_idx id_tag aux_tag idx_tag idx_wf).
+
+        (* ============================================================
+           USE THE INDEX YOU ALREADY HAVE.
+
+           cons_to_composite_insert_head leaves `to_idx (tbl[id_tag])` on the
+           write path -- the index of the table BEFORE the insert -- and
+           rebuilding that is exactly the cost the maintenance rule was meant
+           to remove.  This replaces it with the stored member, which is sound
+           because aux_wf_for_idx says the member IS that index.  Without this
+           rule the insert rule buys nothing, which is why they are registered
+           together.
+
+           The binder names are required to be the index's own, unlike
+           DictIndexImpl's version which accepts any and pays for the
+           generality with an alpha-invariance argument (fold_to_idx).  The
+           install only ever emits the index's own names, so the generality
+           has no customer here. *)
+        Section composite_use_idx.
+          Context (tbl : string).
+
+          Definition composite_use_idx_head (e : expr) :=
+            match e with
+            | ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1
+                (EAccess (ELoc tbl0) id_tag0) =>
+                if (all_eqb [(tbl, [tbl0]); (id_tag, [id_tag0]);
+                             (tup, [tup0; tup1]); (acc, [acc0; acc1; acc2]);
+                             (x, [x0; x1])]
+                    && keys_match tup0 attrs kl0
+                    && keys_match tup0 attrs kl1)%bool
+                then EAccess (EAccess (ELoc tbl) aux_tag) idx_tag
+                else e
+            | _ => e
+            end.
+
+          Lemma composite_use_idx_head_preserve_ty :
+            forall tl t aux_tl (Gstore : tenv),
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              preserve_ty Gstore composite_use_idx_head.
+          Proof.
+            unfold preserve_ty; intros tl t aux_tl Gstore Hwf Htbl Hget Hid Haux Hidx.
+            assert (Htbl' := Htbl). unfold is_tbl_ty in Htbl.
+            repeat destruct_match_hyp; try congruence.
+            intros e t' Genv Hgs Hge He.
+            unfold composite_use_idx_head.
+            repeat (case_match; auto; []).
+            cbn [all_eqb all_eqb' andb] in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            repeat (rewrite eqb_eq in *; subst).
+            lazymatch goal with
+              H : keys_match _ _ ?kl = true |- _ =>
+                apply keys_match_eq in H; subst kl
+            end.
+            lazymatch goal with
+              H : keys_match _ _ ?kl = true |- _ =>
+                apply keys_match_eq in H; subst kl
+            end.
+            (* the fold's three sub-derivations, then the insert's, which is
+               what pins the dictionary's key and value types *)
+            invert_type_of_clear.
+            lazymatch goal with
+              H : type_of _ _ (ETernop OInsert _ _ _) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            invert_type_of_op_clear.
+            (* the collection is the table's own row list, so the fold's row
+               type is the table's row type -- two inversions to turn the
+               access into equations congruence can chain *)
+            lazymatch goal with
+              H : type_of _ _ (EAccess (ELoc tbl) id_tag) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            lazymatch goal with
+              H : type_of _ _ (ELoc tbl) _ |- _ => inversion H; subst
+            end.
+            lazymatch goal with
+              H : type_of ?Gs (map.put (map.put ?Ge ?tp ?rowt) ?ac ?D)
+                    (ERecord (List.map (fun a => (a, EAccess (EVar ?tp) a)) attrs))
+                    ?kt |- _ =>
+                assert (Hrow : rowt = TRecord l) by congruence;
+                rewrite Hrow in *;
+                assert (Hgt : map.get (map.put (map.put Ge tp (TRecord l)) ac D) tp
+                              = Some (TRecord l))
+                  by (rewrite map.get_put_diff, map.get_put_same;
+                      [ reflexivity | use_is_NoDup ]);
+                pose proof (key_lit_inv Gs _ tp l kt Hgt H) as [ _ Hkt ]
+            end.
+            (* the dictionary's KIND, from the fold's initial value *)
+            lazymatch goal with
+              H : type_of _ _ (EAtom (AEmptyDict _ _)) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            lazymatch goal with
+              H : type_of_atom (AEmptyDict _ _) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            (* and its VALUE type, from the bag insert on the row *)
+            lazymatch goal with
+              H : type_of _ _ (EBinop OBagInsert _ (EVar _)) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            lazymatch goal with
+              H : type_of_binop OBagInsert _ _ _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            (* the bag's element type is the ROW type: the row is what the
+               insert inserts.  Aimed at the EVar whose name is the fold's own
+               row binder, since there are three EVar typings in scope. *)
+            lazymatch goal with
+              H : type_of _ (map.put (map.put _ ?tp _) _ _) (EVar ?tp) _ |- _ =>
+                apply EVar_ty_inv in H;
+                rewrite map.get_put_diff in H by use_is_NoDup;
+                rewrite map.get_put_same in H;
+                try (injection H as H); subst
+            end.
+            subst. cbn [idx_ty] in Hidx |- *.
+            eapply TyEAccess; [ | exact Hidx ].
+            eapply TyEAccess; [ | exact Haux ].
+            apply TyELoc. exact Hget.
+          Qed.
+
+          Lemma composite_use_idx_head_preserve_sem :
+            forall (Gstore : tenv) (store : locals) tl t aux_tl,
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              match map.get store tbl with
+              | Some v => aux_wf_for_idx v
+              | _ => False
+              end ->
+              preserve_sem Gstore store composite_use_idx_head.
+          Proof.
+            unfold preserve_sem, aux_wf_for_idx, idx_wf; intros.
+            assert (Htbl' : is_tbl_ty t = true) by assumption.
+            unfold is_tbl_ty, idx_ty in *.
+            apply_locals_wf store.
+            repeat (destruct_match_hyp; try discriminate; intuition idtac; []).
+            (* the table's row list, and the member that IS its index *)
+            assert (Htblv : type_of_value a (TList (TRecord l))).
+            { lazymatch goal with
+                H : type_of_value (VRecord _) (TRecord tl) |- _ =>
+                  inversion H; subst
+              end.
+              lazymatch goal with
+                HF : Forall2 _ _ tl |- _ =>
+                  pose proof (Forall2_access_record _ _ _ _ _ _ _ _ HF E3 H2)
+              end; auto. }
+            inversion Htblv; subst.
+            unfold composite_use_idx_head.
+            repeat (case_match; auto; []).
+            cbn [all_eqb all_eqb' andb] in *.
+            (* destruct the guard's conjunctions by hand: intuition would
+               split the goal as well *)
+            repeat rewrite Bool.andb_true_iff in *.
+            repeat lazymatch goal with H : _ /\ _ |- _ => destruct H end.
+            repeat (rewrite eqb_eq in *; subst).
+            lazymatch goal with
+              H : keys_match _ _ ?kl = true |- _ =>
+                apply keys_match_eq in H; subst kl
+            end.
+            lazymatch goal with
+              H : keys_match _ _ ?kl = true |- _ =>
+                apply keys_match_eq in H; subst kl
+            end.
+            (* the LEFT side is the index-building fold over the table's own
+               row list, which is gallina_to_idx of that list *)
+            lazymatch goal with
+              Hrows : Forall _ ?rows |- _ =>
+                assert (Hlhs : interp_expr store env
+                                 (to_idx_from (EAccess (ELoc tbl) id_tag))
+                               = gallina_to_idx (VList rows))
+            end.
+            { eapply interp_to_idx_from with (l := l).
+              - lazymatch goal with
+                  H : type_wf (TList (TRecord l)) |- _ =>
+                    inversion H; subst; assumption
+                end.
+              (* the guard's conjuncts were destructed above, so the folded
+                 side condition is rebuilt from them *)
+              - cbn [is_tbl_ty]. rewrite Bool.andb_true_iff.
+                split; assumption.
+              - eassumption.
+              - cbn [interp_expr]. unfold get_local, record_proj.
+                rewrite E. cbn. rewrite E3. reflexivity. }
+            unfold to_idx_from, composite_key in Hlhs. rewrite Hlhs.
+            (* the RIGHT side is the stored member, and aux_wf_for_idx says it
+               IS that index *)
+            (* beta and iota ONLY: a bare cbn unfolds gallina_to_idx on the
+               other side of the equation and the lemma stops matching *)
+            cbn [interp_expr]. unfold get_local, record_proj.
+            rewrite E. cbv beta iota. rewrite E4. cbv beta iota. rewrite E6.
+            cbv beta iota.
+            (* the member's value IS the index: idx_wf was substituted into
+               the goal when the member variable was eliminated *)
+            eapply fiat2_gallina_to_idx with (t := TList (TRecord l)).
+            - lazymatch goal with
+                H : type_wf (TList (TRecord l)) |- _ => exact H
+              end.
+            - cbn [is_tbl_ty]. rewrite Bool.andb_true_iff. split; assumption.
+            - constructor; assumption.
+          Qed.
+
+        End composite_use_idx.
 
         Section composite_eq_filter_to_lookup.
           Context (b : string).
@@ -1154,7 +1704,7 @@ Section WithHole.
             unfold preserve_ty; intros tl t aux_tl Gstore Hwf Htbl Hget Hid Haux Hidx.
             assert (Htbl' := Htbl). unfold is_tbl_ty in Htbl.
             repeat destruct_match_hyp; try congruence.
-            intros Genv e t' Hgenv He.
+            intros e t' Genv Hgs Hge He.
             unfold composite_eq_filter_to_lookup_head.
             (* the predicate is not a fixed tree, so the pattern cannot be
                enumerated with destruct_subexpr: case_match reduces exactly the
@@ -1329,6 +1879,30 @@ Section WithHole.
             end.
             unfold value_wf_with_globals in *. invert_Forall; intuition auto.
           Qed.
+        Lemma composite_use_idx_head_sound :
+            forall is_tbl_ty' aux_ty aux_wf,
+              aux_ty_for_idx aux_ty ->
+              (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
+              (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
+              expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
+                composite_use_idx_head.
+          Proof.
+            unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+            invert_tenv_wf_with_globals.
+            specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+            1: eapply composite_use_idx_head_preserve_ty; eauto.
+            1: eapply composite_use_idx_head_preserve_sem; eauto.
+            lazymatch goal with
+              H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+                apply H in H'
+            end.
+            destruct_match_hyp; intuition idtac.
+            lazymatch goal with
+              H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+                apply H in H'
+            end.
+            unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+          Qed.
       End WithTags.
     End WithMap.
   End WithVars.
@@ -1360,3 +1934,9 @@ Proof.
 Qed.
 
 #[export] Hint Resolve composite_eq_filter_to_lookup_head_sound2 : transf_hints.
+
+(* The two maintenance rules need no restatement: closing the sections
+   generalised them into exactly the registrable form, because neither one's
+   soundness depends on the tags beyond what aux_ty_for_idx already carries. *)
+#[export] Hint Resolve composite_use_idx_head_sound : transf_hints.
+#[export] Hint Resolve cons_to_composite_insert_head_sound : transf_hints.
