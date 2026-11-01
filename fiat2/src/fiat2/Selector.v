@@ -696,7 +696,28 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    availablePartitionsForTopic its probe and keeps the list alive
    (available_scans_with_composite, composite_keeps_the_list).  So a program
    may ask for the choice and get it, soundly, and the selector will not ask
-   for it until that trade is settled. *)
+   for it until that trade is settled.
+
+   AND THE WAY TO SETTLE IT IS NARROWER THAN IT LOOKS, because both halves
+   already exist in this tree.  Withholding SplitIf wholesale is the wrong
+   move -- it is one whole-program rewrite, so turning it off for a composite
+   demand turns it off for every other conjunction on that table.  What is
+   wanted is an AIMED SplitIf that declines on one attribute PAIR:
+
+     * the guard has a precedent in kind -- FlatmapTransf.split_if_head
+       already declines to split a two-sided range pair, through
+       is_two_sided_range, for the same reason (the rule that serves the
+       conjunction wants it whole).  That guard is purely syntactic, and a
+       composite one cannot be: a conjunction of two equalities on different
+       attributes SHOULD be split when no composite index covers that pair,
+       which is exactly what gives configuration 0 its probe.
+     * so it has to be parameterized by the pair, and a parameterized basic
+       transf has a precedent too: PromoteGuard, for which see the note
+       above.
+
+   An aimed SplitIf would make the composite configuration DOMINATE rather
+   than trade, which is what this list would need before it could emit the
+   choice. *)
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in
