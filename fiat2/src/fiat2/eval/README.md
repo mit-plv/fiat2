@@ -187,6 +187,20 @@ is maintained and nothing reads the row list, the list is erased even though the
 writes: the table IS its three indexes, across a write (`insert_maintains_every_member`).
 The write stays `a` = 0.00 and costs 1.2x the chosen configuration's.
 
+Its DELETE is not here, and the reason is specific rather than general: the composite
+index has a delete rule, but stated on its own key, and HA removes by `entity_id`. The
+two maintenance rules are priced in `Ex_CompositeKey.v` instead -- a regression file, so
+its ratios say what the rules are worth when they apply and nothing about how often that
+is. The delete there is 906x and goes from `a` = 1.02 to `a` = -0.01, and the row list is
+erased across BOTH writes, so the table is its index through an insert and a delete
+alike.
+
+**A caveat on the exponent table below**: its base count was taken when it was written
+and the harness now measures 56 op kinds across 14 programs, so the totals in it are
+stale by more than the rows added since. The per-subject numbers in each file's own
+header are generated fresh and are the ones to trust; regenerating this table is a
+separate pass.
+
 **What the order asks for** -- `Kafka_WindowStore`. The only file whose index is
 `Ranged`, and so the only one that obliges a backend to provide a structure that can
 answer a key range; every other member in these files may be a hash table. Kafka made
@@ -813,7 +827,7 @@ that found it rather than described in prose:
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
 | composite key, POINT on every attribute | was `Cluster.partition(topic, partition)`; **closed** -- `CompositeDictIndexImpl` serves a conjunction of n equalities at any arity, and both halves are pinned in `Kafka_Cluster.v` (arity two) and `HA_EntityRegistry.v` (arity three) | `one_partition_probes_composite`, `get_entity_id_probes_triple`. What remains open is the SELECTOR: `choices_of` cannot emit the choice, so the chosen column is still `one_partition_probes_then_filters` / `get_entity_id_probes_then_filters` |
-| a row-REMOVING write on a composite index | not exhibited here; `HA_EntityRegistry` models `_index_entry` and not `_unindex_entry` for exactly this reason | not pinned. The composite index has an INSERT rule (`cons_to_composite_insert_head`, with `composite_use_idx_head` to collapse its rebuild -- `insert_maintains_every_member` pins the pair) and no delete rule, so a filter-shaped write rebuilds it from the row list. Sound, and O(n) |
+| a composite index maintained across a KEYED delete | `HA_EntityRegistry`'s `_unindex_entry`, which removes by `entity_id` and drops the row from the tuple index as a side effect | not pinned, and the gap is narrower than it was. The composite index now has BOTH maintenance rules for writes stated on its own key -- an insert (`cons_to_composite_insert_head`) and a delete at the composite key (`filter_neq_to_composite_delete_head`), each paired with `composite_use_idx_head` to collapse the rebuild it leaves, and both pinned and measured in `Ex_CompositeKey.v` (906x on the delete, exponent 1.02 to -0.01). What is missing is the KEYED form: a write that removes the rows a DIFFERENT key names has to probe the primary member for the row and then drop it from the one bucket its composite key names, which is what `DictIndexKeyedDelete` does for a single attribute. That is why `HA_EntityRegistry` models `_index_entry` and not `_unindex_entry` |
 | composite key, a point AND a range | `WindowStore.fetch(key, lo, hi)` | `fetch_key_probes_split`. Not closed by the above and not closable by it: `record_compare` orders a record by sorted field NAME, so a range over a composite key would range on whichever attribute sorts first, which is why that index is `Unranged` |
 | the conjuncts in an order the index was not declared in | not exhibited here; both subjects' reads list them in the order the key was built | not pinned: the rule checks the collected names against the index's attribute list IN ORDER. Association is free -- the matcher collects conjuncts from any tree -- but a permuted conjunction is not matched, and lifting that means normalising the collected pairs into declared order |
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |

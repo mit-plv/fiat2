@@ -144,11 +144,17 @@ Import ListNotations.
      * The reads return rows and here they are counted, as in the other files,
        because the output channel is a list of strings.
      * THE INSERT IS MODELLED AND THE DELETE IS NOT, and the reason is exact
-       rather than general: the composite index has an insert maintenance rule
-       and no delete rule, so a row-removing write would rebuild it from the
-       row list -- sound, and O(n).  _index_entry is therefore here and
-       _unindex_entry is not.  HA_AreaRegistry carries this family's
-       maintained DELETE, on single-attribute indexes.
+       rather than general.  The composite index has BOTH maintenance rules,
+       but its delete is stated on ITS OWN key -- remove the rows whose
+       (domain, platform, unique_id) is this tuple -- and _unindex_entry
+       removes by entity_id, dropping the tuple index's entry as a side
+       effect.  Serving that needs the KEYED form: probe the primary member
+       for the row, then drop it from the one bucket its composite key names,
+       as DictIndexKeyedDelete does for a single attribute.  That rule does
+       not exist for a composite key, so _unindex_entry is out of scope here;
+       Ex_CompositeKey.v prices the delete the index DOES have, and
+       HA_AreaRegistry carries this family's maintained keyed delete on
+       single-attribute indexes.
      * The insert prepends the row.  The source stores into dicts keyed by
        entity_id and by the tuple, so it names no position in a sequence of
        rows, and nothing here observes row order -- see the note on row order

@@ -522,13 +522,44 @@ let dependent_plugins =
     kinds = [ ("resolveAll", fun _ _ -> i 0) ];
     mutating = [] }
 
+(* ---------- composite_key: the composite index's own regression file ----------
+
+   Extracted for its two MAINTENANCE rules.  The triple is unique per row (k3
+   is the row index), and k1/k2 have BOUNDED cardinality for the same reason
+   entity_registry's domain does -- so a configuration that can only probe one
+   attribute scans a bucket that grows. *)
+
+let composite_key =
+  let k1 j = Printf.sprintf "a%d" (j mod 16) in
+  let k2 j = Printf.sprintf "b%d" (j / 16 mod 16) in
+  let row _ j =
+    rcd [ ("k1", s (k1 j)); ("k2", s (k2 j)); ("k3", i j); ("v", s "v") ] in
+  let q rows kind a b c fresh =
+    rcd [ ("kind", i kind); ("a", s a); ("b", s b); ("c", i c);
+          ("new_item", row rows fresh) ] in
+  { queries_var = "queries"; store = outputs_only;
+    table = (fun rows -> [ ("items_tbl", VList (List.init rows (row rows))) ]);
+    build = no_build;
+    kinds =
+      [ ("readInOrder", fun rows j ->
+           let p = spread rows j in q rows 0 (k1 p) (k2 p) p 0);
+        ("readPermuted", fun rows j ->
+           let p = spread rows j in q rows 1 (k1 p) (k2 p) p 0);
+        ("readPermuted2", fun rows j ->
+           let p = spread rows j in q rows 2 (k1 p) (k2 p) p 0);
+        ("insert", fun rows j -> q rows 3 "" "" 0 (rows + j));
+        (* the delete's key is the key OF A ROW, so it removes exactly one *)
+        ("deleteAtKey", fun rows j ->
+           let p = victim rows j in q rows 4 (k1 p) (k2 p) p 0) ];
+    mutating = [ "insert"; "deleteAtKey" ] }
+
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("entity_registry", entity_registry);
     ("window_store", window_store); ("range_delete", range_delete);
-    ("min_delete", min_delete);
+    ("min_delete", min_delete); ("composite_key", composite_key);
     ("item_deletion", item_deletion); ("sat4j", sat4j);
     ("dependent_plugins", dependent_plugins) ]
 

@@ -145,6 +145,12 @@ Proof.
   f_equal. apply IH; assumption.
 Qed.
 
+Lemma attrs_nonempty : forall A (al : list A),
+    Nat.eqb (List.length al) 0 = false -> al <> [].
+Proof.
+  destruct al; cbn; intros H; [ discriminate | congruence ].
+Qed.
+
 Lemma access_record_get_attr_type : forall rt a,
     In a (List.map fst rt) ->
     access_record rt a = Success (get_attr_type rt a).
@@ -410,6 +416,35 @@ Section ConjMatcher.
     pose proof (eq_attr_pair_ty Gstore Genv x0 e rt t He) as Hp.
     destruct (eq_attr_pair x0 e) as [ p | ]; [ | exact I ].
     constructor; auto.
+  Qed.
+
+  (* A key literal's typing says the ROW TYPE IS A RECORD, provided the key
+     has at least one attribute: its first field is an access on the row, and
+     TyEAccess types an access only at a record.  Stated here, over an
+     arbitrary attribute list, because inside the index's section `attrs` is a
+     section variable and cannot be case-split -- the other definitions there
+     mention it. *)
+  Lemma key_lit_row_record : forall (Gstore Genv : tenv) (r : string) al kt,
+      al <> [] ->
+      type_of Gstore Genv
+        (ERecord (List.map (fun a => (a, EAccess (EVar r) a)) al)) kt ->
+      exists rt, map.get Genv r = Some (TRecord rt).
+  Proof.
+    intros Gstore Genv r al kt Hne H.
+    destruct al as [ | a0 al ]; [ congruence | ].
+    inversion H; subst.
+    (* the literal's first field is an access on the row; one step of the
+       Forall2 is all this needs *)
+    lazymatch goal with
+      Hty : Forall2 _ (List.map snd (_ :: _)) (List.map snd ?tl) |- _ =>
+        destruct tl as [ | p0 tl0 ]; cbn [List.map snd] in Hty;
+        inversion Hty as [ | u w l1 l2 Hhd Htl ]; subst
+    end.
+    inversion Hhd; subst.
+    lazymatch goal with
+      H' : type_of _ _ (EVar r) _ |- _ => inversion H'; subst
+    end.
+    eexists; eassumption.
   Qed.
 
   Lemma conj_eq_pairs_ty : forall (Gstore Genv : tenv) x0 e rt t,
@@ -719,6 +754,26 @@ Section WithHole.
             rewrite <- Htl; assumption.
       Qed.
 
+      (* The key literal's typing also tells you the ROW TYPE IS A RECORD,
+         provided the key has at least one attribute: the first field is an
+         access on the row, and TyEAccess types an access only at a record.
+         The rules with an is_tbl_ty hypothesis to lean on use key_lit_inv
+         below; the delete rule has none and uses this. *)
+      Lemma key_lit_inv_ex : forall (Gstore Genv : tenv) (r : string) kt,
+          attrs <> [] ->
+          type_of Gstore Genv
+            (ERecord (List.map (fun a => (a, EAccess (EVar r) a)) attrs)) kt ->
+          exists rt, map.get Genv r = Some (TRecord rt)
+                     /\ is_tbl_ty (TList (TRecord rt)) = true
+                     /\ kt = key_ty rt.
+      Proof.
+        intros Gstore Genv r kt Hne H.
+        pose proof (key_lit_row_record Gstore Genv r attrs kt Hne H)
+          as [ rt Hget ].
+        exists rt. split; [ assumption | ].
+        eapply key_lit_inv; eassumption.
+      Qed.
+
       Corollary composite_key_ty : forall (Gstore Genv : tenv) rt r,
           is_tbl_ty (TList (TRecord rt)) = true ->
           type_of Gstore Genv r (TRecord rt) ->
@@ -1011,6 +1066,54 @@ Section WithHole.
         - apply locals_wf_step; [ apply locals_wf_empty | assumption ].
       Qed.
 
+
+      (* The index the fold builds is key-sorted, which is what makes the
+         delete below an EQUALITY of canonical dictionaries and not a
+         permutation of them. *)
+      Lemma gallina_to_idx_SSorted : forall l d,
+          gallina_to_idx (VList l) = VDict d ->
+          StronglySorted (fun p p' => is_true (dict_entry_leb p p')) d.
+      Proof.
+        cbn [gallina_to_idx]; intros l d H. injection H as H; subst.
+        induction l as [ | r l IH ]; cbn [fold_right].
+        - constructor.
+        - destruct r; try constructor.
+          apply dict_insert_preserve_SSorted; assumption.
+      Qed.
+
+      (* THE CONTENT OF THE DELETE RULE.  Building the index of a table with
+         the rows at ONE COMPOSITE KEY filtered out is deleting that key from
+         the index of the whole table.  The single-attribute proof carries over
+         with record_proj attr replaced by ckey, because the key is abstract
+         to it -- the work was in getting ckey to behave like a projection,
+         which record_proj_record_sort and ckey_eq_iff did. *)
+      Lemma gallina_to_idx_filter_neq : forall l rt kv,
+          type_of_value (VList l) (TList (TRecord rt)) ->
+          gallina_to_idx
+            (VList (filter (fun r => negb (value_eqb (match r with
+                                                      | VRecord rc => ckey rc
+                                                      | _ => VUnit
+                                                      end) kv)) l))
+          = match gallina_to_idx (VList l) with
+            | VDict d => VDict (dict_delete kv d)
+            | v => v
+            end.
+      Proof.
+        intros l rt kv H_ty. invert_type_of_value_clear.
+        lazymatch goal with
+          H: Forall _ l |- _ => induction H as [ | r l H_r H_l IH ]
+        end; auto.
+        invert_type_of_value_clear.
+        pose proof (gallina_to_idx_SSorted l _ eq_refl) as H_sort.
+        cbn [gallina_to_idx filter fold_right] in *.
+        injection IH as IH.
+        destruct (value_eqb (ckey l0) kv) eqn:E; cbn [negb fold_right].
+        - apply value_eqb_eq in E. rewrite E, dict_delete_insert_same; auto.
+          f_equal; assumption.
+        - assert (H_neq : ckey l0 <> kv).
+          { intro H_eq. rewrite H_eq, value_eqb_refl in E. discriminate. }
+          rewrite IH, dict_lookup_delete_diff, dict_delete_insert_diff; auto.
+      Qed.
 
       (* ---- what the index means ----
 
@@ -1383,6 +1486,343 @@ Section WithHole.
         pose proof (interp_conj_eq_pairs store env x0 pr rc) as Hi.
         rewrite Hm in Hi; cbv beta iota in Hi. rewrite Hi.
         apply conj_sat_eq_ckey; assumption.
+      Qed.
+
+      (* The NEGATED bridge, for the delete: what `not (conjunction)` computes
+         on a row is that the row's composite key DIFFERS from the probe's. *)
+      Lemma filter_not_conj_eq_filter_neq_ckey :
+        forall (store env : locals) x0 pr prs (l : list value),
+          NoDup attrs ->
+          conj_eq_pairs x0 pr = Some prs ->
+          Permutation (List.map fst prs) attrs ->
+          Forall (fun v => exists rc, v = VRecord rc) l ->
+          filter (fun v => match interp_expr store (map.put env x0 v)
+                                   (EUnop ONot pr) with
+                           | VBool bb => bb
+                           | _ => false
+                           end) l
+          = filter (fun r => negb (value_eqb
+                                     (match r with
+                                      | VRecord rc => ckey rc
+                                      | _ => VUnit
+                                      end)
+                                     (VRecord (record_sort
+                                        (List.map
+                                           (fun '(s, e) => (s, interp_expr store env e))
+                                           prs))))) l.
+      Proof.
+        intros store env x0 pr prs l Hnd Hm Hperm Hrec.
+        apply In_filter_ext; intros v Hin.
+        rewrite Forall_forall in Hrec. apply Hrec in Hin as [ rc -> ].
+        pose proof (interp_conj_eq_pairs store env x0 pr rc) as Hi.
+        rewrite Hm in Hi; cbv beta iota in Hi.
+        cbn [interp_expr]. rewrite Hi. cbn [interp_unop].
+        f_equal. apply conj_sat_eq_ckey; assumption.
+      Qed.
+
+      (* ============================================================
+         MAINTENANCE: a key's rows removed, one delete.
+
+         [row <- e', check(!(row.a1 == e1 && ... && row.an == en)), ret row]
+         rebuilt into an index  -->  delete {a1 = e1; ...} from the index of e'
+
+         The same shape as DictIndexImpl's filter_neq_to_delete_head, and the
+         same conjunction matcher as the read rule, so the predicate may be
+         written in any order and any association.  Its content is
+         gallina_to_idx_filter_neq; the rest is plumbing.
+
+         Paired with composite_use_idx_head as the insert rule is: this leaves
+         `index of e'` behind, and that rule replaces it with the member
+         already stored, which is what makes the delete O(log n) instead of a
+         rebuild. *)
+      Definition filter_neq_to_composite_delete_head (e : expr) :=
+        match e with
+        | ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1
+            (flatmap_filter_list e' y (EUnop ONot pr) y1 _ _) =>
+            match conj_eq_pairs y pr with
+            | Some prs =>
+                if (all_eqb [(tup, [tup0; tup1]); (acc, [acc0; acc1; acc2]);
+                             (x, [x0; x1]); (y, [y1])]
+                    && keys_match tup0 attrs kl0
+                    && keys_match tup0 attrs kl1
+                    && forallb (fun a => inb String.eqb a (List.map fst prs))
+                         attrs
+                    && Nat.eqb (List.length attrs) (List.length prs)
+                    (* a key of NO attributes would leave the row type
+                       unconstrained, and the row type is what the key's own
+                       typing is read out of *)
+                    && negb (Nat.eqb (List.length attrs) 0))%bool
+                then EBinop ODelete (to_idx_from e') (ERecord prs)
+                else e
+            | None => e
+            end
+        | _ => e
+        end.
+
+      (* The guard processing and the typing inversions are the same for both
+         halves, so they are one tactic.  What it leaves: rt (the row type's
+         field list), Htbl (the index's side condition), Hkt (the key type is
+         key_ty rt), Hperm (the collected names are a permutation of attrs),
+         and the fold's three sub-derivations with the row type substituted. *)
+      Lemma filter_neq_to_composite_delete_head_preserve_ty : forall (Gstore : tenv),
+          preserve_ty Gstore filter_neq_to_composite_delete_head.
+      Proof.
+        unfold preserve_ty; intros Gstore e t' Genv Hgs Hge He.
+        unfold filter_neq_to_composite_delete_head.
+        repeat (case_match; auto; []).
+        (* The guard, and the typing inversions down to the key literal.
+           Inlined in both halves rather than factored into an Ltac: the
+           names an intro-pattern introduces inside an Ltac body are not
+           available to the caller, and preserve_ty needs two of them. *)
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *.
+        repeat lazymatch goal with H : _ /\ _ |- _ => destruct H end.
+        rewrite !Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        lazymatch goal with
+          H : keys_match _ _ ?kl = true |- _ => apply keys_match_eq in H; subst kl
+        end.
+        lazymatch goal with
+          H : keys_match _ _ ?kl = true |- _ => apply keys_match_eq in H; subst kl
+        end.
+        invert_type_of_clear.
+        lazymatch goal with
+          H : type_of _ _ (EFlatmap _ _ _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EIf _ _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of_binop OCons _ _ _ |- _ => inversion H; clear H; subst
+        end.
+        (* the filter's INPUT row type is its OUTPUT row type *)
+        lazymatch goal with
+          H : type_of _ (map.put _ ?yy _) (EVar ?yy) _ |- _ =>
+            apply EVar_ty_inv in H; rewrite map.get_put_same in H;
+            injection H as H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EUnop ONot _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of_unop ONot _ _ |- _ => inversion H; clear H; subst
+        end.
+        (* a COPY of the fold's body, because preserve_ty reuses it whole and
+           the inversion below consumes it *)
+        lazymatch goal with
+          H : type_of _ (map.put (map.put _ _ _) _ _) (ETernop OInsert _ _ _) _
+          |- _ => pose proof H as Hbody; inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of_ternop OInsert _ _ _ _ |- _ => inversion H; clear H; subst
+        end.
+        assert (Hne : attrs <> []).
+        { apply attrs_nonempty with (A := string).
+          lazymatch goal with
+            H : Nat.eqb (List.length attrs) 0 = false |- _ => exact H
+          end. }
+        (* the key literal gives the row type, the side condition and the key
+           type in one step *)
+        lazymatch goal with
+          H : type_of ?Gs (map.put (map.put ?Ge ?tp ?rowt) ?ac ?D)
+                (ERecord (List.map (fun a => (a, EAccess (EVar ?tp) a)) attrs))
+                ?kt |- _ =>
+            pose proof (key_lit_inv_ex Gs _ tp kt Hne H)
+              as [ rt [ Hgt [ Htbl Hkt ] ] ]
+        end.
+        rewrite map.get_put_diff in Hgt by use_is_NoDup.
+        rewrite map.get_put_same in Hgt.
+        injection Hgt as Hgt; subst.
+        pose proof (is_tbl_ty_attrs _ Htbl) as [ _ Hndattrs ].
+        lazymatch goal with
+          H1 : forallb _ _ = true,
+          H2 : Nat.eqb (List.length attrs) (List.length _) = true |- _ =>
+            pose proof (guard_Permutation _ Hndattrs H1 H2) as Hperm
+        end.
+        subst. eapply TyEBinop; [ apply TyODelete | | ].
+        - (* the same fold, over the filter's SOURCE: its three
+             sub-derivations are the matched term's own *)
+          unfold to_idx_from, composite_key.
+          eapply TyEFold; [ eassumption | eassumption | exact Hbody ].
+        - lazymatch goal with
+            H : type_of ?Gs (map.put ?Ge ?yy (TRecord ?rt0)) ?pr TBool |- _ =>
+              pose proof (conj_eq_pairs_ty Gs Ge yy pr rt0 TBool H) as Hprs
+          end.
+          lazymatch goal with
+            H : conj_eq_pairs _ _ = Some _ |- _ =>
+              rewrite H in Hprs; cbv beta iota in Hprs
+          end.
+          apply composite_key_expr_ty;
+            [ assumption | exact Hperm | apply Forall2_of_pairs_ty; assumption ].
+      Qed.
+
+      Lemma filter_neq_to_composite_delete_head_preserve_sem :
+        forall (Gstore : tenv) (store : locals),
+          preserve_sem Gstore store filter_neq_to_composite_delete_head.
+      Proof.
+        unfold preserve_sem; intros Gstore store e t' Genv env Hgs Hge He Hsw Hew.
+        unfold filter_neq_to_composite_delete_head.
+        repeat (case_match; auto; []).
+        (* The guard, and the typing inversions down to the key literal.
+           Inlined in both halves rather than factored into an Ltac: the
+           names an intro-pattern introduces inside an Ltac body are not
+           available to the caller, and preserve_ty needs two of them. *)
+        cbn [all_eqb all_eqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *.
+        repeat lazymatch goal with H : _ /\ _ |- _ => destruct H end.
+        rewrite !Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        lazymatch goal with
+          H : keys_match _ _ ?kl = true |- _ => apply keys_match_eq in H; subst kl
+        end.
+        lazymatch goal with
+          H : keys_match _ _ ?kl = true |- _ => apply keys_match_eq in H; subst kl
+        end.
+        invert_type_of_clear.
+        lazymatch goal with
+          H : type_of _ _ (EFlatmap _ _ _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EIf _ _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of_binop OCons _ _ _ |- _ => inversion H; clear H; subst
+        end.
+        (* the filter's INPUT row type is its OUTPUT row type *)
+        lazymatch goal with
+          H : type_of _ (map.put _ ?yy _) (EVar ?yy) _ |- _ =>
+            apply EVar_ty_inv in H; rewrite map.get_put_same in H;
+            injection H as H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EUnop ONot _) _ |- _ => inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of_unop ONot _ _ |- _ => inversion H; clear H; subst
+        end.
+        (* a COPY of the fold's body, because preserve_ty reuses it whole and
+           the inversion below consumes it *)
+        lazymatch goal with
+          H : type_of _ (map.put (map.put _ _ _) _ _) (ETernop OInsert _ _ _) _
+          |- _ => pose proof H as Hbody; inversion H; clear H; subst
+        end.
+        lazymatch goal with
+          H : type_of_ternop OInsert _ _ _ _ |- _ => inversion H; clear H; subst
+        end.
+        assert (Hne : attrs <> []).
+        { apply attrs_nonempty with (A := string).
+          lazymatch goal with
+            H : Nat.eqb (List.length attrs) 0 = false |- _ => exact H
+          end. }
+        (* the key literal gives the row type, the side condition and the key
+           type in one step *)
+        lazymatch goal with
+          H : type_of ?Gs (map.put (map.put ?Ge ?tp ?rowt) ?ac ?D)
+                (ERecord (List.map (fun a => (a, EAccess (EVar ?tp) a)) attrs))
+                ?kt |- _ =>
+            pose proof (key_lit_inv_ex Gs _ tp kt Hne H)
+              as [ rt [ Hgt [ Htbl Hkt ] ] ]
+        end.
+        rewrite map.get_put_diff in Hgt by use_is_NoDup.
+        rewrite map.get_put_same in Hgt.
+        injection Hgt as Hgt; subst.
+        pose proof (is_tbl_ty_attrs _ Htbl) as [ _ Hndattrs ].
+        lazymatch goal with
+          H1 : forallb _ _ = true,
+          H2 : Nat.eqb (List.length attrs) (List.length _) = true |- _ =>
+            pose proof (guard_Permutation _ Hndattrs H1 H2) as Hperm
+        end.
+        (* the filter's source, as a list of rows *)
+        lazymatch goal with
+          H : type_of Gstore Genv ?src (TList _) |- _ => apply_type_sound src
+        end.
+        lazymatch goal with
+          H : type_of_value _ (TList _) |- _ => inversion H; subst
+        end.
+        (* the row type is well formed, which the index's own lemmas want *)
+        assert (Hrt : type_wf (TRecord rt)).
+        { lazymatch goal with
+            H : type_of Gstore Genv _ (TList (TRecord rt)) |- _ =>
+              apply type_of__type_wf in H as Hwf0; auto;
+              inversion Hwf0; subst; assumption
+          end. }
+        (* one binop step, so that the index of the whole table is exposed
+           without expanding either fold *)
+        assert (E_Binop : forall o a b,
+                   interp_expr store env (EBinop o a b)
+                   = interp_binop o (interp_expr store env a)
+                       (interp_expr store env b)) by reflexivity.
+        (* The matched term is the fold, not the constant to_idx_from applied
+           to it, so the right-hand side is matched as a fold and the lemma
+           about to_idx_from is unfolded into that shape before it is used. *)
+        lazymatch goal with
+          Hrows : Forall _ ?rows,
+          Hsrc : VList ?rows = interp_expr store env ?src |- _ =>
+            lazymatch goal with
+              |- interp_expr store env
+                   (EBinop ODelete (to_idx_from _) (ERecord ?prs))
+                 = interp_expr store env (EFold ?flt _ _ _ _) =>
+                (* the index of the whole table *)
+                assert (Hidx : interp_expr store env (to_idx_from src)
+                               = gallina_to_idx (VList rows))
+                  by (eapply interp_to_idx_from with (l := rt);
+                      [ assumption | assumption | assumption
+                      | symmetry; exact Hsrc ]);
+                (* the rows the filter keeps, as the delete's own test *)
+                assert (Hfl : interp_expr store env flt
+                              = VList (filter (fun r => negb (value_eqb
+                                   (match r with
+                                    | VRecord rc => ckey rc
+                                    | _ => VUnit
+                                    end)
+                                   (VRecord (record_sort (List.map
+                                      (fun '(s, e) => (s, interp_expr store env e))
+                                      prs))))) rows))
+                  by (rewrite interp_flatmap_filter_list, <- Hsrc;
+                      cbv beta iota; f_equal;
+                      apply filter_not_conj_eq_filter_neq_ckey;
+                      [ assumption | eassumption | assumption
+                      | apply (Forall_VRecord_of_list rows rt);
+                        constructor; assumption ]);
+                (* and the index of those rows *)
+                assert (Hfidx : interp_expr store env (to_idx_from flt)
+                                = gallina_to_idx
+                                    (VList (filter (fun r => negb (value_eqb
+                                       (match r with
+                                        | VRecord rc => ckey rc
+                                        | _ => VUnit
+                                        end)
+                                       (VRecord (record_sort (List.map
+                                          (fun '(s, e) => (s, interp_expr store env e))
+                                          prs))))) rows)))
+                  by (eapply interp_to_idx_from with (l := rt);
+                      [ assumption | assumption
+                      | rewrite Forall_forall; intros v Hv;
+                        apply filter_In in Hv as [ Hv _ ];
+                        rewrite Forall_forall in Hrows; apply Hrows; assumption
+                      | exact Hfl ]);
+                unfold to_idx_from, composite_key in Hfidx;
+                rewrite E_Binop, Hidx, Hfidx;
+                erewrite (gallina_to_idx_filter_neq rows rt);
+                  [ | constructor; assumption ]
+            end
+        end.
+        cbn [interp_expr gallina_to_idx interp_binop]. reflexivity.
+      Qed.
+
+      Lemma filter_neq_to_composite_delete_head_sound :
+        expr_transf_sound (locals:=locals) filter_neq_to_composite_delete_head.
+      Proof.
+        unfold expr_transf_sound; split; intros.
+        1: eapply filter_neq_to_composite_delete_head_preserve_ty; eauto.
+        eapply filter_neq_to_composite_delete_head_preserve_sem;
+          resolve_locals_wf; eauto.
       Qed.
 
       Section WithTags.
@@ -1940,3 +2380,4 @@ Qed.
    soundness depends on the tags beyond what aux_ty_for_idx already carries. *)
 #[export] Hint Resolve composite_use_idx_head_sound : transf_hints.
 #[export] Hint Resolve cons_to_composite_insert_head_sound : transf_hints.
+#[export] Hint Resolve filter_neq_to_composite_delete_head_sound : transf_hints.

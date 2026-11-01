@@ -6,7 +6,8 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
-  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.eval.MinIndexProbe.
+  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
+  fiat2.eval.MinIndexProbe.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
   extraction.ExtrOcamlNativeString.
@@ -88,6 +89,7 @@ Module KWS := Kafka_WindowStore.
 Module JID := Jenkins_ItemDeletion.
 Module ERD := Ex_RangeDelete.
 Module EMD := Ex_MinDelete.
+Module ECK := Ex_CompositeKey.
 Module S4J := Sat4j_LiteralStorage.
 Module MIP := MinIndexProbe.
 Module JDP := Jenkins_DependentPlugins.
@@ -104,6 +106,10 @@ Definition entity_registry_src : command := Eval vm_compute in ER.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
 Definition range_delete_src : command := Eval vm_compute in ERD.prog.
 Definition min_delete_src : command := Eval vm_compute in EMD.prog.
+(* the composite key's own regression file, extracted for its two MAINTENANCE
+   rules: the source rebuilds the index on every write, the optimized column
+   inserts one row and deletes one key. *)
+Definition composite_key_src : command := Eval vm_compute in ECK.prog.
 Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
 (* the nested-loop join: the one subject whose SOURCE is quadratic *)
 Definition dependent_plugins_src : command := Eval vm_compute in JDP.elaborated.
@@ -145,6 +151,7 @@ Definition range_delete_opt : command :=
    is identical in both -- only the cost of the branch it takes differs. *)
 Definition min_delete_opt : command :=
   Eval vm_compute in nth 0 EMD.prog_transformed CSkip.
+Definition composite_key_opt : command := Eval vm_compute in ECK.optimized.
 Definition min_delete_opt_noset : command :=
   Eval vm_compute in nth 1 EMD.prog_transformed CSkip.
 
@@ -255,6 +262,7 @@ Definition subjects : list (string * command * command) :=
   ; ("window_store", window_store_src, window_store_opt)
   ; ("range_delete", range_delete_src, range_delete_opt)
   ; ("min_delete", min_delete_src, min_delete_opt)
+  ; ("composite_key", composite_key_src, composite_key_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
   ; ("sat4j", sat4j_src, sat4j_opt)
   ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].

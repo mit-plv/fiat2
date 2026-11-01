@@ -41,6 +41,39 @@ Import ListNotations.
    orders a record by sorted field NAME, so a range over a composite key would
    range on whichever attribute sorts first).  The read stays a scan, so the
    row list survives -- which prefix_read_keeps_the_list pins.
+   WHAT IT MEASURES (harness `bench typed 200 400 800 1600`; work at 1600
+   rows and the fitted exponent).  This file is extracted, unlike the other
+   Ex_* regression files but like Ex_RangeDelete and Ex_MinDelete, because the
+   two maintenance rules have no third-party witness yet and this is where
+   they are priced:
+
+     kind           source    a        optimized   a
+     readInOrder   1738172  1.00            1712  0.00
+     readPermuted  1738412  1.00            1972  0.00
+     readPermuted2 1738652  1.00            2212  0.00
+     insert           1320  0.00            3042 -0.00
+     deleteAtKey   1883785  1.02            2080 -0.01
+     build               9  --            126899  1.00
+     whole op phase 7112674               11018          646x
+
+   THE DELETE IS THE NUMBER TO READ: 1883785 to 2080, 906x, and the exponent
+   1.02 to -0.01.  The source rebuilds the index from the filtered list on
+   every delete; the optimized form is one ODelete on a tree.
+
+   THE INSERT COSTS MORE, and that is the honest direction: a prepend is O(1)
+   already, so maintaining the index adds a constant (1320 to 3042) and buys
+   nothing on this operation.  What it buys is that the READS stay probes
+   afterwards, which is the whole point of maintaining rather than rebuilding.
+
+   A WARNING ABOUT THIS FILE AS EVIDENCE.  It is a regression file: the
+   queries were written to make the rules fire, so the ratios above say what
+   the rules are worth WHEN THEY APPLY and say nothing about how often that
+   is.  eval/ is where that question lives, and the delete rule has no witness
+   there yet -- eval/HA_EntityRegistry's own removal is keyed on entity_id,
+   not on the composite key, so it needs a KEYED delete (probe the primary
+   member for the row, then drop it from the one bucket its key names, as
+   DictIndexKeyedDelete does for a single attribute).  That rule does not
+   exist for a composite key.
    ============================================================ *)
 
 Definition row_ty :=
@@ -49,7 +82,8 @@ Definition row_ty :=
 
 Definition query_ty :=
   TRecord (record_sort
-             [("kind", TInt); ("a", TString); ("b", TString); ("c", TInt)]).
+             [("kind", TInt); ("a", TString); ("b", TString); ("c", TInt);
+              ("new_item", row_ty)]).
 
 Section WithConcreteMaps.
 
@@ -80,18 +114,40 @@ Section WithConcreteMaps.
   Definition dispatch (k : Z) (thn els : command) : command :=
     CIf (EBinop OEq (EAccess (EVar "q") "kind") (EAtom (AInt k))) thn els.
 
-  (* the same three equalities, four ways:
+  (* keep the rows the composite key does NOT name, written PERMUTED so that
+     the delete inherits the read rule's order-insensitivity *)
+  Definition drop_at_key : expr :=
+    EFlatmap LikeList (ELoc "items") "r"
+      (EIf (EUnop ONot (EBinop OAnd c3 (EBinop OAnd c1 c2)))
+         (EBinop OCons (EVar "r") (EAtom (ANil None))) (EAtom (ANil None))).
+
+  (* the same three equalities three ways, and then the two writes:
        0  declared order, right-nested
        1  PERMUTED and LEFT-nested
        2  permuted again
-       3  a PREFIX of the key -- two of the three *)
+       3  an insert
+       4  a delete AT the composite key, permuted
+
+     The PREFIX read is in prog_prefix below and not here, deliberately: a
+     scan of the row list keeps the list alive, and with the list alive the
+     delete's own linear pass over it hides what the delete rule does.  Two
+     programs, so that each fact is measured where nothing masks it. *)
   Definition prog : command :=
     CLetMut (EVar "items_tbl") "items"
       (CForeach (EVar "queries") "q"
          (dispatch 0 (report (filt (EBinop OAnd c1 (EBinop OAnd c2 c3))))
             (dispatch 1 (report (filt (EBinop OAnd (EBinop OAnd c3 c1) c2)))
                (dispatch 2 (report (filt (EBinop OAnd c2 (EBinop OAnd c3 c1))))
-                  (report (filt (EBinop OAnd c1 c2))))))).
+                  (dispatch 3
+                     (CAssign "items"
+                        (EBinop OCons (EAccess (EVar "q") "new_item")
+                           (ELoc "items")))
+                     (CAssign "items" drop_at_key)))))).
+
+  (* the negative half, on its own: a conjunction on a PREFIX of the key *)
+  Definition prog_prefix : command :=
+    CLetMut (EVar "items_tbl") "items"
+      (CForeach (EVar "queries") "q" (report (filt (EBinop OAnd c1 c2)))).
 
   Definition init_Gstore : ctenv :=
     map.put map.empty "outputs" (TList TString).
@@ -112,6 +168,12 @@ Section WithConcreteMaps.
 
   Definition optimized : command := nth 0 prog_transformed CSkip.
 
+  Definition optimized_prefix : command :=
+    apply_optimize_anno
+      (AC [PushdownCollection; AnnotateCollection]
+          [[CompositeDictIdx ["k1"; "k2"; "k3"]]] prog_prefix)
+      init_Gstore init_Genv.
+
   (* ---- projections ---- *)
 
   Definition installed_fields (c : command) : list string :=
@@ -131,6 +193,20 @@ Section WithConcreteMaps.
   Definition query_at (n : nat) (c : command) : option expr :=
     match c with
     | CLetMut _ _ (CForeach _ _ b) => branch n b
+    | _ => None
+    end.
+
+  Fixpoint write_branch (n : nat) (c : command) : option expr :=
+    match n, c with
+    | O, CIf _ (CAssign _ e) _ => Some e
+    | O, CAssign _ e => Some e
+    | S n', CIf _ _ c' => write_branch n' c'
+    | _, _ => None
+    end.
+
+  Definition write_at (n : nat) (c : command) : option expr :=
+    match c with
+    | CLetMut _ _ (CForeach _ _ b) => write_branch n b
     | _ => None
     end.
 
@@ -184,7 +260,7 @@ Section WithConcreteMaps.
      A conjunction on a PREFIX of the key is declined, and the scan it stays
      keeps the row list alive. *)
   Lemma prefix_read_scans :
-    query_at 3 optimized
+    query_at 0 optimized_prefix
     = Some (EACFold AGCount
               (EFlatmap LikeBag
                  (EUnop OBagOfList (EAccess (ELoc "items") "id_tag")) "r"
@@ -194,7 +270,69 @@ Section WithConcreteMaps.
   Proof. vm_compute; reflexivity. Qed.
 
   Lemma prefix_read_keeps_the_list :
-    installed_fields optimized = ["id_tag"; "aux_tag"].
+    installed_fields optimized_prefix = ["id_tag"; "aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* And in the program with the writes and no prefix read, the list is GONE:
+     every read is a probe and both writes are maintained, so the table IS its
+     index -- across an insert AND across a delete. *)
+  Lemma the_table_is_its_index :
+    installed_fields optimized = ["aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ---- the two writes, maintained ----
+
+     The insert is one OInsert into the member, which takes the insert rule
+     and the use rule as a pair: the first turns rebuilding the index of
+     `row :: rest` into building the index of `rest` and inserting one row,
+     and the second replaces that `index of rest` with the member already
+     stored.
+
+     THE DELETE IS ONE ODelete, and the key it deletes at is written in the
+     conjunction's order, not the index's -- so the delete inherits the read
+     rule's order-insensitivity from the same permutation guard.  Its content
+     is gallina_to_idx_filter_neq: the index of a table with one key's rows
+     removed IS the index with that key deleted.
+
+     AND THE ROW LIST IS GONE.  Every read is a probe and both writes are
+     maintained, so no reader of the list is left and erase_dead_field drops
+     it -- including from the writes' own right-hand sides.  The delete is one
+     ODelete and NOTHING ELSE: the table IS its index, across a delete.  That
+     is why the prefix read lives in prog_prefix: a scan of the list keeps the
+     list, and a surviving list makes the delete pay a linear pass that has
+     nothing to do with the index. *)
+
+  Definition member : expr :=
+    EAccess (EAccess (ELoc "items") "aux_tag") "0".
+  Definition new_item : expr := EAccess (EVar "q") "new_item".
+
+  Definition row_key : expr :=
+    ERecord [("k1", EAccess (EVar "tup") "k1");
+             ("k2", EAccess (EVar "tup") "k2");
+             ("k3", EAccess (EVar "tup") "k3")].
+
+  Lemma insert_is_one_insert :
+    write_at 3 optimized
+    = Some (ERecord
+              [("aux_tag",
+                 ERecord
+                   [("0",
+                      ELet new_item "tup"
+                        (ELet member "acc"
+                           (ETernop OInsert (EVar "acc") row_key
+                              (EBinop OBagInsert
+                                 (EOptMatch (EBinop OLookup (EVar "acc") row_key)
+                                    (EAtom (AEmptyBag None)) "x" (EVar "x"))
+                                 (EVar "tup")))))])]).
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma delete_is_one_delete :
+    write_at 4 optimized
+    = Some (ERecord
+              [("aux_tag",
+                 ERecord
+                   [("0", EBinop ODelete member
+                            (key_of [("k3","c"); ("k1","a"); ("k2","b")]))])]).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ---- soundness ---- *)

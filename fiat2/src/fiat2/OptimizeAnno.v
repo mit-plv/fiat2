@@ -290,6 +290,11 @@ Section WithConcreteMaps.
       fun tbl => fold_command_with_globals [tbl]
                    (CDI.cons_to_composite_insert_head cdi_attrs).
 
+    Definition filter_neq_to_composite_delete_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (CDI.filter_neq_to_composite_delete_head
+                      cdi_attrs "tup" "acc" "x").
+
     Context (set_agg_attr : string).
 
     Definition set_agg_wf := (SetAgg.idx_wf (locals:=clocals) "hole" set_agg_attr "x").
@@ -489,19 +494,22 @@ Section WithConcreteMaps.
           S cur_tag)
     | DictIdx attr => mk_dict_idx Unranged attr cur_tag reps
     | RangedDictIdx attr => mk_dict_idx Ranged attr cur_tag reps
-    (* A read rule and an INSERT, maintained.  There is no delete rule yet, so
-       a row-removing write on a table with a composite index rebuilds it --
-       sound, and O(n).  Said plainly rather than left to be discovered.
-       First in the list is LAST to run, so the order below applies the
-       insert, then the use rule that collapses its rebuild, then the read
-       rule. *)
+    (* A read rule and both maintenance rules.  First in the list is LAST to
+       run, so the order below applies the maintenance, then the use rule that
+       collapses the rebuild each maintenance rule leaves behind, then the
+       read rule.  Insert and delete share one loop, for the same reason the
+       single-attribute dictionary's do: an insert into a filtered table and a
+       filter of an extended table both have to be reached. *)
     | CompositeDictIdx attrs =>
         ([(String.of_nat cur_tag,
             ccomposite_dict_idx attrs,
             composite_dict_idx_wf attrs)],
           [composite_dict_lookup_transf (String.of_nat cur_tag) attrs;
            composite_dict_use_idx_transf (String.of_nat cur_tag) attrs;
-           cons_to_composite_insert_transf attrs],
+           fun tbl => repeat_transf
+                        (Basics.compose
+                           (filter_neq_to_composite_delete_transf attrs tbl)
+                           (cons_to_composite_insert_transf attrs tbl)) reps],
           S cur_tag)
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
@@ -1607,6 +1615,9 @@ end.
             1: prove_is_tbl_ty.
             1: prove_idx_wf. }
         all: apply expr_transf_sound__expr_aug_transf_sound.
+        1:{ eapply CDI.filter_neq_to_composite_delete_head_sound;
+              auto using ctenv_ok, clocals_ok.
+            rewrite is_NoDup_to_transparent. cbn; intuition discriminate. }
         1: eapply CDI.cons_to_composite_insert_head_sound;
           auto using ctenv_ok, clocals_ok. }
   Qed.
