@@ -237,6 +237,47 @@ Section WithHole.
           + rewrite map.get_put_same; reflexivity.
       Qed.
 
+      (* What the key expression COMPUTES, in any environment that binds the
+         row.  Stated on its own because the characterisation below rewrites
+         with it under a fold, where the environment is not the literal one. *)
+      Lemma interp_composite_key : forall (env : locals) rc,
+          map.get env tup = Some (VRecord rc) ->
+          interp_expr map.empty env (composite_key (EVar tup))
+          = VRecord (record_sort [(attr1, record_proj attr1 rc);
+                                  (attr2, record_proj attr2 rc)]).
+      Proof.
+        intros env rc Hget. cbn [interp_expr composite_key List.map].
+        unfold get_local; rewrite Hget. reflexivity.
+      Qed.
+
+      (* The key VALUE a row is filed under has the key type.  Derived from
+         composite_key_ty through type_sound rather than proved again by hand:
+         the key is an ordinary expression of the language, so the type of its
+         value is already a consequence of the type of the expression.  This is
+         the one fact the whole characterisation below needs about the key, and
+         it is where the single-attribute development would instead appeal to
+         record_proj_sound. *)
+      Lemma composite_key_value_sound : forall rt rc,
+          type_wf (TRecord rt) ->
+          is_tbl_ty (TList (TRecord rt)) = true ->
+          type_of_value (VRecord rc) (TRecord rt) ->
+          type_of_value
+            (VRecord (record_sort [(attr1, record_proj attr1 rc);
+                                   (attr2, record_proj attr2 rc)]))
+            (key_ty rt).
+      Proof.
+        intros rt rc Hrt Htbl Hrc.
+        erewrite <- interp_composite_key with (env := map.put map.empty tup (VRecord rc)).
+        2: apply map.get_put_same.
+        eapply type_sound with (Genv := map.put map.empty tup (TRecord rt)).
+        - apply composite_key_ty; [ assumption | ].
+          apply TyEVar, map.get_put_same.
+        - apply tenv_wf_empty.
+        - apply tenv_wf_step; [ apply tenv_wf_empty | assumption ].
+        - apply locals_wf_empty.
+        - apply locals_wf_step; [ apply locals_wf_empty | assumption ].
+      Qed.
+
       Definition idx_wf (tbl_v idx_v : value) : Prop :=
         idx_v = interp_expr map.empty (map.put map.empty hole tbl_v) to_idx.
 
@@ -246,6 +287,214 @@ Section WithHole.
           idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
       Proof.
         intros; unfold idx_wf; auto.
+      Qed.
+
+      (* The key of a row, on the value side. *)
+      Definition ckey (rc : list (string * value)) : value :=
+        VRecord (record_sort [(attr1, record_proj attr1 rc);
+                              (attr2, record_proj attr2 rc)]).
+
+      (* The index the fold builds, as a Gallina function.  Same shape as the
+         single-attribute model; only the key differs. *)
+      Definition gallina_to_idx (tbl_v : value) : value :=
+        match tbl_v with
+        | VList l =>
+            VDict (fold_right
+                     (fun v acc =>
+                        match v with
+                        | VRecord rc =>
+                            dict_insert (ckey rc)
+                              (VBag (bag_insert (VRecord rc)
+                                       (match dict_lookup (ckey rc) acc with
+                                        | Some (VBag b) => b
+                                        | _ => nil
+                                        end))) acc
+                        | _ => nil
+                        end) nil l)
+        | _ => VDict nil
+        end.
+
+      Lemma fiat2_gallina_to_idx : forall (v : value) t,
+          type_wf t -> is_tbl_ty t = true ->
+          type_of_value v t ->
+          interp_expr map.empty (map.put map.empty hole v) to_idx = gallina_to_idx v.
+      Proof.
+        intros v t Hwf Htbl Hv.
+        assert (Htbl' := Htbl). unfold is_tbl_ty in Htbl.
+        repeat destruct_match_hyp; try discriminate.
+        assert (Hrt : type_wf (TRecord l)) by (invert_type_wf; assumption).
+        invert_type_of_value_clear; simpl.
+        unfold get_local; rewrite_map_get_put_goal.
+        erewrite In_fold_right_ext with
+          (P := fun a => type_of_value a (TDict Unranged (key_ty l) (TBag (TRecord l))))
+          (g := fun b a =>
+                  match a with
+                  | VDict d =>
+                      match b with
+                      | VRecord rc =>
+                          VDict
+                            (dict_insert (ckey rc)
+                               (VBag
+                                  match dict_lookup (ckey rc) d with
+                                  | Some (VBag bb) => bag_insert b bb
+                                  | _ => [(b, 1)]
+                                  end) d)
+                      | _ => VUnit
+                      end
+                  | _ => VUnit
+                  end).
+        2:{ constructor; cbn; auto using NoDup_nil, SSorted_nil. }
+        2:{ intros a b Ha Hb.
+            invert_type_of_value_clear.
+            apply_Forall_In. invert_type_of_value_clear.
+            repeat rewrite_map_get_put_goal; try now use_is_NoDup.
+            assert (Hkty : type_wf (key_ty l)) by (apply key_ty_wf; auto).
+            (* The one place the composite key is used, and the only place this
+               proof differs from the single-attribute one: there the key's type
+               comes from record_proj_sound, here from the key expression's own
+               typing through composite_key_value_sound. *)
+            enough (type_of_value (VOption (dict_lookup (ckey l2) l1))
+                      (TOption (TBag (TRecord l)))).
+            2:{ eapply dict_lookup_sound with (dk := Unranged).
+                1: exact Hkty.
+                1: constructor; assumption.
+                1: constructor; assumption.
+                1: apply composite_key_value_sound; auto; constructor; auto. }
+            unfold ckey in *.
+            intuition idtac.
+            1:{ do 2 f_equal.
+                invert_type_of_value_clear; auto.
+                rewrite_map_get_put_goal.
+                invert_type_of_value_clear; auto. }
+            1:{ eapply dict_insert_sound with (dk := Unranged).
+                1: exact Hkty.
+                1: constructor; assumption.
+                1: constructor; assumption.
+                1: apply composite_key_value_sound; auto; constructor; auto.
+                invert_type_of_value_clear; cbn.
+                1: repeat (constructor; cbn; auto using NoDup_nil, SSorted_nil).
+                rewrite_map_get_put_goal.
+                invert_type_of_value_clear.
+                constructor; auto using bag_insert_preserve_NoDup,
+                  bag_insert_preserve_SSorted, bag_insert_preserve_pos.
+                rewrite Forall_forall; intros ? H_in.
+                apply bag_insert_incl in H_in; intuition idtac.
+                (* clear first: rewrite_l_to_r would otherwise pick up the
+                   FOLDED is_tbl_ty equation kept for key_ty_wf and fail on
+                   it.  The single-attribute proof unfolds is_tbl_ty at the
+                   start and so never has one in scope. *)
+                1: clear Htbl'; rewrite_l_to_r; constructor; auto.
+                1: apply_Forall_In. } }
+        1:{ induction l0; cbn; auto. invert_Forall. erewrite IHl0; auto.
+            invert_type_of_value_clear. unfold ckey. do 3 f_equal.
+            repeat (case_match; auto). }
+      Qed.
+
+      (* ---- facts about dict_insert, dict_lookup and bag_insert ----
+
+         These five say nothing about any index: they are properties of the
+         canonical dictionary and bag operations.  DictIndexImpl proves the
+         same five for itself, and the comment at DictIndexImpl.v:348 states
+         the convention they violate -- lemmas about dict_insert and
+         dict_delete rather than about an index belong in Utils.  Moving them
+         there is the right cleanup and would remove this duplication; it
+         touches DictIndexImpl and the whole build, so it is flagged here
+         rather than done in passing. *)
+
+      Lemma value_eqb_iff_eq : forall (v v' : value),
+          value_eqb v v' = true <-> v = v'.
+      Proof.
+        split; intros; subst; auto using value_eqb_eq, value_eqb_refl.
+      Qed.
+
+      Lemma value_compare_Eq_iff_eq : forall (v v' : value),
+          value_compare v v' = Eq <-> v = v'.
+      Proof.
+        split; intros; subst; auto using value_compare_Eq_eq, value_compare_refl.
+      Qed.
+
+      Lemma dict_lookup_insert_diff : forall k k' (v : value) d,
+          k <> k' -> dict_lookup k (dict_insert k' v d) = dict_lookup k d.
+      Proof.
+        intros; induction d; cbn.
+        1:{ rewrite <- value_eqb_iff_eq, Bool.not_true_iff_false in *.
+            rewrite_l_to_r; auto. }
+        1:{ case_match; cbn; unfold value_ltb, value_eqb.
+            case_match; cbn; unfold value_ltb, value_eqb;
+              rewrite <- value_compare_Eq_iff_eq in *.
+            1:{ rewrite value_compare_Eq_iff_eq in *; subst.
+                rewrite <- value_compare_Eq_iff_eq in *.
+                case_match; intuition auto. }
+            all: case_match; intuition auto. }
+      Qed.
+
+      Lemma dict_lookup_insert_same : forall k (v : value) d,
+          dict_lookup k (dict_insert k v d) = Some v.
+      Proof.
+        induction d; cbn; intros.
+        1: rewrite value_eqb_refl; trivial.
+        1:{ case_match. unfold value_ltb, value_eqb.
+            case_match; cbn.
+            1,2: rewrite value_eqb_refl; trivial.
+            unfold value_eqb. rewrite_l_to_r. assumption. }
+      Qed.
+
+      Lemma bag_to_list_insert_Permutation : forall (v : value) b,
+          Permutation (bag_to_list (bag_insert v b)) (v :: bag_to_list b).
+      Proof.
+        intros. pose proof (bag_to_list__bag_insert v b).
+        repeat destruct_exists; destruct_and; subst.
+        rewrite_l_to_r.
+        eapply perm_trans.
+        1: apply Permutation_sym, Permutation_middle.
+        rewrite bag_to_list_app. auto.
+      Qed.
+
+      (* ---- what the index means ----
+
+         The bucket at a key holds exactly the rows whose COMPOSITE key is
+         that key, up to order.  Same statement as the single-attribute one
+         with record_proj attr replaced by ckey, which is the whole of the
+         difference. *)
+      Definition idx_chara (tbl_v idx_v : value) : Prop :=
+        match tbl_v, idx_v with
+        | VList l, VDict d =>
+            forall key_v,
+              Permutation
+                (filter (fun r => match r with
+                                  | VRecord rc => value_eqb (ckey rc) key_v
+                                  | _ => false
+                                  end) l)
+                (bag_to_list match dict_lookup key_v d with
+                             | Some (VBag b) => b
+                             | _ => nil
+                             end)
+        | _, _ => False
+        end.
+
+      Lemma idx_wf__idx_chara : forall (t : type) (tbl_v idx_v : value),
+          type_wf t -> is_tbl_ty t = true ->
+          type_of_value tbl_v t ->
+          idx_wf tbl_v idx_v -> idx_chara tbl_v idx_v.
+      Proof.
+        unfold idx_wf, idx_chara.
+        intros; subst; erewrite fiat2_gallina_to_idx; eauto.
+        unfold is_tbl_ty, gallina_to_idx in *.
+        repeat destruct_match_hyp; try discriminate.
+        invert_type_of_value_clear. intros.
+        lazymatch goal with
+          H: Forall _ _ |- _ =>
+            induction H
+        end; cbn; auto.
+        invert_type_of_value_clear.
+        case_match.
+        1:{ apply value_eqb_eq in E; subst.
+            rewrite dict_lookup_insert_same.
+            rewrite bag_to_list_insert_Permutation.
+            apply perm_skip; auto. }
+        1:{ rewrite dict_lookup_insert_diff; auto.
+            rewrite <- value_eqb_iff_eq, Bool.not_true_iff_false in *;
+              eauto using value_eqb_sym. }
       Qed.
 
       Instance composite_dict_idx : IndexInterface.index :=
