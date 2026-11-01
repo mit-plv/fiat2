@@ -162,28 +162,38 @@ Section WithHole.
          binds the row.  This is the whole typing content of a composite key:
          it is an ordinary record literal, and record_sort on the TYPE side
          mirrors the record_sort interp performs on the VALUE side. *)
-      Lemma composite_key_ty : forall (Genv : tenv) rt r,
+      (* A record literal of the two key fields has the key type, whatever the
+         two field expressions are.  Stated in this generality because BOTH
+         sides need it: the index builds the key out of the row's attributes,
+         and the lookup rule builds it out of the filter's two right-hand
+         sides. *)
+      Lemma composite_key_expr_ty : forall (Gstore Genv : tenv) rt e1 e2,
           is_tbl_ty (TList (TRecord rt)) = true ->
-          type_of map.empty Genv r (TRecord rt) ->
-          type_of map.empty Genv (composite_key r) (key_ty rt).
+          type_of Gstore Genv e1 (get_attr_type rt attr1) ->
+          type_of Gstore Genv e2 (get_attr_type rt attr2) ->
+          type_of Gstore Genv (ERecord [(attr1, e1); (attr2, e2)]) (key_ty rt).
       Proof.
-        intros Genv rt r Htbl Hr.
-        (* pose rather than apply-in: is_tbl_ty's THIRD conjunct, that the two
-           attributes differ, is what key_names_NoDup needs below, and
-           consuming Htbl would throw it away. *)
-        pose proof (is_tbl_ty_attrs _ Htbl) as [ H1 H2 ].
-        unfold composite_key, key_ty.
+        intros Gstore Genv rt e1 e2 Htbl H1 H2.
+        unfold key_ty.
         eapply TyERecord with
           (tl := [(attr1, get_attr_type rt attr1); (attr2, get_attr_type rt attr2)]).
         - reflexivity.
-        - cbn. constructor.
-          1: econstructor; eauto using access_record_get_attr_type.
-          constructor.
-          1: econstructor; eauto using access_record_get_attr_type.
-          constructor.
+        - cbn. constructor; [ assumption | ].
+          constructor; [ assumption | constructor ].
         - apply Permuted_record_sort.
         - apply key_names_NoDup; assumption.
         - apply StronglySorted_record_sort.
+      Qed.
+
+      Corollary composite_key_ty : forall (Gstore Genv : tenv) rt r,
+          is_tbl_ty (TList (TRecord rt)) = true ->
+          type_of Gstore Genv r (TRecord rt) ->
+          type_of Gstore Genv (composite_key r) (key_ty rt).
+      Proof.
+        intros Gstore Genv rt r Htbl Hr.
+        pose proof (is_tbl_ty_attrs _ Htbl) as [ H1 H2 ].
+        apply composite_key_expr_ty; try assumption;
+          econstructor; eauto using access_record_get_attr_type.
       Qed.
       (* The fold's step, stated separately so the assembly below does not have
          to interleave the record-literal premises with the dictionary ones. *)
@@ -472,6 +482,66 @@ Section WithHole.
         | _, _ => False
         end.
 
+      (* ---- the key is a faithful pair ----
+
+         record_sort only permutes, and the two names are distinct, so each
+         field read back out of the key record is the value that was put in.
+         This is what makes a record key a faithful PAIR rather than merely
+         some value derived from two attributes, and it is the only thing the
+         lookup rule needs beyond idx_chara. *)
+      Lemma record_proj_key1 : forall v1 v2,
+          attr1 <> attr2 ->
+          record_proj attr1 (record_sort [(attr1, v1); (attr2, v2)]) = v1.
+      Proof.
+        intros v1 v2 Hne.
+        assert (Hnd : NoDup (List.map fst [(attr1, v1); (attr2, v2)])).
+        { cbn; repeat constructor; cbn; intuition auto. }
+        assert (Hacc : access_record (record_sort [(attr1, v1); (attr2, v2)]) attr1
+                       = access_record [(attr1, v1); (attr2, v2)] attr1).
+        { symmetry. apply NoDup_Permutation_access_record; auto.
+          - cbn; auto.
+          - apply Permuted_record_sort. }
+        unfold record_proj. rewrite Hacc. cbn.
+        rewrite String.eqb_refl. reflexivity.
+      Qed.
+
+      Lemma record_proj_key2 : forall v1 v2,
+          attr1 <> attr2 ->
+          record_proj attr2 (record_sort [(attr1, v1); (attr2, v2)]) = v2.
+      Proof.
+        intros v1 v2 Hne.
+        assert (Hnd : NoDup (List.map fst [(attr1, v1); (attr2, v2)])).
+        { cbn; repeat constructor; cbn; intuition auto. }
+        assert (Hacc : access_record (record_sort [(attr1, v1); (attr2, v2)]) attr2
+                       = access_record [(attr1, v1); (attr2, v2)] attr2).
+        { symmetry. apply NoDup_Permutation_access_record; auto.
+          - cbn; auto.
+          - apply Permuted_record_sort. }
+        unfold record_proj. rewrite Hacc. cbn.
+        rewrite (proj2 (String.eqb_neq attr2 attr1)) by congruence.
+        rewrite String.eqb_refl. reflexivity.
+      Qed.
+
+      (* THE MATHEMATICAL CONTENT OF A COMPOSITE KEY.  Two field equalities
+         hold together exactly when the two composite keys are equal.  The
+         left-to-right direction is where the faithfulness above is spent;
+         right-to-left is congruence. *)
+      Lemma ckey_eq_iff : forall rc v1 v2,
+          attr1 <> attr2 ->
+          ckey rc = VRecord (record_sort [(attr1, v1); (attr2, v2)])
+          <-> (record_proj attr1 rc = v1 /\ record_proj attr2 rc = v2).
+      Proof.
+        intros rc v1 v2 Hne. unfold ckey. split.
+        - intros H. injection H as H. split.
+          + rewrite <- (record_proj_key1 (record_proj attr1 rc)
+                          (record_proj attr2 rc) Hne).
+            rewrite H. apply record_proj_key1; assumption.
+          + rewrite <- (record_proj_key2 (record_proj attr1 rc)
+                          (record_proj attr2 rc) Hne).
+            rewrite H. apply record_proj_key2; assumption.
+        - intros [ -> -> ]. reflexivity.
+      Qed.
+
       Lemma idx_wf__idx_chara : forall (t : type) (tbl_v idx_v : value),
           type_wf t -> is_tbl_ty t = true ->
           type_of_value tbl_v t ->
@@ -502,6 +572,106 @@ Section WithHole.
 
       Instance composite_dict_idx_ok : IndexInterface.ok composite_dict_idx idx_wf :=
         IndexInterface.Build_ok composite_dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Section WithTags.
+        Context (id_tag aux_tag idx_tag : string).
+
+        Notation aux_ty_for_idx := (aux_ty_for_idx id_tag aux_tag idx_tag idx_ty).
+        Notation aux_wf_for_idx := (aux_wf_for_idx id_tag aux_tag idx_tag idx_wf).
+
+        Section composite_eq_filter_to_lookup.
+          Context (b : string).
+          Context (tbl : string).
+
+          (* [row <- tbl[id_tag], check(row.attr1 == e1 && row.attr2 == e2), ret row]
+             --> match lookup idx {attr1 = e1; attr2 = e2} with
+                 | none => emptybag | some b => b
+
+             The pattern is the CONJUNCTION, unsplit.  That is a rule-ordering
+             obligation and not an accident: SplitIf peels the first conjunct
+             off and hands it to an index on its own, after which this pattern
+             no longer matches and only half the key is ever used.  So this
+             rule must be given its chance before SplitIf, and a configuration
+             that lists both without ordering them gets the half-indexed read
+             -- the measured gap this index exists to close. *)
+          Definition composite_eq_filter_to_lookup_head (e : expr) :=
+            match e with
+            | flatmap_filter_bag
+                (EUnop OBagOfList (EAccess (ELoc tbl0) id_tag0))
+                x0 (EBinop OAnd (EBinop OEq (EAccess (EVar x1) a1) e1)
+                                (EBinop OEq (EAccess (EVar x2) a2) e2)) x3 _ _ =>
+                if (all_eqb [(tbl, [tbl0]); (attr1, [a1]); (attr2, [a2]);
+                             (x0, [x1; x2; x3]); (id_tag, [id_tag0])]
+                    && negb (free_immut_in x0 e1)
+                    && negb (free_immut_in x0 e2))%bool
+                then EOptMatch (EBinop OLookup
+                                  (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag)
+                                  (ERecord [(attr1, e1); (attr2, e2)]))
+                       (EAtom (AEmptyBag None))
+                       b (EVar b)
+                else e
+            | _ => e
+            end.
+
+          Lemma composite_eq_filter_to_lookup_head_preserve_ty :
+            forall tl t aux_tl (Gstore : tenv),
+              type_wf t -> is_tbl_ty t = true ->
+              map.get Gstore tbl = Some (TRecord tl) ->
+              access_record tl id_tag = Success t ->
+              access_record tl aux_tag = Success (TRecord aux_tl) ->
+              access_record aux_tl idx_tag = Success (idx_ty t) ->
+              preserve_ty Gstore composite_eq_filter_to_lookup_head.
+          Proof.
+            unfold preserve_ty; intros tl t aux_tl Gstore Hwf Htbl Hget Hid Haux Hidx.
+            assert (Htbl' := Htbl). unfold is_tbl_ty in Htbl.
+            repeat destruct_match_hyp; try congruence.
+            intros Genv e t' Hgenv He.
+            repeat destruct_subexpr. cbn [composite_eq_filter_to_lookup_head].
+            case_match; auto.
+            cbn [all_eqb all_eqb' andb] in *.
+            repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+            rewrite !Bool.negb_true_iff in *.
+            repeat (rewrite eqb_eq in *; subst).
+            repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (clear_refl; repeat do_injection2).
+            repeat (rewrite_l_to_r; do_injection2).
+            (* unfold idx_ty in the index's own typing hypothesis, or the
+               dictionary's three arguments stay behind a constant that
+               eauto will not look through *)
+            (* unfold idx_ty in the index's own typing hypothesis, or the
+               dictionary's three arguments stay behind a constant that
+               unification will not look through *)
+            cbn [idx_ty] in Hidx.
+            eapply TyEOptMatch.
+            (* the SOME binder first: it is what pins the option's element
+               type, after which every other goal is determinate *)
+            3:{ apply TyEVar. rewrite map.get_put_same. reflexivity. }
+            2:{ apply TyEAtom, TyAEmptyBag'. invert_type_wf; assumption. }
+            eapply TyEBinop.
+            1: apply TyOLookup.
+            1:{ eapply TyEAccess.
+                2: exact Hidx.
+                eapply TyEAccess.
+                2: exact Haux.
+                apply TyELoc. exact Hget. }
+            apply composite_key_expr_ty.
+            1: assumption.
+            (* the filter's right-hand sides are typed under the row binder;
+               the guard's freshness conditions are what let them out, and
+               get_attr_type names the type the access gave *)
+            1:{ unfold get_attr_type.
+                lazymatch goal with
+                  H: access_record _ attr1 = Success _ |- _ => rewrite H
+                end.
+                eapply not_free_immut_put_ty; eassumption. }
+            1:{ unfold get_attr_type.
+                lazymatch goal with
+                  H: access_record _ attr2 = Success _ |- _ => rewrite H
+                end.
+                eapply not_free_immut_put_ty; eassumption. }
+          Qed.
+        End composite_eq_filter_to_lookup.
+      End WithTags.
     End WithMap.
   End WithVars.
 End WithHole.
