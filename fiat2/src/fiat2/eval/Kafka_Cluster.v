@@ -30,6 +30,9 @@ Import ListNotations.
    Pattern
      A1a, built once, multi-index.  Unlike Keycloak_CachedRealm the keys are
      not unique: each map is key-to-many, so each bucket is a bag of rows.
+     D4 composite key, for the accessor at :289, and it is SERVED here rather
+     than only noted -- a dictionary keyed on a record of the two attributes,
+     which is the key Kafka itself constructs.
 
    Claim
      C3 and C4.  The optimizer reaches Kafka's own storage decision from a
@@ -48,9 +51,14 @@ Import ListNotations.
        index is total and those rows sit in the None bucket, which no query
        probes -- the same answers from a structure with no side condition.
      * `new TopicPartition(p.topic(), p.partition())` is a composite key.
-       Conquord has no composite-key index, so the query is written as the
-       conjunctive filter it is, and the gap is measured below rather than
-       hidden: see one_partition_probes_then_filters.
+       The query is written as the conjunctive filter it is, and both answers
+       to it are measured below rather than one being hidden:
+       one_partition_probes_then_filters is what a single-attribute index
+       leaves (a probe on topic and a residual filter, O(partitions in the
+       topic)), and one_partition_probes_composite is the same read served by
+       a dictionary keyed on BOTH attributes, which is one probe.  The second
+       needs the conjunction left whole, so it is a configuration without
+       SplitIf; composite_unused_when_split is what happens when it is not.
      * The three Set fields, the controller, the cluster id and the
        topicIds/topicNames pair belong to other collections and are out of
        scope here.
@@ -138,14 +146,28 @@ Section WithConcreteMaps.
     map.put (map.put map.empty "partitions_tbl" (TList row_ty))
       "queries" (TList query_ty).
 
-  (* ---- two configurations, differing only in whether a conjunctive filter
-         is split before the collection phase ---- *)
+  (* ---- four configurations ----
+
+     0 and 1 differ only in whether a conjunctive filter is split before the
+     collection phase.  2 and 3 add a COMPOSITE dictionary on (topic,
+     partition), the key Kafka actually builds -- `new TopicPartition(topic,
+     partition)` -- and differ in the same way, which is what makes the
+     ordering between SplitIf and a composite index measurable rather than
+     merely stated. *)
 
   Definition heuristics :=
     [ AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SplitIf]
         [[DictIdx "topic"; DictIdx "leader"]]
     ; AC [PushdownCollection; AnnotateCollection]
         [[DictIdx "topic"; DictIdx "leader"]]
+    (* the composite key, and NO SplitIf: the composite rule matches the
+       conjunction whole, so it must be given its chance before anything
+       takes the conjunction apart *)
+    ; AC [PushdownCollection; AnnotateCollection]
+        [[CompositeDictIdx "topic" "partition"; DictIdx "topic"; DictIdx "leader"]]
+    (* the same choices WITH SplitIf, which is the hazard *)
+    ; AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SplitIf]
+        [[CompositeDictIdx "topic" "partition"; DictIdx "topic"; DictIdx "leader"]]
     ].
 
   Definition prog_transformed :=
@@ -301,6 +323,64 @@ Section WithConcreteMaps.
      buys the representation, not just the speed. *)
   Lemma unsplit_keeps_the_list :
     installed_fields (nth 1 prog_transformed CSkip) = ["id_tag"; "aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ========== configurations 2 and 3: the composite key ========== *)
+
+  (* The key Kafka builds by hand.  Written in the order the index was
+     declared; the stored key is record_sort's order, and the two agree
+     because interp canonicalises an ERecord literal either way -- which is
+     what makes a composite key an ordinary dictionary key. *)
+  Definition tp_key : expr :=
+    ERecord [("topic", EAccess (EVar "q") "topic");
+             ("partition", EAccess (EVar "q") "part")].
+
+  (* THE D4 GAP, CLOSED.  partition(new TopicPartition(topic, part)) is one
+     probe: no residual filter, and so no O(partitions in the topic) scan of
+     the topic's bucket.  Compare one_partition_probes_then_filters, which is
+     the same read under configuration 0. *)
+  Lemma one_partition_probes_composite :
+    query_at 2 (nth 2 prog_transformed CSkip)
+    = Some (EACFold AGCount (probe "0" tp_key)).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* and the single-attribute accessors are untouched, at the tags the
+     composite member displaced them to *)
+  Lemma for_topic_probes_with_composite :
+    query_at 0 (nth 2 prog_transformed CSkip)
+    = Some (EACFold AGCount (probe "1" topic_key)).
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma for_node_probes_with_composite :
+    query_at 1 (nth 2 prog_transformed CSkip)
+    = Some (EACFold AGCount (probe "2" (EUnop OSome (EAccess (EVar "q") "node")))).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* What configuration 2 does NOT get, pinned rather than described: without
+     SplitIf, availablePartitionsForTopic stays a scan, so the list survives.
+     The composite key buys the conjunctive POINT read and nothing else. *)
+  Lemma available_scans_with_composite :
+    query_at 3 (nth 2 prog_transformed CSkip)
+    = Some (EACFold AGCount (scan (EBinop OAnd by_topic has_leader))).
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma composite_keeps_the_list :
+    installed_fields (nth 2 prog_transformed CSkip) = ["id_tag"; "aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* THE HAZARD, EXECUTABLE.  Configuration 3 asks for the same four things
+     and adds SplitIf.  SplitIf peels the first conjunct off and hands it to
+     the dictionary on topic, after which the composite rule's pattern no
+     longer matches -- so the composite index is INSTALLED AND NEVER READ,
+     and the read is the probe-then-filter of configuration 0 again.
+
+     This is a rule-ordering hazard of a kind the list did not yet have: not
+     two rules racing for one read, but a BASIC rewrite destroying the shape
+     an index rule needs.  Its cost is not a slower read but an index paid
+     for in full and never used. *)
+  Lemma composite_unused_when_split :
+    query_at 2 (nth 3 prog_transformed CSkip)
+    = Some (EACFold AGCount (refine (probe "1" topic_key) part_eq)).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ================= soundness ================= *)

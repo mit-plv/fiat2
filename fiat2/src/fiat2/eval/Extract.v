@@ -187,6 +187,19 @@ Definition user_search_opt_rep : command := Eval vm_compute in JU.optimized_rep.
 (* without SplitIf: both conjunctive reads stay scans *)
 Definition cluster_opt_unsplit : command :=
   Eval vm_compute in nth 1 KCl.prog_transformed CSkip.
+(* the COMPOSITE key on (topic, partition), which is the key Kafka builds by
+   hand.  Pair it with cluster/unsplit, not with the chosen configuration:
+   both lack SplitIf, so the difference between them is the composite index
+   and nothing else (KCl.one_partition_probes_composite). *)
+Definition cluster_opt_composite : command :=
+  Eval vm_compute in nth 2 KCl.prog_transformed CSkip.
+(* and the ordering hazard, priced: the same choices WITH SplitIf, which peels
+   the conjunction apart before the composite rule can match it, so the
+   composite index is installed and never read
+   (KCl.composite_unused_when_split).  Against the chosen configuration this
+   row is pure overhead -- the cost of an index that serves nothing. *)
+Definition cluster_opt_composite_split : command :=
+  Eval vm_compute in nth 3 KCl.prog_transformed CSkip.
 (* without SplitIf: fetchAll keeps both of its bounds, and fetch stays a
    scan -- over a list that therefore survives, and that retention then
    rewrites in full on every call *)
@@ -226,6 +239,8 @@ Definition alternatives : list (string * command) :=
   ; ("named_cache/swapped", named_cache_opt_swapped)
   ; ("user_search/table-rep", user_search_opt_rep)
   ; ("cluster/unsplit", cluster_opt_unsplit)
+  ; ("cluster/composite", cluster_opt_composite)
+  ; ("cluster/composite-split", cluster_opt_composite_split)
   ; ("window_store/unsplit", window_store_opt_unsplit)
   ; ("sat4j/unsplit", sat4j_opt_unsplit)
   (* the guard left in source order: the index is installed and NEITHER read

@@ -672,7 +672,31 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    to run: every other index gets first refusal on every read, and TableRep
    picks up only what is left.  That is what makes co-installing it safe,
    and it is the first of the rule-ordering hazards.  It is emitted for one
-   kind of read only; see the note at the end of this file. *)
+   kind of read only; see the note at the end of this file.
+
+   A NINTH HAZARD, OF A NEW KIND, AND ONE THIS LIST CANNOT YET IMPOSE.  Every
+   hazard above orders index rules against each other.  CompositeDictIdx is
+   ordered against a BASIC rewrite instead: its rule matches a conjunction of
+   two attribute equalities WHOLE, and SplitIf peels the first conjunct off
+   and hands it to a single-attribute dictionary, after which the pattern no
+   longer matches.  The cost is not a slower read but an index installed and
+   never read -- eval/Kafka_Cluster pins both halves,
+   one_partition_probes_composite without SplitIf and
+   composite_unused_when_split with it.
+
+   This list cannot impose that ordering, because choices_of cannot emit
+   CompositeDictIdx at all: pred_demand below analyses a conjunction by its
+   FIRST conjunct, which is the very approximation that makes a composite key
+   a measured gap.  Emitting it would mean a demand for a PAIR of attributes
+   and, with it, a decision this file is not in a position to make on its
+   own -- whether to withhold SplitIf from a table that has a composite
+   demand, which would leave that table's OTHER conjunctive reads unsplit.
+   For Kafka_Cluster that trade is real in both directions: the composite key
+   buys the point read, and withholding SplitIf costs
+   availablePartitionsForTopic its probe and keeps the list alive
+   (available_scans_with_composite, composite_keeps_the_list).  So a program
+   may ask for the choice and get it, soundly, and the selector will not ask
+   for it until that trade is settled. *)
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in
