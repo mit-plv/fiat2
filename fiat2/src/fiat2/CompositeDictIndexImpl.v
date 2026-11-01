@@ -834,7 +834,64 @@ Section WithHole.
               rewrite Hchara. reflexivity.
           Qed.
         End composite_eq_filter_to_lookup.
+          (* The two halves packaged as a registrable transformation. *)
+        Ltac invert_tenv_wf_with_globals :=
+          lazymatch goal with
+            H: tenv_wf_with_globals _ _ _ |- _ => inversion H; subst
+          end.
+
+        Lemma composite_eq_filter_to_lookup_head_sound :
+            forall (b : string) is_tbl_ty' aux_ty aux_wf,
+              aux_ty_for_idx aux_ty ->
+              (forall t, is_tbl_ty' t = true -> is_tbl_ty t = true) ->
+              (forall (v : value), aux_wf v -> aux_wf_for_idx v) ->
+              expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
+                (composite_eq_filter_to_lookup_head b).
+          Proof.
+            unfold aux_ty_for_idx, expr_aug_transf_sound; intros.
+            invert_tenv_wf_with_globals.
+            specialize (H tbl_ty). repeat destruct_match_hyp; intuition idtac.
+            1: eapply composite_eq_filter_to_lookup_head_preserve_ty; eauto.
+            1: eapply composite_eq_filter_to_lookup_head_preserve_sem; eauto.
+            lazymatch goal with
+              H: locals_wf ?G ?str, H': map.get ?G _ = _ |- _ =>
+                apply H in H'
+            end.
+            destruct_match_hyp; intuition idtac.
+            lazymatch goal with
+              H: holds_for_all_entries _ ?str, H': map.get ?str _ = _ |- _ =>
+                apply H in H'
+            end.
+            unfold value_wf_with_globals in *. invert_Forall; intuition auto.
+          Qed.
       End WithTags.
     End WithMap.
   End WithVars.
 End WithHole.
+
+(* The registrable form, with every section variable spelled out so that the
+   pipeline's hint database can apply it.  Same shape as
+   DictIndexImpl.eq_filter_to_lookup_head_sound2. *)
+Lemma composite_eq_filter_to_lookup_head_sound2 :
+  forall (hole attr1 attr2 : string),
+  forall tup acc x : string,
+  forall tenv : map.map string type,
+  map.ok tenv ->
+  forall locals : map.map string value,
+  map.ok locals ->
+  forall (id_tag aux_tag idx_tag b : string)
+         (is_tbl_ty' : type -> bool) (aux_ty : type -> type)
+         (aux_wf : value -> Prop),
+  aux_ty_for_idx id_tag aux_tag idx_tag (idx_ty attr1 attr2) aux_ty ->
+  (forall t : type, is_tbl_ty' t = true -> is_tbl_ty attr1 attr2 t = true) ->
+  (forall v : value,
+      aux_wf v ->
+      aux_wf_for_idx id_tag aux_tag idx_tag (idx_wf hole attr1 attr2 tup acc x) v) ->
+  is_NoDup_opaque [tup; acc; x] ->
+  expr_aug_transf_sound is_tbl_ty' aux_ty aux_wf
+    (composite_eq_filter_to_lookup_head attr1 attr2 id_tag aux_tag idx_tag b).
+Proof.
+  intros; eapply composite_eq_filter_to_lookup_head_sound; eauto.
+Qed.
+
+#[export] Hint Resolve composite_eq_filter_to_lookup_head_sound2 : transf_hints.
