@@ -796,9 +796,17 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
      field createdDate -- comparingByStartDateDesc reads getCreatedDate and
      there is no startDate field, the comparator's name is a misnomer.  So it
      is a rank bound AND a one-sided range bound on a single attribute.  The
-     range conjunct is served; the rank conjunct is a top-N, which no operator
-     here expresses and which ODictMinKey does not give, since the N-th
-     largest key is not the least one.
+     range conjunct is served.  The rank conjunct is NOT a missing index, and
+     reading it as one would be a mistake: what answers "the newest N" is a
+     sorted SEQUENCE with a prefix dropped, which is what .sorted(...).skip(N)
+     already is.  A dictionary cannot do it and it is not a dictionary's job;
+     the structure that answers arbitrary rank in logarithmic time is a
+     size-augmented tree, and this pattern never asks for arbitrary N.  N is a
+     policy constant, inserts arrive at the newest end and deletes at the
+     oldest, so the access is at the two ends and nowhere between -- a bounded
+     queue, and the collection it prunes is O(N) to begin with.  There is no
+     exponent in it to win.  Conquord has no positional operator at all, which
+     is the same observation from the language side.
 
      PER-KEY counters held in a dictionary, which is the dictionary-of-
      aggregates shape and is deferred.
