@@ -7,7 +7,7 @@ Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch
   fiat2.Ex_RangeDelete fiat2.Ex_Inventory fiat2.Ex_Sum fiat2.Ex_SumDelete
-  fiat2.Ex_CompositeKey fiat2.Ex_CompositeKeyedDelete
+  fiat2.Ex_CompositeKey fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
   fiat2.Ex_MinDelete fiat2.Ex_Range fiat2.Ex_FlagFilter fiat2.Ex_Orders
   fiat2.Ex_Employee.
 From Stdlib Require Import String List ZArith.
@@ -38,6 +38,7 @@ Module KC := Keycloak_CachedRealm.
 Module NC := Kafka_NamedCache.
 Module AR := HA_AreaRegistry.
 Module CKD := Ex_CompositeKeyedDelete.
+Module CKDecl := Ex_CompositeKeyDecl.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
 Module JID := Jenkins_ItemDeletion.
@@ -85,6 +86,18 @@ Lemma ex_composite_keyed_delete :
   select_anno (("items", (CKD.row_ty, CKD.decls)) :: cenv_rm "items" []) "items" O
     (CKD.elaborated CKD.decls)
   = CKD.anno.
+Proof. vm_compute; reflexivity. Qed.
+
+(* A COMPOSITE DECLARATION ASKS FOR THE INDEX BY ITSELF.  This program has
+   one read at the composite key -- but even without it the declaration's own
+   write check is a conjunctive filter over the table, so the demand scan sees
+   it and emits the composite index.  Declaring a composite key is therefore
+   enough to get one, which is the sense in which the check compiling to a
+   probe is not a coincidence of this example's reads. *)
+Lemma ex_composite_key_decl :
+  select_anno (("items", (CKDecl.row_ty, CKDecl.decls)) :: cenv_rm "items" [])
+    "items" O (CKDecl.elaborated CKDecl.decls)
+  = CKDecl.anno.
 Proof. vm_compute; reflexivity. Qed.
 
 (* One choice, two members.  UniqueDictIdx "id" is demanded by both the

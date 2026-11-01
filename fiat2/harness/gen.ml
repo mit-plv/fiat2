@@ -617,6 +617,32 @@ let composite_two_deletes =
            let p = victim rows j in q 3 "" "" (Printf.sprintf "i%d" p) 0) ];
     mutating = [ "insert"; "deleteAtKey"; "deleteById" ] }
 
+(* ---------- composite_key_decl: a DECLARED composite key ----------
+
+   Two kinds only, because what this subject is for is the WRITE: the
+   declaration's check is an O(n) scan in the source and one probe into the
+   composite index in the optimized form, and no rewrite was written for it.
+   The read is there so the index is asked for by more than the check.
+
+   The composite key is unique per row, which is what a declared key means
+   here: the build phase inserts rows whose (k1, k2) pairs are all distinct,
+   so every check passes and the build is not measuring rejected writes. *)
+
+let composite_key_decl =
+  let k1 j = Printf.sprintf "a%d" (j mod 16) in
+  let k2 j = Printf.sprintf "b%d" (j / 16) in
+  let row j =
+    rcd [ ("k1", s (k1 j)); ("k2", s (k2 j)); ("v", s "v") ] in
+  let q kind a b fresh =
+    rcd [ ("kind", i kind); ("a", s a); ("b", s b); ("new_item", row fresh) ] in
+  { queries_var = "queries"; store = outputs_only; table = no_table;
+    build = (fun rows -> List.init rows (fun j -> q 1 "" "" j));
+    kinds =
+      [ ("readAtKey", fun rows j ->
+           let p = spread rows j in q 0 (k1 p) (k2 p) 0);
+        ("insert", fun rows j -> q 1 "" "" (rows + j)) ];
+    mutating = [ "insert" ] }
+
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
@@ -626,6 +652,7 @@ let specs =
     ("min_delete", min_delete); ("composite_key", composite_key);
     ("composite_keyed_delete", composite_keyed_delete);
     ("composite_two_deletes", composite_two_deletes);
+    ("composite_key_decl", composite_key_decl);
     ("item_deletion", item_deletion); ("sat4j", sat4j);
     ("dependent_plugins", dependent_plugins) ]
 

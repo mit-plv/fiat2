@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.PrimaryKeyCheck
+  fiat2.PrimaryKeyCheck fiat2.CompositeKeyCheck
   fiat2.Utils fiat2.Substitute fiat2.TransfSound fiat2.Constraint fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
@@ -53,13 +53,21 @@ Inductive decl : Type :=
 (* body holds of every row, and reads only the row it is given *)
 | DRow (row : string) (body : expr)
 (* row is the binder, body the predicate every row must satisfy *)
-| DCheck (row : string) (body : expr).
+| DCheck (row : string) (body : expr)
+(* attrs are a key TOGETHER: no two rows of the table agree on all of them.
+   DUnique is its arity-one case up to the key being a one-field record, and
+   is kept separate rather than replaced because the two are served by
+   different indexes -- a key-to-row dictionary for one attribute, a
+   composite dictionary for several.  Listed LAST so that no existing
+   declaration's position in a destruct moves. *)
+| DUniqueMany (attrs : list string).
 
 Definition constr_of_decl (row_ty : type) (d : decl) : constr :=
   match d with
   | DUnique attr => unique_constr attr row_ty
   | DRow row body => mk_constr row body
   | DCheck row body => mk_constr row body
+  | DUniqueMany attrs => unique_many_constr attrs row_ty
   end.
 
 Definition constrs_of_decls (row_ty : type) (ds : list decl) : list constr :=
@@ -121,8 +129,10 @@ Definition decl_guard (row_ty : type) (tbl : string) (free_vars : list string)
   (d : decl) (e : expr) : expr :=
   match d, classify_write tbl e with
   | DUnique attr, WCons row => unique_guard_let tbl attr row
+  | DUniqueMany attrs, WCons row => unique_many_guard_let tbl attrs row
   | DRow r b, WCons row => row_guard (mk_constr r b) free_vars row
-  | DUnique _, WFilter _ _ | DRow _ _, WFilter _ _ => EAtom (ABool true)
+  | DUnique _, WFilter _ _ | DUniqueMany _, WFilter _ _
+  | DRow _ _, WFilter _ _ => EAtom (ABool true)
   | _, _ => constr_guard (constr_of_decl row_ty d) free_vars e
   end.
 
@@ -284,6 +294,13 @@ Section WithWord.
         exists rt kt, row_ty = TRecord rt /\ access_record rt attr = Success kt
     | DRow row body => row <> c_all /\ row_constr_wf row_ty (mk_constr row body)
     | DCheck row body => constr_wf row_ty (mk_constr row body)
+    (* NoDup is what makes the key identify its attributes, and membership is
+       what makes the conjunction typeable; both are decidable and checked
+       once, where the declaration is written *)
+    | DUniqueMany attrs =>
+        exists rt, row_ty = TRecord rt
+                   /\ NoDup attrs
+                   /\ Forall (fun a => In a (List.map fst rt)) attrs
     end.
 
   Lemma decl_wf__constr_wf : forall row_ty d,
@@ -296,6 +313,8 @@ Section WithWord.
     1:{ destruct H_d as [ H_ne H_row ].
         apply row_constr_wf__constr_wf; assumption. }
     1: assumption.
+    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+        eapply unique_many_constr_wf; [ exact H_wf | exact HF ]. }
   Qed.
 
   Lemma decls_wf__constrs_wf : forall row_ty ds,
@@ -327,7 +346,7 @@ Section WithWord.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv.
     unfold decl_guard.
-    destruct d as [ attr | r b | r b ];
+    destruct d as [ attr | r b | r b | al ];
       destruct (classify_write tbl u) as [ row | y q | ] eqn:E_sh;
       cbn beta iota.
     (* the free guard, and every fallback on the general one *)
@@ -357,6 +376,16 @@ Section WithWord.
         1: exact H_row.
         1: eapply type_of_cons_inv; exact H_u.
         1: exact H_fv. }
+    (* and the cheap guard for a COMPOSITE key, same shape and same place *)
+    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+        apply classify_write_cons in E_sh; subst.
+        eapply unique_many_guard_let_ty.
+        1: exact H_Gs.
+        1: exact H_Ge.
+        1: exact H_wf.
+        1: exact HF.
+        1: exact H_tbl.
+        1: eapply type_of_cons_inv; exact H_u. }
   Qed.
 
   Lemma decls_guard_ty : forall ds row_ty free_vars tbl u (Gstore Genv : tenv),
@@ -411,7 +440,7 @@ Section WithWord.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv H_guard.
     unfold decl_guard in H_guard.
-    destruct d as [ attr | r b | r b ];
+    destruct d as [ attr | r b | r b | al ];
       destruct (classify_write tbl u) as [ row | y q | ] eqn:E_sh;
       cbn beta iota in H_guard.
     (* every case that falls back on the general guard *)
@@ -487,6 +516,39 @@ Section WithWord.
         rewrite E_u.
         eapply row_constr_holds_filter;
           [ exact H_wf | exact H_ne | exact H_row | exact H_l
+          | apply H_inv; exact E_tbl ]. }
+    (* the cheap guard for a COMPOSITE key written by a cons *)
+    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+        apply classify_write_cons in E_sh; subst.
+        cbn [constr_of_decl].
+        destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
+          as [ l [ E_tbl H_l ] ].
+        assert (H_nd : NoDup (List.map (row_keys al) l)).
+        { eapply (proj1 (unique_many_constr_holds_iff al rt l H_wf Hnd HF H_l)).
+          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+        eapply unique_many_guard_let_establishes with (l := l).
+        1: exact H_Gs.
+        1: exact H_Ge.
+        1: exact H_wf.
+        1: exact Hnd.
+        1: exact HF.
+        1: exact H_tbl.
+        1: eapply type_of_cons_inv; exact H_u.
+        1: exact H_store.
+        1: exact H_env.
+        1: exact E_tbl.
+        1: exact H_nd.
+        1: exact H_guard. }
+    (* and no guard at all: a composite key survives a row-removing write *)
+    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+        cbn [constr_of_decl] in H_inv |- *.
+        destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
+          as [ l [ E_tbl H_l ] ].
+        destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
+          as [ g E_u ].
+        rewrite E_u.
+        eapply unique_many_constr_holds_filter;
+          [ exact H_wf | exact Hnd | exact HF | exact H_l
           | apply H_inv; exact E_tbl ]. }
   Qed.
 
@@ -598,7 +660,7 @@ Section WithWord.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv.
     unfold decl_guard.
-    destruct d as [ attr | r b | r b ];
+    destruct d as [ attr | r b | r b | al ];
       destruct (classify_write tbl u) as [ row | y q | ] eqn:E_sh;
       cbn beta iota.
     (* every case that emits the general guard already *)
@@ -658,6 +720,34 @@ Section WithWord.
         rewrite E_u.
         eapply row_constr_holds_filter;
           [ exact H_wf | exact H_ne | exact H_row | exact H_l
+          | apply H_inv; exact E_tbl ]. }
+    (* a COMPOSITE key written by a cons onto the table *)
+    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+        apply classify_write_cons in E_sh; subst.
+        destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
+          as [ l [ E_tbl H_l ] ].
+        assert (H_nd : NoDup (List.map (row_keys al) l)).
+        { eapply (proj1 (unique_many_constr_holds_iff al rt l H_wf Hnd HF H_l)).
+          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+        eapply unique_many_guard_let_sound with (l := l);
+          [ exact H_Gs | exact H_Ge | exact H_wf | exact Hnd | exact HF
+          | exact H_tbl | eapply type_of_cons_inv; exact H_u | exact H_fv
+          | exact H_store | exact H_env | exact E_tbl | exact H_nd ]. }
+    (* and under a row-removing write, where the general guard passes too *)
+    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+        cbn [constr_of_decl] in H_inv |- *.
+        destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
+          as [ l [ E_tbl H_l ] ].
+        destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
+          as [ g E_u ].
+        cbn [interp_expr interp_atom]; symmetry.
+        eapply constr_guard_complete with (row_ty := TRecord rt);
+          [ exact H_Gs | exact H_Ge | exact H_wf
+          | eapply unique_many_constr_wf; [ exact H_wf | exact HF ]
+          | exact H_u | exact H_fv | exact H_store | exact H_env | ].
+        rewrite E_u.
+        eapply unique_many_constr_holds_filter;
+          [ exact H_wf | exact Hnd | exact HF | exact H_l
           | apply H_inv; exact E_tbl ]. }
   Qed.
 
