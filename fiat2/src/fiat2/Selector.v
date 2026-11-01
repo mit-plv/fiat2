@@ -677,19 +677,22 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    A NINTH HAZARD, OF A NEW KIND, AND ONE THIS LIST CANNOT YET IMPOSE.  Every
    hazard above orders index rules against each other.  CompositeDictIdx is
    ordered against a BASIC rewrite instead: its rule matches a conjunction of
-   two attribute equalities WHOLE, and SplitIf peels the first conjunct off
-   and hands it to a single-attribute dictionary, after which the pattern no
-   longer matches.  The cost is not a slower read but an index installed and
-   never read -- eval/Kafka_Cluster pins both halves,
-   one_partition_probes_composite without SplitIf and
-   composite_unused_when_split with it.
+   n attribute equalities WHOLE -- in any association, since its matcher
+   collects conjuncts rather than matching a fixed tree -- and SplitIf peels
+   the first conjunct off and hands it to a single-attribute dictionary, after
+   which the pattern no longer matches.  The cost is not a slower read but an
+   index installed and never read.  Two subjects pin both halves, and the
+   arity does not change the hazard: eval/Kafka_Cluster at arity two
+   (one_partition_probes_composite, composite_unused_when_split) and
+   eval/HA_EntityRegistry at arity three (get_entity_id_probes_triple,
+   composite_unused_when_split).
 
    This list cannot impose that ordering, because choices_of cannot emit
    CompositeDictIdx at all: pred_demand below analyses a conjunction by its
    FIRST conjunct, which is the very approximation that makes a composite key
-   a measured gap.  Emitting it would mean a demand for a PAIR of attributes
-   and, with it, a decision this file is not in a position to make on its
-   own -- whether to withhold SplitIf from a table that has a composite
+   a measured gap.  Emitting it would mean a demand for a SEQUENCE of
+   attributes and, with it, a decision this file is not in a position to make
+   on its own -- whether to withhold SplitIf from a table that has a composite
    demand, which would leave that table's OTHER conjunctive reads unsplit.
    For Kafka_Cluster that trade is real in both directions: the composite key
    buys the point read, and withholding SplitIf costs
@@ -715,9 +718,19 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
        transf has a precedent too: PromoteGuard, for which see the note
        above.
 
-   An aimed SplitIf would make the composite configuration DOMINATE rather
-   than trade, which is what this list would need before it could emit the
-   choice. *)
+   An aimed SplitIf would remove the CONFLICT -- a table could serve its
+   composite read whole and still split its other conjunctions -- but it would
+   not make the composite configuration a dominance, and eval/HA_EntityRegistry
+   is where that was measured rather than assumed.  Its configuration 4
+   installs the composite index INSTEAD OF the single-attribute dictionary the
+   split conjunction would have probed, so it has the same NUMBER of members
+   as the configuration the selector can emit today, and it still costs 1.4x
+   to build: a key that is a record of three strings costs about three
+   comparisons where a string key costs one, on every insert and every probe.
+   So the choice is a trade in every configuration measured -- a constant on
+   the build against an exponent on the read, linear to constant -- and what
+   this list needs before it can emit the choice is not a dominance but a cost
+   model that can weigh those against each other. *)
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in

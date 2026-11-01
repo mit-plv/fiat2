@@ -58,6 +58,7 @@ missing is not the operator but the rule -- see the limits table below.
 |---|---|---|
 | `Keycloak_CachedRealm.v` | `CachedRealm.java:301` | two unique-key maps over one list; the list is read, so the list survives -- and, in a second configuration, a maintained row count makes that last read a field read and the list is erased |
 | `Kafka_Cluster.v` | `Cluster.java:114` | two bucketed maps over one collection; nothing reads the list, so the list is erased |
+| `HA_EntityRegistry.v` | `entity_registry.py:982` | the arity-THREE composite key: a dict the author declares as `dict[tuple[str, str, str], str]`, served by one probe at a three-field record key -- and the subject where the composite index buys an EXPONENT rather than a constant, because the first conjunct's bucket grows with the table |
 | `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete; nothing reads the list, so the list is erased |
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 | `Kafka_NamedCache.v` | `NamedCache.java:44,49` | a keyed store and a running total over it, both maintained across a delete and a put; the total is corrected by a probe, never recomputed |
@@ -71,7 +72,7 @@ missing is not the operator but the rule -- see the limits table below.
 
 The per-file `Pattern` headers name codes from the external pattern catalogue the paper
 cites. **Those codes are not defined anywhere in this repository**, so this table is the
-index a reader needs to resolve them, and it is also the answer to "are ten examples
+index a reader needs to resolve them, and it is also the answer to "are eleven examples
 representative" -- not a count of how often each pattern occurs in a corpus, which is
 deliberately not claimed, but a statement of WHICH distinct patterns the set covers and
 which subject is the witness for each.
@@ -79,7 +80,8 @@ which subject is the witness for each.
 | subject | codes claimed | the pattern, in plain terms |
 |---|---|---|
 | `Keycloak_CachedRealm` | A1a | one collection, several unique-key maps built over it once |
-| `Kafka_Cluster` | A1a | the same, with NON-unique keys, so each bucket is a bag |
+| `Kafka_Cluster` | A1a, D4 | the same, with NON-unique keys, so each bucket is a bag; and a two-attribute composite key, served |
+| `HA_EntityRegistry` | A1a, D4 | the same at arity THREE: three dicts over one collection, one of them keyed on a tuple the author writes out by hand |
 | `HA_AreaRegistry` | A1a, A2 | a primary-key dict plus a secondary index, both MAINTAINED across insert and delete |
 | `Kafka_NamedCache` | A1b, A2, A3 | a keyed store plus a maintained AGGREGATE, corrected by a probe rather than recomputed |
 | `Kafka_WindowStore` | A1a, A2, B7, D4 | the only ORDERED index: a range read out of a sorted dict, maintained across a range-shaped delete; and a composite key we cannot declare |
@@ -91,10 +93,10 @@ which subject is the witness for each.
 
 Two things the table is meant to make checkable rather than assertable.
 
-**Where the set is thin.** Eight of the ten subjects claim `A1a` or `A1b` -- a keyed
+**Where the set is thin.** Nine of the eleven subjects claim `A1a` or `A1b` -- a keyed
 lookup over a collection -- so that pattern is covered many times over and the others
-once or twice each. `B7` (ordered/range), `B8` (substring) and the join have exactly ONE
-witness apiece, and a reviewer should read the corresponding claim as resting on one
+once or twice each. `B7` (ordered/range) and `B8` (substring) and the join have exactly ONE
+witness apiece; `D4` (composite key) now has two served witnesses and one unserved, and a reviewer should read the corresponding claim as resting on one
 program. `A3` (maintained aggregate) likewise.
 
 **Where a code is missing.** `Jenkins_DependentPlugins` claims none, because the
@@ -107,7 +109,7 @@ Patterns the development HANDLES but no subject here witnesses are a different l
 live under *Limits* below -- `MinAgg` has no third-party witness, and neither does an
 order-observing read or an `OConcat` append.
 
-The ten fall into seven groups, and the groups are the argument.
+The eleven fall into eight groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
 `HA_LookinFunctions`. The first two are a pair and should be read as one: they put
@@ -152,6 +154,28 @@ and the maintenance gap were one gap, and closing the second closed the first wi
 change to the erasure rule. `Kafka_WindowStore` is in that earlier position with one
 difference: its member is now maintained incrementally, and what keeps its list alive
 is the list's own row-by-row filter rather than the member's rebuild.
+
+**What a key can be** -- `HA_EntityRegistry`. The only file whose index is keyed on
+something that is not an attribute: the key is a RECORD of three attributes, and the
+read that uses it is an ordinary conjunction of three equalities, written right-nested
+as a reader would write it. Read it against `Kafka_Cluster`, which has the same shape at
+arity two: there the composite key bought 2.8x and a constant, because the generator's
+buckets are bounded by construction, and here it buys an exponent -- 0.90 to 0.01 over the six sizes this
+file fits, 0.96 to 0.01 over the four the file's own header reports --
+because the attribute a split conjunction can probe is the entity DOMAIN, of which Home
+Assistant has a few dozen however many entities an installation holds. Same rule, same
+index, two code bases, and the difference between a constant and an exponent is a
+property of the data rather than of the rewrite.
+
+It is also the second witness for the ninth rule-ordering hazard, and the arity does not
+change it: `SplitIf` peels the first conjunct off and the composite rule's pattern stops
+matching, so the index is installed and never read
+(`composite_unused_when_split`). What it adds to `Kafka_Cluster`'s version is a price for
+the hazard's alternative: its configuration 4 installs the composite index INSTEAD OF the
+dictionary the split would have probed, so it has the same number of members as the
+configuration the selector can emit today -- and it still costs 1.4x to build, because a
+record key costs about three comparisons where a string key costs one. The choice is a
+trade in every configuration measured, which is why the selector still does not make it.
 
 **What the order asks for** -- `Kafka_WindowStore`. The only file whose index is
 `Ranged`, and so the only one that obliges a backend to provide a structure that can
@@ -483,15 +507,15 @@ reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the 
 ratio between two sizes would not settle the question it looks like it settles: over an
 8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
-Forty-two reads and writes across the eleven programs the harness runs -- the ten files
-above plus `Ex_RangeDelete` -- by the exponent of their STEP count:
+Forty-five reads and writes across the twelve programs the harness runs -- the eleven
+files above plus `Ex_RangeDelete` -- by the exponent of their STEP count:
 
 | | source | optimized |
 |---|---|---|
-| **quadratic**, `a` = 2.00 | **1 of 42** | 0 of 42 |
-| linear in the table, `a` = 0.87 to 1.05 | 36 of 42 | 3 of 42 |
-| independent of it, `a` = -0.01 to 0.02 | 5 of 42 | 38 of 42 |
-| sublinear, `a` = 0.19 | 0 of 42 | 1 of 42 |
+| **quadratic**, `a` = 2.00 | **1 of 45** | 0 of 45 |
+| linear in the table, `a` = 0.87 to 1.05 | 39 of 45 | 4 of 45 |
+| independent of it, `a` = -0.01 to 0.02 | 5 of 45 | 40 of 45 |
+| sublinear, `a` = 0.19 | 0 of 45 | 1 of 45 |
 
 The quadratic row is new and is the only one of its kind:
 `Jenkins_DependentPlugins`'s `resolveAll`, which is
@@ -525,18 +549,29 @@ therefore entirely in COMPARISONS, at `a` = 1.22. That is not a blind spot in th
 instrument but where `count.ml` puts a tree operation's cost, and it is why the table
 below that subject reports comparisons.
 
-The thirty-eight independent ones in the optimized column are not merely flatter, they
+The forty independent ones in the optimized column are not merely flatter, they
 are flat: the
 Lookin membership test, to take one, costs **exactly 300 steps at every one of the six
 sizes**. Their comparison counts are where the index shows through, at `a` = 0.08 to
 0.31, which is `log n` appearing as the weak power law it is -- the same subject's
 comparison count goes 114, 134, 157, 177, 191, 211, gaining about twenty per doubling
-across twenty queries. Three of the thirty-eight do no comparisons at all (`a` = 0.00):
+across twenty queries. Three of the forty do no comparisons at all (`a` = 0.00):
 `getRequiredActionProviderList`'s count, `sizeInBytes` and `sat4j/size`, which are
 maintained aggregates and so are field reads, cheaper than a probe.
 
-**The three that still grow are the interesting column, and every one of them is a correct
-answer rather than a cost.** Their exponents are 0.98, 0.98 and 0.19.
+**The four that still grow are the interesting column, and three of the four are a correct
+answer rather than a cost.** Their exponents are 0.98, 0.98, 0.19 and 0.90.
+
+The fourth is the exception and it IS a cost: `HA_EntityRegistry`'s `getEntityId`,
+`a` = 0.90. The read is a conjunction of three equalities and the chosen configuration can
+probe only the first of them, so it scans one entity domain's bucket -- and a domain's
+bucket grows with the table, because the number of domains is a property of Home Assistant
+and not of the installation's size. The index that answers it in one probe EXISTS and is
+verified; what does not exist is a selector that asks for it, and that is the whole of why
+this row is here. `HA_EntityRegistry.v`'s configuration 4 is the same read at
+`a` = 0.01, 112315 steps against 2260 at 1600 rows, for 1.4x on the build. So unlike the
+two substring fallbacks below, this entry is a note about `Selector.v` and not about what a
+scan has to cost.
 * `Jenkins_UserSearch`'s `suggestMiss` and `suggestShort`, `a` = 0.98 each. These are the
   guarded fallback, reached by a token with no trigram and by one shorter than three
   characters, and they are linear because a substring match **has** to look at every row.
@@ -562,7 +597,9 @@ it, from 8,983,202 steps to 270,409.
 That rule is `FlatmapTransf.is_two_sided_range`, a guard declining to split a conjunction
 that is already a two-sided range, and it did: `fetchAll` is now `a` = 0.01, 448,700 steps
 against 900 at 1600 rows. **So every measured read and write in the optimized column is
-now flat except the two substring fallbacks, which have to be linear.**
+now flat except the two substring fallbacks, which have to be linear, and
+`HA_EntityRegistry`'s three-attribute read, which does not -- a verified index answers it
+flat and the selector does not ask for that index.**
 
 The seconds agree where they can be read at all, and over the full 32x span they are
 read more easily: the source op phases that resolve grow about 30x, against a counted
@@ -660,12 +697,19 @@ Wall clock is not quoted for this row. The author's column is compiled OCaml wit
 hashtables and the optimized column runs in our interpreter, so the ~10x between them
 mixes the algorithm with the implementation; the row and comparison counts do not.
 
-Two places run the other way, and both are a composite key the author indexed and this
-development has no index for: `Cluster.partition(new TopicPartition(topic, partition))`
-and `InMemoryWindowStore`'s inner map from key to value. The statement is structural, so
-that it does not depend on how a counter is read: **the author descends a map on the whole
-composite key, where the derived form probes one attribute and filters the bucket.** The
-bucket is bounded, so the exponents still match. A third is noted rather than measured:
+One place runs the other way, and it is a composite key of a kind this development
+still has no index for: `InMemoryWindowStore`'s `fetch(key, lo, hi)`, a POINT on the key
+and a RANGE on the time. The statement is structural, so that it does not depend on how a
+counter is read: **the author descends a map on the whole composite key, where the derived
+form probes one attribute and filters the bucket.** The bucket is bounded, so the
+exponents still match.
+
+`Cluster.partition(new TopicPartition(topic, partition))` used to be in that list and no
+longer is: an all-equality composite key is served, by a verified index and rule, and
+measured in `Kafka_Cluster.v` and `HA_EntityRegistry.v`. What the selector does not yet do
+is ASK for it -- see the note at the end of `Selector.v` -- so the chosen column for both
+subjects is still the probe-and-filter form, and the served form is an alternative beside
+it. A third asymmetry is noted rather than measured:
 `partitionCountForTopic` answers a per-bucket count in O(1) from `ArrayList.size()`, which
 would need a maintained aggregate per bucket -- the dict-of-aggregates combinator this
 development does not build.
@@ -757,7 +801,9 @@ that found it rather than described in prose:
 | gap | witness | pinned at |
 |---|---|---|
 | collection-keyed index | HA `_labels_index`, `_aliases_index` | stated in `HA_AreaRegistry.v`'s header |
-| composite key | `Cluster.partition(topic, partition)`; `WindowStore.fetch(key, lo, hi)` | `one_partition_probes_then_filters`, `fetch_key_probes_split` |
+| composite key, POINT on every attribute | was `Cluster.partition(topic, partition)`; **closed** -- `CompositeDictIndexImpl` serves a conjunction of n equalities at any arity, and both halves are pinned in `Kafka_Cluster.v` (arity two) and `HA_EntityRegistry.v` (arity three) | `one_partition_probes_composite`, `get_entity_id_probes_triple`. What remains open is the SELECTOR: `choices_of` cannot emit the choice, so the chosen column is still `one_partition_probes_then_filters` / `get_entity_id_probes_then_filters` |
+| composite key, a point AND a range | `WindowStore.fetch(key, lo, hi)` | `fetch_key_probes_split`. Not closed by the above and not closable by it: `record_compare` orders a record by sorted field NAME, so a range over a composite key would range on whichever attribute sorts first, which is why that index is `Unranged` |
+| the conjuncts in an order the index was not declared in | not exhibited here; both subjects' reads list them in the order the key was built | not pinned: the rule checks the collected names against the index's attribute list IN ORDER. Association is free -- the matcher collects conjuncts from any tree -- but a permuted conjunction is not matched, and lifting that means normalising the collected pairs into declared order |
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
