@@ -245,6 +245,62 @@ let cluster =
         ("available", fun rows j -> q 3 (Printf.sprintf "t%d" (j mod buckets rows)) 0 0) ];
     mutating = [] }
 
+(* ---------- entity_registry: a THREE-attribute conjunctive read ----------
+
+   THE ONE PLACE THIS DIRECTORY BREAKS ITS OWN SELECTIVITY RULE, AND WHY.
+   Every other bucket above grows with the table so that a bucketed read
+   answers a bounded number of rows.  `domain` does not: it is the entity
+   component domain -- light, sensor, switch -- and Home Assistant has a few
+   dozen of them however many entities an installation has.  So the number of
+   domains here is a CONSTANT (16) and a domain's bucket grows with the table,
+   which is the regime the source is actually in.
+
+   That is what the arity-three measurement turns on.  A configuration that
+   can only probe the first conjunct narrows to one domain and then scans it,
+   which is rows/16 -- LINEAR.  The composite key answers the same read with
+   one probe.  Against Kafka_Cluster, where bucket_size kept the residual
+   filter bounded and the composite key therefore bought a constant, this
+   subject is where it buys an exponent -- and the difference is a property of
+   the data, not of the rule.
+
+   `platform` is the integration domain (hue, zwave), also bounded, and varies
+   independently of the domain; `unique_id` is unique per row, so the triple
+   names exactly one entity, which is what async_get_entity_id asks for.  One
+   entity in five has no device, so the device read has a None bucket nothing
+   probes. *)
+
+let entity_registry =
+  let domains = 16 and platforms = 16 in
+  let dom j = Printf.sprintf "d%d" (j mod domains) in
+  let plat j = Printf.sprintf "p%d" (j / domains mod platforms) in
+  let row rows j =
+    rcd [ ("entity_id", s (Printf.sprintf "e%d" j));
+          ("id", s (Printf.sprintf "i%d" j));
+          ("domain", s (dom j)); ("platform", s (plat j));
+          ("unique_id", s (Printf.sprintf "u%d" j));
+          ("device_id", if j mod 5 = 0 then VOption None
+                        else VOption (Some (s (Printf.sprintf "dv%d" (j mod buckets rows))))) ] in
+  let q kind eid dm pl uid dev =
+    rcd [ ("kind", i kind); ("eid", s eid); ("dom", s dm); ("plat", s pl);
+          ("uid", s uid); ("dev", s dev) ] in
+  { queries_var = "queries"; store = outputs_only;
+    table = (fun rows -> [ ("entries_tbl", VList (List.init rows (row rows))) ]);
+    build = no_build;
+    kinds =
+      [ (* get_entry(id) (:1070) *)
+        ("getEntry", fun rows j ->
+           q 0 (Printf.sprintf "i%d" (spread rows j)) "" "" "" "");
+        (* get_entries_for_device_id(device_id) (:1074) *)
+        ("forDevice", fun rows j ->
+           q 1 "" "" "" "" (Printf.sprintf "dv%d" (j mod buckets rows)));
+        (* async_get_entity_id(domain, platform, unique_id) (:1264), asked
+           about an entity that IS registered, which is what both of its
+           callers do *)
+        ("getEntityId", fun rows j ->
+           let p = spread rows j in
+           q 2 "" (dom p) (plat p) (Printf.sprintf "u%d" p) "") ];
+    mutating = [] }
+
 (* ---------- window store: a range, a key, and an expiry ---------- *)
 
 let window_store =
@@ -465,6 +521,7 @@ let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
+    ("entity_registry", entity_registry);
     ("window_store", window_store); ("range_delete", range_delete);
     ("min_delete", min_delete);
     ("item_deletion", item_deletion); ("sat4j", sat4j);

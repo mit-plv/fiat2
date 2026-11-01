@@ -4,6 +4,7 @@ Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
+  fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch
   fiat2.Ex_RangeDelete fiat2.Ex_Inventory fiat2.Ex_Sum fiat2.Ex_SumDelete
   fiat2.Ex_MinDelete fiat2.Ex_Range fiat2.Ex_FlagFilter fiat2.Ex_Orders
@@ -193,6 +194,20 @@ Proof. vm_compute; reflexivity. Qed.
 Lemma kafka_cluster :
   unconstrained "partitions" Kafka_Cluster.prog
   = nth_heu Kafka_Cluster.heuristics 0 Kafka_Cluster.prog.
+Proof. vm_compute; reflexivity. Qed.
+
+(* The file's configuration 0, which is the claim HA_EntityRegistry's header
+   makes about what the selector CAN emit -- and, read the other way, the
+   claim that it cannot emit the composite choice.  Three single-attribute
+   dictionaries and SplitIf: the three-attribute read contributes a demand on
+   `domain` alone, because pred_demand reads a conjunction by its FIRST
+   conjunct.  Configurations 2 and 4 are therefore out of reach, and
+   configuration 4 is the one that answers that read in a single probe.  See
+   the note at the end of Selector.v for what settling it would take; this
+   lemma is what makes "cannot" checkable rather than asserted. *)
+Lemma ha_entity_registry :
+  unconstrained "entries" HA_EntityRegistry.prog
+  = nth_heu HA_EntityRegistry.heuristics 0 HA_EntityRegistry.prog.
 Proof. vm_compute; reflexivity. Qed.
 
 (* The file's configuration 1, the one WITH SplitIf -- and the selector

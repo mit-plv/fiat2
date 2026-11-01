@@ -3,6 +3,7 @@ Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
+  fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
   fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.eval.MinIndexProbe.
@@ -79,6 +80,7 @@ Set Extraction Output Directory "harness/generated".
 Module KC := Keycloak_CachedRealm.
 Module NC := Kafka_NamedCache.
 Module AR := HA_AreaRegistry.
+Module ER := HA_EntityRegistry.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
 Module KCl := Kafka_Cluster.
@@ -98,6 +100,7 @@ Definition area_registry_src : command := Eval vm_compute in AR.elaborated AR.de
 Definition lookin_src : command := Eval vm_compute in LF.elaborated.
 Definition user_search_src : command := Eval vm_compute in JU.elaborated JU.decls.
 Definition cluster_src : command := Eval vm_compute in KCl.prog.
+Definition entity_registry_src : command := Eval vm_compute in ER.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
 Definition range_delete_src : command := Eval vm_compute in ERD.prog.
 Definition min_delete_src : command := Eval vm_compute in EMD.prog.
@@ -126,6 +129,10 @@ Definition lookin_opt : command := Eval vm_compute in LF.optimized.
 Definition user_search_opt : command := Eval vm_compute in JU.optimized.
 Definition cluster_opt : command :=
   Eval vm_compute in nth 0 KCl.prog_transformed CSkip.
+(* entity_registry's chosen column is configuration 0: SplitIf and one
+   dictionary per attribute, which is what the selector can emit today. *)
+Definition entity_registry_opt : command :=
+  Eval vm_compute in nth 0 ER.prog_transformed CSkip.
 Definition window_store_opt : command :=
   Eval vm_compute in nth 1 KWS.prog_transformed CSkip.
 Definition range_delete_opt : command :=
@@ -200,6 +207,23 @@ Definition cluster_opt_composite : command :=
    row is pure overhead -- the cost of an index that serves nothing. *)
 Definition cluster_opt_composite_split : command :=
   Eval vm_compute in nth 3 KCl.prog_transformed CSkip.
+(* ---- entity_registry: the arity-THREE composite key ----
+
+   Read these four against each other, not against the chosen column alone.
+   unsplit and composite differ ONLY in the composite index, so that pair
+   isolates it; triple is the configuration that REPLACES the dictionary on
+   `domain` with the composite one, so it installs the same number of members
+   as the chosen column and is the one that can dominate it; composite-split
+   is the ordering hazard priced at arity three. *)
+Definition entity_registry_opt_unsplit : command :=
+  Eval vm_compute in nth 1 ER.prog_transformed CSkip.
+Definition entity_registry_opt_composite : command :=
+  Eval vm_compute in nth 2 ER.prog_transformed CSkip.
+Definition entity_registry_opt_composite_split : command :=
+  Eval vm_compute in nth 3 ER.prog_transformed CSkip.
+Definition entity_registry_opt_triple : command :=
+  Eval vm_compute in nth 4 ER.prog_transformed CSkip.
+
 (* without SplitIf: fetchAll keeps both of its bounds, and fetch stays a
    scan -- over a list that therefore survives, and that retention then
    rewrites in full on every call *)
@@ -227,6 +251,7 @@ Definition subjects : list (string * command * command) :=
   ; ("lookin", lookin_src, lookin_opt)
   ; ("user_search", user_search_src, user_search_opt)
   ; ("cluster", cluster_src, cluster_opt)
+  ; ("entity_registry", entity_registry_src, entity_registry_opt)
   ; ("window_store", window_store_src, window_store_opt)
   ; ("range_delete", range_delete_src, range_delete_opt)
   ; ("min_delete", min_delete_src, min_delete_opt)
@@ -241,6 +266,10 @@ Definition alternatives : list (string * command) :=
   ; ("cluster/unsplit", cluster_opt_unsplit)
   ; ("cluster/composite", cluster_opt_composite)
   ; ("cluster/composite-split", cluster_opt_composite_split)
+  ; ("entity_registry/unsplit", entity_registry_opt_unsplit)
+  ; ("entity_registry/composite", entity_registry_opt_composite)
+  ; ("entity_registry/composite-split", entity_registry_opt_composite_split)
+  ; ("entity_registry/triple", entity_registry_opt_triple)
   ; ("window_store/unsplit", window_store_opt_unsplit)
   ; ("sat4j/unsplit", sat4j_opt_unsplit)
   (* the guard left in source order: the index is installed and NEITHER read
