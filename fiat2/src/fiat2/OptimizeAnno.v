@@ -4,6 +4,11 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.TrigramIndexImpl fiat2.TrigramIndexUse fiat2.DictIndexKeyedDelete
   fiat2.EraseField fiat2.RepIdx fiat2.SetRemoveTransf
   fiat2.FlagFilter fiat2.SplitFilterProj fiat2.PromoteGuard fiat2.UnpushCollection.
+(* Required, NOT imported: CompositeDictIndexImpl has a to_idx, idx_ty,
+   is_tbl_ty and idx_wf of its own, and importing it would shadow
+   DictIndexImpl's. *)
+Require fiat2.CompositeDictIndexImpl.
+Module CDI := fiat2.CompositeDictIndexImpl.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -100,7 +105,13 @@ Variant index_choice :=
      because mk_idx_sound_strengthen takes its goals apart in constructor
      order, so a choice added in the middle would misalign every block after
      it. *)
-  | CountAgg.
+  | CountAgg
+  (* A dictionary keyed on TWO attributes at once, so that a conjunctive
+     equality on both is one probe rather than a probe and a residual filter.
+     Unranged, because a composite key is for point lookups: record_compare
+     would order it by sorted field NAME, not by the order the key was
+     declared in.  Listed last so that no existing choice's position moves. *)
+  | CompositeDictIdx (attr1 attr2 : string).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -244,6 +255,22 @@ Section WithConcreteMaps.
     Definition dict_keyed_delete_gated_transf (key pk_tag : string) (ds : list decl) :=
       keyed_delete_gated dict_idx_attr dict_idx_dk "tup" "acc" "x" key
         "id_tag" "aux_tag" pk_tag "bkt" "rvar" ds.
+
+    Context (cdi_attr1 cdi_attr2 : string).
+
+    Definition composite_dict_idx_wf :=
+      (CDI.idx_wf "hole" cdi_attr1 cdi_attr2 "tup" "acc" "x").
+    Instance ccomposite_dict_idx : IndexInterface.index :=
+      (CDI.composite_dict_idx "hole" cdi_attr1 cdi_attr2 "tup" "acc" "x").
+    Instance ccomposite_dict_idx_ok :
+      IndexInterface.ok ccomposite_dict_idx composite_dict_idx_wf.
+    apply CDI.composite_dict_idx_ok. auto with transf_hints.
+    Qed.
+
+    Definition composite_dict_lookup_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (CDI.composite_eq_filter_to_lookup_head
+                      cdi_attr1 cdi_attr2 "id_tag" "aux_tag" tag "b" tbl).
 
     Context (set_agg_attr : string).
 
@@ -444,6 +471,18 @@ Section WithConcreteMaps.
           S cur_tag)
     | DictIdx attr => mk_dict_idx Unranged attr cur_tag reps
     | RangedDictIdx attr => mk_dict_idx Ranged attr cur_tag reps
+    (* read rule only.  A composite index has no maintenance rules yet, so
+       asking for one on a table that is WRITTEN leaves the index stale --
+       which the pipeline does not permit silently: without a maintenance
+       rule the write keeps its list form and the index is simply not used
+       there.  The subject that wants this choice (eval/Kafka_Cluster) only
+       reads.  Said plainly rather than left to be discovered. *)
+    | CompositeDictIdx attr1 attr2 =>
+        ([(String.of_nat cur_tag,
+            ccomposite_dict_idx attr1 attr2,
+            composite_dict_idx_wf attr1 attr2)],
+          [composite_dict_lookup_transf (String.of_nat cur_tag) attr1 attr2],
+          S cur_tag)
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
         ([(u_tag, cunique_idx attr, unique_idx_wf attr)],
@@ -646,7 +685,7 @@ end.
          | |- NoDup nil => constructor
          end.
     all: auto using csum_agg_ok, ccount_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
-      cunique_idx_ok, ctrigram_idx_ok, crep_idx_ok.
+      cunique_idx_ok, ctrigram_idx_ok, crep_idx_ok, ccomposite_dict_idx_ok.
     all: try (eexists; intuition eauto; lia).
     (* and that choice's two tags are distinct, by of_nat's injectivity *)
     (* no cbn here: it would unfold of_nat into its decimal definition and
@@ -1089,7 +1128,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | ];
+    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | | a1 a2 ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -1522,6 +1561,21 @@ end.
         all: apply expr_transf_sound__expr_aug_transf_sound.
         1: eapply filter_neq_to_count_sub_head_sound; auto using ctenv_ok, clocals_ok.
         1: eapply cons_to_incr_head_sound. }
+    (* the composite dictionary: one read rule, and nothing else to be sound
+       about -- it installs no maintenance, so there is no write-side goal *)
+    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+        1:{ eapply CDI.composite_eq_filter_to_lookup_head_sound;
+              auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. } }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)
