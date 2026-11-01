@@ -158,9 +158,13 @@ Section WithConcreteMaps.
 
   (* No SplitIf: the composite rule wants the conjunction whole, and the
      ordering hazard that costs is pinned twice in eval/ already. *)
+  (* the basics the deterministic selector emits for this program, so that
+     eval/SelectorTests can compare its output to this annotation directly *)
+  Definition basics : list basic_transf :=
+    [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap].
+
   Definition heuristics :=
-    [ AC [PushdownCollection; AnnotateCollection]
-        [[CompositeDictIdx ["k1"; "k2"; "k3"]]] ].
+    [ AC basics [[CompositeDictIdx ["k1"; "k2"; "k3"]]] ].
 
   Definition prog_transformed :=
     map (fun heu => apply_optimize_anno (heu prog) init_Gstore init_Genv)
@@ -170,8 +174,7 @@ Section WithConcreteMaps.
 
   Definition optimized_prefix : command :=
     apply_optimize_anno
-      (AC [PushdownCollection; AnnotateCollection]
-          [[CompositeDictIdx ["k1"; "k2"; "k3"]]] prog_prefix)
+      (AC basics [[CompositeDictIdx ["k1"; "k2"; "k3"]]] prog_prefix)
       init_Gstore init_Genv.
 
   (* ---- projections ---- *)

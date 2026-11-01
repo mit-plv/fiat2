@@ -54,20 +54,21 @@ Import ListNotations.
      read with one probe.  See the configuration table below.
 
    What it measured (harness alternatives, typed, 200/400/800/1600 rows;
-   work at 1600 rows and the fitted exponent).  Every row is against
-   configuration 0, the one the selector can emit today:
+   work at 1600 rows and the fitted exponent).  Configuration 4 is the CHOSEN
+   column, because it is what the deterministic selector emits
+   (eval/SelectorTests.ha_entity_registry), and every other row is against it:
 
                         build  getEntry forDevice getEntityId  register
-     0 chosen          239297      1248      1566      116555      5434
+     4 CHOSEN          323334      1268      1586        2540      6386
+                       a=1.01    a=0.01   a=-0.00      a=0.01    a=0.00
+     0 split + dicts   239297      1248      1566      116555      5434
                        a=1.01    a=0.01   a=-0.00      a=0.95    a=0.00
-     1 unsplit         239301      1248      1566     2450692      5794
+     1 unsplit, no cmp 239301      1248      1566     2450692      5794
                        a=1.01    a=0.01   a=-0.00      a=1.00    a=0.00
-     2 composite       402364      1268      1586        2540      7970
+     2 cmp + dead dict 402364      1268      1586        2540      7970
                        a=1.01    a=0.01   a=-0.00      a=0.01    a=0.00
      3 cmp + split     402364      1268      1586      116575      7970
                        a=1.01    a=0.01   a=-0.00      a=0.95    a=0.00
-     4 triple          323334      1268      1586        2540      6386
-                       a=1.01    a=0.01   a=-0.00      a=0.01    a=0.00
 
    THE NUMBER TO READ IS THE EXPONENT, NOT THE RATIO.  Configuration 0 can
    probe only the first conjunct, so its read is one domain's bucket -- and a
@@ -79,34 +80,41 @@ Import ListNotations.
    differs from eval/Kafka_Cluster, where the same index bought 2.8x and a
    constant because that generator's buckets are bounded by construction.
 
-   AND THE WRITE STAYS CONSTANT, which is the other half of the claim: every
-   configuration's `register` is a=0.00, so the composite index is MAINTAINED
-   and not rebuilt.  That takes two rules working as a pair -- the insert rule
-   turns rebuilding the index of `row :: rest` into building the index of
-   `rest` and inserting one row, and the use rule replaces that `index of
-   rest` by the member already stored.  Either alone leaves the O(n) rebuild
-   it found; see insert_maintains_every_member for what the pair produces.
-   The composite member costs 1.2x per insert against configuration 0 (a
-   three-field record key is about three comparisons where a string key is
-   one) and 1.4x on the build, both constants.
+   WHAT THE CHOSEN COLUMN COSTS, stated against the configuration the
+   selector used to emit: 1.35x on the build and 1.18x on each insert.  Both
+   are constants and both are KEY WORK, not an extra structure -- a key that
+   is a record of three strings costs about three comparisons where a string
+   key costs one.  Configuration 4 installs THREE members, the same number as
+   configuration 0, because the composite index REPLACES the dictionary on
+   `domain` rather than joining it.  So the trade the selector takes is a
+   constant on every write against an exponent on a read, which is the trade
+   it takes everywhere else too.
 
-   WHAT IT COSTS, AND THE ONE THING THAT SURPRISED.  Configuration 4 installs
-   THREE members, the same number as configuration 0 -- the composite index
-   replaces the dictionary on `domain` rather than joining it -- and it still
-   costs 1.4x to build.  That is not an extra structure, it is KEY WORK.  So
-   the trade is a constant on the build and on each insert against an exponent
-   on the read, which is a trade a selector should take and is not a
-   dominance.  Configuration 2, which keeps the dead `domain` dictionary as
-   well, costs 1.7x and 1.5x and buys nothing more.
+   AND CONFIGURATION 2 IS WHY THE SUBSUMPTION MATTERS.  It is configuration 4
+   plus the dictionary on `domain` that nothing reads any more: identical on
+   all four operations, 1.2x on the build and 1.2x on each insert.  The
+   selector does not emit it, and not by a rule about this program -- a read
+   whose predicate is a composite conjunction yields DComposite and not DEq,
+   so the single-attribute dictionary is emitted only where some other read
+   asks for it independently.  Nothing here asks for `domain`.
 
-   And configuration 3 is the hazard with a price on it: identical to
-   configuration 0 on all three reads, to within the one extra record field,
-   while paying configuration 2's build and insert.  An index installed,
-   maintained on every write, and never read.
+   AND CONFIGURATION 3 IS THE HAZARD WITH A PRICE ON IT: configuration 0's
+   reads at configuration 2's cost.  An index installed, maintained on every
+   write, and never read.  The selector declines it for the general reason --
+   a composite demand and a split demand on one table conflict, and the split
+   wins -- which is what keeps eval/Kafka_Cluster out of this state.
+
+   AND THE WRITE STAYS CONSTANT in every configuration: `register` is a=0.00,
+   so the composite index is MAINTAINED and not rebuilt.  That takes two rules
+   working as a pair -- the insert rule turns rebuilding the index of
+   `row :: rest` into building the index of `rest` and inserting one row, and
+   the use rule replaces that `index of rest` by the member already stored.
+   Either alone leaves the O(n) rebuild it found; see
+   insert_maintains_every_member for what the pair produces.
 
    Against the scan form the whole op phase is 4002998 work for the source and
-   125431 for configuration 0, 32x; wall-clock agrees on the exponent, with
-   getEntityId growing 19.8x across the six sizes in configuration 0.
+   11780 for the chosen column, 340x, and EVERY read in the chosen column is
+   flat -- getEntry 0.01, forDevice -0.01, getEntityId 0.01, register 0.01.
 
    Pattern
      A1a, built once, multi-index.  D4 composite key at arity three, served.
@@ -254,19 +262,21 @@ Section WithConcreteMaps.
     map.put (map.put map.empty "entries_tbl" (TList row_ty))
       "queries" (TList query_ty).
 
-  (* ---- five configurations ----
+  (* ---- five configurations, of which 4 is the one the selector emits ----
 
-     0  what the selector can emit today: SplitIf, and a dictionary per
-        attribute.  The triple read probes on `domain` and filters the rest.
+     0  what the selector emitted BEFORE it could read a conjunction of
+        equalities as one demand: SplitIf, and a dictionary per attribute.
+        The triple read probes on `domain` and filters the rest.
      1  the same choices without SplitIf.  1 and 2 differ ONLY in the
         composite index, so that pair isolates it.
      2  the composite index ADDED to 1's three dictionaries.  The triple read
         becomes one probe -- and the `domain` dictionary becomes dead, which
-        is what configuration 4 is for.
+        is what makes 4 strictly better than 2.
      3  configuration 2 with SplitIf, which is the ordering hazard: the
         composite index is installed and never read.
-     4  the composite index INSTEAD OF the `domain` dictionary.  Three
-        members, as in configuration 0, and every read a single probe. *)
+     4  THE CHOSEN ONE: the composite index INSTEAD OF the `domain`
+        dictionary.  Three members, as in configuration 0, and every read a
+        single probe. *)
 
   Definition triple := CompositeDictIdx ["domain"; "platform"; "unique_id"].
 
@@ -275,15 +285,18 @@ Section WithConcreteMaps.
      selector's own output -- eval/SelectorTests.ha_entity_registry. *)
   Definition dicts := [DictIdx "id"; DictIdx "device_id"; DictIdx "domain"].
 
+  (* Every configuration shares the same basics and differs only in SplitIf
+     and in the index list, so the table below compares one thing at a time.
+     The basics are the ones the deterministic selector emits. *)
+  Definition basics : list basic_transf :=
+    [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap].
+
   Definition heuristics :=
-    [ AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SplitIf]
-        [dicts]
-    ; AC [PushdownCollection; AnnotateCollection] [dicts]
-    ; AC [PushdownCollection; AnnotateCollection] [triple :: dicts]
-    ; AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SplitIf]
-        [triple :: dicts]
-    ; AC [PushdownCollection; AnnotateCollection]
-        [[triple; DictIdx "id"; DictIdx "device_id"]]
+    [ AC (basics ++ [SplitIf]) [dicts]
+    ; AC basics [dicts]
+    ; AC basics [triple :: dicts]
+    ; AC (basics ++ [SplitIf]) [triple :: dicts]
+    ; AC basics [[triple; DictIdx "id"; DictIdx "device_id"]]
     ].
 
   Definition prog_transformed :=

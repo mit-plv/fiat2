@@ -135,10 +135,11 @@ Definition lookin_opt : command := Eval vm_compute in LF.optimized.
 Definition user_search_opt : command := Eval vm_compute in JU.optimized.
 Definition cluster_opt : command :=
   Eval vm_compute in nth 0 KCl.prog_transformed CSkip.
-(* entity_registry's chosen column is configuration 0: SplitIf and one
-   dictionary per attribute, which is what the selector can emit today. *)
+(* entity_registry's chosen column is configuration 4 -- the COMPOSITE index
+   in place of the dictionary on `domain` -- because that is what the
+   deterministic selector emits (eval/SelectorTests.ha_entity_registry). *)
 Definition entity_registry_opt : command :=
-  Eval vm_compute in nth 0 ER.prog_transformed CSkip.
+  Eval vm_compute in nth 4 ER.prog_transformed CSkip.
 Definition window_store_opt : command :=
   Eval vm_compute in nth 1 KWS.prog_transformed CSkip.
 Definition range_delete_opt : command :=
@@ -222,14 +223,18 @@ Definition cluster_opt_composite_split : command :=
    `domain` with the composite one, so it installs the same number of members
    as the chosen column and is the one that can dominate it; composite-split
    is the ordering hazard priced at arity three. *)
+(* configuration 0, which is what the selector emitted BEFORE it could read a
+   conjunction of equalities as one demand: SplitIf and a dictionary per
+   attribute, so the three-attribute read is a probe on `domain` and a
+   residual filter on the other two. *)
+Definition entity_registry_opt_split_dicts : command :=
+  Eval vm_compute in nth 0 ER.prog_transformed CSkip.
 Definition entity_registry_opt_unsplit : command :=
   Eval vm_compute in nth 1 ER.prog_transformed CSkip.
 Definition entity_registry_opt_composite : command :=
   Eval vm_compute in nth 2 ER.prog_transformed CSkip.
 Definition entity_registry_opt_composite_split : command :=
   Eval vm_compute in nth 3 ER.prog_transformed CSkip.
-Definition entity_registry_opt_triple : command :=
-  Eval vm_compute in nth 4 ER.prog_transformed CSkip.
 
 (* without SplitIf: fetchAll keeps both of its bounds, and fetch stays a
    scan -- over a list that therefore survives, and that retention then
@@ -274,10 +279,10 @@ Definition alternatives : list (string * command) :=
   ; ("cluster/unsplit", cluster_opt_unsplit)
   ; ("cluster/composite", cluster_opt_composite)
   ; ("cluster/composite-split", cluster_opt_composite_split)
+  ; ("entity_registry/split-dicts", entity_registry_opt_split_dicts)
   ; ("entity_registry/unsplit", entity_registry_opt_unsplit)
   ; ("entity_registry/composite", entity_registry_opt_composite)
   ; ("entity_registry/composite-split", entity_registry_opt_composite_split)
-  ; ("entity_registry/triple", entity_registry_opt_triple)
   ; ("window_store/unsplit", window_store_opt_unsplit)
   ; ("sat4j/unsplit", sat4j_opt_unsplit)
   (* the guard left in source order: the index is installed and NEITHER read

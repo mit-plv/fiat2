@@ -583,20 +583,18 @@ across twenty queries. Three of the forty-one do no comparisons at all (`a` = 0.
 `getRequiredActionProviderList`'s count, `sizeInBytes` and `sat4j/size`, which are
 maintained aggregates and so are field reads, cheaper than a probe.
 
-**The four that still grow are the interesting column, and three of the four are a correct
-answer rather than a cost.** Their exponents are 0.98, 0.98, 0.19 and 0.90.
+**The three that still grow are the interesting column, and every one of them is a correct
+answer rather than a cost.** Their exponents are 0.98, 0.98 and 0.19.
 
-The fourth is the exception and it IS a cost: `HA_EntityRegistry`'s `getEntityId`,
-`a` = 0.89. The read is a conjunction of three equalities and the chosen configuration can
-probe only the first of them, so it scans one entity domain's bucket -- and a domain's
-bucket grows with the table, because the number of domains is a property of Home Assistant
-and not of the installation's size. The index that answers it in one probe EXISTS and is
-verified; what does not exist is a selector that asks for it, and that is the whole of why
-this row is here. `HA_EntityRegistry.v`'s configuration 4 is the same read at
-`a` = 0.01, 116555 steps against 2540 at 1600 rows, for 1.4x on the build and 1.2x on
-each insert. So unlike the
-two substring fallbacks below, this entry is a note about `Selector.v` and not about what a
-scan has to cost.
+One entry has left this list since it was written, and it left the way the two at the end
+of this section did -- a rule named in the note that described it. `HA_EntityRegistry`'s
+`getEntityId` was here at `a` = 0.89, with the note that "the index that answers it in one
+probe EXISTS and is verified; what does not exist is a selector that asks for it". The
+selector asks for it now: `indexable` reads a conjunction of attribute equalities with the
+composite rule's own matcher, so such a read yields one `DComposite` demand instead of a
+`DEq` on its first conjunct, and `choices_of` emits `CompositeDictIdx` for it. That read is
+`a` = 0.01 in the chosen column, 2540 steps against 116555, and the subject as a whole went
+from 32x to **340x** against its scan form.
 * `Jenkins_UserSearch`'s `suggestMiss` and `suggestShort`, `a` = 0.98 each. These are the
   guarded fallback, reached by a token with no trigram and by one shorter than three
   characters, and they are linear because a substring match **has** to look at every row.

@@ -1,5 +1,11 @@
 Require Import fiat2.Language fiat2.Utils fiat2.Surface fiat2.FlatmapForms
   fiat2.OptimizeAnno fiat2.SplitFilterProj fiat2.PromoteGuard.
+(* Required, NOT imported, for conj_eq_pairs alone.  The composite demand
+   below is phrased with the READ RULE'S OWN MATCHER rather than a copy of
+   it, which is the strongest form of the discipline range_attr's comment
+   asks for: being in sync is not something to keep checking, it is the same
+   function. *)
+Require fiat2.CompositeDictIndexImpl.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
@@ -61,6 +67,11 @@ Variant demand :=
   (* A read or a write some index answers.  Each one names the rule it is
      evidence for; the rule's pattern is reproduced in the matcher below. *)
   | DEq (attr : string)      (* eq_filter_to_lookup / unique_lookup *)
+  | DComposite (attrs : list string)
+                             (* composite_eq_filter_to_lookup: a conjunction
+                                of TWO OR MORE attribute equalities, which
+                                one dictionary keyed on a record of them
+                                answers with a single probe *)
   | DRange (attr : string)   (* range_filter_to_dict_range, and the two
                                 range-shaped write rules *)
   | DSubstr (attr : string)  (* trigram_lookup_guarded *)
@@ -170,17 +181,41 @@ Definition range_attr (x : string) (p : expr) : option string :=
    test.  This is the selector's model of what the read rules can see, and
    both the demand below and the SplitIf decision are phrased in terms of
    it rather than in terms of any particular program. *)
+(* A conjunction of TWO OR MORE attribute equalities, read with the composite
+   rule's own matcher.  ONE equality is DEq's business and is left to it, so
+   this detector changes nothing about a single-attribute read; and a
+   conjunction with any non-equality conjunct is declined by conj_eq_pairs
+   itself, which is what keeps a mixed predicate like (topic = k && leader is
+   set) going to the first-conjunct analysis below as it always did. *)
+Definition composite_attrs (x : string) (p : expr) : option (list string) :=
+  match CompositeDictIndexImpl.conj_eq_pairs x p with
+  | Some prs =>
+      let attrs := List.map fst prs in
+      (* all_neqb is the index's OWN side condition (is_tbl_ty requires the
+         key's attributes pairwise distinct, because a record literal with a
+         repeated field name fails TyERecord's NoDup premise).  Asking for it
+         here is what keeps the selector from demanding an index the install
+         would refuse -- the same discipline range_attr's comment states. *)
+      if (Nat.leb 2 (List.length attrs) && all_neqb attrs)%bool
+      then Some attrs else None
+  | None => None
+  end.
+
 Definition indexable (x : string) (p : expr) : option demand :=
   match range_attr x p with
   | Some a => Some (DRange a)
   | None =>
-      match p with
-      | EBinop OEq (EAccess (EVar x1) a) k =>
-          if (String.eqb x x1 && negb (free_immut_in x k))%bool
-          then Some (DEq a) else None
-      | EBinop OStrContains (EAccess (EVar x1) a) _ =>
-          if String.eqb x x1 then Some (DSubstr a) else None
-      | _ => None
+      match composite_attrs x p with
+      | Some attrs => Some (DComposite attrs)
+      | None =>
+          match p with
+          | EBinop OEq (EAccess (EVar x1) a) k =>
+              if (String.eqb x x1 && negb (free_immut_in x k))%bool
+              then Some (DEq a) else None
+          | EBinop OStrContains (EAccess (EVar x1) a) _ =>
+              if String.eqb x x1 then Some (DSubstr a) else None
+          | _ => None
+          end
       end
   end.
 
@@ -211,11 +246,15 @@ Definition write_pred_demand (x : string) (p : expr) : option demand :=
           match range_attr x q with
           | Some a => Some (DRange a)
           | None =>
-              match q with
-              | EBinop OEq (EAccess (EVar x1) k) kexp =>
-                  if (String.eqb x x1 && negb (free_immut_in x kexp))%bool
-                  then Some (DDelKey k) else None
-              | _ => None
+              match composite_attrs x q with
+              | Some attrs => Some (DComposite attrs)
+              | None =>
+                  match q with
+                  | EBinop OEq (EAccess (EVar x1) k) kexp =>
+                      if (String.eqb x x1 && negb (free_immut_in x kexp))%bool
+                      then Some (DDelKey k) else None
+                  | _ => None
+                  end
               end
           end
       | _ => None
@@ -674,74 +713,97 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    and it is the first of the rule-ordering hazards.  It is emitted for one
    kind of read only; see the note at the end of this file.
 
-   A NINTH HAZARD, OF A NEW KIND, AND ONE THIS LIST CANNOT YET IMPOSE.  Every
+   A NINTH HAZARD, OF A NEW KIND, AND THE ONE THIS LIST NOW IMPOSES.  Every
    hazard above orders index rules against each other.  CompositeDictIdx is
    ordered against a BASIC rewrite instead: its rule matches a conjunction of
-   n attribute equalities WHOLE -- in any association, since its matcher
-   collects conjuncts rather than matching a fixed tree -- and SplitIf peels
-   the first conjunct off and hands it to a single-attribute dictionary, after
-   which the pattern no longer matches.  The cost is not a slower read but an
-   index installed and never read.  Two subjects pin both halves, and the
-   arity does not change the hazard: eval/Kafka_Cluster at arity two
+   n attribute equalities WHOLE -- in any association and any order, since its
+   matcher collects conjuncts rather than matching a fixed tree -- and SplitIf
+   peels the first conjunct off and hands it to a single-attribute dictionary,
+   after which the pattern no longer matches.  The cost is not a slower read
+   but an index installed and never read.  Two subjects pin both halves, and
+   the arity does not change the hazard: eval/Kafka_Cluster at arity two
    (one_partition_probes_composite, composite_unused_when_split) and
    eval/HA_EntityRegistry at arity three (get_entity_id_probes_triple,
    composite_unused_when_split).
 
-   This list cannot impose that ordering, because choices_of cannot emit
-   CompositeDictIdx at all: pred_demand below analyses a conjunction by its
-   FIRST conjunct, which is the very approximation that makes a composite key
-   a measured gap.  Emitting it would mean a demand for a SEQUENCE of
-   attributes and, with it, a decision this file is not in a position to make
-   on its own -- whether to withhold SplitIf from a table that has a composite
-   demand, which would leave that table's OTHER conjunctive reads unsplit.
-   For Kafka_Cluster that trade is real in both directions: the composite key
-   buys the point read, and withholding SplitIf costs
-   availablePartitionsForTopic its probe and keeps the list alive
-   (available_scans_with_composite, composite_keeps_the_list).  So a program
-   may ask for the choice and get it, soundly, and the selector will not ask
-   for it until that trade is settled.
+   THIS LIST NOW IMPOSES IT, in choices_of: a composite demand and a split
+   demand on the same table conflict, and the SPLIT WINS.  The reason is not
+   about either program.  SplitIf is one whole-program rewrite, so a table
+   that needs it for any predicate gets it for all of them; and what demands
+   it is a conjunction NOTHING matches whole, which is exactly what the
+   composite rule declines.  So the split serves reads the composite index
+   cannot, and emitting both would install an index that is maintained by
+   every write and read by nothing.
 
-   AND THE WAY TO SETTLE IT IS NARROWER THAN IT LOOKS, because both halves
-   already exist in this tree.  Withholding SplitIf wholesale is the wrong
-   move -- it is one whole-program rewrite, so turning it off for a composite
-   demand turns it off for every other conjunction on that table.  What is
-   wanted is an AIMED SplitIf that declines on one attribute PAIR:
+   WHAT THAT GIVES, and the two subjects are the test of whether it is a rule
+   or a fact about them.  eval/HA_EntityRegistry has no mixed conjunction, so
+   no read demands the split, and the selector emits the composite choice --
+   AND drops the single-attribute dictionary on the first attribute, because a
+   read whose predicate is a composite conjunction yields DComposite and NOT
+   DEq, so that dictionary is emitted only where some other read asks for it.
+   eval/Kafka_Cluster has one (availablePartitionsForTopic's
+   `topic = k && leader is set`), so the split is demanded and the composite
+   choice is declined, leaving that subject's choices exactly as they were.
+   Neither outcome names a table or an attribute.
 
-     * the guard has a precedent in kind -- FlatmapTransf.split_if_head
-       already declines to split a two-sided range pair, through
-       is_two_sided_range, for the same reason (the rule that serves the
-       conjunction wants it whole).  That guard is purely syntactic, and a
-       composite one cannot be: a conjunction of two equalities on different
-       attributes SHOULD be split when no composite index covers that pair,
-       which is exactly what gives configuration 0 its probe.
-     * so it has to be parameterized by the pair, and a parameterized basic
-       transf has a precedent too: PromoteGuard, for which see the note
-       above.
+   WHAT IS STILL OUT OF REACH is the configuration where a table wants BOTH:
+   an AIMED SplitIf that declines on one attribute TUPLE and splits every
+   other conjunction.  Both halves of it exist in the tree --
+   FlatmapTransf.split_if_head already declines a two-sided range pair through
+   is_two_sided_range, for the same reason, and PromoteGuard is the precedent
+   for a parameterized basic transf -- but that guard is purely syntactic and
+   a composite one cannot be: a conjunction of two equalities SHOULD be split
+   when no composite index covers that pair, which is exactly what gives
+   Kafka_Cluster its probe.  So it has to be parameterized by the tuple, which
+   is a change to the rule and to the basics list, not to this analysis.
 
-   An aimed SplitIf would remove the CONFLICT -- a table could serve its
-   composite read whole and still split its other conjunctions -- but it would
-   not make the composite configuration a dominance, and eval/HA_EntityRegistry
-   is where that was measured rather than assumed.  Its configuration 4
-   installs the composite index INSTEAD OF the single-attribute dictionary the
-   split conjunction would have probed, so it has the same NUMBER of members
-   as the configuration the selector can emit today, and it still costs 1.4x
-   to build and 1.2x per insert: a key that is a record of three strings costs
-   about three comparisons where a string key costs one, on every insert and
-   every probe.  So the choice is a trade in every configuration measured -- a
-   constant on the build and on each write against an exponent on the read,
-   linear to constant -- and what this list needs before it can emit the
-   choice is not a dominance but a cost model that can weigh those against
-   each other.
+   AND IT IS STILL A TRADE, not a dominance, which is worth stating because
+   this list takes it anyway.  eval/HA_EntityRegistry measures the chosen
+   configuration at 1.35x the build and 1.18x each insert of the one this file
+   used to emit, against 45.9x and an exponent (0.95 to 0.01) on the read.
+   Both costs are KEY WORK -- a record of three strings is about three
+   comparisons where a string is one -- and the number of installed members is
+   the same, because the composite index replaces the single-attribute one
+   rather than joining it.  Taking a constant on the write for an exponent on
+   the read is the trade this file takes everywhere; it is recorded here
+   because a cost model would be the thing that could ever decline it.
 
-   WHAT IS NO LONGER A REASON TO DECLINE IT: being written.  The composite
-   index is maintained across an INSERT and across a DELETE AT ITS OWN KEY,
+   BEING WRITTEN IS NOT A REASON TO DECLINE IT.  The composite index is
+   maintained across an INSERT and across a DELETE AT ITS OWN KEY,
    incrementally, by two rules each paired with the one that collapses the
    rebuild they leave behind (eval/HA_EntityRegistry.insert_maintains_every_member
    and Ex_CompositeKey.delete_is_one_delete pin the two results; the delete is
    906x and goes from linear to constant).  A write that removes the rows a
-   DIFFERENT key names is still a reason to decline: that needs the keyed form
+   DIFFERENT key names is still unserved: that needs the keyed form
    DictIndexKeyedDelete provides for a single attribute, and it does not exist
-   for a composite key. *)
+   for a composite key -- so such a write rebuilds, soundly and in O(n). *)
+(* An index on (a, b) IS an index on (b, a): the stored key is a record and
+   record_sort decides its field order, so two composite choices whose
+   attribute SETS agree are the same index.  Both halves of that are already
+   proved -- record_sort_Permutation_eq for the key, and the read rule's
+   permutation guard for the probe -- so the dedup is not an approximation.
+
+   Without it, eval-style code that writes the same conjunction in two orders
+   installs two copies of one index, and the second is maintained by every
+   write and read by nothing.  Ex_CompositeKey, which writes one conjunction
+   three ways on purpose, is where that showed up. *)
+Definition same_attr_set (a b : list string) : bool :=
+  (Nat.eqb (List.length a) (List.length b) && forallb (fun x => str_mem x b) a)%bool.
+
+Fixpoint drop_permuted_composites (acc : list index_choice)
+  (l : list index_choice) : list index_choice :=
+  match l with
+  | [] => rev acc
+  | CompositeDictIdx attrs :: l' =>
+      if existsb (fun c => match c with
+                           | CompositeDictIdx bs => same_attr_set attrs bs
+                           | _ => false
+                           end) acc
+      then drop_permuted_composites acc l'
+      else drop_permuted_composites (CompositeDictIdx attrs :: acc) l'
+  | c :: l' => drop_permuted_composites (c :: acc) l'
+  end.
+
 Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   : list index_choice :=
   let keys := unique_keys ce tbl in
@@ -757,7 +819,38 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
     ++ omap (fun d => match d with DSum a => Some (SumAgg a) | _ => None end) ds
     ++ omap (fun d => match d with DMin a => Some (MinAgg a) | _ => None end) ds
     ++ (if demand_mem DCount ds then [CountAgg] else []) in
-  dedup_choices (reps ++ dicts ++ aggs).
+  (* THE COMPOSITE CHOICE, AND THE ONE INTERACTION THAT DECLINES IT.
+
+     A composite demand and a split demand on the same table CONFLICT, and
+     the conflict is not about this program: SplitIf is one whole-program
+     rewrite, so a table that needs it for any predicate gets it for all of
+     them, and a split conjunction no longer matches the composite rule --
+     the index would be installed, maintained by every write, and read by
+     nothing.  That is the ninth hazard, and this is where the list stops
+     being a comment and starts being executable.  So the split wins, because
+     it serves reads the composite index cannot: a conjunction with a
+     non-equality conjunct is exactly what demands the split, and exactly
+     what the composite rule declines.
+
+     Lifting this needs an AIMED SplitIf -- one that declines on a named
+     attribute tuple, as FlatmapTransf.is_two_sided_range declines on a range
+     pair -- after which both could be emitted together.  See the note at the
+     end of this file.
+
+     NOTE THAT NO SUBSUMPTION RULE IS NEEDED.  A read whose predicate is a
+     composite conjunction yields DComposite and NOT DEq, so the
+     single-attribute dictionary on its first attribute is emitted only if
+     some OTHER read demands it independently -- which is what keeps
+     DictIdx "topic" in eval/Kafka_Cluster (partitionsForTopic asks for it)
+     and drops DictIdx "domain" in eval/HA_EntityRegistry (nothing else asks).
+     The pruning falls out of the demand language rather than being a rule. *)
+  let composites :=
+    if demand_mem DConjSplit ds then []
+    else drop_permuted_composites []
+           (omap (fun d => match d with
+                           | DComposite attrs => Some (CompositeDictIdx attrs)
+                           | _ => None end) ds) in
+  dedup_choices (reps ++ composites ++ dicts ++ aggs).
 
 (* ---------- the selector ---------- *)
 

@@ -7,6 +7,7 @@ Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch
   fiat2.Ex_RangeDelete fiat2.Ex_Inventory fiat2.Ex_Sum fiat2.Ex_SumDelete
+  fiat2.Ex_CompositeKey
   fiat2.Ex_MinDelete fiat2.Ex_Range fiat2.Ex_FlagFilter fiat2.Ex_Orders
   fiat2.Ex_Employee.
 From Stdlib Require Import String List ZArith.
@@ -189,25 +190,52 @@ Proof. vm_compute; reflexivity. Qed.
 
 (* The file's configuration 0, the one with SplitIf: both conjunctive reads
    become a probe followed by a filter, where configuration 1 leaves them
-   scanning.  The selector asks for the split because a conjunction's first
-   conjunct is an equality here and no conjunction is a range pair. *)
+   scanning.  The selector asks for the split because this table has a
+   conjunction NOTHING matches whole -- availablePartitionsForTopic's
+   (topic = k && leader is set), whose second conjunct is not an equality --
+   and whose first conjunct an index can serve.
+
+   AND THAT IS WHY THE COMPOSITE CHOICE IS DECLINED HERE, although
+   partition(topic, part) demands it: SplitIf is one whole-program rewrite, so
+   a table that needs it for one predicate gets it for all of them, and a
+   split conjunction no longer matches the composite rule.  The index would be
+   installed, maintained, and read by nothing -- which the file measures as
+   configuration 3.  Read this lemma against ha_entity_registry, where no
+   read demands the split and the composite choice is emitted. *)
 Lemma kafka_cluster :
   unconstrained "partitions" Kafka_Cluster.prog
   = nth_heu Kafka_Cluster.heuristics 0 Kafka_Cluster.prog.
 Proof. vm_compute; reflexivity. Qed.
 
-(* The file's configuration 0, which is the claim HA_EntityRegistry's header
-   makes about what the selector CAN emit -- and, read the other way, the
-   claim that it cannot emit the composite choice.  Three single-attribute
-   dictionaries and SplitIf: the three-attribute read contributes a demand on
-   `domain` alone, because pred_demand reads a conjunction by its FIRST
-   conjunct.  Configurations 2 and 4 are therefore out of reach, and
-   configuration 4 is the one that answers that read in a single probe.  See
-   the note at the end of Selector.v for what settling it would take; this
-   lemma is what makes "cannot" checkable rather than asserted. *)
+(* The file's configuration 4 -- the COMPOSITE index in place of the
+   dictionary on `domain`, and no SplitIf.  Three things have to line up for
+   the selector to reach it, and each is a general rule rather than a fact
+   about this program:
+
+     * the three-attribute read yields DComposite and not DEq, because
+       indexable now reads a conjunction of equalities with the composite
+       rule's own matcher instead of looking at the first conjunct only;
+     * the dictionary on `domain` is therefore NOT demanded by that read, and
+       nothing else in the program asks for it, so it is not emitted -- the
+       subsumption falls out of the demand language and is not a rule;
+     * SplitIf is not demanded, because conj_evidence asks for it only when
+       the predicate as a whole is matched by NOTHING, and now it is matched.
+
+   Compare kafka_cluster below, where the same selector declines the
+   composite choice: that table has a read whose conjunction is NOT all
+   equalities, so SplitIf is demanded, and a split conjunction no longer
+   matches the composite rule. *)
 Lemma ha_entity_registry :
   unconstrained "entries" HA_EntityRegistry.prog
-  = nth_heu HA_EntityRegistry.heuristics 0 HA_EntityRegistry.prog.
+  = nth_heu HA_EntityRegistry.heuristics 4 HA_EntityRegistry.prog.
+Proof. vm_compute; reflexivity. Qed.
+
+(* And the composite index's own regression file, where the same conjunction
+   is written three ways: ONE index, because an index on (a, b) is an index on
+   (b, a) and drop_permuted_composites knows it. *)
+Lemma ex_composite_key :
+  unconstrained "items" Ex_CompositeKey.prog
+  = nth_heu Ex_CompositeKey.heuristics 0 Ex_CompositeKey.prog.
 Proof. vm_compute; reflexivity. Qed.
 
 (* The file's configuration 1, the one WITH SplitIf -- and the selector
