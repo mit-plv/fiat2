@@ -158,19 +158,81 @@ Lemma conj_eq_pairs_and : forall x0 e1 e2,
       end.
 Proof. reflexivity. Qed.
 
-(* Decidable equality on attribute lists, for the rule's guard. *)
-Fixpoint attr_list_eqb (l1 l2 : list string) : bool :=
-  match l1, l2 with
-  | [], [] => true
-  | a1 :: l1, a2 :: l2 => (String.eqb a1 a2 && attr_list_eqb l1 l2)%bool
-  | _, _ => false
-  end.
+(* ---- the sort is determined by the multiset of NAMES ----
 
-Lemma attr_list_eqb_eq : forall l1 l2, attr_list_eqb l1 l2 = true -> l1 = l2.
+   record_entry_leb compares field NAMES only (Value.v:498), so it is total
+   and transitive but NOT antisymmetric: two entries with the same name and
+   different values are below each other both ways.  It IS antisymmetric where
+   the names are distinct, which is exactly what a NoDup premise buys, and
+   that is enough for the sort to be determined by the multiset.  Stdlib has
+   no uniqueness lemma for a sort under a merely total order, so here it is.
+
+   WHY THIS MATTERS HERE.  It is what makes the declared ORDER of a composite
+   key's attributes inert: the stored key record is record_sort'ed, so an
+   index on (a, b) and an index on (b, a) are the same index, and a read may
+   list its conjuncts in any order at all.  Without this lemma the read rule
+   has to insist on one order, which is what it used to do. *)
+
+Lemma string_leb_antisym : forall s s',
+    String.leb s s' = true -> String.leb s' s = true -> s = s'.
 Proof.
-  induction l1; destruct l2; cbn; intros H; try discriminate; auto.
-  rewrite Bool.andb_true_iff, String.eqb_eq in H. destruct H as [ -> H ].
-  f_equal; auto.
+  unfold String.leb; intros s s' H H'.
+  destruct (String.compare s' s) eqn:E.
+  - symmetry; apply String.compare_eq_iff; assumption.
+  - rewrite String.compare_antisym, E in H; cbn in H; discriminate.
+  - discriminate.
+Qed.
+
+Lemma StronglySorted_NoDup_Permutation_eq :
+  forall A (l l' : list (string * A)),
+    StronglySorted (fun p p' => is_true (record_entry_leb p p')) l ->
+    StronglySorted (fun p p' => is_true (record_entry_leb p p')) l' ->
+    NoDup (List.map fst l) ->
+    Permutation l l' ->
+    l = l'.
+Proof.
+  induction l as [ | p l IH ]; intros l' Hs Hs' Hnd Hp.
+  - apply Permutation_nil in Hp; congruence.
+  - destruct l' as [ | p' l' ].
+    1: apply Permutation_sym, Permutation_nil in Hp; discriminate.
+    inversion Hs as [ | ? ? Hs2 Hall ]; subst.
+    inversion Hs' as [ | ? ? Hs2' Hall' ]; subst.
+    (* the two heads are the same entry: each is in the other list, and if
+       neither is the other's head then the names are below each other both
+       ways, so they are equal -- and then one name occurs twice *)
+    assert (Hhd : p = p').
+    { pose proof (Permutation_in _ Hp (or_introl eq_refl)) as Hin.
+      pose proof (Permutation_in _ (Permutation_sym Hp) (or_introl eq_refl)) as Hin'.
+      cbn in Hin, Hin'.
+      destruct Hin as [ Heq | Hin ]; [ congruence | ].
+      destruct Hin' as [ Heq' | Hin' ]; [ congruence | ].
+      exfalso.
+      rewrite Forall_forall in Hall, Hall'.
+      pose proof (Hall _ Hin') as Hle.
+      pose proof (Hall' _ Hin) as Hle'.
+      unfold record_entry_leb, is_true in Hle, Hle'.
+      pose proof (string_leb_antisym _ _ Hle Hle') as Hname.
+      inversion Hnd as [ | ? ? Hni ]; subst.
+      apply Hni. rewrite Hname. apply in_map; assumption. }
+    subst p'. f_equal.
+    cbn in Hnd; inversion Hnd; subst.
+    apply IH; try assumption.
+    eapply Permutation_cons_inv; eassumption.
+Qed.
+
+Lemma record_sort_Permutation_eq :
+  forall A (l l' : list (string * A)),
+    NoDup (List.map fst l) ->
+    Permutation l l' ->
+    record_sort l = record_sort l'.
+Proof.
+  intros A l l' Hnd Hp.
+  apply StronglySorted_NoDup_Permutation_eq;
+    auto using StronglySorted_record_sort.
+  - eapply Permutation_NoDup;
+      [ apply Permutation_map, Permuted_record_sort | assumption ].
+  - eapply perm_trans; [ apply Permutation_sym, Permuted_record_sort | ].
+    eapply perm_trans; [ exact Hp | apply Permuted_record_sort ].
 Qed.
 
 Section ConjMatcher.
@@ -394,6 +456,27 @@ Section WithHole.
       rewrite inb_true_iff in Ha; assumption.
     Qed.
 
+    (* The read rule's two decidable tests, cashed in as the permutation every
+       key lemma above wants: every attribute the index declares occurs among
+       the collected conjuncts, and there are exactly as many conjuncts as
+       attributes.  With the attributes distinct -- which is_tbl_ty already
+       forces -- that is a permutation, and so the conjunction may list its
+       equalities IN ANY ORDER. *)
+    Lemma guard_Permutation : forall (prs : list (string * expr)),
+        NoDup attrs ->
+        forallb (fun a => inb String.eqb a (List.map fst prs)) attrs = true ->
+        Nat.eqb (List.length attrs) (List.length prs) = true ->
+        Permutation (List.map fst prs) attrs.
+    Proof.
+      intros prs Hnd Hin Hlen.
+      apply Nat.eqb_eq in Hlen.
+      apply Permutation_sym, NoDup_Permutation_bis.
+      - assumption.
+      - rewrite length_map. rewrite <- Hlen. apply Nat.le_refl.
+      - rewrite forallb_forall in Hin. intros a Ha.
+        apply Hin in Ha. rewrite inb_true_iff in Ha. assumption.
+    Qed.
+
     Lemma key_ty_wf : forall rt,
         type_wf (TRecord rt) ->
         is_tbl_ty (TList (TRecord rt)) = true ->
@@ -434,19 +517,26 @@ Section WithHole.
          conjunction's right-hand sides. *)
       Lemma composite_key_expr_ty : forall (Gstore Genv : tenv) rt kvs,
           is_tbl_ty (TList (TRecord rt)) = true ->
-          List.map fst kvs = attrs ->
+          Permutation (List.map fst kvs) attrs ->
           Forall2 (type_of Gstore Genv) (List.map snd kvs)
-            (List.map (get_attr_type rt) attrs) ->
+            (List.map (get_attr_type rt) (List.map fst kvs)) ->
           type_of Gstore Genv (ERecord kvs) (key_ty rt).
       Proof.
-        intros Gstore Genv rt kvs Htbl Hfst Hty.
+        intros Gstore Genv rt kvs Htbl Hperm Hty.
         pose proof (is_tbl_ty_attrs _ Htbl) as [ _ Hnd ].
+        assert (Hnd' : NoDup (List.map fst kvs))
+          by (eapply Permutation_NoDup;
+              [ apply Permutation_sym; eassumption | assumption ]).
         unfold key_ty.
+        (* the literal is typed at ITS OWN field order and the key type is the
+           sorted permutation of it, which is what makes the declared order of
+           the index's attributes inert on the typing side *)
         eapply TyERecord with
-          (tl := List.map (fun a => (a, get_attr_type rt a)) attrs).
-        - rewrite map_fst_pairs; assumption.
+          (tl := List.map (fun a => (a, get_attr_type rt a)) (List.map fst kvs)).
+        - rewrite map_fst_pairs; reflexivity.
         - rewrite map_snd_pairs; assumption.
-        - apply Permuted_record_sort.
+        - eapply perm_trans; [ | apply Permuted_record_sort ].
+          apply Permutation_map; assumption.
         - rewrite map_fst_pairs; assumption.
         - apply StronglySorted_record_sort.
       Qed.
@@ -488,8 +578,11 @@ Section WithHole.
         intros Gstore Genv rt r Htbl Hr.
         pose proof (is_tbl_ty_attrs _ Htbl) as [ Hin _ ].
         unfold composite_key.
-        apply composite_key_expr_ty; auto using map_fst_pairs.
-        rewrite map_snd_pairs. apply Forall2_access_ty; assumption.
+        apply composite_key_expr_ty.
+        - assumption.
+        - rewrite map_fst_pairs; apply Permutation_refl.
+        - rewrite map_fst_pairs, map_snd_pairs.
+          apply Forall2_access_ty; assumption.
       Qed.
 
       (* The key of a row, on the value side. *)
@@ -795,21 +888,34 @@ Section WithHole.
          the Forall. *)
       Lemma ckey_eq_iff : forall rc kvs,
           NoDup attrs ->
-          List.map fst kvs = attrs ->
+          Permutation (List.map fst kvs) attrs ->
           ckey rc = VRecord (record_sort kvs)
           <-> Forall (fun p => record_proj (fst p) rc = snd p) kvs.
       Proof.
-        intros rc kvs Hnd Hfst. unfold ckey. split.
+        intros rc kvs Hnd Hperm. unfold ckey.
+        assert (Hnd' : NoDup (List.map fst kvs))
+          by (eapply Permutation_NoDup;
+              [ apply Permutation_sym; eassumption | assumption ]).
+        split.
         - intros H. injection H as H.
           rewrite Forall_forall; intros [ s v ] Hp. cbn [fst snd].
-          assert (Hin : In s attrs).
-          { apply (in_map fst) in Hp. cbn in Hp. rewrite Hfst in Hp. assumption. }
+          assert (Hinkvs : In s (List.map fst kvs))
+            by (apply (in_map fst) in Hp; cbn in Hp; assumption).
+          assert (Hin : In s attrs) by (eapply Permutation_in; eassumption).
           rewrite <- (record_proj_ckey rc s Hnd Hin), H.
-          rewrite record_proj_record_sort by (rewrite Hfst; assumption).
-          apply record_proj_pairs; [ rewrite Hfst; assumption | assumption ].
+          rewrite record_proj_record_sort by assumption.
+          apply record_proj_pairs; assumption.
         - intros HF.
-          rewrite (pairs_eq_of_Forall (fun a => record_proj a rc) kvs attrs Hfst HF).
-          reflexivity.
+          pose proof (pairs_eq_of_Forall (fun a => record_proj a rc) kvs
+                        (List.map fst kvs) eq_refl HF) as Heq.
+          f_equal.
+          transitivity (record_sort
+                          (List.map (fun a => (a, record_proj a rc))
+                             (List.map fst kvs))).
+          + apply record_sort_Permutation_eq.
+            * rewrite map_fst_pairs; assumption.
+            * apply Permutation_map, Permutation_sym; assumption.
+          + f_equal. symmetry. exact Heq.
       Qed.
 
       Lemma idx_wf__idx_chara : forall (t : type) (tbl_v idx_v : value),
@@ -888,13 +994,13 @@ Section WithHole.
          per-conjunct freshness condition buys. *)
       Lemma conj_sat_eq_ckey : forall (store env : locals) rc prs,
           NoDup attrs ->
-          List.map fst prs = attrs ->
+          Permutation (List.map fst prs) attrs ->
           conj_sat store env rc prs
           = value_eqb (ckey rc)
               (VRecord (record_sort
                  (List.map (fun '(s, e) => (s, interp_expr store env e)) prs))).
       Proof.
-        intros store env rc prs Hnd Hfst.
+        intros store env rc prs Hnd Hperm.
         apply Bool.eq_iff_eq_true.
         rewrite DictIndexImpl.value_eqb_iff_eq.
         rewrite ckey_eq_iff;
@@ -913,7 +1019,7 @@ Section WithHole.
         forall (store env : locals) x0 pr prs (l : list value),
           NoDup attrs ->
           conj_eq_pairs x0 pr = Some prs ->
-          List.map fst prs = attrs ->
+          Permutation (List.map fst prs) attrs ->
           Forall (fun v => exists rc, v = VRecord rc) l ->
           filter (fun v => match interp_expr store (map.put env x0 v) pr with
                            | VBool bb => bb
@@ -929,7 +1035,7 @@ Section WithHole.
                              | _ => false
                              end) l.
       Proof.
-        intros store env x0 pr prs l Hnd Hm Hfst Hrec.
+        intros store env x0 pr prs l Hnd Hm Hperm Hrec.
         apply In_filter_ext; intros v Hin.
         rewrite Forall_forall in Hrec. apply Hrec in Hin as [ rc -> ].
         pose proof (interp_conj_eq_pairs store env x0 pr rc) as Hi.
@@ -952,20 +1058,21 @@ Section WithHole.
              --> match lookup idx {a1 = e1; ...; an = en} with
                  | none => emptybag | some b => b
 
-             The pattern is the CONJUNCTION, unsplit, of ANY length and ANY
-             association -- conj_eq_pairs collects the conjuncts and the guard
-             checks the names it collected against the index's attribute list.
+             The pattern is the CONJUNCTION, unsplit, of ANY length, ANY
+             association and ANY ORDER -- conj_eq_pairs collects the conjuncts
+             and the guard checks that the names it collected are a
+             PERMUTATION of the index's attribute list (guard_Permutation).
+             Nothing about how the programmer wrote the conjunction has to
+             match how the index was declared, and that is not a convenience:
+             the stored key record is record_sort'ed, so an index on (a, b) is
+             the same index as one on (b, a), and a rule that insisted on one
+             order would be insisting on a distinction its own index does not
+             make.  record_sort_Permutation_eq is what pays for it.
 
-             TWO THINGS THE GUARD DOES NOT DO, both deliberate.  It does not
-             accept the conjuncts in a different ORDER from the declaration:
-             the key record would then be a permutation of the index's, and
-             while record_sort makes the two VALUES equal, proving that needs
-             uniqueness of the sort on a multiset of names, which nothing here
-             has.  Normalising the collected pairs into declared order is the
-             way to lift it, and it is a change to the rule only.  And it does
+             WHAT THE GUARD STILL DOES NOT DO, and it is deliberate: it does
              not match a conjunction with an EXTRA conjunct beside the key's
-             n: that read is a probe followed by a residual filter, which is a
-             different rule.
+             n.  That read is a probe followed by a residual filter, which is
+             a different rule.
 
              Rule ORDER is an obligation and not an accident: SplitIf peels a
              conjunct off and hands it to an index on its own, after which this
@@ -981,7 +1088,9 @@ Section WithHole.
                 match conj_eq_pairs x0 pr with
                 | Some prs =>
                     if (all_eqb [(tbl, [tbl0]); (x0, [x3]); (id_tag, [id_tag0])]
-                        && attr_list_eqb (List.map fst prs) attrs)%bool
+                        && forallb (fun a => inb String.eqb a (List.map fst prs))
+                             attrs
+                        && Nat.eqb (List.length attrs) (List.length prs))%bool
                     then EOptMatch (EBinop OLookup
                                       (EAccess (EAccess (ELoc tbl) aux_tag) idx_tag)
                                       (ERecord prs))
@@ -1054,8 +1163,10 @@ Section WithHole.
             cbn [all_eqb all_eqb' andb] in *.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
             repeat (rewrite eqb_eq in *; subst).
+            pose proof (is_tbl_ty_attrs _ Htbl') as [ _ Hndattrs ].
             lazymatch goal with
-              H : attr_list_eqb _ _ = true |- _ => apply attr_list_eqb_eq in H
+              H1 : forallb _ _ = true, H2 : Nat.eqb _ _ = true |- _ =>
+                pose proof (guard_Permutation _ Hndattrs H1 H2) as Hperm
             end.
             repeat invert_type_of_clear. repeat invert_type_of_op_clear.
             repeat rewrite_map_get_put_hyp.
@@ -1088,11 +1199,8 @@ Section WithHole.
               H : conj_eq_pairs _ _ = Some _ |- _ =>
                 rewrite H in Hprs; cbv beta iota in Hprs
             end.
-            apply composite_key_expr_ty; [ assumption | assumption | ].
-            lazymatch goal with
-              H : List.map fst ?prs = attrs |- _ => rewrite <- H
-            end.
-            apply Forall2_of_pairs_ty; assumption.
+            apply composite_key_expr_ty;
+              [ assumption | exact Hperm | apply Forall2_of_pairs_ty; assumption ].
           Qed.
 
           Lemma composite_eq_filter_to_lookup_head_preserve_sem :
@@ -1151,7 +1259,8 @@ Section WithHole.
             repeat rewrite Bool.andb_true_iff in *; intuition idtac.
             repeat (rewrite eqb_eq in *; subst).
             lazymatch goal with
-              H : attr_list_eqb _ _ = true |- _ => apply attr_list_eqb_eq in H
+              H1 : forallb _ _ = true, H2 : Nat.eqb _ _ = true |- _ =>
+                pose proof (guard_Permutation _ Hnd H1 H2) as Hperm
             end.
             (* the SOURCE side: a filter over the table's rows *)
             rewrite interp_flatmap_filter_bag.
