@@ -645,6 +645,15 @@ Definition dict_attr (c : index_choice) : option string :=
    dictionary.  A table with a keyed delete and two bucketed dictionaries
    would want two pairs sharing one key member; that is not expressible as a
    choice list today, and the second dictionary keeps rebuilding. *)
+(* The keys a delete names that are DECLARED unique -- the only ones a
+   keyed-delete pairing may be built on, because the pair's soundness rests
+   on the row it probes for being the only one leaving. *)
+Definition keyed_delete_keys (keys : list string) (ds : list demand)
+  : list string :=
+  omap (fun d => match d with
+                 | DDelKey k => if str_mem k keys then Some k else None
+                 | _ => None end) ds.
+
 Definition pair_keyed_delete (keys : list string) (ds : list demand)
   (cs : list index_choice) : list index_choice :=
   match omap (fun d => match d with
@@ -664,6 +673,26 @@ Definition pair_keyed_delete (keys : list string) (ds : list demand)
                        | _ => Some c
                        end) cs
       end
+  end.
+
+(* The same pairing, on a COMPOSITE dictionary.  A delete naming a declared
+   key cannot be served by the composite index's own delete rule -- that rule
+   requires the filter to name every key attribute -- so without the pairing
+   such a write rebuilds the member, key records and all.  The pair probes
+   the key member for the row that is leaving and takes just that row out of
+   the one bucket its composite key names.
+
+   Returns None when it does not fire, because the caller has to know: the
+   pair brings a primary-key member of its own, so the single-attribute
+   pairing must not build a second one.
+
+   The composites list is built by omap from the DComposite demands, so every
+   entry is a CompositeDictIdx and "the first composite" is its head. *)
+Definition pair_keyed_delete_composite (keys : list string) (ds : list demand)
+  (cs : list index_choice) : option (list index_choice) :=
+  match keyed_delete_keys keys ds, cs with
+  | k :: _, CompositeDictIdx attrs :: cs' => Some (KeyedCompositeIdx attrs k :: cs')
+  | _, _ => None
   end.
 
 (* A trigram index brings a key-to-row dictionary as its second member, and
@@ -809,6 +838,17 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
   let keys := unique_keys ce tbl in
   let dicts := drop_subsumed_by_trigram
                  (pair_keyed_delete keys ds (omap (dict_of_demand keys ds) ds)) in
+  (* the dictionaries WITHOUT the single-attribute pairing, and without the
+     standalone key dictionary the composite pair subsumes
+     (keyed_composite_subsumes_unique_dict).  Used only where the composite
+     pairing fired. *)
+  let dicts_unpaired :=
+    drop_subsumed_by_trigram
+      (filter (fun c => match c with
+                        | UniqueDictIdx k =>
+                            negb (str_mem k (keyed_delete_keys keys ds))
+                        | _ => true end)
+         (omap (dict_of_demand keys ds) ds)) in
   let reps :=
     omap (fun d => match d with DRep ct => Some (TableRep ct) | _ => None end) ds in
   let aggs :=
@@ -850,7 +890,24 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
            (omap (fun d => match d with
                            | DComposite attrs => Some (CompositeDictIdx attrs)
                            | _ => None end) ds) in
-  dedup_choices (reps ++ composites ++ dicts ++ aggs).
+  (* THE SECOND INTERACTION: a keyed delete and a composite read on one
+     table.  Both pairings want a primary-key member, and forming both would
+     install two copies of it -- correct, and maintained twice by every
+     write.  So at most one pairing is formed, which is the policy
+     pair_keyed_delete already follows, and it goes to the COMPOSITE: its
+     member is the more expensive one to rebuild, since rebuilding it builds
+     a key RECORD per row and sorts its fields, where the single-attribute
+     member rebuilds from one projection.
+
+     What this costs is real and is left visible rather than hidden: a
+     single-attribute dictionary beside a composite pair keeps rebuilding on
+     a keyed delete.  Allowing both pairs IS expressible -- it is two choices
+     with a duplicated key member -- and is deliberately not done here; it is
+     measurable as an alternative configuration. *)
+  match pair_keyed_delete_composite keys ds composites with
+  | Some composites' => dedup_choices (reps ++ composites' ++ dicts_unpaired ++ aggs)
+  | None => dedup_choices (reps ++ composites ++ dicts ++ aggs)
+  end.
 
 (* ---------- the selector ---------- *)
 

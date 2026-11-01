@@ -7,7 +7,7 @@ Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch
   fiat2.Ex_RangeDelete fiat2.Ex_Inventory fiat2.Ex_Sum fiat2.Ex_SumDelete
-  fiat2.Ex_CompositeKey
+  fiat2.Ex_CompositeKey fiat2.Ex_CompositeKeyedDelete
   fiat2.Ex_MinDelete fiat2.Ex_Range fiat2.Ex_FlagFilter fiat2.Ex_Orders
   fiat2.Ex_Employee.
 From Stdlib Require Import String List ZArith.
@@ -37,6 +37,7 @@ Local Open Scope string.
 Module KC := Keycloak_CachedRealm.
 Module NC := Kafka_NamedCache.
 Module AR := HA_AreaRegistry.
+Module CKD := Ex_CompositeKeyedDelete.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
 Module JID := Jenkins_ItemDeletion.
@@ -70,6 +71,20 @@ Lemma ha_area_registry :
   select_anno (("areas", (AR.row_ty, AR.decls)) :: cenv_rm "areas" []) "areas" O
     (AR.elaborated AR.decls)
   = AR.anno.
+Proof. vm_compute; reflexivity. Qed.
+
+(* The COMPOSITE keyed pair, and the pin that decides what a declaration is
+   allowed to cost.  The program deletes in both shapes a composite index
+   can be asked for -- at the whole key, and at the declared key -- and the
+   selector reaches the pair for the second without giving up the first:
+   pair_keyed_delete_composite replaces the standalone composite choice, and
+   keyed_composite_subsumes_composite says that replacement loses no rule.
+   The standalone UniqueDictIdx "id" the guard and the delete both demand is
+   dropped, because the pair's second member already carries its rules. *)
+Lemma ex_composite_keyed_delete :
+  select_anno (("items", (CKD.row_ty, CKD.decls)) :: cenv_rm "items" []) "items" O
+    (CKD.elaborated CKD.decls)
+  = CKD.anno.
 Proof. vm_compute; reflexivity. Qed.
 
 (* One choice, two members.  UniqueDictIdx "id" is demanded by both the

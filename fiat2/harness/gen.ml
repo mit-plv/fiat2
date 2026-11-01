@@ -553,6 +553,70 @@ let composite_key =
            let p = victim rows j in q rows 4 (k1 p) (k2 p) p 0) ];
     mutating = [ "insert"; "deleteAtKey" ] }
 
+(* ---------- composite_keyed_delete: two deletes on one table ----------
+
+   The table is declared with a unique key and carries a composite index on
+   (k1, k2), and the program deletes in both shapes: at the whole composite
+   key, which the index's own rule serves with no declaration, and at the
+   declared key, which only the pair's gated rule can serve.
+
+   The composite key is UNIQUE PER ROW -- k1 cycles through 16 values and k2
+   counts the cycles -- so a bucket holds one row and the read is a probe
+   that returns one row however large the table is.  That keeps the read's
+   number about the probe rather than about the bucket.
+
+   The table starts empty, as every SLetConstrained table does, so the rows
+   arrive through the build phase as inserts.  The build is therefore not
+   free on either side: the source's uniqueness guard is a scan and the
+   optimized one is a probe, which is its own measured difference. *)
+
+let composite_keyed_delete =
+  let k1 j = Printf.sprintf "a%d" (j mod 16) in
+  let k2 j = Printf.sprintf "b%d" (j / 16) in
+  let row j =
+    rcd [ ("id", s (Printf.sprintf "i%d" j)); ("k1", s (k1 j)); ("k2", s (k2 j));
+          ("v", s "v") ] in
+  let q kind a b k fresh =
+    rcd [ ("kind", i kind); ("a", s a); ("b", s b); ("k", s k);
+          ("new_item", row fresh) ] in
+  { queries_var = "queries"; store = outputs_only; table = no_table;
+    build = (fun rows -> List.init rows (fun j -> q 1 "" "" "" j));
+    kinds =
+      [ ("readAtKey", fun rows j ->
+           let p = spread rows j in q 0 (k1 p) (k2 p) "" 0);
+        ("insert", fun rows j -> q 1 "" "" "" (rows + j));
+        (* at the declared key: the pair's gated rule.  Kind 3 names the
+           keyed delete in BOTH programs, so the two specs below differ only
+           in the kind the first does not have. *)
+        ("deleteById", fun rows j ->
+           let p = victim rows j in q 3 "" "" (Printf.sprintf "i%d" p) 0) ];
+    mutating = [ "insert"; "deleteById" ] }
+
+(* and the same table WITH the composite-key delete as well, which is where
+   the two deletes are seen to coexist -- and where the one that cannot
+   maintain the primary-key member keeps the row list installed, so every
+   write pays a linear pass over it *)
+let composite_two_deletes =
+  let k1 j = Printf.sprintf "a%d" (j mod 16) in
+  let k2 j = Printf.sprintf "b%d" (j / 16) in
+  let row j =
+    rcd [ ("id", s (Printf.sprintf "i%d" j)); ("k1", s (k1 j)); ("k2", s (k2 j));
+          ("v", s "v") ] in
+  let q kind a b k fresh =
+    rcd [ ("kind", i kind); ("a", s a); ("b", s b); ("k", s k);
+          ("new_item", row fresh) ] in
+  { queries_var = "queries"; store = outputs_only; table = no_table;
+    build = (fun rows -> List.init rows (fun j -> q 1 "" "" "" j));
+    kinds =
+      [ ("readAtKey", fun rows j ->
+           let p = spread rows j in q 0 (k1 p) (k2 p) "" 0);
+        ("insert", fun rows j -> q 1 "" "" "" (rows + j));
+        ("deleteAtKey", fun rows j ->
+           let p = victim rows j in q 2 (k1 p) (k2 p) "" 0);
+        ("deleteById", fun rows j ->
+           let p = victim rows j in q 3 "" "" (Printf.sprintf "i%d" p) 0) ];
+    mutating = [ "insert"; "deleteAtKey"; "deleteById" ] }
+
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
@@ -560,6 +624,8 @@ let specs =
     ("entity_registry", entity_registry);
     ("window_store", window_store); ("range_delete", range_delete);
     ("min_delete", min_delete); ("composite_key", composite_key);
+    ("composite_keyed_delete", composite_keyed_delete);
+    ("composite_two_deletes", composite_two_deletes);
     ("item_deletion", item_deletion); ("sat4j", sat4j);
     ("dependent_plugins", dependent_plugins) ]
 

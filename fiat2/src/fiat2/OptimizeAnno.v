@@ -9,6 +9,11 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
    DictIndexImpl's. *)
 Require fiat2.CompositeDictIndexImpl.
 Module CDI := fiat2.CompositeDictIndexImpl.
+(* and the composite index's keyed delete, for the same reason: it imports
+   CompositeDictIndexImpl itself, so importing it here would shadow
+   DictIndexImpl's names just as importing that one would. *)
+Require fiat2.CompositeDictKeyedDelete.
+Module CKD := fiat2.CompositeDictKeyedDelete.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -115,7 +120,24 @@ Variant index_choice :=
      is for point lookups: record_compare would order it by sorted field NAME,
      not by the order the key was declared in.  Listed last so that no
      existing choice's position moves. *)
-  | CompositeDictIdx (attrs : list string).
+  | CompositeDictIdx (attrs : list string)
+  (* The composite dictionary, paired with the primary-key dictionary on key
+     -- the composite counterpart of KeyedDictIdx, and for the same reason.
+     A delete that names a declared key cannot be served by the composite
+     index's own delete rule, which requires the filter to name EVERY key
+     attribute; without the pairing such a write rebuilds the member.  This
+     choice probes the primary-key member for the row that is leaving and
+     takes just that row out of the one bucket its COMPOSITE key names.
+
+     Only that delete and the primary-key lookup are gated on the
+     declaration.  Everything the standalone CompositeDictIdx hands out is
+     handed out here ungated, so a declaration ADDS a rule rather than
+     trading one: the unconstrained delete still fires on a filter that
+     names the whole key.  That makes this choice subsume both standalone
+     ones (keyed_composite_subsumes_composite,
+     keyed_composite_subsumes_unique_dict).  Listed last so that no existing
+     choice's position moves. *)
+  | KeyedCompositeIdx (attrs : list string) (key : string).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -294,6 +316,15 @@ Section WithConcreteMaps.
       fun tbl => fold_command_with_globals [tbl]
                    (CDI.filter_neq_to_composite_delete_head
                       cdi_attrs "tup" "acc" "x").
+
+    (* A filter-shaped delete naming a key this dictionary is NOT keyed on.
+       The composite counterpart of dict_keyed_delete_gated_transf, gated the
+       same way and for the same reason; the key and the primary-key member's
+       tag are explicit arguments so that adding them renumbers nothing. *)
+    Definition composite_keyed_delete_gated_transf (key pk_tag : string)
+      (ds : list decl) :=
+      CKD.composite_keyed_delete_gated cdi_attrs "tup" "acc" "x" key
+        "id_tag" "aux_tag" pk_tag "bkt" "rvar" ds.
 
     Context (set_agg_attr : string).
 
@@ -511,6 +542,38 @@ Section WithConcreteMaps.
                            (filter_neq_to_composite_delete_transf attrs tbl)
                            (cons_to_composite_insert_transf attrs tbl)) reps],
           S cur_tag)
+    | KeyedCompositeIdx attrs key =>
+        (* two members from one choice: the composite dictionary, and the
+           primary-key dictionary the keyed delete probes.  Only the
+           primary-key lookup and the keyed delete are gated -- reading or
+           maintaining either member on its own key needs no declaration. *)
+        let d_tag := String.of_nat cur_tag in
+        let u_tag := String.of_nat (S cur_tag) in
+        ([(d_tag, ccomposite_dict_idx attrs, composite_dict_idx_wf attrs);
+          (u_tag, cunique_idx key, unique_idx_wf key)],
+          [unique_scan_gated_transf u_tag key ds;
+           composite_dict_lookup_transf d_tag attrs;
+           composite_dict_use_idx_transf d_tag attrs;
+           unique_lookup_gated_transf u_tag key ds;
+           unique_use_idx_transf' u_tag key;
+           (* last in the list is first to run: the two maintenance rules
+              leave a rebuild of the index behind, and the use rules above
+              turn those rebuilds into reads -- the keyed delete's emitted
+              form contains one too, which is why the composite use rule is
+              listed ABOVE it.  The composite index's own delete and this
+              cross-member one cannot race: that rule's matcher requires the
+              filter to name every key attribute, and a filter naming one
+              does so only at arity one, which attrs_is_key declines. *)
+           composite_keyed_delete_gated_transf attrs key u_tag ds;
+           filter_neq_to_unique_delete_transf' key;
+           (* the SAME loop the standalone composite choice builds, so that
+              keyed_composite_subsumes_composite stays literally true *)
+           fun tbl => repeat_transf
+                        (Basics.compose
+                           (filter_neq_to_composite_delete_transf attrs tbl)
+                           (cons_to_composite_insert_transf attrs tbl)) reps;
+           cons_to_unique_insert_transf' key],
+          S (S cur_tag))
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
         ([(u_tag, cunique_idx attr, unique_idx_wf attr)],
@@ -651,6 +714,31 @@ end.
       let '(kd_idxs, kd_transfs, _) := mk_idx ds cur_tag reps (KeyedDictIdx a k) in
       let '(u_idxs, u_transfs, _) := mk_idx ds (S cur_tag) reps (UniqueDictIdx k) in
       incl u_idxs kd_idxs /\ incl u_transfs kd_transfs.
+  Proof.
+    intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
+  Qed.
+
+  (* And the composite pair subsumes its two standalone choices, in exactly
+     the same sense.  The first of these is what says a declaration COSTS
+     NOTHING: every rule CompositeDictIdx hands out is handed out by the
+     pair as well, so moving a table from the standalone choice to the pair
+     can only add rules -- the unconstrained delete is not traded for the
+     keyed one. *)
+  Lemma keyed_composite_subsumes_composite : forall ds al k cur_tag reps,
+      let '(kc_idxs, kc_transfs, _) :=
+        mk_idx ds cur_tag reps (KeyedCompositeIdx al k) in
+      let '(c_idxs, c_transfs, _) :=
+        mk_idx ds cur_tag reps (CompositeDictIdx al) in
+      incl c_idxs kc_idxs /\ incl c_transfs kc_transfs.
+  Proof.
+    intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
+  Qed.
+
+  Lemma keyed_composite_subsumes_unique_dict : forall ds al k cur_tag reps,
+      let '(kc_idxs, kc_transfs, _) :=
+        mk_idx ds cur_tag reps (KeyedCompositeIdx al k) in
+      let '(u_idxs, u_transfs, _) := mk_idx ds (S cur_tag) reps (UniqueDictIdx k) in
+      incl u_idxs kc_idxs /\ incl u_transfs kc_transfs.
   Proof.
     intros; cbn; split; intros x H; cbn in H |- *; intuition idtac.
   Qed.
@@ -1156,7 +1244,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | | a1 a2 ];
+    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | | al | al ak ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -1620,6 +1708,144 @@ end.
             rewrite is_NoDup_to_transparent. cbn; intuition discriminate. }
         1: eapply CDI.cons_to_composite_insert_head_sound;
           auto using ctenv_ok, clocals_ok. }
+    (* the composite pair: two members.  The keyed delete reads BOTH of them
+       and is owed two layouts, two is_tbl_ty implications and both members'
+       relations; the primary-key lookup and scan are owed one layout and the
+       declaration; everything else is owed its own member's weak relation or
+       nothing at all. *)
+    1:{ repeat destruct_In; try apply_in_nil.
+        (* the primary-key member's scan, at the second tag *)
+        1:{ unfold unique_scan_gated_transf.
+            eapply (unique_scan_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag))
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        (* the composite member's read rule and the rule that uses the
+           member already stored: exactly what CompositeDictIdx hands out *)
+        1:{ repeat apply_transf_sound_lemmas.
+            eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ].
+            eapply CDI.composite_eq_filter_to_lookup_head_sound;
+              auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                instantiate(3:="tup"). instantiate (2:="acc"). instantiate (1:="x").
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        1:{ repeat apply_transf_sound_lemmas.
+            eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ].
+            eapply CDI.composite_use_idx_head_sound;
+              auto using ctenv_ok, clocals_ok.
+            1:{ rewrite is_NoDup_to_transparent.
+                cbn; intuition discriminate. }
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf. }
+        (* the primary-key member's lookup and use rules *)
+        1:{ unfold unique_lookup_gated_transf.
+            eapply (unique_lookup_gated_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag)) "y"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold unique_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        1:{ unfold unique_use_idx_transf'.
+            eapply (unique_use_idx_transf_sound "hole" ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat (S init_tag))
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            unfold unique_idx_bridges; split; [ | split ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. } }
+        (* the keyed delete: both members, and the declaration *)
+        1:{ unfold composite_keyed_delete_gated_transf.
+            eapply (CKD.composite_keyed_delete_gated_sound "hole" al "tup" "acc" "x"
+                      ltac:(auto with transf_hints)
+                      ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (String.of_nat (S init_tag)) "bkt" "rvar"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold CKD.composite_keyed_delete_bridges.
+            split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
+            (* the two members' places in the record *)
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            (* and both members installable on the table *)
+            1: prove_is_tbl_ty.
+            1: prove_is_tbl_ty.
+            (* the composite member's own relation, from typing *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
+            (* and the primary-key member's strong one, which the
+               declaration pays for *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        (* the primary-key member's own delete, which needs nothing *)
+        1:{ unfold filter_neq_to_unique_delete_transf'.
+            eapply (filter_neq_to_unique_delete_transf_sound ak "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)). }
+        (* the composite member's insert-and-delete loop *)
+        1:{ repeat apply_transf_sound_lemmas.
+            all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+            all: apply expr_transf_sound__expr_aug_transf_sound.
+            1:{ eapply CDI.filter_neq_to_composite_delete_head_sound;
+                  auto using ctenv_ok, clocals_ok.
+                rewrite is_NoDup_to_transparent. cbn; intuition discriminate. }
+            1: eapply CDI.cons_to_composite_insert_head_sound;
+              auto using ctenv_ok, clocals_ok. }
+        (* and the primary-key member's insert *)
+        1:{ unfold cons_to_unique_insert_transf'.
+            eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)). } }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)
