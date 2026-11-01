@@ -198,10 +198,10 @@ Section WithConcreteMaps.
        conjunction whole, so it must be given its chance before anything
        takes the conjunction apart *)
     ; AC [PushdownCollection; AnnotateCollection]
-        [[CompositeDictIdx "topic" "partition"; DictIdx "topic"; DictIdx "leader"]]
+        [[CompositeDictIdx ["topic"; "partition"]; DictIdx "topic"; DictIdx "leader"]]
     (* the same choices WITH SplitIf, which is the hazard *)
     ; AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SplitIf]
-        [[CompositeDictIdx "topic" "partition"; DictIdx "topic"; DictIdx "leader"]]
+        [[CompositeDictIdx ["topic"; "partition"]; DictIdx "topic"; DictIdx "leader"]]
     ].
 
   Definition prog_transformed :=

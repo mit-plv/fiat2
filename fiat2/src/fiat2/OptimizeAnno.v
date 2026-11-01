@@ -106,12 +106,16 @@ Variant index_choice :=
      order, so a choice added in the middle would misalign every block after
      it. *)
   | CountAgg
-  (* A dictionary keyed on TWO attributes at once, so that a conjunctive
-     equality on both is one probe rather than a probe and a residual filter.
-     Unranged, because a composite key is for point lookups: record_compare
-     would order it by sorted field NAME, not by the order the key was
-     declared in.  Listed last so that no existing choice's position moves. *)
-  | CompositeDictIdx (attr1 attr2 : string).
+  (* A dictionary keyed on a SEQUENCE of attributes at once, so that a
+     conjunctive equality on all of them is one probe rather than a probe and
+     a residual filter.  Any arity: the key is a record of the listed
+     attributes.  The list is the order the read rule expects the conjuncts
+     in, and its entries must be distinct and present in the row type -- both
+     checked by the index's own is_tbl_ty.  Unranged, because a composite key
+     is for point lookups: record_compare would order it by sorted field NAME,
+     not by the order the key was declared in.  Listed last so that no
+     existing choice's position moves. *)
+  | CompositeDictIdx (attrs : list string).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -256,12 +260,12 @@ Section WithConcreteMaps.
       keyed_delete_gated dict_idx_attr dict_idx_dk "tup" "acc" "x" key
         "id_tag" "aux_tag" pk_tag "bkt" "rvar" ds.
 
-    Context (cdi_attr1 cdi_attr2 : string).
+    Context (cdi_attrs : list string).
 
     Definition composite_dict_idx_wf :=
-      (CDI.idx_wf "hole" cdi_attr1 cdi_attr2 "tup" "acc" "x").
+      (CDI.idx_wf "hole" cdi_attrs "tup" "acc" "x").
     Instance ccomposite_dict_idx : IndexInterface.index :=
-      (CDI.composite_dict_idx "hole" cdi_attr1 cdi_attr2 "tup" "acc" "x").
+      (CDI.composite_dict_idx "hole" cdi_attrs "tup" "acc" "x").
     Instance ccomposite_dict_idx_ok :
       IndexInterface.ok ccomposite_dict_idx composite_dict_idx_wf.
     apply CDI.composite_dict_idx_ok. auto with transf_hints.
@@ -270,7 +274,7 @@ Section WithConcreteMaps.
     Definition composite_dict_lookup_transf :=
       fun tbl => fold_command_with_globals [tbl]
                    (CDI.composite_eq_filter_to_lookup_head
-                      cdi_attr1 cdi_attr2 "id_tag" "aux_tag" tag "b" tbl).
+                      cdi_attrs "id_tag" "aux_tag" tag "b" tbl).
 
     Context (set_agg_attr : string).
 
@@ -477,11 +481,11 @@ Section WithConcreteMaps.
        rule the write keeps its list form and the index is simply not used
        there.  The subject that wants this choice (eval/Kafka_Cluster) only
        reads.  Said plainly rather than left to be discovered. *)
-    | CompositeDictIdx attr1 attr2 =>
+    | CompositeDictIdx attrs =>
         ([(String.of_nat cur_tag,
-            ccomposite_dict_idx attr1 attr2,
-            composite_dict_idx_wf attr1 attr2)],
-          [composite_dict_lookup_transf (String.of_nat cur_tag) attr1 attr2],
+            ccomposite_dict_idx attrs,
+            composite_dict_idx_wf attrs)],
+          [composite_dict_lookup_transf (String.of_nat cur_tag) attrs],
           S cur_tag)
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
