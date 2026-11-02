@@ -25,7 +25,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem
   fiat2.TypeSound fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf
   fiat2.DictIndexImpl fiat2.SumAgg fiat2.MinAgg fiat2.TransfUtils
   fiat2.FlatmapTransf fiat2.IndexTransf fiat2.Utils fiat2.Substitute
-  fiat2.OptimizeAnno.
+  fiat2.OptimizeAnno fiat2.Surface fiat2.PrimaryKeyCheck.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString
   coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith.
@@ -195,6 +195,36 @@ Section WithConcreteMaps.
                         (ELet (EAccess (EVar "q") "new_order") "x"
                            (EAccess (EVar "x") "value"))
                         (EAccess (EAccess (ELoc "orders") "aux_tag") "0"))])]).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
+     AND THE GUARD SIDE.  Maintenance being incremental is only half of
+     affordable: under a DECLARED key the write also has to be CHECKED, and
+     until classify_write recognised an append that check read the whole
+     table once per row.  These three pins say it now takes the same cheap
+     path a cons takes, and that the recogniser is not vacuous.
+     ------------------------------------------------------------------ *)
+  Definition the_append : expr :=
+    EBinop OConcat (ELoc "orders")
+      (EBinop OCons (EAccess (EVar "q") "new_order") (EAtom (ANil None))).
+
+  Lemma append_is_recognised :
+    classify_write "orders" the_append
+    = WSnoc (EAccess (EVar "q") "new_order").
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* the cheap guard, which probes the key, rather than constr_guard, which
+     quantifies over the rows *)
+  Lemma append_gets_the_cheap_key_guard :
+    decl_guard row_ty_orders "orders" [] (DUnique "id") the_append
+    = unique_guard_let "orders" "id" (EAccess (EVar "q") "new_order").
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* NEGATIVE CONTROL: an append of the table to ITSELF adds more than one
+     row, so it is not recognised and still falls back on the general guard *)
+  Lemma self_append_is_not_recognised :
+    classify_write "orders" (EBinop OConcat (ELoc "orders") (ELoc "orders"))
+    = WOther.
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------

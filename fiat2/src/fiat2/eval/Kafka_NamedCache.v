@@ -466,7 +466,7 @@ Section WithConcreteMaps.
      here for the same reason: each is a shape the guard elaboration
      recognises -- a filter, then a cons -- so the declared key costs one
      probe per write.  Written as a single expression instead (`the hit ++
-     the rest`) the write would be WOther (Surface.v:109) and the
+     the rest`) the write would be WOther (Surface.v:125) and the
      declaration would re-check uniqueness over the whole table on every
      touch.  That is a fact about the guard elaboration, not about LRU, and
      it is why the shape below is the shape the source already has.
@@ -594,7 +594,7 @@ Section WithConcreteMaps.
 
      WHY NOT MATCH ON THE OPTION IN THE ASSIGNMENT.  Writing the eviction as
      `cache := match eldest with none => cache | some ek => without ek` makes
-     the write WOther (Surface.v:109) and, worse, buries the filter inside an
+     the write WOther (Surface.v:125) and, worse, buries the filter inside an
      EOptMatch where filter_of cannot see it -- so the dictionary member is
      REBUILT on every eviction.  Measured, that cost 2.0x against the
      source's own filter.  Stepping over the at-most-one eldest key instead
