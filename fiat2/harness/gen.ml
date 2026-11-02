@@ -739,6 +739,7 @@ let specs =
     (* the same workload: the two programs differ only in whether one
        subterm's order is demanded *)
     ("named_cache_lru_ordered", named_cache_lru);
+    ("named_cache_lru_noevict", named_cache_lru);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("entity_registry", entity_registry);

@@ -450,6 +450,27 @@ one read that asks for a key gets an exponent (379x, `a` 0.99 to 0.01) and every
 that must rewrite the list gets a constant and keeps `a` at 1. Order as semantics costs
 the erasure, and the erasure is where the exponents came from.
 
+That is an isolation and not a comparison between two programs. The same program with
+the eviction replaced by one more report does every write the LRU does -- the
+move-to-front included -- and never asks what the order is; the list is then erased, and
+the same operations go `getTouch` 3.39x to **635.55x**, `put` 1.66x to **609.93x** and
+`delete` 1.00x to **966.26x**, every exponent from `a` 1 to `a` 0.01. `contains` is
+identical in both columns, because it never needed the list. **Reading the order once
+costs every write its exponent**, and the difference between the two programs is one read.
+
+What would close that gap is worth stating precisely, because it is not an
+insert-by-position operator. Every write there is linear because every write REBUILDS THE
+WHOLE LIST. `NamedCache` does each of them in O(1) by splicing a node whose address it
+already holds (`node.previous.next = node.next`, `:219`) -- a handle, not an index -- so
+operators for indexing and inserting at a position would still have to scan to find the
+position and none of those writes would get faster. Serving them needs a sequence with
+O(1) removal and insertion at a handle, and an index kind that hands handles out. Until
+then this is a LIMIT rather than a missing rewrite, and its honest form is: the only way
+to make those writes sublinear in the language as it stands is to hand-build the chain as
+`prev`/`next` attributes with a dictionary on the key -- exactly the derived structure
+this work exists to stop people writing by hand. The row list is where order lives, and a
+list has no cheap middle.
+
 That program also prices an order demand that is not needed. Written with the
 moved-to-front sublist as a plain filter rather than a sorted one, the keyed read inside
 the touch cannot use the index at all -- `unique_lookup_head` matches a bag-level filter,

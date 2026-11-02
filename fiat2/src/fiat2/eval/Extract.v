@@ -133,6 +133,10 @@ Definition named_cache_lru_src : command :=
   Eval vm_compute in NC.elaborated_lru NC.decls.
 Definition named_cache_lru_ordered_src : command :=
   Eval vm_compute in NC.elaborated_lru_ordered NC.decls.
+(* and the control: the same writes with the order never read, so the list
+   is erased and the same delete goes from a constant to an exponent *)
+Definition named_cache_lru_noevict_src : command :=
+  Eval vm_compute in NC.elaborated_lru_noevict NC.decls.
 Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
 (* the nested-loop join: the one subject whose SOURCE is quadratic *)
 Definition dependent_plugins_src : command := Eval vm_compute in JDP.elaborated.
@@ -186,6 +190,8 @@ Definition keyed_dict_delete_opt : command :=
 Definition named_cache_lru_opt : command := Eval vm_compute in NC.optimized_lru.
 Definition named_cache_lru_ordered_opt : command :=
   Eval vm_compute in NC.optimized_lru_ordered.
+Definition named_cache_lru_noevict_opt : command :=
+  Eval vm_compute in NC.optimized_lru_noevict.
 Definition min_delete_opt_noset : command :=
   Eval vm_compute in nth 1 EMD.prog_transformed CSkip.
 
@@ -309,6 +315,8 @@ Definition subjects : list (string * command * command) :=
   ; ("named_cache_lru", named_cache_lru_src, named_cache_lru_opt)
   ; ("named_cache_lru_ordered", named_cache_lru_ordered_src,
       named_cache_lru_ordered_opt)
+  ; ("named_cache_lru_noevict", named_cache_lru_noevict_src,
+      named_cache_lru_noevict_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
   ; ("sat4j", sat4j_src, sat4j_opt)
   ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].

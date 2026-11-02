@@ -512,6 +512,41 @@ Section WithConcreteMaps.
      most one row.  Nothing else in the development exercises the demand
      analysis in this direction: every other subject is relaxed as far as it
      can go.
+
+     AND THE ISOLATION, which is the number to quote.  prog_lru_noevict_s is
+     this program with the eviction replaced by one more report: every write
+     is the same, the move-to-front included, and nothing asks what the
+     order is.  The list is then erased (lru_noevict_erases_the_list), and
+     the same operations measure:
+
+       kind        order read (this program)   order never read
+       contains      1628  a=0.01   379.05x      1628  a=0.01   379.05x
+       getTouch    812572  a=0.98     3.39x      4332  a=0.01   635.55x
+       put         951424  a=0.98     1.66x      2584  a=0.01   609.93x
+       delete      812280  a=1.01     1.00x       840  a=0.02   966.26x
+
+     READING THE ORDER ONCE COSTS EVERY WRITE ITS EXPONENT.  Two to three
+     orders of magnitude, and `contains` is identical in both columns
+     because it never needed the list.  The difference between the two
+     programs is one read.
+
+     WHAT WOULD CLOSE IT, and it is not an insert-by-position operator.
+     Every write here is linear because every write REBUILDS THE WHOLE LIST:
+     the move-to-front filters it, the eviction filters it, the put filters
+     it.  Kafka does each of those in O(1) by splicing a node whose address
+     it already holds -- `node.previous.next = node.next` (:219) -- which is
+     a handle, not an index.  Adding ONth and OInsertAt would let a program
+     speak about positions, but it would still have to SCAN to find the
+     position, so none of the three writes above would get faster.  Serving
+     them needs a sequence whose removal and insertion are O(1) at a handle,
+     and an index kind that hands out handles.
+
+     So this is a LIMIT rather than a missing rewrite, and the honest form of
+     it is: the only way to get these writes sublinear in the language as it
+     stands is to hand-build the chain as `prev`/`next` attributes with a
+     dictionary on the key -- which is exactly the derived structure this
+     work exists to stop people writing by hand.  The row list is where
+     order lives, and a list has no cheap middle.
      ================================================================== *)
 
   (* cache.get(key) returning the node rather than counting it: the rows
@@ -604,11 +639,42 @@ Section WithConcreteMaps.
   Definition prog_lru_ordered_s (ds : list decl) : scommand :=
     prog_lru_gen ds hit_ordered.
 
+  (* THE CONTROL THAT ISOLATES THE ORDER READ.  The same five arms with the
+     eviction replaced by one more report, so the program does every write
+     the LRU does -- including the move-to-front -- and never asks what the
+     order is.  Nothing then reads the row list, the list is erased, and the
+     same `delete` goes from a constant to an exponent.  The difference
+     between this program and prog_lru_s is one read. *)
+  Definition prog_lru_noevict_s (ds : list decl) : scommand :=
+    SLetConstrained "cache" row_ty ds
+      (SForeach (EVar "ops") "q"
+         (dispatch 0
+            (SAssign "cache" (without (EAccess (EVar "q") "k")) SSkip)
+            (dispatch 1
+               (SSeq (SAssign "cache" (without node_key) SSkip)
+                  (SAssign "cache"
+                     (EBinop OCons (EAccess (EVar "q") "node") (ELoc "cache"))
+                     SSkip))
+               (dispatch 2
+                  (SSeq (report get_key)
+                     (SLet (hit_sorted (EAccess (EVar "q") "k")) "hit_rows"
+                        (SSeq
+                           (SAssign "cache"
+                              (without (EAccess (EVar "q") "k")) SSkip)
+                           (SForeach (EVar "hit_rows") "hr"
+                              (SAssign "cache"
+                                 (EBinop OCons (EVar "hr") (ELoc "cache"))
+                                 SSkip)))))
+                  (dispatch 3 (report get_key) (report get_key)))))).
+
   Definition elaborated_lru (ds : list decl) : command :=
     elab [] (get_free_vars init_Genv) (prog_lru_s ds).
 
   Definition elaborated_lru_ordered (ds : list decl) : command :=
     elab [] (get_free_vars init_Genv) (prog_lru_ordered_s ds).
+
+  Definition elaborated_lru_noevict (ds : list decl) : command :=
+    elab [] (get_free_vars init_Genv) (prog_lru_noevict_s ds).
 
   (* no aggregate: this program asks for no total.  One index, and the row
      list beside it. *)
@@ -625,6 +691,13 @@ Section WithConcreteMaps.
 
   Definition optimized_lru_ordered : command :=
     apply_optimize_anno_constrained anno_lru_ordered init_Gstore init_Genv.
+
+  Definition anno_lru_noevict : canno_command :=
+    CAC (("cache", (row_ty, decls)) :: cenv_rm "cache" []) O
+      basics [UniqueDictIdx "k"] [] (elaborated_lru_noevict decls).
+
+  Definition optimized_lru_noevict : command :=
+    apply_optimize_anno_constrained anno_lru_noevict init_Gstore init_Genv.
 
   (* ---- projections for the LRU program's five arms ---- *)
 
@@ -721,6 +794,15 @@ Section WithConcreteMaps.
   Proof. vm_compute; reflexivity. Qed.
 
   (* ------------------------------------------------------------------
+     AND THE CONTROL, which is what makes the whole claim an isolation
+     rather than a comparison between two different programs.  Take the
+     eviction away and nothing asks for the order any more -- every write
+     is the same, the move-to-front included -- and the list is erased. *)
+  Lemma lru_noevict_erases_the_list :
+    installed_fields optimized_lru_noevict = ["aux_tag"].
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
      And all of it is sound: the program above computes what the fold-and-
      scan program computes, on every store and environment.  Both orderings
      are sound -- the hazard costs time, never correctness, which is exactly
@@ -798,6 +880,30 @@ Section WithConcreteMaps.
     1: apply init_Gstore_wf.
     1: apply init_Genv_wf.
     reflexivity.
+  Qed.
+
+  Lemma elaborated_lru_noevict_well_typed :
+    well_typed init_Gstore init_Genv (elaborated_lru_noevict decls).
+  Proof.
+    eapply command_typechecker_sound with (c := elaborated_lru_noevict decls).
+    1: apply init_Gstore_wf.
+    1: apply init_Genv_wf.
+    reflexivity.
+  Qed.
+
+  Theorem optimized_lru_noevict_sound :
+    well_typed init_Gstore init_Genv optimized_lru_noevict /\
+      forall (store env : clocals),
+        locals_wf init_Gstore store -> locals_wf init_Genv env ->
+        interp_command store env optimized_lru_noevict
+        = interp_command store env (elaborated_lru_noevict decls).
+  Proof.
+    unfold optimized_lru_noevict, anno_lru_noevict, elaborated_lru_noevict,
+      prog_lru_noevict_s.
+    apply elab_apply_optimize_anno_constrained_sound;
+      [ apply init_Gstore_wf | apply init_Genv_wf | apply row_ty_wf
+      | apply incl_refl | apply decls_wf
+      | apply elaborated_lru_noevict_well_typed ].
   Qed.
 
   Lemma elaborated_lru_ordered_well_typed :
