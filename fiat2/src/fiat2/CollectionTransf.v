@@ -21,6 +21,36 @@ Definition annotate_collection (e : expr) : expr :=
   | _ => e
   end.
 
+(* ------------------------------------------------------------------
+   AN INSERT AT THE END OF THE LIST, under a coercion that forgets position.
+
+   `tbl := tbl ++ [row]` is how a program appends in insertion order, and it
+   is the shape real code writes: a Java ArrayList.add, a Python
+   list.append.  Every subject in this development conses at the FRONT
+   instead, and that was a modelling bias rather than a faithful choice --
+   the cons was the only shape an index-maintenance rule recognised, so
+   writing the append the source actually performs would have cost the whole
+   index.
+
+   Under OBagOfList or OSetOfList the position is already gone, so the
+   append and the cons denote the same collection.  Normalising one into the
+   other is therefore sound outright, and it hands all four aggregate
+   indexes -- the sum, the count, the minimum and the set -- the shape their
+   existing cons-shaped maintenance rules already match.  One rule, four
+   indexes, and not one of their proofs changes.
+
+   It is deliberately NOT a case of annotate_collection: that pass only ever
+   RELAXES a collection, and this rewrites a list into a list, under a
+   coercion that was already there. *)
+Definition snoc_to_cons_under_coercion (e : expr) : expr :=
+  match e with
+  | EUnop OBagOfList (EBinop OConcat l (EBinop OCons row (EAtom (ANil _)))) =>
+      EUnop OBagOfList (EBinop OCons row l)
+  | EUnop OSetOfList (EBinop OConcat l (EBinop OCons row (EAtom (ANil _)))) =>
+      EUnop OSetOfList (EBinop OCons row l)
+  | _ => e
+  end.
+
 Fixpoint bag_of (e : expr) : expr :=
   match e with
   | EFlatmap LikeList e1 x e2 => EFlatmap LikeBag (bag_of e1) x (bag_of e2)
@@ -428,6 +458,46 @@ Section WithWord.
       unfold expr_transf_sound; intros; intuition idtac.
       1: apply annotate_collection_preserve_ty; auto.
       1: eapply annotate_collection_preserve_sem; eauto.
+    Qed.
+
+    Lemma snoc_to_cons_under_coercion_preserve_ty : forall (Gstore : tenv),
+        preserve_ty Gstore snoc_to_cons_under_coercion.
+    Proof.
+      unfold preserve_ty; intros. repeat destruct_subexpr.
+      cbn. repeat (case_match; auto).
+      all: repeat invert_type_of_clear.
+      all: repeat invert_type_of_op_clear.
+      all: repeat (econstructor; eauto).
+    Qed.
+
+    Lemma snoc_to_cons_under_coercion_preserve_sem :
+      forall (Gstore : tenv) (store : locals),
+        preserve_sem Gstore store snoc_to_cons_under_coercion.
+    Proof.
+      unfold preserve_sem; intros. repeat destruct_subexpr.
+      (* the unop is destructed by hand: two of its cases match, and
+         destruct_subexpr insists on leaving exactly one goal *)
+      destruct o; cbn [snoc_to_cons_under_coercion]; try reflexivity.
+      all: repeat destruct_subexpr.
+      all: cbn [snoc_to_cons_under_coercion].
+      all: repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+      all: apply_type_sound e1; invert_type_of_value_clear.
+      all: cbn [interp_expr interp_unop interp_binop interp_atom];
+        rewrite <- H1.
+      (* the append and the cons are a permutation of each other, and both
+         coercions are invariant under one *)
+      1: f_equal; apply Permutation_list_to_bag_eq, Permutation_cons_append.
+      1: f_equal; apply Permutation_list_to_set_eq, Permutation_cons_append.
+    Qed.
+
+    Theorem snoc_to_cons_under_coercion_sound :
+      expr_transf_sound (locals:=locals) snoc_to_cons_under_coercion.
+    Proof.
+      unfold expr_transf_sound; intros; intuition idtac.
+      1: apply snoc_to_cons_under_coercion_preserve_ty; auto.
+      (* Gstore is pinned: left to eauto it unifies with Genv *)
+      1: eapply snoc_to_cons_under_coercion_preserve_sem
+           with (Gstore := Gstore) (Genv := Genv); eauto.
     Qed.
 
     Lemma bag_of_ty : forall e Gstore Genv t,

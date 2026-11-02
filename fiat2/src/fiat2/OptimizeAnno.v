@@ -215,6 +215,23 @@ Section WithConcreteMaps.
 
   Section CommonPipelineParts.
     Context (tag : string).
+
+    (* An insert at the END of the list, normalised into the cons that every
+       maintenance rule below already matches.  Shared by the four aggregate
+       indexes, whose to_idx coerces the rows to a bag or a set before doing
+       anything else -- so position is already gone and the rewrite is sound
+       outright.  The dictionaries fold the list itself and need their own.
+
+       It runs ONCE, composed OUTSIDE each index's repeat_transf loop rather
+       than inside it.  repeat_transf applies its argument exactly n times
+       with no fixpoint test (TransfSound.v:419) and reps is 10000, so a
+       transf placed inside is paid ten thousand times in COMPILE time.  Once
+       is enough here: no rule anywhere in the development constructs an
+       OConcat, so after one pass over the command no append is left for the
+       maintenance rules to miss. *)
+    Definition snoc_normalize_transf :=
+      fun tbl => fold_command_with_globals [tbl] snoc_to_cons_under_coercion.
+
     Context (sum_agg_attr : string).
 
     Definition sum_agg_wf := (SumAgg.idx_wf (locals:=clocals) "hole" sum_agg_attr "x").
@@ -537,14 +554,18 @@ Section WithConcreteMaps.
           [sum_agg_lookup_transf sum_tag attr;
            (* an insert and a keyed delete are both maintained in one pass; the
               delete's rewrite is not self-similar, so repeating it is safe *)
-           fun tbl => repeat_transf (Basics.compose (filter_to_sub_transf attr tbl)
-                                       (cons_to_add_transf tbl)) reps],
+           fun tbl => Basics.compose
+                        (repeat_transf (Basics.compose (filter_to_sub_transf attr tbl)
+                                          (cons_to_add_transf tbl)) reps)
+                        (snoc_normalize_transf tbl)],
           S cur_tag)
     | MinAgg attr =>
         let min_tag := String.of_nat cur_tag in
         ([(min_tag, cmin_agg attr, min_agg_wf attr)],
                        [min_agg_lookup_transf min_tag attr;
-                        fun tbl => repeat_transf (cons_to_min_transf tbl) reps;
+                        fun tbl => Basics.compose
+                                     (repeat_transf (cons_to_min_transf tbl) reps)
+                                     (snoc_normalize_transf tbl);
                         (* last in the list, so first to run: the guard leaves a
                            read of the old minimum for the lookup rule above *)
                         filter_to_min_guard_transf attr],
@@ -554,8 +575,10 @@ Section WithConcreteMaps.
         ([(set_tag, cset_agg attr, set_agg_wf attr)],
           [set_agg_lookup_transf set_tag attr;
            (* an insert and a keyed delete are both maintained in one pass *)
-           fun tbl => repeat_transf (Basics.compose (filter_to_set_diff_transf attr tbl)
-                                       (cons_to_set_insert_transf attr tbl)) reps],
+           fun tbl => Basics.compose
+                        (repeat_transf (Basics.compose (filter_to_set_diff_transf attr tbl)
+                                          (cons_to_set_insert_transf attr tbl)) reps)
+                        (snoc_normalize_transf tbl)],
           S cur_tag)
     | DictIdx attr => mk_dict_idx Unranged attr cur_tag reps
     | RangedDictIdx attr => mk_dict_idx Ranged attr cur_tag reps
@@ -704,8 +727,10 @@ Section WithConcreteMaps.
         ([(count_tag, ccount_agg, count_agg_wf)],
           [count_agg_lookup_transf count_tag;
            (* an insert and a keyed delete in one pass, exactly as for the sum *)
-           fun tbl => repeat_transf (Basics.compose (filter_to_count_sub_transf tbl)
-                                       (cons_to_incr_transf tbl)) reps],
+           fun tbl => Basics.compose
+                        (repeat_transf (Basics.compose (filter_to_count_sub_transf tbl)
+                                          (cons_to_incr_transf tbl)) reps)
+                        (snoc_normalize_transf tbl)],
           S cur_tag)
     | TableRep ctag =>
         let r_tag := String.of_nat cur_tag in
@@ -1300,7 +1325,8 @@ end.
             1: prove_idx_wf. }
         all: apply expr_transf_sound__expr_aug_transf_sound.
         1: eapply filter_neq_to_sub_head_sound; auto using ctenv_ok, clocals_ok.
-        1: eapply cons_to_add_head_sound. }
+        1: eapply cons_to_add_head_sound.
+        1: apply snoc_to_cons_under_coercion_sound. }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
         1:{ eapply min_to_agg_lookup_head_sound; auto using ctenv_ok, clocals_ok.
@@ -1312,6 +1338,7 @@ end.
             1: prove_idx_wf. }
         all: apply expr_transf_sound__expr_aug_transf_sound.
         1: eapply cons_to_min_head_sound.
+        1: apply snoc_to_cons_under_coercion_sound.
         1: eapply filter_neq_to_min_guard_head_sound; auto using ctenv_ok, clocals_ok. }
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -1325,7 +1352,9 @@ end.
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
             eapply filter_neq_to_set_diff_head_sound; auto using ctenv_ok, clocals_ok. }
         1:{ apply expr_transf_sound__expr_aug_transf_sound.
-            eapply cons_to_set_insert_head_sound; auto using ctenv_ok, clocals_ok. } }
+            eapply cons_to_set_insert_head_sound; auto using ctenv_ok, clocals_ok. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            apply snoc_to_cons_under_coercion_sound. } }
     (* both dictionary hints, from the one lemma above *)
     1:{ eapply mk_dict_idx_transfs_sound with (dk := Unranged) (attr := a)
           (cur_tag := init_tag) (reps := reps);
@@ -1751,7 +1780,8 @@ end.
             1: prove_idx_wf. }
         all: apply expr_transf_sound__expr_aug_transf_sound.
         1: eapply filter_neq_to_count_sub_head_sound; auto using ctenv_ok, clocals_ok.
-        1: eapply cons_to_incr_head_sound. }
+        1: eapply cons_to_incr_head_sound.
+        1: apply snoc_to_cons_under_coercion_sound. }
     (* the composite dictionary: a read rule, the rule that uses the member
        already stored, and the insert that maintains it *)
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
