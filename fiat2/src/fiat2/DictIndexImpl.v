@@ -249,6 +249,56 @@ Section WithHole.
             unfold value_eqb. rewrite_l_to_r. assumption. }
       Qed.
 
+      (* ----------------------------------------------------------------
+         The two facts an insert at the END of the list needs.
+
+         Both go through lookup extensionality rather than the insertion's
+         own case analysis: a canonical dictionary is determined by what it
+         looks up (dict_wf_lookup_ext), so it is enough to say where each
+         key lands.  The alternative is a nine-case argument over the three
+         positions of each key against the head, needing transitivity and
+         trichotomy to rule out the impossible combinations. *)
+      Lemma dict_insert_insert_same : forall (k v v' : value) d,
+          dict_wf d ->
+          dict_insert k v (dict_insert k v' d) = dict_insert k v d.
+      Proof.
+        intros k v v' d H_wf.
+        apply dict_wf_lookup_ext.
+        1: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+        1: apply dict_insert_preserve_dict_wf; exact H_wf.
+        intros q. destruct (value_eqb q k) eqn:E.
+        1:{ apply value_eqb_eq in E; subst. rewrite !dict_lookup_insert_same; reflexivity. }
+        1:{ assert (q <> k)
+              by (intro; subst; rewrite value_eqb_refl in E; discriminate).
+            rewrite !dict_lookup_insert_diff by assumption; reflexivity. }
+      Qed.
+
+      Lemma dict_insert_comm : forall (k k' v v' : value) d,
+          k <> k' -> dict_wf d ->
+          dict_insert k v (dict_insert k' v' d)
+          = dict_insert k' v' (dict_insert k v d).
+      Proof.
+        intros k k' v v' d H_ne H_wf.
+        apply dict_wf_lookup_ext.
+        1: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+        1: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+        intros q.
+        destruct (value_eqb q k) eqn:E_k; destruct (value_eqb q k') eqn:E_k'.
+        (* q cannot be both keys, since the keys differ *)
+        1:{ apply value_eqb_eq in E_k; apply value_eqb_eq in E_k'; congruence. }
+        1:{ apply value_eqb_eq in E_k; subst.
+            rewrite dict_lookup_insert_same, dict_lookup_insert_diff by congruence.
+            rewrite dict_lookup_insert_same; reflexivity. }
+        1:{ apply value_eqb_eq in E_k'; subst.
+            rewrite dict_lookup_insert_diff by congruence.
+            rewrite !dict_lookup_insert_same; reflexivity. }
+        1:{ assert (q <> k)
+              by (intro; subst; rewrite value_eqb_refl in E_k; discriminate).
+            assert (q <> k')
+              by (intro; subst; rewrite value_eqb_refl in E_k'; discriminate).
+            rewrite !dict_lookup_insert_diff by assumption; reflexivity. }
+      Qed.
+
       Section DictDelete.
         Local Coercion is_true : bool >-> Sortclass.
 
@@ -517,6 +567,132 @@ Section WithHole.
               (range_rows (dict_range lo hi d)).
         Proof.
           unfold dict_range; intros; apply gallina_to_idx_filter_key; auto.
+        Qed.
+
+        (* ----------------------------------------------------------------
+           AN INSERT AT THE END OF THE LIST.
+
+           The four aggregate indexes get this from one rewrite under their
+           bag or set coercion (snoc_to_cons_under_coercion): position is gone
+           before anything looks at the rows.  THIS index folds the row LIST
+           itself, so the same freedom has to be earned -- the fold must not
+           care in which order the rows arrive.
+
+           It does not, and the reason is worth naming, because it is exactly
+           what the UNIQUE dictionary cannot say.  The step here inserts the
+           row into the BUCKET at its key, and that commutes both when two
+           rows share a key (bag_insert commutes on a sorted bag) and when
+           they do not (dict_insert commutes at distinct keys).  The unique
+           index's step OVERWRITES the entry instead of extending a bucket,
+           so for it the order of arrival decides the content. *)
+        Definition idx_step (v : value) (ac : list (value * value))
+          : list (value * value) :=
+          match v with
+          | VRecord r =>
+              dict_insert (record_proj attr r)
+                (VBag (bag_insert (VRecord r)
+                         (match dict_lookup (record_proj attr r) ac with
+                          | Some (VBag b) => b
+                          | _ => nil
+                          end))) ac
+          | _ => nil
+          end.
+
+        (* the index's own fold, named *)
+        Lemma gallina_to_idx_fold : forall l,
+            gallina_to_idx (VList l) = VDict (fold_right idx_step nil l).
+        Proof. reflexivity. Qed.
+
+        (* What the accumulator satisfies at every step, and all it needs to:
+           canonical, with every value a sorted bag. *)
+        Definition idx_acc_wf (d : list (value * value)) : Prop :=
+          dict_wf d
+          /\ Forall (fun p => exists b, snd p = VBag b
+                                        /\ StronglySorted bag_entry_leb b) d.
+
+        Lemma idx_bucket_SSorted : forall d k,
+            idx_acc_wf d ->
+            StronglySorted bag_entry_leb
+              (match dict_lookup k d with Some (VBag b) => b | _ => nil end).
+        Proof.
+          intros d k [_ H_b]. destruct (dict_lookup k d) eqn:E; [ | constructor ].
+          apply dict_lookup_Some_In in E.
+          rewrite Forall_forall in H_b. apply H_b in E.
+          cbn in E. destruct E as [b [-> H_s]]. exact H_s.
+        Qed.
+
+        Lemma idx_step_acc_wf : forall r ac,
+            idx_acc_wf ac -> idx_acc_wf (idx_step (VRecord r) ac).
+        Proof.
+          intros r ac H_wf. pose proof H_wf as H_copy.
+          destruct H_copy as [H_d H_b]. cbn [idx_step]. split.
+          1: apply dict_insert_preserve_dict_wf; exact H_d.
+          rewrite Forall_forall; intros p H_in.
+          apply dict_insert_incl in H_in. destruct H_in as [ <- | H_in ].
+          1:{ cbn. eexists; split; [ reflexivity | ].
+              apply bag_insert_preserve_SSorted, idx_bucket_SSorted; exact H_wf. }
+          1:{ rewrite Forall_forall in H_b; apply H_b; exact H_in. }
+        Qed.
+
+        Lemma idx_fold_acc_wf : forall l,
+            Forall (fun v => exists rv, v = VRecord rv) l ->
+            idx_acc_wf (fold_right idx_step nil l).
+        Proof.
+          induction l as [| v l IH]; cbn [fold_right]; intros H_rec.
+          1: split; [ exact I | constructor ].
+          invert_Forall.
+          lazymatch goal with H: exists _, v = VRecord _ |- _ =>
+            destruct H as [rv ->] end.
+          apply idx_step_acc_wf, IH; assumption.
+        Qed.
+
+        Lemma idx_step_comm : forall r r' ac,
+            idx_acc_wf ac ->
+            idx_step (VRecord r) (idx_step (VRecord r') ac)
+            = idx_step (VRecord r') (idx_step (VRecord r) ac).
+        Proof.
+          intros r r' ac H_wf. pose proof H_wf as H_copy.
+          destruct H_copy as [H_d H_b]. cbn [idx_step].
+          destruct (value_eqb (record_proj attr r) (record_proj attr r')) eqn:E.
+          1:{ (* one bucket, taken in both orders *)
+              apply value_eqb_eq in E. rewrite E.
+              rewrite !dict_lookup_insert_same.
+              rewrite !dict_insert_insert_same by exact H_d.
+              (* the two rows land in the same bucket, in either order *)
+              rewrite (bag_insert_bag_insert (VRecord r) (VRecord r'))
+                by (apply idx_bucket_SSorted; exact H_wf).
+              reflexivity. }
+          1:{ (* distinct keys: neither insert disturbs the other's bucket *)
+              assert (H_ne : record_proj attr r <> record_proj attr r')
+                by (intro H_eq; rewrite H_eq, value_eqb_refl in E; discriminate).
+              rewrite !dict_lookup_insert_diff by congruence.
+              apply dict_insert_comm; [ exact H_ne | exact H_d ]. }
+        Qed.
+
+        (* THE FACT THE RULE NEEDS: appending a row at the end builds the same
+           index as consing it at the front.  The row arrives LAST in the list
+           and FIRST in the fold, and the step does not care which. *)
+        Lemma idx_fold_app_singleton : forall l r,
+            Forall (fun v => exists rv, v = VRecord rv) l ->
+            fold_right idx_step nil (l ++ [VRecord r])
+            = fold_right idx_step nil (VRecord r :: l).
+        Proof.
+          intros l r. induction l as [| v l IH]; cbn [fold_right app]; intros H_rec;
+            [ reflexivity | ].
+          invert_Forall.
+          lazymatch goal with H: exists _, v = VRecord _ |- _ =>
+            destruct H as [rv ->] end.
+          rewrite IH by assumption.
+          apply idx_step_comm, idx_fold_acc_wf; assumption.
+        Qed.
+
+        Lemma gallina_to_idx_app_singleton : forall l r,
+            Forall (fun v => exists rv, v = VRecord rv) l ->
+            gallina_to_idx (VList (l ++ [VRecord r]))
+            = gallina_to_idx (VList (VRecord r :: l)).
+        Proof.
+          intros l r H_rec. rewrite !gallina_to_idx_fold.
+          f_equal. apply idx_fold_app_singleton; assumption.
         Qed.
       End DictRange.
 
@@ -1356,6 +1532,153 @@ Section WithHole.
           Qed.
         End cons_to_insert.
 
+        (* ----------------------------------------------------------------
+           The dictionary's APPEND, normalised into its CONS.
+
+           One rewrite, and then cons_to_insert_head above does the
+           maintenance unchanged -- the same division of labour the four
+           aggregate indexes get from snoc_to_cons_under_coercion.  What this
+           rule costs that theirs does not is the fact it rests on:
+           gallina_to_idx_app_singleton, i.e. that the index's fold does not
+           care where in the list a row sits.
+
+           The guard is the cons rule's guard.  It ties the matched attribute
+           and kind to THIS index's, which is what lets the proof speak about
+           gallina_to_idx at all, and it checks the fold's binders are used
+           consistently and distinctly, which is what fold_to_idx needs. *)
+        (* Peel one node WITHOUT reducing what is under it.  A cbn here
+           unfolds the fold's step into interp_ternop, and then the bridge to
+           idx_step no longer matches the term. *)
+        Lemma interp_EFold_peel : forall (store env : locals) c i tup0 acc0 body,
+            interp_expr store env (EFold c i tup0 acc0 body)
+            = match interp_expr store env c with
+              | VList l => fold_right
+                             (fun v a => interp_expr store
+                                           (map.put (map.put env tup0 v) acc0 a) body)
+                             (interp_expr store env i) l
+              | _ => VUnit
+              end.
+        Proof. reflexivity. Qed.
+
+        Lemma interp_EAtom_peel : forall (store env : locals) a,
+            interp_expr store env (EAtom a) = interp_atom a.
+        Proof. reflexivity. Qed.
+
+        Section snoc_to_cons_in_idx.
+          Definition snoc_to_cons_in_idx_head (e : expr) :=
+            match e with
+            | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+                (EBinop OConcat e2 (EBinop OCons e1 (EAtom (ANil _)))) =>
+                if (dict_kind_beq dk dk0 &&
+                      all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1; tup2; tup3]);
+                               (attr, [attr0; attr1]); (x0, [x1])] &&
+                      all_neqb [acc0; tup0; x0])%bool
+                then eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
+                       (EBinop OCons e1 e2)
+                else e
+            | _ => e
+            end.
+
+          (* The fold's STEP as the interpreter runs it.  It is idx_step
+             exactly when the accumulator's values are bags, which is what
+             idx_acc_wf carries: OBagInsert on a non-bag is VUnit, so without
+             that invariant the two genuinely differ. *)
+          Lemma interp_idx_body : forall (store env : locals) tup0 acc0 x0 r d,
+              acc0 <> tup0 -> x0 <> tup0 -> x0 <> acc0 ->
+              idx_acc_wf d ->
+              interp_expr store (map.put (map.put env tup0 (VRecord r)) acc0 (VDict d))
+                (ETernop OInsert (EVar acc0) (EAccess (EVar tup0) attr)
+                   (EBinop OBagInsert
+                      (EOptMatch (EBinop OLookup (EVar acc0) (EAccess (EVar tup0) attr))
+                         (EAtom (AEmptyBag None)) x0 (EVar x0))
+                      (EVar tup0)))
+              = VDict (idx_step (VRecord r) d).
+          Proof.
+            intros store env tup0 acc0 x0 r d H_at H_xt H_xa H_wf.
+            cbn [interp_expr interp_ternop interp_binop interp_atom].
+            unfold get_local. repeat rewrite_map_get_put_goal.
+            cbn [idx_step].
+            (* the lookup must be resolved before the bucket read can be: it
+               binds the found value, and nothing rewrites under that binder *)
+            destruct (dict_lookup (record_proj attr r) d) as [ w | ] eqn:E;
+              [ | reflexivity ].
+            rewrite map.get_put_same.
+            (* the entry found is a bucket, which is what the invariant says *)
+            destruct H_wf as [ _ H_b ]. apply dict_lookup_Some_In in E.
+            rewrite Forall_forall in H_b. apply H_b in E. cbn in E.
+            destruct E as [ b [ -> _ ] ]. reflexivity.
+          Qed.
+
+          (* and the whole fold, which is the index the interpreter builds *)
+          Lemma interp_idx_fold : forall (store env : locals) tup0 acc0 x0 l,
+              acc0 <> tup0 -> x0 <> tup0 -> x0 <> acc0 ->
+              Forall (fun v => exists rv, v = VRecord rv) l ->
+              fold_right
+                (fun v a => interp_expr store (map.put (map.put env tup0 v) acc0 a)
+                   (ETernop OInsert (EVar acc0) (EAccess (EVar tup0) attr)
+                      (EBinop OBagInsert
+                         (EOptMatch (EBinop OLookup (EVar acc0) (EAccess (EVar tup0) attr))
+                            (EAtom (AEmptyBag None)) x0 (EVar x0))
+                         (EVar tup0))))
+                (VDict nil) l
+              = VDict (fold_right idx_step nil l).
+          Proof.
+            intros store env tup0 acc0 x0 l H_at H_xt H_xa.
+            induction l as [| v l IH]; cbn [fold_right]; intros H_rec;
+              [ reflexivity | ].
+            invert_Forall.
+            lazymatch goal with H: exists _, v = VRecord _ |- _ =>
+              destruct H as [ rv -> ] end.
+            rewrite IH by assumption.
+            apply interp_idx_body; auto.
+            apply idx_fold_acc_wf; assumption.
+          Qed.
+          Lemma snoc_to_cons_in_idx_head_preserve_ty : forall (Gstore : tenv),
+              preserve_ty Gstore snoc_to_cons_in_idx_head.
+          Proof.
+            unfold preserve_ty; intros. repeat destruct_subexpr.
+            cbn. repeat (case_match; auto).
+            repeat invert_type_of_clear.
+            repeat invert_type_of_op_clear.
+            repeat (econstructor; eauto).
+          Qed.
+          Lemma snoc_to_cons_in_idx_head_preserve_sem :
+            forall (Gstore : tenv) (store : locals),
+              preserve_sem Gstore store snoc_to_cons_in_idx_head.
+          Proof.
+            unfold preserve_sem; intros. repeat destruct_subexpr.
+            cbn [snoc_to_cons_in_idx_head]. repeat (case_match; auto; []).
+            cbn in * |-.
+            rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+            use_dict_kind_beq.
+            rewrite eqb_eq, eqb_neq in *; subst. repeat invert_type_of_clear.
+            repeat rewrite_map_get_put_hyp.
+            repeat (try clear_refl; repeat do_injection).
+            repeat invert_type_of_op_clear.
+            apply_type_sound e1_1. invert_type_of_value_clear.
+            apply_type_sound e1_2_1. invert_type_of_value_clear.
+            rewrite !interp_EFold_peel, !interp_EBinop, !interp_EAtom_peel.
+            rewrite <- H1, <- H4. cbn [interp_atom interp_binop].
+            (* the rows are records, which is all the fold's step needs *)
+            assert (H_rec : Forall (fun v => exists rv, v = VRecord rv) l).
+            1:{ eapply Forall_impl; [ | exact H5 ].
+                intros a H_a. inversion H_a; subst; eauto. }
+            (* each side folds over its OWN list, so each needs its own
+               record-ness: the bridge is applied twice, at two lists *)
+            assert (H_cons : Forall (fun v => exists rv, v = VRecord rv)
+                               (VRecord l0 :: l))
+              by (constructor; [ eauto | exact H_rec ]).
+            assert (H_app : Forall (fun v => exists rv, v = VRecord rv)
+                              (l ++ [VRecord l0])).
+            1:{ rewrite Forall_forall in H_rec |- *. intros a H_in.
+                apply in_app_or in H_in.
+                destruct H_in as [ H_in | H_in ]; [ apply H_rec; exact H_in | ].
+                destruct H_in as [ H_eq | [] ]; subst; eauto. }
+            rewrite !interp_idx_fold by (first [ assumption | congruence ]).
+            f_equal. symmetry. apply idx_fold_app_singleton; assumption.
+          Qed.
+        End snoc_to_cons_in_idx.
+
         Section filter_to_delete.
           Definition filter_neq_to_delete_head (e : expr) :=
             (* the index rebuilt from [y <- e', check(!(y.attr == k)), ret y] -->
@@ -1991,6 +2314,15 @@ Section WithHole.
         intuition idtac.
         1: eapply cons_to_insert_head_preserve_ty; eauto.
         1: eapply cons_to_insert_head_preserve_sem; [ | | eauto .. ]; auto.
+      Qed.
+
+      Lemma snoc_to_cons_in_idx_head_sound :
+        expr_transf_sound (locals:=locals) snoc_to_cons_in_idx_head.
+      Proof.
+        unfold expr_transf_sound; intros.
+        intuition idtac.
+        1: eapply snoc_to_cons_in_idx_head_preserve_ty; eauto.
+        1: eapply snoc_to_cons_in_idx_head_preserve_sem; [ | | eauto .. ]; auto.
       Qed.
 
       Lemma filter_neq_to_delete_head_sound :

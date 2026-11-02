@@ -285,6 +285,12 @@ Section WithConcreteMaps.
     Definition dict_lookup_transf := fun tbl => fold_command_with_globals [tbl] (eq_filter_to_lookup_head dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
     Definition dict_range_transf := fun tbl => fold_command_with_globals [tbl] (range_filter_to_dict_range_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag "b" tbl).
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr dict_idx_dk "tup" "acc" "x" "y").
+    (* an insert at the END of the list, normalised into the cons the rule
+       above maintains.  One pass, outside the loop, for the reason given at
+       snoc_normalize_transf. *)
+    Definition snoc_in_idx_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (snoc_to_cons_in_idx_head dict_idx_attr dict_idx_dk).
     Definition filter_to_delete_transf := fun tbl => fold_command_with_globals [tbl] (filter_neq_to_delete_head dict_idx_attr dict_idx_dk "tup" "acc" "x").
     (* the write-side range pair: a range-shaped filter over the table is
        maintained on the index, restricting to the range or deleting it *)
@@ -530,11 +536,13 @@ Section WithConcreteMaps.
           restriction, range delete -- the restriction before the delete,
           because on a negated ONE-SIDED bound both fire and the restriction
           is the direct spelling. *)
-       fun tbl => repeat_transf
-                    (Basics.compose (filter_range_delete_transf attr dk tbl)
-                       (Basics.compose (filter_range_transf attr dk tbl)
-                          (Basics.compose (filter_to_delete_transf attr dk tbl)
-                             (cons_to_insert_transf attr dk tbl)))) reps],
+       fun tbl => Basics.compose
+                    (repeat_transf
+                       (Basics.compose (filter_range_delete_transf attr dk tbl)
+                          (Basics.compose (filter_range_transf attr dk tbl)
+                             (Basics.compose (filter_to_delete_transf attr dk tbl)
+                                (cons_to_insert_transf attr dk tbl)))) reps)
+                    (snoc_in_idx_transf attr dk tbl)],
       S cur_tag).
 
   (* so that the bare cbn in mk_idx_ok and mk_idx_sound_strengthen reduces a
@@ -714,12 +722,15 @@ Section WithConcreteMaps.
               Unranged member, but they are listed here because
               keyed_dict_subsumes_dict claims this list contains every transf
               the standalone DictIdx choice hands out, and that claim has to
-              stay literally true *)
-           fun tbl => repeat_transf
-                        (Basics.compose (filter_range_delete_transf attr Unranged tbl)
-                           (Basics.compose (filter_range_transf attr Unranged tbl)
-                              (Basics.compose (filter_to_delete_transf attr Unranged tbl)
-                                 (cons_to_insert_transf attr Unranged tbl)))) reps;
+              stay literally true -- which is why the append normalisation is
+              composed on here in exactly the shape mk_dict_idx composes it *)
+           fun tbl => Basics.compose
+                        (repeat_transf
+                           (Basics.compose (filter_range_delete_transf attr Unranged tbl)
+                              (Basics.compose (filter_range_transf attr Unranged tbl)
+                                 (Basics.compose (filter_to_delete_transf attr Unranged tbl)
+                                    (cons_to_insert_transf attr Unranged tbl)))) reps)
+                        (snoc_in_idx_transf attr Unranged tbl);
            cons_to_unique_insert_transf' key],
           S (S cur_tag))
     | CountAgg =>
@@ -1290,6 +1301,9 @@ end.
           eauto with transf_hints. }
     1:{ apply expr_transf_sound__expr_aug_transf_sound.
         eapply cons_to_insert_head_sound;
+          eauto with transf_hints. }
+    1:{ apply expr_transf_sound__expr_aug_transf_sound.
+        eapply snoc_to_cons_in_idx_head_sound;
           eauto with transf_hints. }
   Qed.
 
