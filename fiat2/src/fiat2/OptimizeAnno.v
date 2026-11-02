@@ -14,6 +14,11 @@ Module CDI := fiat2.CompositeDictIndexImpl.
    DictIndexImpl's names just as importing that one would. *)
 Require fiat2.CompositeDictKeyedDelete.
 Module CKD := fiat2.CompositeDictKeyedDelete.
+(* and the rule in the other direction -- the primary-key member maintained
+   across a delete at the composite key -- required and not imported for the
+   same reason again. *)
+Require fiat2.CompositeKeyBucketDelete.
+Module CKBD := fiat2.CompositeKeyBucketDelete.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
@@ -326,6 +331,19 @@ Section WithConcreteMaps.
       CKD.composite_keyed_delete_gated cdi_attrs "tup" "acc" "x" key
         "id_tag" "aux_tag" pk_tag "bkt" "rvar" ds.
 
+    (* THE SAME PAIR OF MEMBERS, THE OTHER DIRECTION.  A delete naming every
+       one of this dictionary's key attributes leaves the primary-key member
+       keyed on an attribute the filter never mentions, so that member was
+       rebuilt.  This rule probes the bucket the composite key names -- which
+       holds exactly the rows that are leaving -- and deletes their keys from
+       the primary-key member one by one.  Gated on the same declaration and
+       owed the same bridges; the composite member's tag is the explicit
+       argument here, because this rule is the one that READS it. *)
+    Definition composite_bucket_delete_gated_transf (key d_tag : string)
+      (ds : list decl) :=
+      CKBD.cbucket_delete_gated cdi_attrs key "tup" "acc"
+        "id_tag" "aux_tag" d_tag "bkt" ds.
+
     Context (set_agg_attr : string).
 
     Definition set_agg_wf := (SetAgg.idx_wf (locals:=clocals) "hole" set_agg_attr "x").
@@ -565,6 +583,10 @@ Section WithConcreteMaps.
               filter to name every key attribute, and a filter naming one
               does so only at arity one, which attrs_is_key declines. *)
            composite_keyed_delete_gated_transf attrs key u_tag ds;
+           (* and its mirror, which closes the gap the composite-key delete
+              used to leave: it must run BEFORE the primary-key use rule
+              above turns rebuilds into reads, so it is listed below it *)
+           composite_bucket_delete_gated_transf attrs key d_tag ds;
            filter_neq_to_unique_delete_transf' key;
            (* the SAME loop the standalone composite choice builds, so that
               keyed_composite_subsumes_composite stays literally true *)
@@ -1819,6 +1841,38 @@ end.
                 eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
             (* and the primary-key member's strong one, which the
                declaration pays for *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        (* and the mirror rule: the primary-key member maintained across a
+           delete at the composite key.  The bridges are the keyed delete's,
+           so the six goals below are its six, in the same order. *)
+        1:{ unfold composite_bucket_delete_gated_transf.
+            eapply (CKBD.cbucket_delete_gated_sound "hole" al "tup" "acc" "x"
+                      ltac:(auto with transf_hints)
+                      ak "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (String.of_nat (S init_tag)) "bkt"
+                      ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            intros H_uq. unfold CKD.composite_keyed_delete_bridges.
+            split; [ | split; [ | split; [ | split; [ | split ] ] ] ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_is_tbl_ty.
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
             1:{ intros t v H_twf H_is H_ty H_Qv.
                 eapply compo_unique_bridge_wf;
                   [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].

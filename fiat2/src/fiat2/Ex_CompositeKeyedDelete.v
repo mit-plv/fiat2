@@ -30,8 +30,8 @@ Import ListNotations.
    statement; this file is the instance, with both emitted forms pinned.
 
    WHAT IT MEASURES (harness `csv typed 200 400 800 1600`; work at 1600 rows
-   and the fitted exponent).  Two programs, because one of them hides the
-   other's result -- see prog_keyed_s below for why.
+   and the fitted exponent).  Two programs, because the second one isolates
+   the keyed delete -- see prog_keyed_s below.
 
    composite_keyed_delete -- the read, the insert and the KEYED delete, with
    the row list erased because nothing reads it:
@@ -48,28 +48,32 @@ Import ListNotations.
    probe into the key member, which is what PrimaryKeyCheck is about.
 
    composite_two_deletes -- the same table with the composite-key delete as
-   well, which is where the rules coexist AND where the cost of the one
-   missing rule is visible:
+   well, which is where the two rules coexist:
 
      kind          source     a     optimized     a      ratio
      readAtKey    1160800  1.00          1412  0.01      822x
-     insert        659870  0.98          4270  0.01      155x
-     deleteAtKey  1313955  1.02       3305310  1.02      0.4x
-     deleteById    780350  1.02        784070  1.00      1.0x
+     insert        659870  0.98          3930  0.01      168x
+     deleteAtKey  1313955  1.02          3360  0.01      391x
+     deleteById    780350  1.02          4420  0.01      177x
 
-   READ THE LAST TWO ROWS AS ONE FINDING.  The composite-key delete cannot
-   maintain the primary-key member -- the member is keyed on id, which that
-   filter does not name -- so the member is REBUILT, which (a) makes that
-   operation 2.5x WORSE than the source's own filter, and (b) keeps the row
-   list installed, which costs the keyed delete its entire 186x.
+   EVERY OPERATION IS AN EXPONENT, and the two deletes cost each other
+   nothing: adding the composite-key delete leaves the keyed delete at 177x
+   against its own 186x alone, which is the one extra record field.
 
-   It is a gap in the rules and not in the pairing: WITHOUT the pair the same
-   rebuild happens on this operation and the keyed delete rebuilds the
-   composite member as well, so pairing is a strict improvement either way.
-   And the missing rule needs no new primitive -- the composite member's
-   bucket at the deleted key holds exactly the rows that are leaving, and
-   ESort LikeBag is already a TBag -> TList coercion, so their ids can be
-   deleted from the key member by an ordinary EFold.  Not built.
+   THE LAST TWO ROWS USED TO BE THIS FILE'S PRICED GAP, and they are worth
+   keeping in view because they are what a measurement bought.  Before
+   CompositeKeyBucketDelete existed, a delete at the whole composite key
+   could not maintain the primary-key member -- that member is keyed on id,
+   which the filter does not name -- so the member was REBUILT.  Measured,
+   that made deleteAtKey 3305310 at a=1.02, which is 2.5x WORSE than the
+   source's own filter, and the rebuild kept the row list installed, which
+   cost deleteById its whole 186x (784070, a=1.00, 1.0x).  The rule that
+   closed it needed no new primitive: the composite member's bucket at the
+   deleted key holds exactly the rows that are leaving, and ESort LikeBag is
+   already a TBag -> TList coercion, so an ordinary EFold deletes their ids
+   from the key member one by one -- which is sound because deleting keys
+   COMMUTES, so the order the sort picks cannot be observed
+   (CompositeKeyBucketDelete.fold_pk_del_Permutation).
    ============================================================ *)
 
 Definition row_ty :=
@@ -139,19 +143,17 @@ Section WithConcreteMaps.
                   (SAssign "items" drop_at_key SSkip)
                   (SAssign "items" drop_at_id SSkip))))).
 
-  (* THE SAME TABLE WITHOUT THE COMPOSITE-KEY DELETE, and the reason there
-     are two programs here is the reason Ex_CompositeKey has two.
+  (* THE SAME TABLE WITHOUT THE COMPOSITE-KEY DELETE, which is how the keyed
+     delete is measured on its own.
 
-     A delete at the whole composite key cannot maintain the PRIMARY-KEY
-     member: that member is keyed on id, which the filter does not name, so
-     it is rebuilt from the surviving rows (composite_delete_rebuilds_the_key_member
-     below).  The rebuild reads the row list, so the list cannot be erased,
-     and with the list installed every write pays a linear pass over it --
-     which hides what the keyed delete does.
-
-     So the keyed delete is measured here, where nothing else keeps the list
-     alive and the field is erased outright, and the coexistence of the two
-     deletes is pinned on prog_s above, where it can be seen. *)
+     It used to be a necessity rather than a control: the composite-key
+     delete rebuilt the primary-key member, the rebuild read the row list, so
+     the list could not be erased, and with the list installed every write
+     paid a linear pass over it -- which hid what the keyed delete does.  That
+     gap is closed (composite_delete_maintains_the_key_member below), so both
+     programs now erase the list and the two measure the same way.  The pair
+     is kept because it is what isolates the keyed delete's own cost: the
+     difference between the two is one record field and nothing else. *)
   Definition prog_keyed_s (ds : list decl) : scommand :=
     SLetConstrained "items" row_ty ds
       (SForeach (EVar "queries") "q"
@@ -320,23 +322,26 @@ Section WithConcreteMaps.
     = Some (EBinop ODelete (mem "0") ckey_of_q_permuted).
   Proof. vm_compute; reflexivity. Qed.
 
-  (* AND ITS LIMIT, pinned rather than left out.  The primary-key member is
-     keyed on id, which this filter does not name, so no rule can tell which
-     entries leave and the member is REBUILT from the surviving rows -- which
-     is also why the row list is still installed below.
+  (* AND ITS OTHER MEMBER, which used to be this file's priced gap and is
+     now a probe and a fold.  The primary-key member is keyed on id, which
+     this filter does not name, so no rule can read off WHICH entries leave
+     -- but the composite member's bucket at the deleted key holds exactly
+     the rows that are leaving, so their ids can be deleted one at a time.
+     That is what CompositeKeyBucketDelete emits, and ESort LikeBag is the
+     coercion that lets an EFold walk a bag.
 
-     Serving it would need a rule in the other direction: the composite
-     member's bucket at the deleted key holds exactly the rows that are
-     leaving, so their ids could be deleted from the key member one by one.
-     That is a fold over the bucket emitting ODeletes, which the language can
-     express and no rule emits.  Not done here. *)
-  Lemma composite_delete_rebuilds_the_key_member :
-    rebuild_src (member_at 2 "1" optimized)
-    = Some (flatmap_filter_list list_e "r"
-              (EUnop ONot (EBinop OAnd
-                             (EBinop OEq (EAccess (EVar "r") "k2") (q_fld "b"))
-                             (EBinop OEq (EAccess (EVar "r") "k1") (q_fld "a"))))
-              "r" None None).
+     The two members are now maintained in OPPOSITE directions by the two
+     deletes: this one probes the composite member to maintain the key
+     member, and the keyed delete below probes the key member to maintain
+     the composite one. *)
+  Lemma composite_delete_maintains_the_key_member :
+    member_at 2 "1" optimized
+    = Some (ELet (mem "1") "acc"
+              (EOptMatch (EBinop OLookup (mem "0") ckey_of_q_permuted)
+                 (EVar "acc") "bkt"
+                 (EFold (ESort LikeBag (EVar "bkt")) (EVar "acc") "tup" "acc"
+                    (EBinop ODelete (EVar "acc")
+                       (EAccess (EVar "tup") "id"))))).
   Proof. vm_compute; reflexivity. Qed.
 
   (* ---- the delete AT THE DECLARED KEY, which is what the declaration buys ----
@@ -378,23 +383,21 @@ Section WithConcreteMaps.
      for the first.  keyed_composite_subsumes_composite is the general
      statement; these two lemmas are its instance. *)
 
-  (* ---- what is installed, and the one thing that keeps the list alive ----
+  (* ---- what is installed ----
 
-     Three facts in one equality: both members are installed, and the row
-     list survives.  It survives because of composite_delete_rebuilds_the_key_member
-     above -- that rebuild is the only remaining reader of the list, so
-     closing that gap would erase it. *)
-  Lemma both_members_installed_and_the_list_survives :
-    installed_fields optimized = ["id_tag"; "aux_tag"].
+     THE TABLE IS ITS TWO INDEXES, across BOTH deletes.  The row list is
+     erased: with the key member maintained incrementally by the
+     composite-key delete too, nothing reads the list any more.  This
+     equality is what closing the gap bought, and it is why prog_keyed_s
+     below now measures the same way. *)
+  Lemma the_table_is_its_two_indexes :
+    installed_fields optimized = ["aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 
-  (* and the keyed delete does not read the list: its own arm leaves the list
-     to the filter the source wrote, and touches neither member through it *)
-  Lemma keyed_delete_leaves_the_list_to_the_source :
-    list_at 3 optimized
-    = Some (flatmap_filter_list list_e "r"
-              (EUnop ONot (EBinop OEq (EAccess (EVar "r") "id") (q_fld "k")))
-              "r" None None).
+  (* and the same fact from the write side: no arm of any write carries a
+     row list, so there is no linear pass left anywhere in the program *)
+  Lemma no_write_keeps_a_row_list :
+    list_at 3 optimized = None.
   Proof. vm_compute; reflexivity. Qed.
 
   (* ---- the same keyed delete with nothing to keep the list alive ----
