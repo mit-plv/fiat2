@@ -161,18 +161,25 @@ Section WithAttrs.
      NoDup is load-bearing and only in the second branch: without it the
      row that stays could share its key with a row that leaves, and the
      delete would take out the survivor's entry.
+
+     STATED OVER AN ARBITRARY BUCKET KEY, because nothing in it depends on
+     what files a row under which key -- only that the index files each row
+     under exactly one.  So DictBucketPkDelete's arity-one rule instantiates
+     this proof at row_key rather than repeating it, and the composite
+     statement below is the instance at crow_key.
      ================================================================== *)
-  Lemma idx_entries_filter_cneq : forall (l : list value) (av : value),
+  Lemma idx_entries_filter_bneq :
+    forall (bk : value -> value) (l : list value) (av : value),
       NoDup (List.map (row_key key) l) ->
       UniqueDictIndexImpl.idx_entries key
-        (filter (fun r => negb (value_eqb (crow_key attrs r) av)) l)
-      = fold_left pk_del (crows_at attrs av l)
+        (filter (fun r => negb (value_eqb (bk r) av)) l)
+      = fold_left pk_del (filter (fun r => value_eqb (bk r) av) l)
           (UniqueDictIndexImpl.idx_entries key l).
   Proof.
-    induction l as [ | r l IH ]; intros av H_nd; [ reflexivity | ].
+    intros bk l; induction l as [ | r l IH ]; intros av H_nd; [ reflexivity | ].
     cbn [List.map] in H_nd; inversion H_nd as [ | ? ? H_ni H_nd' ]; subst.
-    unfold crows_at in *; cbn [filter].
-    destruct (value_eqb (crow_key attrs r) av) eqn:E_av; cbn [negb].
+    cbn [filter].
+    destruct (value_eqb (bk r) av) eqn:E_av; cbn [negb].
     - (* r is leaving: its own entry goes, and it was the only one at its key *)
       rewrite IH by assumption.
       rewrite fold_pk_del_cons.
@@ -193,6 +200,15 @@ Section WithAttrs.
       apply filter_In in H_in' as [ H_in' _ ].
       rewrite <- E_k. apply in_map; exact H_in'.
   Qed.
+
+  (* the instance this file's own rule uses *)
+  Lemma idx_entries_filter_cneq : forall (l : list value) (av : value),
+      NoDup (List.map (row_key key) l) ->
+      UniqueDictIndexImpl.idx_entries key
+        (filter (fun r => negb (value_eqb (crow_key attrs r) av)) l)
+      = fold_left pk_del (crows_at attrs av l)
+          (UniqueDictIndexImpl.idx_entries key l).
+  Proof. intros l av H_nd; apply idx_entries_filter_bneq; exact H_nd. Qed.
 
 End WithAttrs.
 

@@ -8,6 +8,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
   fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
   fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
+  fiat2.Ex_KeyedDictTwoDeletes
   fiat2.eval.MinIndexProbe.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
@@ -93,6 +94,7 @@ Module EMD := Ex_MinDelete.
 Module ECK := Ex_CompositeKey.
 Module CKD := Ex_CompositeKeyedDelete.
 Module CKDecl := Ex_CompositeKeyDecl.
+Module KDTD := Ex_KeyedDictTwoDeletes.
 Module S4J := Sat4j_LiteralStorage.
 Module MIP := MinIndexProbe.
 Module JDP := Jenkins_DependentPlugins.
@@ -119,6 +121,12 @@ Definition composite_keyed_delete_src : command :=
   Eval vm_compute in CKD.elaborated_keyed CKD.decls.
 Definition composite_key_decl_src : command :=
   Eval vm_compute in CKDecl.elaborated CKDecl.decls.
+(* the same two deletes at a SINGLE-ATTRIBUTE dictionary, which is what
+   prices the arity-one instance of the gap Ex_CompositeKeyedDelete closed *)
+Definition keyed_two_deletes_src : command :=
+  Eval vm_compute in KDTD.elaborated KDTD.decls.
+Definition keyed_dict_delete_src : command :=
+  Eval vm_compute in KDTD.elaborated_keyed KDTD.decls.
 Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
 (* the nested-loop join: the one subject whose SOURCE is quadratic *)
 Definition dependent_plugins_src : command := Eval vm_compute in JDP.elaborated.
@@ -166,6 +174,9 @@ Definition composite_two_deletes_opt : command := Eval vm_compute in CKD.optimiz
 Definition composite_keyed_delete_opt : command :=
   Eval vm_compute in CKD.optimized_keyed.
 Definition composite_key_decl_opt : command := Eval vm_compute in CKDecl.optimized.
+Definition keyed_two_deletes_opt : command := Eval vm_compute in KDTD.optimized.
+Definition keyed_dict_delete_opt : command :=
+  Eval vm_compute in KDTD.optimized_keyed.
 Definition min_delete_opt_noset : command :=
   Eval vm_compute in nth 1 EMD.prog_transformed CSkip.
 
@@ -284,6 +295,8 @@ Definition subjects : list (string * command * command) :=
   ; ("composite_keyed_delete", composite_keyed_delete_src, composite_keyed_delete_opt)
   ; ("composite_two_deletes", composite_two_deletes_src, composite_two_deletes_opt)
   ; ("composite_key_decl", composite_key_decl_src, composite_key_decl_opt)
+  ; ("keyed_dict_delete", keyed_dict_delete_src, keyed_dict_delete_opt)
+  ; ("keyed_two_deletes", keyed_two_deletes_src, keyed_two_deletes_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
   ; ("sat4j", sat4j_src, sat4j_opt)
   ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].

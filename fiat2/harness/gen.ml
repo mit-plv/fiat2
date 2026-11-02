@@ -593,9 +593,10 @@ let composite_keyed_delete =
     mutating = [ "insert"; "deleteById" ] }
 
 (* and the same table WITH the composite-key delete as well, which is where
-   the two deletes are seen to coexist -- and where the one that cannot
-   maintain the primary-key member keeps the row list installed, so every
-   write pays a linear pass over it *)
+   the two deletes are seen to coexist.  It used to be where the one that
+   could not maintain the primary-key member kept the row list installed;
+   CompositeKeyBucketDelete closed that, so both programs now erase the list
+   and this pair isolates the keyed delete's own cost. *)
 let composite_two_deletes =
   let k1 j = Printf.sprintf "a%d" (j mod 16) in
   let k2 j = Printf.sprintf "b%d" (j / 16) in
@@ -643,6 +644,62 @@ let composite_key_decl =
         ("insert", fun rows j -> q 1 "" "" (rows + j)) ];
     mutating = [ "insert" ] }
 
+(* ---------- keyed_dict_delete / keyed_two_deletes ----------
+
+   Ex_KeyedDictTwoDeletes: the same two deletes at a SINGLE-ATTRIBUTE
+   dictionary (OptimizeAnno's KeyedDictIdx), which is what prices the
+   arity-one instance of the gap CompositeKeyBucketDelete closed at a
+   composite key.
+
+   THE BUCKET POLICY IS THE STANDARD ONE and it is load-bearing for the
+   delete at fl.  [buckets] grows with the table, so a floor's bucket holds
+   about bucket_size rows however large the table is -- the same policy
+   area_registry uses, that being the eval subject for this index.  A delete
+   at fl therefore touches a bounded number of rows, so serving it is a
+   change of exponent; with a CONSTANT number of floors instead, a bucket
+   would grow and that operation would be inherently linear.  The delete at
+   the declared key does not depend on the policy.
+
+   The table starts empty, so the rows arrive as inserts through the build
+   phase, and the source's uniqueness guard is a scan there while the
+   optimized one is a probe. *)
+
+let keyed_dict_delete =
+  let row rows j =
+    rcd [ ("id", s (Printf.sprintf "i%d" j));
+          ("fl", s (Printf.sprintf "f%d" (j mod buckets rows))); ("v", s "v") ] in
+  let q rows kind fl k fresh =
+    rcd [ ("kind", i kind); ("fl", s fl); ("k", s k);
+          ("new_item", row rows fresh) ] in
+  { queries_var = "queries"; store = outputs_only; table = no_table;
+    build = (fun rows -> List.init rows (fun j -> q rows 1 "" "" j));
+    kinds =
+      [ ("readAtFloor", fun rows j ->
+           q rows 0 (Printf.sprintf "f%d" (j mod buckets rows)) "" 0);
+        ("insert", fun rows j -> q rows 1 "" "" (rows + j));
+        ("deleteById", fun rows j ->
+           q rows 3 "" (Printf.sprintf "i%d" (victim rows j)) 0) ];
+    mutating = [ "insert"; "deleteById" ] }
+
+let keyed_two_deletes =
+  let row rows j =
+    rcd [ ("id", s (Printf.sprintf "i%d" j));
+          ("fl", s (Printf.sprintf "f%d" (j mod buckets rows))); ("v", s "v") ] in
+  let q rows kind fl k fresh =
+    rcd [ ("kind", i kind); ("fl", s fl); ("k", s k);
+          ("new_item", row rows fresh) ] in
+  { queries_var = "queries"; store = outputs_only; table = no_table;
+    build = (fun rows -> List.init rows (fun j -> q rows 1 "" "" j));
+    kinds =
+      [ ("readAtFloor", fun rows j ->
+           q rows 0 (Printf.sprintf "f%d" (j mod buckets rows)) "" 0);
+        ("insert", fun rows j -> q rows 1 "" "" (rows + j));
+        ("deleteAtFloor", fun rows j ->
+           q rows 2 (Printf.sprintf "f%d" (victim rows j mod buckets rows)) "" 0);
+        ("deleteById", fun rows j ->
+           q rows 3 "" (Printf.sprintf "i%d" (victim rows j)) 0) ];
+    mutating = [ "insert"; "deleteAtFloor"; "deleteById" ] }
+
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
     ("area_registry", area_registry); ("lookin", lookin);
@@ -653,6 +710,8 @@ let specs =
     ("composite_keyed_delete", composite_keyed_delete);
     ("composite_two_deletes", composite_two_deletes);
     ("composite_key_decl", composite_key_decl);
+    ("keyed_dict_delete", keyed_dict_delete);
+    ("keyed_two_deletes", keyed_two_deletes);
     ("item_deletion", item_deletion); ("sat4j", sat4j);
     ("dependent_plugins", dependent_plugins) ]
 

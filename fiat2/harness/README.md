@@ -595,10 +595,12 @@ the outer binding on the way out, so what is left is exactly the program's outpu
 `yes` in that column is therefore a concrete witness of that subject's soundness theorem
 on that input.
 
-`check` compares the evaluator against the oracle on both programs of all eleven
-subjects, over tables of 0, 1, 2, 7 and 23 rows and op phases of 0, 1 and 5 queries per
-kind: 330 configurations, 0 mismatches, re-run under each of the three structure
-settings. A failure there would be a bug in `eval.ml`, in
+`check` compares the evaluator against the oracle on both programs of every subject --
+the eleven evaluation subjects and the regression subjects beside them -- over tables of
+0, 1, 2, 7 and 23 rows and op phases of 0, 1 and 5 queries per kind: 1110 configurations,
+0 mismatches, re-run under each of the three structure settings.  The count moves as
+subjects are added, so read it as what the last run reported rather than as a fixed
+number. A failure there would be a bug in `eval.ml`, in
 `bridge.ml` or in a generator -- never in the development, which depends on none of them.
 
 ## Reading the numbers
