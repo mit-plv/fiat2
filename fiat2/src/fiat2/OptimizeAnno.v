@@ -356,6 +356,13 @@ Section WithConcreteMaps.
       fun tbl => fold_command_with_globals [tbl]
                    (CDI.cons_to_composite_insert_head cdi_attrs).
 
+    (* an insert at the END of the list, normalised into the cons the rule
+       above maintains.  One pass, outside the loop, for the reason recorded
+       at snoc_normalize_transf. *)
+    Definition snoc_to_cons_in_cidx_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (CDI.snoc_to_cons_in_cidx_head cdi_attrs).
+
     Definition filter_neq_to_composite_delete_transf :=
       fun tbl => fold_command_with_globals [tbl]
                    (CDI.filter_neq_to_composite_delete_head
@@ -611,10 +618,12 @@ Section WithConcreteMaps.
             composite_dict_idx_wf attrs)],
           [composite_dict_lookup_transf (String.of_nat cur_tag) attrs;
            composite_dict_use_idx_transf (String.of_nat cur_tag) attrs;
-           fun tbl => repeat_transf
-                        (Basics.compose
-                           (filter_neq_to_composite_delete_transf attrs tbl)
-                           (cons_to_composite_insert_transf attrs tbl)) reps],
+           fun tbl => Basics.compose
+                        (repeat_transf
+                           (Basics.compose
+                              (filter_neq_to_composite_delete_transf attrs tbl)
+                              (cons_to_composite_insert_transf attrs tbl)) reps)
+                        (snoc_to_cons_in_cidx_transf attrs tbl)],
           S cur_tag)
     | KeyedCompositeIdx attrs key =>
         (* two members from one choice: the composite dictionary, and the
@@ -646,10 +655,12 @@ Section WithConcreteMaps.
            filter_neq_to_unique_delete_transf' key;
            (* the SAME loop the standalone composite choice builds, so that
               keyed_composite_subsumes_composite stays literally true *)
-           fun tbl => repeat_transf
-                        (Basics.compose
-                           (filter_neq_to_composite_delete_transf attrs tbl)
-                           (cons_to_composite_insert_transf attrs tbl)) reps;
+           fun tbl => Basics.compose
+                        (repeat_transf
+                           (Basics.compose
+                              (filter_neq_to_composite_delete_transf attrs tbl)
+                              (cons_to_composite_insert_transf attrs tbl)) reps)
+                        (snoc_to_cons_in_cidx_transf attrs tbl);
            cons_to_unique_insert_transf' key;
            snoc_to_unique_insert_transf' key],
           S (S cur_tag))
@@ -1854,6 +1865,8 @@ end.
               auto using ctenv_ok, clocals_ok.
             rewrite is_NoDup_to_transparent. cbn; intuition discriminate. }
         1: eapply CDI.cons_to_composite_insert_head_sound;
+          auto using ctenv_ok, clocals_ok.
+        1: eapply CDI.snoc_to_cons_in_cidx_head_sound;
           auto using ctenv_ok, clocals_ok. }
     (* the composite pair: two members.  The keyed delete reads BOTH of them
        and is owed two layouts, two is_tbl_ty implications and both members'
@@ -2018,6 +2031,8 @@ end.
                   auto using ctenv_ok, clocals_ok.
                 rewrite is_NoDup_to_transparent. cbn; intuition discriminate. }
             1: eapply CDI.cons_to_composite_insert_head_sound;
+              auto using ctenv_ok, clocals_ok.
+            1: eapply CDI.snoc_to_cons_in_cidx_head_sound;
               auto using ctenv_ok, clocals_ok. }
         (* and the primary-key member's insert *)
         1:{ unfold cons_to_unique_insert_transf'.

@@ -973,6 +973,103 @@ Section WithHole.
         unfold cidx_step.
         apply DictIndexImpl.bidx_fold_app_singleton; assumption.
       Qed.
+
+      (* Peel one node without reducing what is under it.  Needed because a
+         cbn would evaluate the key RECORD LITERAL, and the bridge from that
+         literal to ckey is stated about its unreduced form. *)
+      Lemma interp_ETernop_peel : forall (store env : locals) o e1 e2 e3,
+          interp_expr store env (ETernop o e1 e2 e3)
+          = interp_ternop o (interp_expr store env e1) (interp_expr store env e2)
+              (interp_expr store env e3).
+      Proof. reflexivity. Qed.
+
+      Lemma interp_EOptMatch_peel : forall (store env : locals) e e_none x e_some,
+          interp_expr store env (EOptMatch e e_none x e_some)
+          = match interp_expr store env e with
+            | VOption None => interp_expr store env e_none
+            | VOption (Some v) => interp_expr store (map.put env x v) e_some
+            | _ => VUnit
+            end.
+      Proof. reflexivity. Qed.
+
+      Lemma interp_EVar_peel : forall (store env : locals) x,
+          interp_expr store env (EVar x) = get_local env x.
+      Proof. reflexivity. Qed.
+
+      Lemma interp_EAtom_peel : forall (store env : locals) a,
+          interp_expr store env (EAtom a) = interp_atom a.
+      Proof. reflexivity. Qed.
+
+      Lemma interp_EFold_peel : forall (store env : locals) c i tup0 acc0 body,
+          interp_expr store env (EFold c i tup0 acc0 body)
+          = match interp_expr store env c with
+            | VList l => fold_right
+                           (fun v a => interp_expr store
+                                         (map.put (map.put env tup0 v) acc0 a) body)
+                           (interp_expr store env i) l
+            | _ => VUnit
+            end.
+      Proof. reflexivity. Qed.
+
+      (* ----------------------------------------------------------------
+         The fold's step at the MATCHED binder names, which is cidx_step as
+         soon as keys_match says the key literal is this index's own.  A cbn
+         is safe here, unlike in the rule's proof: this lemma IS the bridge,
+         so nothing downstream has to match the term it reduces. *)
+      Lemma interp_cidx_body :
+        forall (store env : locals) tup0 acc0 x0 kl_i kl_l rc d,
+          acc0 <> tup0 -> x0 <> tup0 -> x0 <> acc0 ->
+          keys_match tup0 attrs kl_i = true ->
+          keys_match tup0 attrs kl_l = true ->
+          DictIndexImpl.bidx_acc_wf d ->
+          interp_expr store
+            (map.put (map.put env tup0 (VRecord rc)) acc0 (VDict d))
+            (ETernop OInsert (EVar acc0) (ERecord kl_i)
+               (EBinop OBagInsert
+                  (EOptMatch (EBinop OLookup (EVar acc0) (ERecord kl_l))
+                     (EAtom (AEmptyBag None)) x0 (EVar x0))
+                  (EVar tup0)))
+          = VDict (cidx_step (VRecord rc) d).
+      Proof.
+        intros store env tup0 acc0 x0 kl_i kl_l rc d H_at H_xt H_xa
+          H_km_i H_km_l H_wf.
+        (* the insert's key and the lookup's key are each this index's, so
+           they are the same literal; the rule matches them separately *)
+        apply keys_match_eq in H_km_i; apply keys_match_eq in H_km_l;
+          subst kl_i kl_l.
+        assert (E_acc : map.get
+                          (map.put (map.put env tup0 (VRecord rc)) acc0 (VDict d))
+                          acc0 = Some (VDict d)) by apply map.get_put_same.
+        assert (E_tup : map.get
+                          (map.put (map.put env tup0 (VRecord rc)) acc0 (VDict d))
+                          tup0 = Some (VRecord rc))
+          by (rewrite map.get_put_diff by congruence; apply map.get_put_same).
+        (* the key literal evaluates to this index's composite key *)
+        assert (E_key : forall e_env,
+                   map.get e_env tup0 = Some (VRecord rc) ->
+                   interp_expr store e_env
+                     (ERecord (List.map (fun a => (a, EAccess (EVar tup0) a)) attrs))
+                   = ckey rc).
+        1:{ intros e_env H_g. cbn [interp_expr]. unfold ckey.
+            do 2 f_equal. apply interp_key_fields.
+            cbn [interp_expr]. unfold get_local. rewrite H_g. reflexivity. }
+        rewrite interp_ETernop_peel, !interp_EBinop, interp_EOptMatch_peel,
+          !interp_EBinop, !interp_EVar_peel.
+        rewrite !(E_key _ E_tup).
+        unfold get_local. rewrite E_acc, E_tup.
+        cbn [interp_ternop interp_binop].
+        unfold cidx_step, DictIndexImpl.bidx_step.
+        destruct (dict_lookup (ckey rc) d) as [ w | ] eqn:E.
+        (* absent: the new bucket holds just this row *)
+        2:{ cbn [interp_expr interp_atom]. reflexivity. }
+        (* found: the entry is a bucket, which is what the invariant says *)
+        rewrite interp_EVar_peel. unfold get_local, DictIndexImpl.bidx_acc_wf in *.
+        rewrite map.get_put_same.
+        destruct H_wf as [ _ H_b ].
+        apply DictIndexImpl.dict_lookup_Some_In in E.
+        rewrite Forall_forall in H_b. apply H_b in E. cbn in E.
+        destruct E as [ b [ -> _ ] ]. reflexivity.
+      Qed.
       (* What the fold COMPUTES, over any collection expression and in any
          environment.  The index interface's own equation is the instance at
          the hole; the maintenance rule needs the instance at the tail of a
@@ -1310,6 +1407,34 @@ Section WithHole.
 
          The index's key is a record literal COMPUTED from attrs, so a pattern
          cannot bind it positionally; keys_match checks it instead. *)
+
+      (* and the whole fold, which is the index the interpreter builds *)
+      Lemma interp_cidx_fold :
+        forall (store env : locals) tup0 acc0 x0 kl_i kl_l l,
+          acc0 <> tup0 -> x0 <> tup0 -> x0 <> acc0 ->
+          keys_match tup0 attrs kl_i = true ->
+          keys_match tup0 attrs kl_l = true ->
+          Forall (fun v => exists rc, v = VRecord rc) l ->
+          fold_right
+            (fun v a => interp_expr store (map.put (map.put env tup0 v) acc0 a)
+               (ETernop OInsert (EVar acc0) (ERecord kl_i)
+                  (EBinop OBagInsert
+                     (EOptMatch (EBinop OLookup (EVar acc0) (ERecord kl_l))
+                        (EAtom (AEmptyBag None)) x0 (EVar x0))
+                     (EVar tup0))))
+            (VDict nil) l
+          = VDict (fold_right cidx_step nil l).
+      Proof.
+        intros store env tup0 acc0 x0 kl_i kl_l l H_at H_xt H_xa H_km_i H_km_l.
+        induction l as [| v l IH]; cbn [fold_right]; intros H_rec;
+          [ reflexivity | ].
+        invert_Forall.
+        lazymatch goal with H : exists _, v = VRecord _ |- _ =>
+          destruct H as [ rc -> ] end.
+        rewrite IH by assumption.
+        apply interp_cidx_body; try assumption.
+        unfold cidx_step. apply DictIndexImpl.bidx_fold_acc_wf; assumption.
+      Qed.
       Notation ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1 d :=
         (EFold d (EAtom (AEmptyDict Unranged None)) tup0 acc0
            (ETernop OInsert (EVar acc1) (ERecord kl0)
@@ -1341,6 +1466,165 @@ Section WithHole.
         | _ => e
         end.
 
+
+
+      (* With at least one key attribute, the key literal's own typing forces
+         the row type to be a record: EAccess has a record subject or it has
+         nothing.  This is what the rule's non-empty check buys, and the only
+         reason it is needed. *)
+      Lemma keys_match_forces_record :
+        forall (Gstore Genv : tenv) tup0 al kl t_key,
+          al <> [] ->
+          keys_match tup0 al kl = true ->
+          type_of Gstore Genv (ERecord kl) t_key ->
+          exists rt, map.get Genv tup0 = Some (TRecord rt).
+      Proof.
+        intros * H_ne H_km H_t.
+        (* al is quantified here, so destructing it is safe -- destructing the
+           SECTION's attrs inside a proof would strand every lemma whose
+           statement mentions it *)
+        destruct al as [ | a0 al' ]; [ congruence | ].
+        apply keys_match_eq in H_km; subst kl.
+        inversion H_t; subst. cbn [List.map] in *.
+        lazymatch goal with
+          H : Forall2 _ (_ :: _) _ |- _ => inversion H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EAccess (EVar _) _) _ |- _ => inversion H; subst
+        end.
+        lazymatch goal with
+          H : type_of _ _ (EVar _) _ |- _ => inversion H; subst
+        end.
+        eexists; eassumption.
+      Qed.
+      (* ----------------------------------------------------------------
+         The composite dictionary's APPEND, normalised into its CONS.
+
+         One rewrite, after which cons_to_composite_insert_head above does
+         the maintenance unchanged -- the division of labour the attribute
+         dictionary gets from snoc_to_cons_in_idx_head and the four
+         aggregates get from snoc_to_cons_under_coercion.
+
+         What licenses it is that this index's fold is the attribute
+         dictionary's fold at a RECORD key, so the commutation is that one's
+         lemma instantiated (gallina_to_idx_app_singleton above) rather than
+         a second proof. *)
+      Definition snoc_to_cons_in_cidx_head (e : expr) :=
+        match e with
+        | ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1
+            (EBinop OConcat e2 (EBinop OCons e1 (EAtom (ANil _)))) =>
+            (* The attribute list is tested FIRST so that an empty one
+               reduces the whole guard to false by iota alone, which is what
+               lets the proofs dispatch that case in one step. *)
+            if (negb (Nat.eqb (List.length attrs) O)
+                && all_eqb [(acc0, [acc1; acc2]); (tup0, [tup1]); (x0, [x1])]
+                && all_neqb [acc0; tup0; x0]
+                && keys_match tup0 attrs kl0
+                && keys_match tup0 attrs kl1
+                (* AT LEAST ONE key attribute, and the reason is not
+                   fussiness.  The commutation this rule rests on is a fact
+                   about gallina_to_idx, whose step returns nil on a row that
+                   is not a record, while the interpreter's body inserts such
+                   a row at a degenerate key -- so the bridge between them
+                   needs the rows to BE records.  The only thing that says so
+                   here is the key literal's own typing, since EAccess forces
+                   its subject to be a record, and with no attributes there is
+                   no EAccess to force it.  is_tbl_ty admits attrs = [], so
+                   this is checked rather than assumed; an index on no
+                   attributes buckets every row under one key and serves
+                   nothing, so declining it costs nothing. *))%bool
+            then ecomposite_to_idx tup0 tup1 acc0 acc1 acc2 x0 x1 kl0 kl1
+                   (EBinop OCons e1 e2)
+            else e
+        | _ => e
+        end.
+
+      Lemma snoc_to_cons_in_cidx_head_preserve_ty : forall (Gstore : tenv),
+          preserve_ty Gstore snoc_to_cons_in_cidx_head.
+      Proof.
+        unfold preserve_ty; intros Gstore e t Genv Hgs Hge He.
+        unfold snoc_to_cons_in_cidx_head.
+        repeat (case_match; auto; []).
+        invert_type_of_clear.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OConcat _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        invert_type_of_op_clear.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        invert_type_of_op_clear.
+        eapply TyEFold; [ | eassumption | eassumption ].
+        eapply TyEBinop; [ apply TyOCons | eassumption | eassumption ].
+      Qed.
+
+      Lemma snoc_to_cons_in_cidx_head_preserve_sem :
+        forall (Gstore : tenv) (store : locals),
+          preserve_sem Gstore store snoc_to_cons_in_cidx_head.
+      Proof.
+        unfold preserve_sem; intros Gstore store e t Genv env Hgs Hge He Hsw Hew.
+        unfold snoc_to_cons_in_cidx_head.
+        repeat (case_match; auto; []).
+        cbn [all_eqb all_eqb' all_neqb all_neqb' andb] in *.
+        repeat rewrite Bool.andb_true_iff in *; intuition idtac.
+        repeat (rewrite eqb_eq in *; subst).
+        rewrite !Bool.negb_true_iff in *.
+        (* the guard's distinctness, as disequalities rather than booleans *)
+        rewrite !eqb_neq in *.
+        invert_type_of_clear.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OConcat _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        invert_type_of_op_clear.
+        lazymatch goal with
+          H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; clear H; subst
+        end.
+        invert_type_of_op_clear.
+        (* The row type is a RECORD, forced by the key literal.  The single-
+           attribute dictionary gets this for free, because its key is an
+           EAccess directly; here the key is a record literal, which forces
+           nothing when it is empty -- hence the rule's non-empty check. *)
+        lazymatch goal with
+          H : type_of _ _ (ETernop OInsert _ (ERecord _) _) _ |- _ =>
+            pose proof H as H_body; inversion H; subst
+        end.
+        assert (H_attrs : attrs <> []).
+        1:{ intro H_nil.
+            lazymatch goal with
+            | H : Nat.eqb (List.length attrs) O = false |- _ =>
+                rewrite H_nil in H; cbn in H; discriminate
+            | H : negb (Nat.eqb (List.length attrs) O) = true |- _ =>
+                rewrite H_nil in H; cbn in H; discriminate
+            end. }
+        lazymatch goal with
+        | H : type_of _ _ (ERecord _) _, H_km : keys_match _ attrs _ = true |- _ =>
+            destruct (keys_match_forces_record _ _ _ _ _ _ H_attrs H_km H)
+              as [ rt H_g ]
+        end.
+        rewrite map.get_put_diff in H_g by congruence.
+        rewrite map.get_put_same in H_g. do_injection; subst.
+        (* the table's rows, and the row being appended *)
+        apply_type_sound e0_4. invert_type_of_value_clear.
+        apply_type_sound e0_6. invert_type_of_value_clear.
+        (* record-ness of each of the two lists the folds run over *)
+        assert (H_rec : Forall (fun w => exists rc, w = VRecord rc) l1).
+        1:{ eapply Forall_impl; [ | exact H5 ].
+            intros w H_w. inversion H_w; subst; eauto. }
+        assert (H_cons : Forall (fun w => exists rc, w = VRecord rc)
+                           (VRecord l2 :: l1))
+          by (constructor; [ eauto | exact H_rec ]).
+        assert (H_app : Forall (fun w => exists rc, w = VRecord rc)
+                          (l1 ++ [VRecord l2])).
+        1:{ rewrite Forall_forall in H_rec |- *. intros w H_in.
+            apply in_app_or in H_in.
+            destruct H_in as [ H_in | H_in ]; [ apply H_rec; exact H_in | ].
+            destruct H_in as [ H_eq | [] ]; subst; eauto. }
+        rewrite !interp_EFold_peel, !interp_EBinop, !interp_EAtom_peel.
+        rewrite <- H, <- H3. cbn [interp_atom interp_binop].
+        rewrite !interp_cidx_fold by (first [ assumption | congruence ]).
+        f_equal. symmetry. unfold cidx_step.
+        apply DictIndexImpl.bidx_fold_app_singleton; assumption.
+      Qed.
       Lemma cons_to_composite_insert_head_preserve_ty : forall (Gstore : tenv),
           preserve_ty Gstore cons_to_composite_insert_head.
       Proof.
@@ -1409,6 +1693,15 @@ Section WithHole.
           H : VList ?l2 = interp_expr store env ?b |- _ => rewrite <- H
         end.
         cbn [fold_right]. reflexivity.
+      Qed.
+
+      Lemma snoc_to_cons_in_cidx_head_sound :
+        expr_transf_sound (locals:=locals) snoc_to_cons_in_cidx_head.
+      Proof.
+        unfold expr_transf_sound; split; intros.
+        1: eapply snoc_to_cons_in_cidx_head_preserve_ty; eauto.
+        eapply snoc_to_cons_in_cidx_head_preserve_sem;
+          resolve_locals_wf; eauto.
       Qed.
 
       Lemma cons_to_composite_insert_head_sound :
