@@ -214,6 +214,18 @@ Section WithHole.
         - apply dict_insert_preserve_SSorted; exact IH.
       Qed.
 
+
+      (* and canonical in the stronger sense dict_wf means -- strictly
+         increasing keys, so no key appears twice.  Needed because the two
+         dict_insert facts below are proved by lookup extensionality, which
+         is a statement about canonical dictionaries. *)
+      Lemma idx_entries_dict_wf : forall (l : list value), dict_wf (idx_entries l).
+      Proof.
+        induction l as [| r l IH]; cbn [idx_entries fold_right];
+          [ exact I | ].
+        apply dict_insert_preserve_dict_wf; exact IH.
+      Qed.
+
       (* Dropping from the table every row whose key is k deletes exactly k's
          entry.  Nothing is assumed about the keys being distinct: a row
          contributes only to its own key's entry, so the rows that leave can
@@ -285,6 +297,54 @@ Section WithHole.
           idx_entries (r :: l) = dict_insert (row_key attr r) r (idx_entries l).
       Proof.
         reflexivity.
+      Qed.
+
+      (* ----------------------------------------------------------------
+         AN INSERT AT THE END OF THE LIST, and the one index where it is NOT
+         the cons rule with a different pattern.
+
+         The attribute dictionary's step extends a BUCKET, so it commutes and
+         an append builds the same index as a cons.  This step OVERWRITES the
+         entry, and idx_entries is a fold_right, so the row applied LAST is
+         the one applied OUTERMOST -- the FIRST row of the list wins.  Append
+         the row and it loses to any row already carrying its key; cons it and
+         it wins.  Checked by computation before this was written:
+
+           idx_entries "k" (r1 :: [r2]) = [(1, r1)]
+           idx_entries "k" ([r2] ++ [r1]) = [(1, r2)]
+
+         So the maintenance an append needs is insert-IF-ABSENT.  That is
+         sound with no declaration at all, and where the key IS declared the
+         test always succeeds, so it costs one probe and never a scan. *)
+      Lemma idx_entries_app_singleton : forall (l : list value) (r : value),
+          idx_entries (l ++ [r])
+          = match dict_lookup (row_key attr r) (idx_entries l) with
+            | None => dict_insert (row_key attr r) r (idx_entries l)
+            | Some _ => idx_entries l
+            end.
+      Proof.
+        induction l as [| a l IH]; intros r; cbn [app];
+          [ cbn [idx_entries fold_right]; reflexivity | ].
+        (* fold rather than unfold: a cbn here leaves idx_entries unfolded on
+           one side and folded on the other, and then the destruct below
+           cannot abstract both occurrences of the lookup *)
+        rewrite !idx_entries_cons, IH.
+        destruct (value_eqb (row_key attr a) (row_key attr r)) eqn:E.
+        - (* the row already in the list carries the appended row's key, so
+             the appended row is the one that loses *)
+          apply value_eqb_eq in E; rewrite E.
+          rewrite DictIndexImpl.dict_lookup_insert_same.
+          destruct (dict_lookup (row_key attr r) (idx_entries l));
+            [ reflexivity | ].
+          apply DictIndexImpl.dict_insert_insert_same, idx_entries_dict_wf.
+        - (* different keys: the two insertions do not see each other *)
+          assert (H_kne : row_key attr r <> row_key attr a)
+            by (intro H_eq; rewrite H_eq, value_eqb_refl in E; discriminate).
+          rewrite DictIndexImpl.dict_lookup_insert_diff by exact H_kne.
+          destruct (dict_lookup (row_key attr r) (idx_entries l));
+            [ reflexivity | ].
+          apply DictIndexImpl.dict_insert_comm;
+            [ congruence | apply idx_entries_dict_wf ].
       Qed.
 
       (* Deleting a key no row carries leaves the entries alone.  Proved by

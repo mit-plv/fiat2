@@ -269,6 +269,7 @@ Section WithIndexUse.
                    H_Gs H_Ge H_t H_sw H_ew). }
     Qed.
 
+
     Definition cons_to_unique_insert_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl] cons_to_unique_insert_head.
 
@@ -409,6 +410,206 @@ Section WithIndexUse.
                    H_Gs H_Ge H_t H_sw H_ew). }
     Qed.
 
+    Lemma interp_EOptMatch_peel : forall (store env : locals) e e_none x e_some,
+        interp_expr store env (EOptMatch e e_none x e_some)
+        = match interp_expr store env e with
+          | VOption None => interp_expr store env e_none
+          | VOption (Some v) => interp_expr store (map.put env x v) e_some
+          | _ => VUnit
+          end.
+    Proof. reflexivity. Qed.
+
+    (* What the emitted body computes: a probe, and then either one insertion
+       or nothing at all. *)
+    (* ------------------------------------------------------------------
+       AN INSERTION AT THE END OF THE LIST, and the one index in the
+       development where this is not the rule above with a different
+       pattern.
+
+       For the attribute dictionary the two coincide: its step extends a
+       BUCKET at the key, so it commutes, and an append builds the same index
+       as a cons (DictIndexImpl.idx_step_comm).  This index's step
+       OVERWRITES the entry, and idx_entries is a fold_right, so the row
+       applied LAST is the one applied OUTERMOST: the FIRST row of the list
+       wins.  Appending a row therefore LOSES to any row already carrying its
+       key, where consing it would have won.  Checked by computation before
+       this rule was written, on two rows sharing a key:
+
+         idx_entries "k" (r1 :: [r2]) = [(1, r1)]
+         idx_entries "k" ([r2] ++ [r1]) = [(1, r2)]
+
+       So what an append needs is insert-IF-ABSENT, which is what this
+       emits.  It assumes nothing -- no declaration, no uniqueness -- and
+       where the key IS declared the test always succeeds, so the cost is one
+       probe and never a scan.
+       ------------------------------------------------------------------ *)
+
+    Lemma interp_snoc_body : forall z (store env : locals) r d,
+        z <> acc ->
+        interp_expr store (map.put (map.put env tup r) acc (VDict d))
+          (EOptMatch (EBinop OLookup (EVar acc) (EAccess (EVar tup) attr))
+             uidx_body' z (EVar acc))
+        = match dict_lookup (row_key attr r) d with
+          | None => VDict (dict_insert (row_key attr r) r d)
+          | Some _ => VDict d
+          end.
+    Proof.
+      intros z store env r d H_z.
+      assert (E_acc : map.get (map.put (map.put env tup r) acc (VDict d)) acc
+                      = Some (VDict d)) by apply map.get_put_same.
+      assert (E_tup : map.get (map.put (map.put env tup r) acc (VDict d)) tup
+                      = Some r)
+        by (rewrite map.get_put_diff by congruence; apply map.get_put_same).
+      (* peeled one node at a time: a cbn would reduce the none branch too,
+         and interp_idx_body would no longer match it *)
+      rewrite interp_EOptMatch_peel, interp_EBinop, interp_EAccess, !interp_EVar.
+      unfold get_local. rewrite E_acc, E_tup. cbn [interp_binop].
+      change (match r with
+              | VRecord fs => record_proj attr fs
+              | _ => VUnit
+              end) with (row_key attr r).
+      destruct (dict_lookup (row_key attr r) d) eqn:E.
+      (* found: the index is handed back untouched *)
+      1:{ rewrite interp_EVar. unfold get_local.
+          rewrite map.get_put_diff by congruence. rewrite E_acc. reflexivity. }
+      (* absent: exactly the step the cons rule performs *)
+      1:{ rewrite UniqueDictIndexImpl.interp_idx_body by assumption.
+          cbn [UniqueDictIndexImpl.idx_step]. reflexivity. }
+    Qed.
+    Definition snoc_to_unique_insert_head (z : string) (e : expr) : expr :=
+      match e with
+      | euidx tup0 tup1 tup2 acc0 acc1 attr0
+          (EBinop OConcat e2 (EBinop OCons e1 (EAtom (ANil _)))) =>
+          if (all_eqb [(tup, [tup0; tup1; tup2]); (acc, [acc0; acc1]);
+                       (attr, [attr0])]
+              && all_neqb [z; tup; acc]
+              && negb (free_immut_in acc e1))%bool
+          then ELet (uto_idx_at e2) acc
+                 (ELet e1 tup
+                    (EOptMatch
+                       (EBinop OLookup (EVar acc) (EAccess (EVar tup) attr))
+                       uidx_body' z (EVar acc)))
+          else e
+      | _ => e
+      end.
+
+    Lemma snoc_to_unique_insert_head_preserve_ty : forall z (Gstore : tenv),
+        preserve_ty Gstore (snoc_to_unique_insert_head z).
+    Proof.
+      unfold preserve_ty; intros z Gstore e t Genv H_Gs H_Ge H_t.
+      repeat destruct_subexpr.
+      cbn [snoc_to_unique_insert_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq, eqb_neq in *; subst.
+      lazymatch goal with
+      | H : type_of _ _ (EFold _ _ _ _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      (* the appended list is a concat of the table and a one-row list *)
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OConcat _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      (* The fold's body is inverted WITHOUT clearing it: the none branch is
+         that body verbatim, and the lookup's key is one of its pieces. *)
+      lazymatch goal with
+      | H : type_of _ _ (ETernop OInsert _ _ _) _ |- _ => inversion H; subst
+      end.
+      invert_type_of_op_clear.
+      eapply TyELet.
+      1:{ unfold uto_idx_at. eapply TyEFold; eassumption. }
+      1:{ eapply TyELet.
+          (* the row is typed under acc's binder now, which is what the
+             rule's freshness side condition is for *)
+          1:{ apply not_free_immut_put_ty2; [ assumption | eassumption ]. }
+          1:{ rewrite <- (Properties.map.put_comm _ _ _ _ Genv H_ne).
+              eapply TyEOptMatch.
+              1:{ eapply TyEBinop; [ apply TyOLookup | | ]; eassumption. }
+              1: eassumption.
+              (* the some branch keeps the index, under z's binder -- which
+                 is why the rule checks z is neither of the fold's names *)
+              1:{ apply TyEVar.
+                  rewrite map.get_put_diff by congruence.
+                  apply map.get_put_same. } } }
+    Qed.
+
+    Lemma snoc_to_unique_insert_head_preserve_sem :
+      forall z (Gstore : tenv) (store : locals),
+        preserve_sem Gstore store (snoc_to_unique_insert_head z).
+    Proof.
+      unfold preserve_sem;
+        intros z Gstore store e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+      repeat destruct_subexpr.
+      cbn [snoc_to_unique_insert_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
+      rewrite eqb_eq, eqb_neq in *; subst.
+      repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+      (* the table being appended to is a list *)
+      lazymatch goal with
+      | H : type_of _ _ e1_1 (TList ?rt) |- _ =>
+          pose proof (type_sound Gstore Genv e1_1 (TList rt) H H_Gs H_Ge
+                        store env H_sw H_ew) as H_v
+      end.
+      apply type_of_value_TList_inv in H_v as [ rows [ E_rows _ ] ].
+      assert (E_app : interp_expr store env
+                        (EBinop OConcat e1_1
+                           (EBinop OCons e1_2_1 (EAtom (ANil t0))))
+                      = VList (rows ++ [interp_expr store env e1_2_1])).
+      1:{ rewrite interp_EBinop, E_rows, interp_EBinop, interp_EAtom.
+          cbn [interp_atom interp_binop]. reflexivity. }
+      (* the source: the index of the appended list.  Bound by a match on the
+         goal because destruct_subexpr has spelled the fold out, so only
+         CONVERSION relates it to uto_idx_at *)
+      lazymatch goal with
+      | |- _ = interp_expr _ _ ?src =>
+          assert (E_src :
+                   interp_expr store env src
+                   = VDict (UniqueDictIndexImpl.idx_entries attr
+                              (rows ++ [interp_expr store env e1_2_1])))
+      end.
+      1:{ eapply interp_uto_idx_at. exact E_app. }
+      rewrite E_src.
+      rewrite interp_ELet_step, interp_ELet_step.
+      rewrite (interp_uto_idx_at store env e1_1 rows E_rows).
+      rewrite <- (not_free_immut_put_sem _ acc store env) by assumption.
+      rewrite <- (Properties.map.put_comm _ _ _ _ env H_ne).
+      rewrite interp_snoc_body by congruence.
+      rewrite UniqueDictIndexImpl.idx_entries_app_singleton.
+      destruct (dict_lookup (row_key attr (interp_expr store env e1_2_1))
+                  (UniqueDictIndexImpl.idx_entries attr rows));
+        reflexivity.
+    Qed.
+
+    Lemma snoc_to_unique_insert_head_sound : forall z,
+      expr_transf_sound (locals := locals) (snoc_to_unique_insert_head z).
+    Proof.
+      unfold expr_transf_sound; intros z Gstore Genv e t H_Gs H_Ge H_t.
+      split.
+      1: exact (snoc_to_unique_insert_head_preserve_ty z Gstore e t Genv
+                  H_Gs H_Ge H_t).
+      1:{ intros store env H_sw H_ew.
+          exact (snoc_to_unique_insert_head_preserve_sem z Gstore store e t Genv
+                   env H_Gs H_Ge H_t H_sw H_ew). }
+    Qed.
+
+    Definition snoc_to_unique_insert_transf (z : string)
+      : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl] (snoc_to_unique_insert_head z).
+
+    Lemma snoc_to_unique_insert_transf_sound : forall z is_tbl_ty' aux_ty aux_wf,
+        aug_transf_sound (locals := locals) is_tbl_ty' aux_ty aux_wf
+          (snoc_to_unique_insert_transf z).
+    Proof.
+      intros. unfold snoc_to_unique_insert_transf.
+      apply fold_command_with_globals_sound.
+      apply expr_transf_sound__expr_aug_transf_sound.
+      apply snoc_to_unique_insert_head_sound.
+    Qed.
     Definition filter_neq_to_unique_delete_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl] filter_neq_to_unique_delete_head.
 

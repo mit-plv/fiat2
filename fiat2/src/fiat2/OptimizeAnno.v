@@ -426,6 +426,15 @@ Section WithConcreteMaps.
     Definition cons_to_unique_insert_transf' : string -> command -> command :=
       cons_to_unique_insert_transf unique_idx_attr "tup" "acc".
 
+    (* and an insert at the END of the list, which for THIS index is not the
+       rule above with another pattern: its step overwrites the entry, so an
+       appended row loses to any row already carrying its key and the
+       maintenance is insert-if-absent.  Listed beside the cons rule at every
+       choice that hands that one out, because three subsumption theorems say
+       those lists contain everything UniqueDictIdx hands out. *)
+    Definition snoc_to_unique_insert_transf' : string -> command -> command :=
+      snoc_to_unique_insert_transf unique_idx_attr "tup" "acc" "z".
+
     Definition filter_neq_to_unique_delete_transf' : string -> command -> command :=
       filter_neq_to_unique_delete_transf unique_idx_attr "tup" "acc".
 
@@ -641,7 +650,8 @@ Section WithConcreteMaps.
                         (Basics.compose
                            (filter_neq_to_composite_delete_transf attrs tbl)
                            (cons_to_composite_insert_transf attrs tbl)) reps;
-           cons_to_unique_insert_transf' key],
+           cons_to_unique_insert_transf' key;
+           snoc_to_unique_insert_transf' key],
           S (S cur_tag))
     | UniqueDictIdx attr =>
         let u_tag := String.of_nat cur_tag in
@@ -656,7 +666,8 @@ Section WithConcreteMaps.
               that recomputation into a read *)
            unique_use_idx_transf' u_tag attr;
            filter_neq_to_unique_delete_transf' attr;
-           cons_to_unique_insert_transf' attr],
+           cons_to_unique_insert_transf' attr;
+           snoc_to_unique_insert_transf' attr],
           S cur_tag)
     | TrigramIdx attr key =>
         (* two members from one choice: the trigram dictionary, and the
@@ -686,7 +697,8 @@ Section WithConcreteMaps.
            tri_delete_gated_transf attr key u_tag ds;
            filter_neq_to_unique_delete_transf' key;
            cons_to_tri_insert_transf attr key;
-           cons_to_unique_insert_transf' key],
+           cons_to_unique_insert_transf' key;
+           snoc_to_unique_insert_transf' key],
           S (S cur_tag))
     | KeyedDictIdx attr key =>
         (* two members from one choice: the dictionary bucketed on attr, and
@@ -731,7 +743,8 @@ Section WithConcreteMaps.
                                  (Basics.compose (filter_to_delete_transf attr Unranged tbl)
                                     (cons_to_insert_transf attr Unranged tbl)))) reps)
                         (snoc_in_idx_transf attr Unranged tbl);
-           cons_to_unique_insert_transf' key],
+           cons_to_unique_insert_transf' key;
+           snoc_to_unique_insert_transf' key],
           S (S cur_tag))
     | CountAgg =>
         let count_tag := String.of_nat cur_tag in
@@ -1438,6 +1451,11 @@ end.
             eapply (cons_to_unique_insert_transf_sound a "tup" "acc"
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)). }
+        1:{ unfold snoc_to_unique_insert_transf'.
+            eapply (snoc_to_unique_insert_transf_sound a "tup" "acc"
+                      ltac:(discriminate) "z"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)). } }
     (* the trigram choice: two members.  The trigram lookup and the trigram
        delete each read BOTH of them, so each is owed two layouts; the
@@ -1607,6 +1625,11 @@ end.
                       ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)). }
+        1:{ unfold snoc_to_unique_insert_transf'.
+            eapply (snoc_to_unique_insert_transf_sound ak "tup" "acc"
+                      ltac:(discriminate) "z"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)). }
         }
     (* the keyed-delete pair: two members.  The keyed delete reads BOTH of
        them, so it is owed two layouts and the declaration; the primary-key
@@ -1764,6 +1787,11 @@ end.
         1:{ unfold cons_to_unique_insert_transf'.
             eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
                       ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)). }
+        1:{ unfold snoc_to_unique_insert_transf'.
+            eapply (snoc_to_unique_insert_transf_sound ak "tup" "acc"
+                      ltac:(discriminate) "z"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)). } }
     (* the table's own representation: one use rule, the basic push-down for
@@ -1995,6 +2023,11 @@ end.
         1:{ unfold cons_to_unique_insert_transf'.
             eapply (cons_to_unique_insert_transf_sound ak "tup" "acc"
                       ltac:(discriminate)
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)). }
+        1:{ unfold snoc_to_unique_insert_transf'.
+            eapply (snoc_to_unique_insert_transf_sound ak "tup" "acc"
+                      ltac:(discriminate) "z"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)). } }
   Qed.
