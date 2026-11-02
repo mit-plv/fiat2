@@ -120,6 +120,39 @@ let named_cache =
         ("delete", fun rows j -> q 0 (Printf.sprintf "k%d" (victim rows j))) ];
     mutating = [ "delete" ] }
 
+(* ---------- the LRU chain on the same cache ----------
+
+   eval/Kafka_NamedCache's second program.  Five kinds, and the two that
+   matter are getTouch and evict.
+
+   Every kind here is O(n) in the SOURCE, and the point of the subject is
+   which of them the index can and cannot help:
+     contains   a pure keyed lookup                -> a probe
+     getTouch   the same lookup, then move-to-front -> probe + one list pass
+     evict      read the LAST row, then drop it     -> two list passes
+   The row list cannot be erased, because evict asks for its order, so
+   every write still rebuilds it.  That is the limit this subject measures
+   rather than asserts.
+
+   getTouch's key is always present (spread over the live rows) so the
+   touch really moves a row; evict needs no key at all. *)
+
+let named_cache_lru =
+  let row j = rcd [ ("k", s (Printf.sprintf "k%d" j)); ("size", i (1 + (j mod 97))) ] in
+  let q kind k node = rcd [ ("kind", i kind); ("k", s k); ("node", node) ] in
+  { queries_var = "ops"; store = outputs_only; table = no_table;
+    build = (fun rows -> List.init rows (fun j -> q 1 "" (row j)));
+    kinds =
+      [ ("contains", fun rows j ->
+           q 4 (Printf.sprintf "k%d" (spread rows j)) (row 0));
+        ("getTouch", fun rows j ->
+           q 2 (Printf.sprintf "k%d" (spread rows j)) (row 0));
+        ("put", fun rows j -> q 1 "" (row (rows + j)));
+        ("evict", fun _ _ -> q 3 "" (row 0));
+        ("delete", fun rows j ->
+           q 0 (Printf.sprintf "k%d" (victim rows j)) (row 0)) ];
+    mutating = [ "getTouch"; "put"; "evict"; "delete" ] }
+
 (* ---------- area registry: bucketed on floor, keyed on id ---------- *)
 
 let area_registry =
@@ -702,6 +735,10 @@ let keyed_two_deletes =
 
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
+    ("named_cache_lru", named_cache_lru);
+    (* the same workload: the two programs differ only in whether one
+       subterm's order is demanded *)
+    ("named_cache_lru_ordered", named_cache_lru);
     ("area_registry", area_registry); ("lookin", lookin);
     ("user_search", user_search); ("cluster", cluster);
     ("entity_registry", entity_registry);

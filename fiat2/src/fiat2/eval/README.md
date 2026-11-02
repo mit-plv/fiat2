@@ -62,6 +62,7 @@ missing is not the operator but the rule -- see the limits table below.
 | `HA_AreaRegistry.v` | `area_registry.py:169` | a primary key dict and a secondary index, maintained across an insert and a delete; nothing reads the list, so the list is erased |
 | `HA_LookinFunctions.v` | `lookin/entity.py:94` | a set derived from a list because no query observes order or multiplicity; both reads are membership probes, and the list is erased |
 | `Kafka_NamedCache.v` | `NamedCache.java:44,49` | a keyed store and a running total over it, both maintained across a delete and a put; the total is corrected by a probe, never recomputed |
+| `Kafka_NamedCache.v`, second program | `NamedCache.java:45-46,213,241` | the only subject whose ROW ORDER IS THE MEANING: `head`/`tail` and the `previous`/`next` chain store recency as POSITION, so `evict()` reads the last row and the list cannot be erased. One exponent (the pure lookup, 379x) and four constants, every one of them an operation that must rewrite the list |
 | `Kafka_WindowStore.v` | `InMemoryWindowStore.java:78` | the only ORDERED index: a time range answered out of a sorted dictionary, maintained incrementally across both a put and a range-shaped retention delete -- and two limits, a conjunctive range reader and a list that survives its own filter |
 | `Jenkins_ItemDeletion.v` | `ItemDeletion.java:74,129,149,165` | the only WHOLE-ROW read: a `Set<Item>` asked `contains(item)`, so the question is about a row and not an attribute, no dictionary can be keyed for it, and `TableRep` is the only index that applies |
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
@@ -84,6 +85,7 @@ which subject is the witness for each.
 | `HA_EntityRegistry` | A1a, D4 | the same at arity THREE: three dicts over one collection, one of them keyed on a tuple the author writes out by hand |
 | `HA_AreaRegistry` | A1a, A2 | a primary-key dict plus a secondary index, both MAINTAINED across insert and delete |
 | `Kafka_NamedCache` | A1b, A2, A3 | a keyed store plus a maintained AGGREGATE, corrected by a probe rather than recomputed |
+| `Kafka_NamedCache`, second program | A1b, D7 | recency as POSITION: the first read in this development that observes ORDER, so the first list that is not dead code |
 | `Kafka_WindowStore` | A1a, A2, B7, D4 | the only ORDERED index: a range read out of a sorted dict, maintained across a range-shaped delete; and a composite key we cannot declare |
 | `HA_LookinFunctions` | B3, B5, D1 | a membership test inside a loop, licensed by multiplicity being unobserved -- so a set, not a dict |
 | `Jenkins_ItemDeletion` | B3, D1 | the same two, at ROW level: the set's elements are whole rows, so no key can serve it |
@@ -434,6 +436,27 @@ So the erasures that are wins are the ones where every read is answered by an in
 **nothing replaces the list** -- `Kafka_Cluster`, `HA_AreaRegistry`, `Kafka_NamedCache`,
 `Keycloak_CachedRealm` with its count, and now `Jenkins_UserSearch` with its declared
 key. That is every subject: all eight install `aux_tag` alone.
+
+**And the one subject where the list is not dead code at all.** Every erasure above rests
+on the same fact: no read observes row order, so once the indexes capture every read the
+list is a dead store. `Kafka_NamedCache`'s second program is the exception, and it is an
+exception by semantics rather than by a missing rule. `NamedCache` stores recency as
+POSITION -- `head`, `tail` and the `previous`/`next` chain at `:45-46`, no timestamp
+anywhere -- so `evict()` at `:241` reads the LAST row, and that read cannot be relaxed:
+`annotate_collection`'s five patterns all weaken a list toward a bag or a set, and it
+recognises exactly two fold shapes, neither of them this one. The list therefore stays,
+the index is installed beside it, and the measurement splits cleanly along that line: the
+one read that asks for a key gets an exponent (379x, `a` 0.99 to 0.01) and every operation
+that must rewrite the list gets a constant and keeps `a` at 1. Order as semantics costs
+the erasure, and the erasure is where the exponents came from.
+
+That program also prices an order demand that is not needed. Written with the
+moved-to-front sublist as a plain filter rather than a sorted one, the keyed read inside
+the touch cannot use the index at all -- `unique_lookup_head` matches a bag-level filter,
+so a read whose order is demanded stays a scan -- and the touch goes 3.39x to 1.93x, a
+1.76x price for asking that an at-most-one-row sublist keep its order. It is the only
+place in this directory where the collection analysis is exercised in that direction;
+everywhere else every read is relaxed as far as it can go.
 
 `TableRep` erases by substitution, so what it establishes is a **representation** fact
 rather than a cost one, and that is the right way to read it. The collection phase has

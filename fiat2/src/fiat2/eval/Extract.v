@@ -127,6 +127,12 @@ Definition keyed_two_deletes_src : command :=
   Eval vm_compute in KDTD.elaborated KDTD.decls.
 Definition keyed_dict_delete_src : command :=
   Eval vm_compute in KDTD.elaborated_keyed KDTD.decls.
+(* the LRU chain: the one subject whose row list is ORDER and cannot be
+   erased, and the same program with one subterm's order demanded *)
+Definition named_cache_lru_src : command :=
+  Eval vm_compute in NC.elaborated_lru NC.decls.
+Definition named_cache_lru_ordered_src : command :=
+  Eval vm_compute in NC.elaborated_lru_ordered NC.decls.
 Definition sat4j_src : command := Eval vm_compute in S4J.elaborated S4J.decls.
 (* the nested-loop join: the one subject whose SOURCE is quadratic *)
 Definition dependent_plugins_src : command := Eval vm_compute in JDP.elaborated.
@@ -177,6 +183,9 @@ Definition composite_key_decl_opt : command := Eval vm_compute in CKDecl.optimiz
 Definition keyed_two_deletes_opt : command := Eval vm_compute in KDTD.optimized.
 Definition keyed_dict_delete_opt : command :=
   Eval vm_compute in KDTD.optimized_keyed.
+Definition named_cache_lru_opt : command := Eval vm_compute in NC.optimized_lru.
+Definition named_cache_lru_ordered_opt : command :=
+  Eval vm_compute in NC.optimized_lru_ordered.
 Definition min_delete_opt_noset : command :=
   Eval vm_compute in nth 1 EMD.prog_transformed CSkip.
 
@@ -297,6 +306,9 @@ Definition subjects : list (string * command * command) :=
   ; ("composite_key_decl", composite_key_decl_src, composite_key_decl_opt)
   ; ("keyed_dict_delete", keyed_dict_delete_src, keyed_dict_delete_opt)
   ; ("keyed_two_deletes", keyed_two_deletes_src, keyed_two_deletes_opt)
+  ; ("named_cache_lru", named_cache_lru_src, named_cache_lru_opt)
+  ; ("named_cache_lru_ordered", named_cache_lru_ordered_src,
+      named_cache_lru_ordered_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
   ; ("sat4j", sat4j_src, sat4j_opt)
   ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].
