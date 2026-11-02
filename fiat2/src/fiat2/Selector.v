@@ -755,6 +755,18 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    eval/HA_EntityRegistry at arity three (get_entity_id_probes_triple,
    composite_unused_when_split).
 
+   AND IT IS NOW CLOSED DOWNSTREAM, which changes what this list has to do
+   rather than what it says.  PruneDeadIndexes runs the pipeline, finds the
+   members nothing reads, drops their CHOICES and runs it again; the
+   pipeline's soundness theorem assumes nothing about the choice list, so
+   the pruned program is sound for free.  On both subjects above the pruned
+   hazard configuration equals the configuration this list picks, TERM FOR
+   TERM -- Kafka_Cluster's pruning_turns_the_hazard_into_the_chosen_
+   configuration and HA_EntityRegistry's pruning_drops_the_dead_triple.  So
+   the veto below is no longer what keeps the hazard from costing anything;
+   it is what keeps the compiler from doing the work twice.  Both remain
+   worth having, and the veto is the cheaper of the two.
+
    THIS LIST NOW IMPOSES IT, in choices_of: a composite demand and a split
    demand on the same table conflict, and the SPLIT WINS.  The reason is not
    about either program.  SplitIf is one whole-program rewrite, so a table
@@ -872,10 +884,14 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
      non-equality conjunct is exactly what demands the split, and exactly
      what the composite rule declines.
 
-     Lifting this needs an AIMED SplitIf -- one that declines on a named
+     Lifting this needed an AIMED SplitIf -- one that declines on a named
      attribute tuple, as FlatmapTransf.is_two_sided_range declines on a range
      pair -- after which both could be emitted together.  See the note at the
-     end of this file.
+     end of this file.  It no longer needs one: emitting both and letting
+     PruneDeadIndexes drop whichever member goes unread reaches the same
+     program, and is pinned to on both subjects.  What the aimed SplitIf
+     would still buy is avoiding the second pipeline run, so it is a
+     compile-time question now rather than a generated-code one.
 
      NOTE THAT NO SUBSUMPTION RULE IS NEEDED.  A read whose predicate is a
      composite conjunction yields DComposite and NOT DEq, so the

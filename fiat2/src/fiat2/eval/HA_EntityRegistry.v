@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf
-  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno.
+  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno fiat2.PruneDeadIndexes.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString
   coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.
@@ -536,6 +536,49 @@ Section WithConcreteMaps.
                        ERecord [("0", composite_bucket_add);
                                 ("1", dict_bucket_add "1" "id");
                                 ("2", dict_bucket_add "2" "device_id")])]).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
+     THE TWO DEAD-INDEX CONFIGURATIONS, CLOSED -- by dropping the choice.
+
+     An index member exists only because a CHOICE asked for it, so a member
+     nothing reads can be removed by removing the choice and running the
+     pipeline again (PruneDeadIndexes).  The pipeline's soundness theorem is
+     quantified over the choice list with no side condition, so the pruned
+     program is sound for free.
+
+     This subject has BOTH directions of the hazard, which is why the pins
+     are here and not only in eval/Kafka_Cluster.  Configuration 2 pays for
+     a dictionary on `domain` that the composite triple made dead;
+     configuration 3 adds SplitIf, which makes the TRIPLE the dead one
+     instead.  Each prunes to the configuration a selector would have
+     picked, term for term -- so neither hazard's cost is reduced, both are
+     gone, and nothing has to be measured to say so. *)
+
+  (* configuration 2 -- the dead dictionary on domain -- becomes
+     configuration 4, the chosen one *)
+  Lemma pruning_drops_the_dead_dictionary :
+    apply_optimize_anno_pruned 1 "entries" (AC basics [triple :: dicts] prog)
+      init_Gstore init_Genv
+    = nth 4 prog_transformed CSkip.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* configuration 3 -- SplitIf, so the triple is the dead one -- becomes
+     configuration 0, the split program with no composite index at all *)
+  Lemma pruning_drops_the_dead_triple :
+    apply_optimize_anno_pruned 1 "entries"
+      (AC (basics ++ [SplitIf]) [triple :: dicts] prog) init_Gstore init_Genv
+    = nth 0 prog_transformed CSkip.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* and the negative control, which is what makes the two above worth
+     anything: on the configuration the selector picks, pruning changes
+     nothing *)
+  Lemma pruning_keeps_what_is_read :
+    apply_optimize_anno_pruned 1 "entries"
+      (AC basics [[triple; DictIdx "id"; DictIdx "device_id"]] prog)
+      init_Gstore init_Genv
+    = nth 4 prog_transformed CSkip.
   Proof. vm_compute; reflexivity. Qed.
 
   (* ================= soundness ================= *)

@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
   fiat2.TransfUtils fiat2.FlatmapTransf fiat2.IndexTransf
-  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno.
+  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno fiat2.PruneDeadIndexes.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import String ZArith List.
 
@@ -415,6 +415,40 @@ Section WithConcreteMaps.
   Lemma composite_unused_when_split :
     query_at 2 (nth 3 prog_transformed CSkip)
     = Some (EACFold AGCount (refine (probe "1" topic_key) part_eq)).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* AND THE HAZARD, CLOSED -- by dropping the choice rather than by a rule.
+
+     An index member exists only because a CHOICE asked for it, so a member
+     nothing reads can be removed by removing the choice and running the
+     pipeline again.  PruneDeadIndexes does exactly that, and the pipeline's
+     soundness theorem is quantified over the choice list with no side
+     condition, so the pruned program is sound for free.
+
+     What the equality below says is stronger than a measurement: pruning
+     configuration 3 does not merely make it cheaper, it produces
+     configuration 0 -- the configuration the selector picks -- TERM FOR
+     TERM.  So the hazard's cost is not reduced, it is gone, and nothing has
+     to be measured to say so. *)
+  Lemma pruning_turns_the_hazard_into_the_chosen_configuration :
+    apply_optimize_anno_pruned 1 "partitions"
+      (AC [PushdownCollection; AnnotateCollection; IfNilIntoFlatmap; SplitIf]
+         [[CompositeDictIdx ["topic"; "partition"];
+           DictIdx "topic"; DictIdx "leader"]] prog)
+      init_Gstore init_Genv
+    = nth 0 prog_transformed CSkip.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* and it is not pruning everything it can reach: configuration 2 is the
+     same four choices WITHOUT SplitIf, where the composite member is read,
+     and there the choice list comes back untouched *)
+  Lemma pruning_keeps_the_composite_when_it_is_read :
+    prune_icss 1 "partitions" 10000
+      [PushdownCollection; AnnotateCollection]
+      [[CompositeDictIdx ["topic"; "partition"];
+        DictIdx "topic"; DictIdx "leader"]] init_Gstore init_Genv prog
+    = [[CompositeDictIdx ["topic"; "partition"];
+        DictIdx "topic"; DictIdx "leader"]].
   Proof. vm_compute; reflexivity. Qed.
 
   (* ================= soundness ================= *)
