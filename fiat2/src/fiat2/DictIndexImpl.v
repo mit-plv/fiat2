@@ -570,6 +570,17 @@ Section WithHole.
         Qed.
 
         (* ----------------------------------------------------------------
+           THE BUCKET FOLD, over an ARBITRARY key function.
+
+           Stated generically because the COMPOSITE dictionary's fold is this
+           same fold with a record key: it instantiates these lemmas rather
+           than copying them, and none of the proofs below ever looks inside
+           the key.
+           ---------------------------------------------------------------- *)
+        Section BucketFold.
+          Context (key : list (string * value) -> value).
+
+        (* ----------------------------------------------------------------
            AN INSERT AT THE END OF THE LIST.
 
            The four aggregate indexes get this from one rewrite under their
@@ -585,33 +596,28 @@ Section WithHole.
            they do not (dict_insert commutes at distinct keys).  The unique
            index's step OVERWRITES the entry instead of extending a bucket,
            so for it the order of arrival decides the content. *)
-        Definition idx_step (v : value) (ac : list (value * value))
+        Definition bidx_step (v : value) (ac : list (value * value))
           : list (value * value) :=
           match v with
           | VRecord r =>
-              dict_insert (record_proj attr r)
+              dict_insert (key r)
                 (VBag (bag_insert (VRecord r)
-                         (match dict_lookup (record_proj attr r) ac with
+                         (match dict_lookup (key r) ac with
                           | Some (VBag b) => b
                           | _ => nil
                           end))) ac
           | _ => nil
           end.
 
-        (* the index's own fold, named *)
-        Lemma gallina_to_idx_fold : forall l,
-            gallina_to_idx (VList l) = VDict (fold_right idx_step nil l).
-        Proof. reflexivity. Qed.
-
         (* What the accumulator satisfies at every step, and all it needs to:
            canonical, with every value a sorted bag. *)
-        Definition idx_acc_wf (d : list (value * value)) : Prop :=
+        Definition bidx_acc_wf (d : list (value * value)) : Prop :=
           dict_wf d
           /\ Forall (fun p => exists b, snd p = VBag b
                                         /\ StronglySorted bag_entry_leb b) d.
 
-        Lemma idx_bucket_SSorted : forall d k,
-            idx_acc_wf d ->
+        Lemma bidx_bucket_SSorted : forall d k,
+            bidx_acc_wf d ->
             StronglySorted bag_entry_leb
               (match dict_lookup k d with Some (VBag b) => b | _ => nil end).
         Proof.
@@ -621,49 +627,49 @@ Section WithHole.
           cbn in E. destruct E as [b [-> H_s]]. exact H_s.
         Qed.
 
-        Lemma idx_step_acc_wf : forall r ac,
-            idx_acc_wf ac -> idx_acc_wf (idx_step (VRecord r) ac).
+        Lemma bidx_step_acc_wf : forall r ac,
+            bidx_acc_wf ac -> bidx_acc_wf (bidx_step (VRecord r) ac).
         Proof.
           intros r ac H_wf. pose proof H_wf as H_copy.
-          destruct H_copy as [H_d H_b]. cbn [idx_step]. split.
+          destruct H_copy as [H_d H_b]. cbn [bidx_step]. split.
           1: apply dict_insert_preserve_dict_wf; exact H_d.
           rewrite Forall_forall; intros p H_in.
           apply dict_insert_incl in H_in. destruct H_in as [ <- | H_in ].
           1:{ cbn. eexists; split; [ reflexivity | ].
-              apply bag_insert_preserve_SSorted, idx_bucket_SSorted; exact H_wf. }
+              apply bag_insert_preserve_SSorted, bidx_bucket_SSorted; exact H_wf. }
           1:{ rewrite Forall_forall in H_b; apply H_b; exact H_in. }
         Qed.
 
-        Lemma idx_fold_acc_wf : forall l,
+        Lemma bidx_fold_acc_wf : forall l,
             Forall (fun v => exists rv, v = VRecord rv) l ->
-            idx_acc_wf (fold_right idx_step nil l).
+            bidx_acc_wf (fold_right bidx_step nil l).
         Proof.
           induction l as [| v l IH]; cbn [fold_right]; intros H_rec.
           1: split; [ exact I | constructor ].
           invert_Forall.
           lazymatch goal with H: exists _, v = VRecord _ |- _ =>
             destruct H as [rv ->] end.
-          apply idx_step_acc_wf, IH; assumption.
+          apply bidx_step_acc_wf, IH; assumption.
         Qed.
 
-        Lemma idx_step_comm : forall r r' ac,
-            idx_acc_wf ac ->
-            idx_step (VRecord r) (idx_step (VRecord r') ac)
-            = idx_step (VRecord r') (idx_step (VRecord r) ac).
+        Lemma bidx_step_comm : forall r r' ac,
+            bidx_acc_wf ac ->
+            bidx_step (VRecord r) (bidx_step (VRecord r') ac)
+            = bidx_step (VRecord r') (bidx_step (VRecord r) ac).
         Proof.
           intros r r' ac H_wf. pose proof H_wf as H_copy.
-          destruct H_copy as [H_d H_b]. cbn [idx_step].
-          destruct (value_eqb (record_proj attr r) (record_proj attr r')) eqn:E.
+          destruct H_copy as [H_d H_b]. cbn [bidx_step].
+          destruct (value_eqb (key r) (key r')) eqn:E.
           1:{ (* one bucket, taken in both orders *)
               apply value_eqb_eq in E. rewrite E.
               rewrite !dict_lookup_insert_same.
               rewrite !dict_insert_insert_same by exact H_d.
               (* the two rows land in the same bucket, in either order *)
               rewrite (bag_insert_bag_insert (VRecord r) (VRecord r'))
-                by (apply idx_bucket_SSorted; exact H_wf).
+                by (apply bidx_bucket_SSorted; exact H_wf).
               reflexivity. }
           1:{ (* distinct keys: neither insert disturbs the other's bucket *)
-              assert (H_ne : record_proj attr r <> record_proj attr r')
+              assert (H_ne : key r <> key r')
                 by (intro H_eq; rewrite H_eq, value_eqb_refl in E; discriminate).
               rewrite !dict_lookup_insert_diff by congruence.
               apply dict_insert_comm; [ exact H_ne | exact H_d ]. }
@@ -672,10 +678,10 @@ Section WithHole.
         (* THE FACT THE RULE NEEDS: appending a row at the end builds the same
            index as consing it at the front.  The row arrives LAST in the list
            and FIRST in the fold, and the step does not care which. *)
-        Lemma idx_fold_app_singleton : forall l r,
+        Lemma bidx_fold_app_singleton : forall l r,
             Forall (fun v => exists rv, v = VRecord rv) l ->
-            fold_right idx_step nil (l ++ [VRecord r])
-            = fold_right idx_step nil (VRecord r :: l).
+            fold_right bidx_step nil (l ++ [VRecord r])
+            = fold_right bidx_step nil (VRecord r :: l).
         Proof.
           intros l r. induction l as [| v l IH]; cbn [fold_right app]; intros H_rec;
             [ reflexivity | ].
@@ -683,8 +689,29 @@ Section WithHole.
           lazymatch goal with H: exists _, v = VRecord _ |- _ =>
             destruct H as [rv ->] end.
           rewrite IH by assumption.
-          apply idx_step_comm, idx_fold_acc_wf; assumption.
+          apply bidx_step_comm, bidx_fold_acc_wf; assumption.
         Qed.
+        End BucketFold.
+
+        (* ----------------------------------------------------------------
+           THIS index's instance: the key is one attribute's value. *)
+        Definition idx_step := bidx_step (record_proj attr).
+        Definition idx_acc_wf := bidx_acc_wf.
+
+        Lemma idx_fold_acc_wf : forall l,
+            Forall (fun v => exists rv, v = VRecord rv) l ->
+            idx_acc_wf (fold_right idx_step nil l).
+        Proof. unfold idx_acc_wf, idx_step; apply bidx_fold_acc_wf. Qed.
+
+        Lemma gallina_to_idx_fold : forall l,
+            gallina_to_idx (VList l) = VDict (fold_right idx_step nil l).
+        Proof. reflexivity. Qed.
+
+        Lemma idx_fold_app_singleton : forall l r,
+            Forall (fun v => exists rv, v = VRecord rv) l ->
+            fold_right idx_step nil (l ++ [VRecord r])
+            = fold_right idx_step nil (VRecord r :: l).
+        Proof. unfold idx_step; apply bidx_fold_app_singleton. Qed.
 
         Lemma gallina_to_idx_app_singleton : forall l r,
             Forall (fun v => exists rv, v = VRecord rv) l ->
@@ -1597,7 +1624,7 @@ Section WithHole.
             intros store env tup0 acc0 x0 r d H_at H_xt H_xa H_wf.
             cbn [interp_expr interp_ternop interp_binop interp_atom].
             unfold get_local. repeat rewrite_map_get_put_goal.
-            cbn [idx_step].
+            cbn [idx_step bidx_step].
             (* the lookup must be resolved before the bucket read can be: it
                binds the found value, and nothing rewrites under that binder *)
             destruct (dict_lookup (record_proj attr r) d) as [ w | ] eqn:E;

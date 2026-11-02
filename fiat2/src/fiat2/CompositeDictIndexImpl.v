@@ -948,6 +948,31 @@ Section WithHole.
         | _ => VDict nil
         end.
 
+
+      (* ----------------------------------------------------------------
+         THIS index's instance of the bucket fold.
+
+         The step is the single-attribute dictionary's step at a RECORD key:
+         same insertion into the same kind of bucket, only the key function
+         differs.  So the fact that an append builds the same index as a cons
+         is DictIndexImpl's lemma instantiated here, not a second copy of its
+         proof -- which is why that lemma is stated over an arbitrary key
+         function in the first place. *)
+      Definition cidx_step := DictIndexImpl.bidx_step ckey.
+
+      Lemma gallina_to_idx_fold : forall l,
+          gallina_to_idx (VList l) = VDict (fold_right cidx_step nil l).
+      Proof. reflexivity. Qed.
+
+      Lemma gallina_to_idx_app_singleton : forall l r,
+          Forall (fun v => exists rc, v = VRecord rc) l ->
+          gallina_to_idx (VList (l ++ [VRecord r]))
+          = gallina_to_idx (VList (VRecord r :: l)).
+      Proof.
+        intros l r H_rec. rewrite !gallina_to_idx_fold. f_equal.
+        unfold cidx_step.
+        apply DictIndexImpl.bidx_fold_app_singleton; assumption.
+      Qed.
       (* What the fold COMPUTES, over any collection expression and in any
          environment.  The index interface's own equation is the instance at
          the hole; the maintenance rule needs the instance at the tail of a
