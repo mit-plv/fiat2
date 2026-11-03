@@ -67,13 +67,14 @@ missing is not the operator but the rule -- see the limits table below.
 | `Jenkins_ItemDeletion.v` | `ItemDeletion.java:74,129,149,165` | the only WHOLE-ROW read: a `Set<Item>` asked `contains(item)`, so the question is about a row and not an attribute, no dictionary can be keyed for it, and `TableRep` is the only index that applies |
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
 | `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and the five FILTERING PROJECTIONS it leaves as scans found a missing rule -- the bag-level counterpart of a list-level split -- now built and pinned in a third configuration |
+| `Netbox_TemplateExtensions.v` | `plugins/registration.py:75`, `utilities/templatetags/plugins.py:26-48` | the only subject whose GROUP ORDER IS THE MEANING: a dict from model name to the plugin extensions registered for it, appended to at the end and concatenated back in registration order by `html += content`. The first order-observing read an index SERVES, and the file where the bag-valued dictionary every other subject uses is shown to be sound but USELESS -- with `DictIdx` installed both reads stay scans and the index is never read |
 | `Jenkins_DependentPlugins.v` | `PluginManager.java:1042` | the only subject whose SOURCE IS QUADRATIC: a nested-loop join over a maintained field, `plugins` inside `plugins`. Its indexable guard is THIRD in its chain, which is why the selector found nothing on it until `PromoteGuard` existed -- and the one subject found by searching the corpora for a shape rather than by reading a class |
 
 ## Which pattern each subject covers
 
 The per-file `Pattern` headers name codes from the external pattern catalogue the paper
 cites. **Those codes are not defined anywhere in this repository**, so this table is the
-index a reader needs to resolve them, and it is also the answer to "are eleven examples
+index a reader needs to resolve them, and it is also the answer to "are twelve examples
 representative" -- not a count of how often each pattern occurs in a corpus, which is
 deliberately not claimed, but a statement of WHICH distinct patterns the set covers and
 which subject is the witness for each.
@@ -92,29 +93,35 @@ which subject is the witness for each.
 | `Jenkins_UserSearch` | A1a, A2, B8 | a SUBSTRING read beside a hand-built exact-match map, in one class over one collection |
 | `Sat4j_LiteralStorage` | A1a | A1a at an extreme: eight reads over one declared key, seven of them the same probe in different clothes |
 | `Jenkins_DependentPlugins` | **none claimed** | a nested-loop EQUIJOIN: a collection iterated inside itself, with an equality relating the two |
+| `Netbox_TemplateExtensions` | **none claimed** | a keyed read that OBSERVES the order inside its group, over a table built by appending: the first order-observing read that an index SERVES, where `Kafka_NamedCache`'s second program observes order and is served by none. Its read is also an (N+1) -- once per rendered object |
 
 Two things the table is meant to make checkable rather than assertable.
 
-**Where the set is thin.** Nine of the eleven subjects claim `A1a` or `A1b` -- a keyed
+**Where the set is thin.** Nine of the twelve subjects claim `A1a` or `A1b` -- a keyed
 lookup over a collection -- so that pattern is covered many times over and the others
 once or twice each. `B7` (ordered/range) and `B8` (substring) and the join have exactly ONE
 witness apiece; `D4` (composite key) now has two served witnesses and one unserved, and a reviewer should read the corresponding claim as resting on one
-program. `A3` (maintained aggregate) likewise.
+program. `A3` (maintained aggregate) likewise, and so does an order-observing read that
+an index SERVES -- `Netbox_TemplateExtensions` is its only witness, with
+`Kafka_NamedCache`'s second program beside it as the unserved case.
 
-**Where a code is missing.** `Jenkins_DependentPlugins` claims none, because the
-catalogue's codes are not reproduced here and assigning one from memory would be a guess
-dressed as a citation. Its pattern is stated in prose in its own header and in the row
-above; if the catalogue has a code for a nested-loop join, that is the one place in this
-directory where one should be added by hand.
+**Where a code is missing.** `Jenkins_DependentPlugins` and
+`Netbox_TemplateExtensions` claim none, because the catalogue's codes are not reproduced
+here and assigning one from memory would be a guess dressed as a citation. Each pattern
+is stated in prose in its own header and in the row above; if the catalogue has a code
+for a nested-loop join, or one for an order-preserving read of a group, those are the
+two places in this directory where a code should be added by hand.
 
 Patterns the development HANDLES but no subject here witnesses are a different list and
-live under *Limits* below -- `MinAgg` has no third-party witness, and neither does an
-order-observing read or an `OConcat` append.
+live under *Limits* below -- `MinAgg` has no third-party witness. An order-observing
+read and an `OConcat` append were both on that list and both now have one:
+`Netbox_TemplateExtensions` is a single subject whose write appends and whose read
+observes the order of a group, so it closes the two rows together.
 
-The eleven fall into eight groups, and the groups are the argument.
+The twelve fall into eight groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
-`HA_LookinFunctions`. The first two are a pair and should be read as one: they put
+`HA_LookinFunctions`, `Netbox_TemplateExtensions`. The first two are a pair and should be read as one: they put
 the same erasure rule in front of two code bases and get opposite answers -- keep the
 list, drop the list -- and each answer is the storage the original's author chose by
 hand. Keycloak keeps `requiredActionProviderList` beside both maps; `Cluster` has a
@@ -128,10 +135,28 @@ from the queries alone, and erases the list because after the rewrite nothing re
 Read it against `Keycloak_CachedRealm`: same erasure rule, same built-once shape,
 opposite answer about the list, and the reason is what the queries ask.
 
-So those three cover both directions in which one category's conclusion licenses
+`Netbox_TemplateExtensions` is `HA_LookinFunctions` read backwards, and the pair is why
+both are in this group. There the query observed neither order nor multiplicity, so the
+SET level was available and a membership test became a probe. Here the query DOES observe
+order -- `html += content` concatenates a plugin bucket in registration order -- so
+nothing above the LIST level is available, and the index that serves it has to keep its
+buckets as lists. Its `decls` is empty too: what licenses the rewrite in both files is
+what the queries ask, and the two files are the two answers that question can have.
+
+The contrast is pinned rather than argued. With `ListDictIdx "model"` the row list is
+erased and each read is one probe; with `DictIdx "model"` -- the bag-valued dictionary
+every other subject here uses -- both reads stay whole-table scans and the index is
+built, maintained and never read (`bag_read_is_still_two_scans`,
+`bag_idx_keeps_the_list`). Both pipelines are proved sound, so the bag-valued index is
+useless on this read rather than wrong, and the reason is mechanical: the fold observes
+the order, so `annotate_collection` never relaxes the filter, and the bag-level lookup
+rule cannot match it.
+
+So those four cover both directions in which one category's conclusion licenses
 another's rewrite: a declared uniqueness making a single-row lookup sound
-(`Keycloak_CachedRealm`), and an inferred interpretation making a membership probe
-available (`HA_LookinFunctions`).
+(`Keycloak_CachedRealm`), and an inferred interpretation either making a membership probe
+available (`HA_LookinFunctions`) or forbidding anything coarser than a list
+(`Netbox_TemplateExtensions`).
 
 **What the writes cost** -- `HA_AreaRegistry`, `Kafka_NamedCache`. These are the two
 whose writes are their own AND whose maintenance is the subject's point;
@@ -862,8 +887,10 @@ transcription.
 
 ## Limits stated here rather than hidden
 
-Each of these has a witness in the corpus and no rule, and each is pinned in the file
-that found it rather than described in prose:
+Each of these had a witness in the corpus and no rule, and each is pinned in the file
+that found it rather than described in prose. Rows marked **closed** are kept rather
+than deleted, because what closed them and what they cost while open is part of the
+record:
 
 | gap | witness | pinned at |
 |---|---|---|
@@ -875,8 +902,18 @@ that found it rather than described in prose:
 | erasing a list whose only reader is its own write | `removeExpiredSegments()` rewrites the table from the table | `the_list_filter_keeps_the_list` -- but only in the unsplit configuration. Splitting removes the list's other reader, after which the field is erased and the write is incremental (`split_erases_the_list`). So the gap is narrower than it looked: it bites a program whose write is the list's **only** reader, which no subject here is |
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
-| a write that appends instead of prepending | every source here adds at the end or puts into a map | not pinned: `OConcat` exists, and **no rewrite rule in the development mentions it**, so such a write rebuilds every index instead of updating it. All seven maintenance rules (`cons_to_insert`, `cons_to_incr`, `cons_to_add`, `cons_to_set_insert`, `cons_to_min`, `cons_to_unique_insert`, `cons_to_tri_insert`) match `OCons` and nothing else |
-| a read that observes row order | none here, by construction | not pinned, and the limit is wider than the write above: **every** index in the development is order-insensitive, so an order-observing read is served by none of them, and such a table keeps its list and gains nothing |
+| a write that appends instead of prepending | every source here adds at the end or puts into a map; `Netbox_TemplateExtensions` is the third-party witness | **closed.** `tbl := tbl ++ [row]` is maintained incrementally for all eight index kinds, and takes the same cheap declared-key guard a cons takes (`classify_write` recognises it as `WSnoc`). The decomposition is not uniform and that is the interesting part: the four aggregates cost ONE rule between them, because their `to_idx` coerces to a bag or a set before anything looks at the rows; the dictionaries EARN order-independence from their bucket step commuting; the trigram member needs `set_insert` to be idempotent as well as commutative; and `UniqueDictIdx` needs genuinely different emitted code, insert-if-absent, because its `fold_right` lets the FIRST row of the list win. `Ex_SnocMaintenance.v` pins that the append and the cons compile to the same write (`snoc_write_is_incremental`, `cons_write_is_incremental`, identical right-hand sides) and that an append of the table to itself is still `WOther`, which is what makes the other two pins mean something |
+| a read that observes row order | `Kafka_NamedCache`'s second program (LRU recency as list POSITION) and `Netbox_TemplateExtensions` (`html += content` over a plugin bucket) | **closed for a KEYED read, open for a POSITIONAL one.** `ListDictIdx` buckets rows into a LIST in the table's own order, so a filter that keeps a group's order is answered by a lookup; it is the first index here whose `to_idx` is order-SENSITIVE, which is why none of the bucket-commutation machinery the row above relies on applies to it, and why its cons and append rules emit different code -- a cons prepends to the bucket, an append appends to it. Pinned both ways in `Netbox_TemplateExtensions.v`. What stays open is reading or writing at a POSITION rather than at a key: `Kafka_NamedCache`'s chain is spliced at a handle, not indexed, so `ONth`/`OInsertAt` would still have to scan for the position and are declined -- stated at length under **What the choice is worth** above, and in `Kafka_NamedCache.v`'s header |
+
+Those two rows closed together, in one afternoon and for one reason, which is worth
+stating because it was not the plan. The append row was closed first and on its own
+terms -- it had looked like a modelling bias, since `OConcat` was typed, had notation and
+was mentioned by no rule, so every subject here consed onto the front because that was
+the only shape a maintenance rule recognised. Closing it then made the second row
+reachable: once a write could add at the end without costing the whole index, a
+dictionary whose buckets record WHERE the row went became worth building, and the
+order-observing read it serves is the one no index could serve before. The two are one
+story and `Netbox_TemplateExtensions` is the single subject that witnesses both halves.
 
 The count aggregate was on this list and is now built: `CountAgg`, pinned in
 `Keycloak_CachedRealm.v` at `counted_list_read_is_a_field` and
