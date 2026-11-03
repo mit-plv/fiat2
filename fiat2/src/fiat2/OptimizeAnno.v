@@ -486,6 +486,14 @@ Section WithConcreteMaps.
                       "tup" "acc" "gvar" "sacc" "bkt"
                       trigram_seps "wrd" "wacc").
 
+    (* an insert at the END of the list, normalised into the cons the rule
+       above maintains.  One pass, outside the loop, as everywhere else. *)
+    Definition snoc_to_cons_in_tri_transf : string -> command -> command :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (snoc_to_cons_in_tri_head trigram_text_attr trigram_key_attr
+                      "tup" "acc" "gvar" "sacc" "bkt"
+                      trigram_seps "wrd" "wacc").
+
     (* A filter-shaped delete: the row that goes is read out of the
        primary-key member, so this one is gated on the declaration too.
        Without it another row could share the key, and its contributions
@@ -708,6 +716,7 @@ Section WithConcreteMaps.
            tri_delete_gated_transf attr key u_tag ds;
            filter_neq_to_unique_delete_transf' key;
            cons_to_tri_insert_transf attr key;
+           snoc_to_cons_in_tri_transf attr key;
            cons_to_unique_insert_transf' key;
            snoc_to_unique_insert_transf' key],
           S (S cur_tag))
@@ -1627,6 +1636,18 @@ end.
                parameter of this rule *)
             eapply (cons_to_tri_insert_sound a ak "tup" "acc" "gvar" "sacc" "bkt"
                       trigram_seps "wrd" "wacc"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            discriminate. }
+        1:{ unfold snoc_to_cons_in_tri_transf.
+            (* this rule's proof leans on more of the index's binder
+               distinctness than the cons rule's does, so its statement
+               interleaves those hypotheses with the binders themselves *)
+            eapply (snoc_to_cons_in_tri_sound a ak "tup" "acc" "gvar" "sacc" "bkt"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
+                      trigram_seps "wrd" "wacc"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
             discriminate. }

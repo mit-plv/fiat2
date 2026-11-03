@@ -532,6 +532,7 @@ Section WithIndexUse.
       reflexivity.
     Qed.
 
+
     Lemma cons_to_tri_insert_head_sound :
       tup <> acc -> expr_transf_sound (locals := locals) cons_to_tri_insert_head.
     Proof.
@@ -572,6 +573,186 @@ Section WithIndexUse.
       apply TrigramIndexImpl.interp_to_idx_fold; try assumption.
       eapply TrigramIndexImpl.typed_rows_have_text; eassumption.
     Qed.
+
+    (* ------------------------------------------------------------------
+       The trigram member's APPEND, normalised into its CONS.
+
+       One rewrite, after which cons_to_tri_insert_head above does the
+       maintenance unchanged -- the division of labour every other index
+       gets.  What it rests on is TrigramIndexImpl.tri_entries_app_singleton,
+       and that fact is not the dictionaries': a row puts its KEY into the
+       bucket of every trigram of every word of its text, so the per-row step
+       is a fold of a fold.  Two rows commute because set_insert is
+       commutative AND IDEMPOTENT -- rows whose trigram sets OVERLAP may
+       write one bucket in either order.  The bag-backed indexes needed only
+       commutativity.
+       ------------------------------------------------------------------ *)
+    Definition snoc_to_cons_in_tri_head (e : expr) : expr :=
+      match e with
+      | etri_idx tup0 tup1 tup2 tup3 acc0 acc1
+          wrd0 wrd1 wacc0 wacc1 gvar0 gvar1 gvar2 sacc0 sacc1 sacc2
+          bkt0 bkt1 attr0 key0 key1 seps0
+          (EBinop OConcat e2 (EBinop OCons e1 (EAtom (ANil _)))) =>
+          if (all_eqb [(tup, [tup0; tup1; tup2; tup3]);
+                       (acc, [acc0; acc1]); (wrd, [wrd0; wrd1]);
+                       (wacc, [wacc0; wacc1]); (gvar, [gvar0; gvar1; gvar2]);
+                       (sacc, [sacc0; sacc1; sacc2]); (bkt, [bkt0; bkt1]);
+                       (attr, [attr0]); (key, [key0; key1]); (seps, [seps0])])%bool
+          then etri_idx tup0 tup1 tup2 tup3 acc0 acc1
+                 wrd0 wrd1 wacc0 wacc1 gvar0 gvar1 gvar2 sacc0 sacc1 sacc2
+                 bkt0 bkt1 attr0 key0 key1 seps0
+                 (EBinop OCons e1 e2)
+          else e
+      | _ => e
+      end.
+
+    Lemma snoc_to_cons_in_tri_head_preserve_ty : forall (Gstore : tenv),
+        preserve_ty Gstore snoc_to_cons_in_tri_head.
+    Proof.
+      unfold preserve_ty; intros Gstore e t Genv H_Gs H_Ge H_t.
+      repeat destruct_subexpr.
+      cbn [snoc_to_cons_in_tri_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      lazymatch goal with
+      | H : type_of _ _ (EFold _ _ _ _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OConcat _ _) _ |- _ =>
+          inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OCons _ _) _ |- _ =>
+          inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      eapply TyEFold; [ | eassumption | eassumption ].
+      eapply TyEBinop; [ apply TyOCons | eassumption | eassumption ].
+    Qed.
+
+    Lemma snoc_to_cons_in_tri_head_preserve_sem :
+      forall (Gstore : tenv) (store : locals),
+        tup <> acc -> preserve_sem Gstore store snoc_to_cons_in_tri_head.
+    Proof.
+      unfold preserve_sem;
+        intros Gstore store H_ta e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+      repeat destruct_subexpr.
+      cbn [snoc_to_cons_in_tri_head]. repeat (case_match; auto; []).
+      cbn in * |-.
+      rewrite !Bool.andb_true_iff in *; intuition idtac.
+      rewrite eqb_eq in *; subst.
+      lazymatch goal with
+      | H : type_of _ _ (EFold _ _ _ _ _) _ |- _ => inversion H; subst; clear H
+      end.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OConcat _ _) _ |- _ =>
+          inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OCons _ _) _ |- _ =>
+          inversion H; subst; clear H
+      end.
+      invert_type_of_op_clear.
+      (* The row type is a RECORD whose attr is a STRING, forced by the body's
+         OWords on that attribute: the bridge to tri_entries is stated in
+         those terms, so the rule cannot proceed without them. *)
+      lazymatch goal with
+      | H : type_of _ _ (EFold (EBinop OWords _ (EAccess (EVar _) _)) _ _ _ _) _
+        |- _ => inversion H; subst
+      end.
+      lazymatch goal with
+      | H : type_of _ _ (EBinop OWords _ (EAccess (EVar _) _)) _ |- _ =>
+          inversion H; subst
+      end.
+      invert_type_of_op_clear.
+      lazymatch goal with
+      | H : type_of _ _ (EAccess (EVar _) _) _ |- _ => inversion H; subst
+      end.
+      lazymatch goal with
+      | H : type_of _ _ (EVar tup) _ |- _ => inversion H; subst
+      end.
+      lazymatch goal with
+      | H : map.get (map.put (map.put Genv tup _) acc _) tup = Some _ |- _ =>
+          rewrite map.get_put_diff in H by congruence;
+          rewrite map.get_put_same in H; do_injection; subst
+      end.
+      (* the table's rows, and the row being appended *)
+      apply_type_sound e1_1. invert_type_of_value_clear.
+      apply_type_sound e1_2_1.
+      lazymatch goal with
+      | H : VList ?rs = interp_expr store env e1_1 |- _ =>
+          assert (E_rows : interp_expr store env e1_1 = VList rs)
+            by (symmetry; exact H)
+      end.
+      lazymatch goal with
+      | H : Forall (fun v => type_of_value v (TRecord tl)) ?rs |- _ =>
+          assert (H_Fc : Forall (fun v => type_of_value v (TRecord tl))
+                           (interp_expr store env e1_2_1 :: rs))
+            by (constructor; assumption);
+          assert (H_Fa : Forall (fun v => type_of_value v (TRecord tl))
+                           (rs ++ [interp_expr store env e1_2_1]))
+            by (eapply Forall_Permutation_iff;
+                [ apply Permutation_cons_append | exact H_Fc ])
+      end.
+      (* each side's collection, as a value *)
+      lazymatch goal with
+      | H : VList ?rs = interp_expr store env e1_1 |- _ =>
+          assert (E_cons : interp_expr store env (EBinop OCons e1_2_1 e1_1)
+                           = VList (interp_expr store env e1_2_1 :: rs))
+            by (cbn [interp_expr interp_binop]; rewrite E_rows; reflexivity);
+          assert (E_snoc : interp_expr store env
+                             (EBinop OConcat e1_1
+                                (EBinop OCons e1_2_1 (EAtom (ANil t0))))
+                           = VList (rs ++ [interp_expr store env e1_2_1]))
+            by (cbn [interp_expr interp_binop interp_atom];
+                rewrite E_rows; reflexivity)
+      end.
+      (* Each side IS to_idx_at at its own collection, but only up to
+         conversion -- destruct_subexpr has spelled the fold out -- so this
+         goes through replace rather than rewrite. *)
+      lazymatch goal with
+      | |- interp_expr _ _ ?lhs = interp_expr _ _ ?rhs =>
+          replace (interp_expr store env lhs)
+            with (TrigramIndexImpl.tri_entries attr key seps
+                    (interp_expr store env e1_2_1 :: l))
+            by (symmetry;
+                eapply interp_to_idx_at;
+                [ exact H3 | exact H_Fc | exact E_cons ]);
+          replace (interp_expr store env rhs)
+            with (TrigramIndexImpl.tri_entries attr key seps
+                    (l ++ [interp_expr store env e1_2_1]))
+            by (symmetry;
+                eapply interp_to_idx_at;
+                [ exact H3 | exact H_Fa | exact E_snoc ])
+      end.
+      symmetry. apply TrigramIndexImpl.tri_entries_app_singleton.
+    Qed.
+
+    Lemma snoc_to_cons_in_tri_head_sound :
+      tup <> acc ->
+      expr_transf_sound (locals := locals) snoc_to_cons_in_tri_head.
+    Proof.
+      unfold expr_transf_sound; intros H_ne *; intros.
+      intuition idtac.
+      1: eapply snoc_to_cons_in_tri_head_preserve_ty; eauto.
+      (* Gstore is pinned: left to eauto it unifies with Genv *)
+      1: eapply (snoc_to_cons_in_tri_head_preserve_sem Gstore store H_ne); eauto.
+    Qed.
+
+    Lemma snoc_to_cons_in_tri_sound : forall is_tbl_ty' aux_ty aux_wf,
+        tup <> acc ->
+        aug_transf_sound (locals := locals) is_tbl_ty' aux_ty aux_wf
+          (fun tbl => fold_command_with_globals [tbl] snoc_to_cons_in_tri_head).
+    Proof.
+      intros * H_ne.
+      apply fold_command_with_globals_sound.
+      apply expr_transf_sound__expr_aug_transf_sound.
+      apply snoc_to_cons_in_tri_head_sound; exact H_ne.
+    Qed.
+
 
     Lemma tri_is_tbl_ty_inv : forall t,
         @IndexInterface.is_tbl_ty tridx t = true ->

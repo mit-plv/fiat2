@@ -711,6 +711,224 @@ Section WithHole.
           [ exact H | apply tri_word_buckets, IH ].
       Qed.
 
+
+      (* ----------------------------------------------------------------
+         AN INSERT AT THE END OF THE LIST, for the trigram member.
+
+         The other indexes earn this from a step that commutes.  So does this
+         one, but its step is not a single insert: a row contributes its KEY
+         to the bucket of every trigram of every word of its text, so the
+         per-row step is a fold of a fold.  Two rows still commute, and the
+         reason is the SET: set_insert is both commutative and IDEMPOTENT, so
+         two rows whose trigram sets OVERLAP may write the same bucket in
+         either order, and a row's own repeated trigram costs nothing.
+
+         buckets_are_sets is too weak to say it, though -- set_insert is a
+         SORTED, deduplicating insert, so it commutes only on a CANONICAL
+         set.  This is that invariant, and the four lemmas below are the
+         four buckets_are_sets already has. *)
+      Definition canonical_buckets (d : list (value * value)) : Prop :=
+        Forall (fun e => match snd e with
+                         | VSet l => NoDup l /\ StronglySorted value_leb l
+                         | _ => False
+                         end) d.
+
+      (* dict_wf is in here because dict_insert_insert_same needs it: the
+         same-trigram case of the commutation collapses two inserts at one
+         key, and that is a fact about CANONICAL dictionaries. *)
+      Definition buckets_are_canonical (a : value) : Prop :=
+        match a with
+        | VDict d => dict_wf d /\ canonical_buckets d
+        | _ => False
+        end.
+
+      (* the set a trigram's bucket holds, and what tri_step does to it *)
+      Definition bucket_set (d : list (value * value)) (g : value) : list value :=
+        match dict_lookup g d with
+        | Some (VSet l) => l
+        | _ => nil
+        end.
+
+      Lemma bucket_set_canonical : forall d g,
+          canonical_buckets d ->
+          NoDup (bucket_set d g) /\ StronglySorted value_leb (bucket_set d g).
+      Proof.
+        unfold canonical_buckets, bucket_set; intros d g H.
+        destruct (dict_lookup g d) as [ w | ] eqn:E_lk.
+        2: split; [ constructor | constructor ].
+        apply DictIndexImpl.dict_lookup_Some_In in E_lk.
+        eapply List.Forall_In in H; [ | exact E_lk ].
+        cbn [snd] in H. destruct w; try contradiction. exact H.
+      Qed.
+
+      Lemma bucket_insert_as_set : forall d g k,
+          canonical_buckets d ->
+          bucket_insert k (dict_lookup g d) = VSet (set_insert k (bucket_set d g)).
+      Proof.
+        unfold canonical_buckets, bucket_insert, bucket_set; intros d g k H.
+        destruct (dict_lookup g d) as [ w | ] eqn:E_lk; [ | reflexivity ].
+        apply DictIndexImpl.dict_lookup_Some_In in E_lk.
+        eapply List.Forall_In in H; [ | exact E_lk ].
+        cbn [snd] in H. destruct w; try contradiction. reflexivity.
+      Qed.
+
+      Lemma tri_step_canonical : forall g k a,
+          buckets_are_canonical a -> buckets_are_canonical (tri_step g k a).
+      Proof.
+        unfold buckets_are_canonical, tri_step; intros * H.
+        destruct a as [ | | | | | | d | | | ]; try contradiction.
+        destruct H as [ H_wf H_b ]. split.
+        1: apply dict_insert_preserve_dict_wf; exact H_wf.
+        unfold canonical_buckets in *.
+        apply Forall_dict_insert; [ exact H_b | ].
+        cbn [snd]. rewrite bucket_insert_as_set by exact H_b.
+        destruct (bucket_set_canonical d g H_b) as [ H_nd H_s ]. split.
+        1: apply set_insert_preserve_NoDup; assumption.
+        1: apply set_insert_preserve_SSorted; assumption.
+      Qed.
+
+      (* THE COMMUTATION.  Two trigram-and-key insertions commute: at the same
+         trigram because set_insert does (and is idempotent, so two rows
+         sharing a trigram is not a special case), and at different trigrams
+         because dict_insert does. *)
+      Lemma tri_step_comm : forall g1 k1 g2 k2 a,
+          buckets_are_canonical a ->
+          tri_step g1 k1 (tri_step g2 k2 a)
+          = tri_step g2 k2 (tri_step g1 k1 a).
+      Proof.
+        unfold tri_step; intros * H.
+        destruct a as [ | | | | | | d | | | ]; try contradiction.
+        destruct H as [ H_wf H_b ].
+        destruct (value_eqb g1 g2) eqn:E_g.
+        1:{ (* one bucket, taken in both orders *)
+            apply value_eqb_eq in E_g; subst g2.
+            rewrite !DictIndexImpl.dict_lookup_insert_same.
+            (* the inner buckets first: unfolding bucket_insert here would
+               consume the pattern this lemma matches *)
+            rewrite !(bucket_insert_as_set d g1 _ H_b).
+            cbn [bucket_insert].
+            rewrite !DictIndexImpl.dict_insert_insert_same by exact H_wf.
+            destruct (bucket_set_canonical d g1 H_b) as [ H_nd H_s ].
+            rewrite (set_insert_set_insert k1 k2 _ H_nd H_s). reflexivity. }
+        1:{ (* different trigrams: neither insertion sees the other's bucket *)
+            assert (H_ne : g1 <> g2)
+              by (intro H_eq; rewrite H_eq, value_eqb_refl in E_g; discriminate).
+            rewrite (DictIndexImpl.dict_lookup_insert_diff g1 g2) by exact H_ne.
+            rewrite (DictIndexImpl.dict_lookup_insert_diff g2 g1)
+              by (apply not_eq_sym; exact H_ne).
+            f_equal.
+            apply DictIndexImpl.dict_insert_comm; [ exact H_ne | exact H_wf ]. }
+      Qed.
+
+      Lemma tri_fold_canonical : forall k l a,
+          buckets_are_canonical a ->
+          buckets_are_canonical (fold_right (fun g a' => tri_step g k a') a l).
+      Proof.
+        intros * H; induction l as [ | g l IH ]; cbn [fold_right];
+          [ exact H | apply tri_step_canonical, IH ].
+      Qed.
+
+      Lemma tri_word_canonical : forall w k a,
+          buckets_are_canonical a -> buckets_are_canonical (tri_word_step w k a).
+      Proof.
+        unfold tri_word_step; intros; apply tri_fold_canonical; assumption.
+      Qed.
+
+      Lemma tri_row_canonical : forall ws k a,
+          buckets_are_canonical a -> buckets_are_canonical (tri_row_step ws k a).
+      Proof.
+        unfold tri_row_step; intros * H.
+        induction ws as [ | w ws IH ]; cbn [fold_right];
+          [ exact H | apply tri_word_canonical, IH ].
+      Qed.
+
+      (* ----------------------------------------------------------------
+         Lifting the commutation through a fold.  TWO levels of fold sit
+         between tri_step and the per-row step -- trigrams within a word,
+         words within a row -- so these are applied twice, and then once more
+         to push a whole row past the fold over rows. *)
+      (* Generic, and polymorphic in the element type on purpose: the three
+         levels fold over trigrams (values), words (strings) and rows
+         (values). *)
+      Lemma fold_pres :
+        forall (A B : Type) (g : A -> B -> B) (P : B -> Prop) l b,
+          (forall y a, P a -> P (g y a)) -> P b -> P (fold_right g b l).
+      Proof.
+        intros * H_pres H_b; induction l as [ | y l IH ]; cbn [fold_right];
+          [ exact H_b | apply H_pres, IH ].
+      Qed.
+
+      Lemma fold_push :
+        forall (A B : Type) (f g : A -> B -> B) (P : B -> Prop) x l b,
+          (forall y a, P a -> P (g y a)) ->
+          (forall y a, P a -> f x (g y a) = g y (f x a)) ->
+          P b ->
+          f x (fold_right g b l) = fold_right g (f x b) l.
+      Proof.
+        intros * H_pres H_comm H_b.
+        induction l as [ | y l IH ]; cbn [fold_right]; [ reflexivity | ].
+        rewrite H_comm by (eapply fold_pres; eassumption).
+        rewrite IH; reflexivity.
+      Qed.
+
+      Lemma fold_two_comm :
+        forall (A B : Type) (f g : A -> B -> B) (P : B -> Prop) l1 l2 b,
+          (forall y a, P a -> P (f y a)) ->
+          (forall y a, P a -> P (g y a)) ->
+          (forall x y a, P a -> f x (g y a) = g y (f x a)) ->
+          P b ->
+          fold_right f (fold_right g b l2) l1
+          = fold_right g (fold_right f b l1) l2.
+      Proof.
+        intros * H_f H_g H_comm H_b.
+        induction l1 as [ | x l1 IH ]; cbn [fold_right]; [ reflexivity | ].
+        rewrite IH.
+        eapply fold_push with (P := P);
+          [ exact H_g | intros; apply H_comm; assumption
+          | eapply fold_pres; eassumption ].
+      Qed.
+
+      Lemma tri_word_step_comm : forall w1 k1 w2 k2 a,
+          buckets_are_canonical a ->
+          tri_word_step w1 k1 (tri_word_step w2 k2 a)
+          = tri_word_step w2 k2 (tri_word_step w1 k1 a).
+      Proof.
+        unfold tri_word_step; intros * H.
+        eapply fold_two_comm with (P := buckets_are_canonical);
+          [ intros; apply tri_step_canonical; assumption
+          | intros; apply tri_step_canonical; assumption
+          | intros; apply tri_step_comm; assumption
+          | exact H ].
+      Qed.
+
+      Lemma tri_row_step_comm : forall ws1 k1 ws2 k2 a,
+          buckets_are_canonical a ->
+          tri_row_step ws1 k1 (tri_row_step ws2 k2 a)
+          = tri_row_step ws2 k2 (tri_row_step ws1 k1 a).
+      Proof.
+        unfold tri_row_step; intros * H.
+        eapply fold_two_comm with (P := buckets_are_canonical);
+          [ intros; apply tri_word_canonical; assumption
+          | intros; apply tri_word_canonical; assumption
+          | intros; apply tri_word_step_comm; assumption
+          | exact H ].
+      Qed.
+
+      Lemma buckets_are_canonical_nil : buckets_are_canonical (VDict nil).
+      Proof. split; [ exact I | constructor ]. Qed.
+
+      (* THE FACT THE RULE NEEDS: appending a row at the end builds the same
+         trigram index as consing it at the front. *)
+      Lemma tri_entries_app_singleton : forall l r,
+          tri_entries (l ++ [r]) = tri_entries (r :: l).
+      Proof.
+        unfold tri_entries; intros l r.
+        rewrite fold_right_app. cbn [fold_right]. symmetry.
+        eapply fold_push with (P := buckets_are_canonical);
+          [ intros; apply tri_row_canonical; assumption
+          | intros; apply tri_row_step_comm; assumption
+          | exact buckets_are_canonical_nil ].
+      Qed.
       Lemma tri_entries_buckets : forall l a,
           buckets_are_sets a ->
           buckets_are_sets

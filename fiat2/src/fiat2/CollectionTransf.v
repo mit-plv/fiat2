@@ -130,6 +130,48 @@ Section WithWord.
       H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H; subst
     end.
 
+  (* The other direction of set_insert_incl: nothing is lost. *)
+  Lemma set_insert_In : forall (l : list value) v p,
+      In p (set_insert v l) <-> p = v \/ In p l.
+  Proof.
+    induction l as [ | a l IH ]; cbn; intros v p.
+    1: intuition congruence.
+    destruct (value_ltb v a) eqn:E_lt; cbn.
+    1: intuition congruence.
+    destruct (value_eqb v a) eqn:E_eq; cbn.
+    1:{ apply value_eqb_eq in E_eq; subst. intuition congruence. }
+    rewrite IH. intuition congruence.
+  Qed.
+
+  (* The set counterpart of bag_insert_bag_insert, and for the same reason: an
+     index whose buckets are SETS needs its step to commute.  set_insert is a
+     SORTED, DEDUPLICATING insert, so this goes through canonicity rather than
+     through the insertion's case analysis -- two sorted lists with the same
+     members are equal (Permutation_SSorted_eq).  Unlike the bag's, this
+     operation is also IDEMPOTENT, which is what lets two rows share a bucket
+     key without the order of arrival mattering. *)
+  Lemma set_insert_set_insert : forall (x y : value) s,
+      NoDup s -> StronglySorted value_leb s ->
+      set_insert x (set_insert y s) = set_insert y (set_insert x s).
+  Proof.
+    intros x y s H_nd H_s.
+    assert (H_sy : StronglySorted value_leb (set_insert y s))
+      by (apply set_insert_preserve_SSorted; exact H_s).
+    assert (H_ndy : NoDup (set_insert y s))
+      by (apply set_insert_preserve_NoDup; [ exact H_nd | exact H_s ]).
+    assert (H_sx : StronglySorted value_leb (set_insert x s))
+      by (apply set_insert_preserve_SSorted; exact H_s).
+    assert (H_ndx : NoDup (set_insert x s))
+      by (apply set_insert_preserve_NoDup; [ exact H_nd | exact H_s ]).
+    apply Permutation_SSorted_eq.
+    2: apply set_insert_preserve_SSorted; exact H_sy.
+    2: apply set_insert_preserve_SSorted; exact H_sx.
+    apply NoDup_Permutation.
+    1: apply set_insert_preserve_NoDup; [ exact H_ndy | exact H_sy ].
+    1: apply set_insert_preserve_NoDup; [ exact H_ndx | exact H_sx ].
+    intros p. rewrite !set_insert_In. intuition idtac.
+  Qed.
+
   Lemma bag_insert_bag_insert : forall (x y : value) b,
       StronglySorted bag_entry_leb b ->
       bag_insert x (bag_insert y b) = bag_insert y (bag_insert x b).
