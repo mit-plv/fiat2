@@ -9,6 +9,10 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
    DictIndexImpl's. *)
 Require fiat2.CompositeDictIndexImpl.
 Module CDI := fiat2.CompositeDictIndexImpl.
+(* and the list-valued dictionary, for the same reason: its to_idx, idx_ty,
+   is_tbl_ty and idx_wf would shadow DictIndexImpl's. *)
+Require fiat2.ListDictIndexImpl.
+Module LDI := fiat2.ListDictIndexImpl.
 (* and the composite index's keyed delete, for the same reason: it imports
    CompositeDictIndexImpl itself, so importing it here would shadow
    DictIndexImpl's names just as importing that one would. *)
@@ -145,7 +149,22 @@ Variant index_choice :=
      ones (keyed_composite_subsumes_composite,
      keyed_composite_subsumes_unique_dict).  Listed last so that no existing
      choice's position moves. *)
-  | KeyedCompositeIdx (attrs : list string) (key : string).
+  | KeyedCompositeIdx (attrs : list string) (key : string)
+  (* An attribute-to-rows dictionary whose buckets are LISTS, in the table's
+     own order.  DictIdx's buckets are bags, so a read that observes the
+     order of a group cannot use it and stays a scan; this choice answers
+     such a read with a lookup, and the bucket it returns IS the filtered
+     sublist.
+
+     It does NOT subsume DictIdx, and DictIdx does not subsume it: a
+     bag-valued bucket cannot answer an order-observing read, and a
+     list-valued one is strictly more to maintain.  They serve different
+     reads, so there is no subsumption theorem between them.
+
+     Unranged: the key groups, it does not order.  A read that wants the
+     GROUPS in key order is RangedDictIdx's business.  Listed last so that
+     no existing choice's position moves. *)
+  | ListDictIdx (attr : string).
 
 Variant anno_command :=
   | AC (basic_transfs : list basic_transf) (all_index_choices : list (list index_choice)) (c : command).
@@ -325,6 +344,44 @@ Section WithConcreteMaps.
       (ds : list decl) :=
       DBPD.bucket_pk_delete_gated dict_idx_attr key "tup" "acc"
         "id_tag" "aux_tag" d_tag "bkt" ds.
+
+    (* ---------------------------------------------------------------
+       The list-valued dictionary.  Its read rule is the list-level
+       counterpart of dict_lookup_transf above, and its two maintenance
+       rules are genuinely different from each other: a cons prepends to
+       the bucket, an append appends to it.  Both are one-shot-free --
+       each rewrite consumes the shape it matched -- so both go in the
+       maintenance loop. *)
+    Context (list_dict_idx_attr : string).
+
+    Definition list_dict_idx_wf :=
+      (LDI.idx_wf "hole" list_dict_idx_attr "tup" "acc" "x").
+    Instance clist_dict_idx : IndexInterface.index :=
+      (LDI.list_dict_idx "hole" list_dict_idx_attr "tup" "acc" "x").
+    Instance clist_dict_idx_ok : IndexInterface.ok clist_dict_idx list_dict_idx_wf.
+    apply LDI.list_dict_idx_ok. auto with transf_hints.
+    Qed.
+
+    Definition list_dict_lookup_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (LDI.eq_filter_to_lookup_list_head
+                      list_dict_idx_attr "id_tag" "aux_tag" tag "b" tbl).
+
+    Definition use_list_dict_idx_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (LDI.use_list_idx_head list_dict_idx_attr
+                      "id_tag" "aux_tag" tag tbl).
+
+    Definition cons_to_insert_list_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (LDI.cons_to_insert_list_head list_dict_idx_attr "tup" "acc" "x" "y").
+
+    (* An append at the END.  Unlike every other index's append rule this is
+       NOT a normalisation into the cons: the bucket is a list, so the two
+       writes put the row in different places and emit different code. *)
+    Definition snoc_to_append_list_transf :=
+      fun tbl => fold_command_with_globals [tbl]
+                   (LDI.snoc_to_append_list_head list_dict_idx_attr "tup" "acc" "x" "y").
 
     Context (cdi_attrs : list string).
 
@@ -786,6 +843,20 @@ Section WithConcreteMaps.
               turns that into a read *)
            rep_maintain_transf],
           S cur_tag)
+    | ListDictIdx attr =>
+        ([(String.of_nat cur_tag,
+            clist_dict_idx attr,
+            list_dict_idx_wf attr)],
+          [list_dict_lookup_transf (String.of_nat cur_tag) attr;
+           use_list_dict_idx_transf (String.of_nat cur_tag) attr;
+           (* Both write shapes in the one loop.  Neither is a one-shot
+              normalisation -- there is no cons for an append to become --
+              so unlike every other index here nothing is composed outside
+              the loop. *)
+           fun tbl => repeat_transf
+                        (Basics.compose (snoc_to_append_list_transf attr tbl)
+                           (cons_to_insert_list_transf attr tbl)) reps],
+          S cur_tag)
 end.
 
   (* TrigramIdx subsumes UniqueDictIdx on the key it points through.  The
@@ -913,7 +984,8 @@ end.
          | |- NoDup nil => constructor
          end.
     all: auto using csum_agg_ok, ccount_agg_ok, cmin_agg_ok, cset_agg_ok, cdict_idx_ok,
-      cunique_idx_ok, ctrigram_idx_ok, crep_idx_ok, ccomposite_dict_idx_ok.
+      cunique_idx_ok, ctrigram_idx_ok, crep_idx_ok, ccomposite_dict_idx_ok,
+      clist_dict_idx_ok.
     all: try (eexists; intuition eauto; lia).
     (* and that choice's two tags are distinct, by of_nat's injectivity *)
     (* no cbn here: it would unfold of_nat into its decimal definition and
@@ -1359,7 +1431,7 @@ end.
     intros ic ds row_ty init_tag reps idxs transfs next_tag f H_mk H_in l Q
       H_incl H_nd H_Q H_decl.
     revert H_mk H_in H_incl H_nd.
-    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | | al | al ak ];
+    destruct ic as [ a | a | a | a | a | a | a ak | a ak | ct | | al | al ak | a ];
       cbn; intros; invert_pair; repeat apply_incl_cons_inv.
     1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
         all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
@@ -2066,6 +2138,33 @@ end.
                       ltac:(discriminate) "z"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)). } }
+    (* the list-valued dictionary: a read, the use rule, and the two
+       maintenance rules, none of them gated *)
+    1:{ repeat destruct_In; try apply_in_nil; repeat apply_transf_sound_lemmas.
+        all: try (eapply expr_aug_transf_sound_strengthen_wf; [ exact H_Q | ]).
+        1:{ eapply LDI.eq_filter_to_lookup_list_head_sound2;
+            auto using ctenv_ok, clocals_ok.
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1: prove_idx_wf.
+            1:{ rewrite is_NoDup_to_transparent. cbn; intuition discriminate. } }
+        1:{ eapply LDI.use_list_idx_head_sound2; auto using ctenv_ok, clocals_ok.
+            1: prove_idx_wf.
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            1:{ rewrite is_NoDup_to_transparent. cbn; intuition discriminate. } }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply LDI.snoc_to_append_list_head_sound;
+              eauto with transf_hints. }
+        1:{ apply expr_transf_sound__expr_aug_transf_sound.
+            eapply LDI.cons_to_insert_list_head_sound;
+              eauto with transf_hints. } }
   Qed.
   (* The instance for a declaration-free table: with no declarations no
      member's gate can fire, so no declaration is owed. *)
