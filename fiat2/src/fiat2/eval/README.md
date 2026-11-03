@@ -68,13 +68,15 @@ missing is not the operator but the rule -- see the limits table below.
 | `Jenkins_UserSearch.v` | `CollectionSearchIndex.java:54`, `Jenkins.java:2437` | the only SUBSTRING index, and the only file whose claim is that the author did NOT build the structure: `find` is their own `ConcurrentHashMap` lookup, `suggest` their own linear `contains` scan, one class and one collection; both writes maintain both members, and the declared key erases the list |
 | `Sat4j_LiteralStorage.v` | Cozy's `examples/sat4j-literal-storage.ds` | the only subject WE DID NOT CHOOSE: a third-party benchmark spec, one declared key and eight reads over one table; the key answers a row read and an existence test without `SetAgg`, and the five FILTERING PROJECTIONS it leaves as scans found a missing rule -- the bag-level counterpart of a list-level split -- now built and pinned in a third configuration |
 | `Netbox_TemplateExtensions.v` | `plugins/registration.py:75`, `utilities/templatetags/plugins.py:26-48` | the only subject whose GROUP ORDER IS THE MEANING: a dict from model name to the plugin extensions registered for it, appended to at the end and concatenated back in registration order by `html += content`. The first order-observing read an index SERVES, and the file where the bag-valued dictionary every other subject uses is shown to be sound but USELESS -- with `DictIdx` installed both reads stay scans and the index is never read |
+| `Kafka_ConsumerProtocol.v` | `ConsumerProtocol.java:83-92` | the first SORT: a two-key ascending comparator over a HETEROGENEOUS key (String topic, int partition), desugared into one `ESort` of a renamed key record. Its sorted order is observed twice, on the wire and by a run-detecting loop -- and it is the file that pins the DEMAND FIREWALL, that a sort relaxes its input to a bag however order-sensitive the reads below it are |
+| `Netbox_ChangelogRetention.v` | `core/jobs.py:160-168` | the hardest order in the corpora: FOUR keys, MIXED direction, where `DISTINCT ON` makes the order SELECT THE ANSWER. Descending by projected negation; the grouping prefix becomes a composite index key; and the firewall above is what lets the ordinary BAG-valued composite dictionary serve the filter, so the read is one probe, the sort runs over the bucket, and the list is erased across an append |
 | `Jenkins_DependentPlugins.v` | `PluginManager.java:1042` | the only subject whose SOURCE IS QUADRATIC: a nested-loop join over a maintained field, `plugins` inside `plugins`. Its indexable guard is THIRD in its chain, which is why the selector found nothing on it until `PromoteGuard` existed -- and the one subject found by searching the corpora for a shape rather than by reading a class |
 
 ## Which pattern each subject covers
 
 The per-file `Pattern` headers name codes from the external pattern catalogue the paper
 cites. **Those codes are not defined anywhere in this repository**, so this table is the
-index a reader needs to resolve them, and it is also the answer to "are twelve examples
+index a reader needs to resolve them, and it is also the answer to "are fourteen examples
 representative" -- not a count of how often each pattern occurs in a corpus, which is
 deliberately not claimed, but a statement of WHICH distinct patterns the set covers and
 which subject is the witness for each.
@@ -93,11 +95,13 @@ which subject is the witness for each.
 | `Jenkins_UserSearch` | A1a, A2, B8 | a SUBSTRING read beside a hand-built exact-match map, in one class over one collection |
 | `Sat4j_LiteralStorage` | A1a | A1a at an extreme: eight reads over one declared key, seven of them the same probe in different clothes |
 | `Jenkins_DependentPlugins` | **none claimed** | a nested-loop EQUIJOIN: a collection iterated inside itself, with an equality relating the two |
+| `Kafka_ConsumerProtocol` | A1a | a two-key ascending comparator whose result order is read back; the sort key is heterogeneous, so it must be a record and not a list |
+| `Netbox_ChangelogRetention` | **none claimed** | an ARGMIN PER GROUP under a four-key mixed-direction order, over an append-only log; the order selects which row survives, and the grouping key is a prefix of the sort key |
 | `Netbox_TemplateExtensions` | **none claimed** | a keyed read that OBSERVES the order inside its group, over a table built by appending: the first order-observing read that an index SERVES, where `Kafka_NamedCache`'s second program observes order and is served by none. Its read is also an (N+1) -- once per rendered object |
 
 Two things the table is meant to make checkable rather than assertable.
 
-**Where the set is thin.** Nine of the twelve subjects claim `A1a` or `A1b` -- a keyed
+**Where the set is thin.** Ten of the fourteen subjects claim `A1a` or `A1b` -- a keyed
 lookup over a collection -- so that pattern is covered many times over and the others
 once or twice each. `B7` (ordered/range) and `B8` (substring) and the join have exactly ONE
 witness apiece; `D4` (composite key) now has two served witnesses and one unserved, and a reviewer should read the corresponding claim as resting on one
@@ -105,12 +109,13 @@ program. `A3` (maintained aggregate) likewise, and so does an order-observing re
 an index SERVES -- `Netbox_TemplateExtensions` is its only witness, with
 `Kafka_NamedCache`'s second program beside it as the unserved case.
 
-**Where a code is missing.** `Jenkins_DependentPlugins` and
-`Netbox_TemplateExtensions` claim none, because the catalogue's codes are not reproduced
+**Where a code is missing.** `Jenkins_DependentPlugins`,
+`Netbox_TemplateExtensions` and `Netbox_ChangelogRetention` claim none, because the catalogue's codes are not reproduced
 here and assigning one from memory would be a guess dressed as a citation. Each pattern
 is stated in prose in its own header and in the row above; if the catalogue has a code
-for a nested-loop join, or one for an order-preserving read of a group, those are the
-two places in this directory where a code should be added by hand.
+for a nested-loop join, for an order-preserving read of a group, or for an argmin per
+group, those are the three places in this directory where a code should be added by
+hand.
 
 Patterns the development HANDLES but no subject here witnesses are a different list and
 live under *Limits* below -- `MinAgg` has no third-party witness. An order-observing
@@ -118,7 +123,7 @@ read and an `OConcat` append were both on that list and both now have one:
 `Netbox_TemplateExtensions` is a single subject whose write appends and whose read
 observes the order of a group, so it closes the two rows together.
 
-The twelve fall into eight groups, and the groups are the argument.
+The fourteen fall into nine groups, and the groups are the argument.
 
 **What the reads ask for** -- `Keycloak_CachedRealm`, `Kafka_Cluster`,
 `HA_LookinFunctions`, `Netbox_TemplateExtensions`. The first two are a pair and should be read as one: they put
@@ -352,6 +357,55 @@ list after all (`split_projection_read_is_a_probe`, `split_erases_the_list`). Th
 un-split configuration is kept beside it rather than deleted, because the pair is the
 evidence. A subject chosen by someone else found a missing rule; none of the eight we
 chose did.
+
+**What an ORDER means** -- `Kafka_ConsumerProtocol`, `Netbox_ChangelogRetention`. The
+two sorts, and the only group whose subject is not an index.
+
+A comparator is not in this language and is not being added. `ESort` sorts by
+`value_leb`, and on records that order is lexicographic in FIELD-NAME order --
+`record_compare` is a comparison of `(name, value)` pairs and two records of one type
+have the same names, so what is left is the values in the order the names sort. That is
+normally a nuisance: it is why `CompositeDictIdx` is `Unranged`. Here it is the
+mechanism. `order by topic, partition` elaborates to a projection onto a record whose
+field names were GENERATED to sort in the requested order, one `ESort`, and a projection
+back; `SortBy.v` carries the theorem that the result is a permutation of the input and
+is sorted with respect to the listed attributes, so the naming convention is proved and
+not asserted. The side condition -- that the generated names sort in the order they were
+written -- is a property of the user's attribute names, so it is a BOOLEAN discharged by
+computation at each use, and it fails loudly rather than silently at ten or more keys.
+
+`Kafka_ConsumerProtocol` is the smallest honest case and the one that shows why the key
+must be a RECORD: `comparing(topic).thenComparing(partition)` is heterogeneous, so a key
+held as a list could not type. Three pins together are the argument -- sorting the ROWS
+directly gives partition-major order, because a row's own field names sort `partition`
+before `topic`, so the naive sort is the WRONG comparator and is wrong silently; the
+desugaring gives topic-major; and asking for the other key order gives the other answer.
+
+**And the finding, which is a negative one.** That file also pins that a sort is a demand
+FIREWALL: the fold downstream compares each element with its neighbour, and the table
+UPSTREAM is still read as a bag -- `ESort LikeList` of a list projection becomes
+`ESort LikeBag` of a BAG projection over `OBagOfList` of the table
+(`sort_is_a_demand_firewall`). A sort re-establishes the order from the values, so
+nothing above it can need a list. That is the precise boundary of where the list level is
+load-bearing, and it says a sort is NOT a reason for it: read against
+`Netbox_TemplateExtensions`, where the order observed is INSERTION order, which no sort
+can recover and which is why that read needs list-valued buckets while these two need
+nothing.
+
+`Netbox_ChangelogRetention` is the hard case and the one where the firewall pays.
+`order_by('changed_object_type_id', 'changed_object_id', '-time', '-pk')` followed by
+`distinct('changed_object_type_id', 'changed_object_id')` is an argmin per group: four
+keys, two of them descending, and the order decides which row survives the prune.
+Descending is modelled by projecting the negation, which is the limit `SortBy.v` states
+and which the corpora say is enough -- all eighteen descending keys in the Python
+sources are numeric or temporal, and five of the six mixed-direction Java comparators
+descend on a numeric key. And because the sort relaxes its input to a bag, the ORDINARY
+bag-valued composite dictionary can serve the filter underneath it: the per-group read
+becomes one probe (`group_read_is_one_probe`, against
+`without_the_index_it_is_a_scan`), the sort runs over the BUCKET rather than the table,
+and the row list is erased across an append (`index_erases_the_list`,
+`append_is_maintained`). The firewall is not only a limitation; it is what makes the
+indexes this development already had usable underneath a sort.
 
 ## Who chooses the heuristics
 
@@ -903,6 +957,8 @@ record:
 | moving an indexable conjunct into the position the splitter peels | not exhibited here; the selector reads the first conjunct only, so an indexable conjunct elsewhere is invisible | not pinned: `swap_conjuncts_head` exists but is unconditional -- it reverses every conjunction it meets -- so it cannot bring one forward without reordering the rest. A guarded swap does not exist |
 | a declared-key read at SET level is served, but by a SCAN rather than a probe | this file's own first draft | narrowed, not closed. `unique_lookup_head` still matches bag level only, so a set-level read of a declared key gets no probe. What it now gets is `unique_scan_head`, which serves it from the primary-key member instead of from the list -- enough to erase the field, not enough to make the read logarithmic. A set-level counterpart of the lookup rule does not exist; the rule that fires instead is correct and linear |
 | a write that appends instead of prepending | every source here adds at the end or puts into a map; `Netbox_TemplateExtensions` is the third-party witness | **closed.** `tbl := tbl ++ [row]` is maintained incrementally for all eight index kinds, and takes the same cheap declared-key guard a cons takes (`classify_write` recognises it as `WSnoc`). The decomposition is not uniform and that is the interesting part: the four aggregates cost ONE rule between them, because their `to_idx` coerces to a bag or a set before anything looks at the rows; the dictionaries EARN order-independence from their bucket step commuting; the trigram member needs `set_insert` to be idempotent as well as commutative; and `UniqueDictIdx` needs genuinely different emitted code, insert-if-absent, because its `fold_right` lets the FIRST row of the list win. `Ex_SnocMaintenance.v` pins that the append and the cons compile to the same write (`snoc_write_is_incremental`, `cons_write_is_incremental`, identical right-hand sides) and that an append of the table to itself is still `WOther`, which is what makes the other two pins mean something |
+| a sort key that DESCENDS and is not numeric | `StickyTaskAssignor.java:434` -- `comparing(TaskId::partition).thenComparing(TaskId::subtopologyId).reversed()`, and `subtopologyId` is a `String` | **narrow and measured.** `order by` is desugared by generating field names that sort in the requested order (`SortBy.v`), and renaming cannot reverse a field. For an integer key the caller projects its negation, which `Netbox_ChangelogRetention` does for `-time` and `-pk`; for a string there is no such move. The corpora say the gap is small: all 18 descending keys in the Python sources are numeric or temporal, and 5 of the 6 mixed-direction Java comparators descend on a numeric key. The witness above is the sixth, and it reverses the WHOLE comparator rather than one key, so what it wants is a list reverse or a descending sort rather than a per-key direction |
+| a STABLE sort | none, by construction | **not closable in this language, and not this desugaring's doing.** `CollectionTransf` rewrites `ESort LikeList l` into `ESort LikeBag (EBagOf l)`, which discards the input order, so "sort by salary, ties in the order they arrived" has nothing to be stable with respect to. The desugaring breaks ties by the whole row, since the payload field sorts last; that is a total order and a definite answer, but it is not the input's |
 | a read that observes row order | `Kafka_NamedCache`'s second program (LRU recency as list POSITION) and `Netbox_TemplateExtensions` (`html += content` over a plugin bucket) | **closed for a KEYED read, open for a POSITIONAL one.** `ListDictIdx` buckets rows into a LIST in the table's own order, so a filter that keeps a group's order is answered by a lookup; it is the first index here whose `to_idx` is order-SENSITIVE, which is why none of the bucket-commutation machinery the row above relies on applies to it, and why its cons and append rules emit different code -- a cons prepends to the bucket, an append appends to it. Pinned both ways in `Netbox_TemplateExtensions.v`. What stays open is reading or writing at a POSITION rather than at a key: `Kafka_NamedCache`'s chain is spliced at a handle, not indexed, so `ONth`/`OInsertAt` would still have to scan for the position and are declined -- stated at length under **What the choice is worth** above, and in `Kafka_NamedCache.v`'s header |
 
 Those two rows closed together, in one afternoon and for one reason, which is worth
