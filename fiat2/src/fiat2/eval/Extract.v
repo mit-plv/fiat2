@@ -351,4 +351,8 @@ Definition alternatives : list (string * command) :=
   (* and with the orphaned list erased, which is the cascade the rule buys *)
   ; ("min_delete/dictmin-erased", min_delete_probe_dictmin_erased) ].
 
-Extraction "extracted.ml" subjects alternatives ref_run.
+(* The Extraction command itself is in eval/ExtractAll.v, one level further
+   down, because the fully type-annotated terms the backend consumes live in
+   eval/Elaborate.v -- which requires THIS file.  Everything has to leave
+   through one driver: two Extraction commands would emit two copies of the
+   AST types, and OCaml would treat them as unrelated. *)

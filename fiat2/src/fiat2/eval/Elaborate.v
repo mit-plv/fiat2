@@ -151,67 +151,96 @@ Section WithConcreteMaps.
   Definition ce_s4j : cenv :=
     ("records", (S4J.row_ty, S4J.decls)) :: cenv_rm "records" [].
 
+  (* One row per subject, so the checks below and the TERMS the backend
+     consumes come from the same place rather than from two lists that
+     could disagree.
+
+     s_sel is the program the SELECTOR reads and the table's type is
+     synthesized from; s_src is the source column the harness measures.
+     They differ for exactly one subject -- see item_deletion below. *)
+  Record subj := mk_subj {
+      s_name : string;
+      s_ce : cenv;
+      s_tbl : string;
+      s_Gstore : ctenv;
+      s_Genv : ctenv;
+      s_sel : command;
+      s_src : command;
+      s_opt : command }.
+
+  Definition subjects : list subj :=
+    [ mk_subj "keycloak" ce_kc "actions"
+        KC.init_Gstore KC.init_Genv
+        X.keycloak_src X.keycloak_src X.keycloak_opt
+    ; mk_subj "named_cache" ce_nc "cache"
+        NC.init_Gstore NC.init_Genv
+        X.named_cache_src X.named_cache_src X.named_cache_opt
+    ; mk_subj "area_registry" ce_ar "areas"
+        AR.init_Gstore AR.init_Genv
+        X.area_registry_src X.area_registry_src X.area_registry_opt
+    ; mk_subj "lookin" [] "functions"
+        LF.init_Gstore LF.init_Genv
+        X.lookin_src X.lookin_src X.lookin_opt
+    ; mk_subj "user_search" ce_ju "users"
+        JU.init_Gstore JU.init_Genv
+        X.user_search_src X.user_search_src X.user_search_opt
+    ; mk_subj "cluster" [] "partitions"
+        KCl.init_Gstore KCl.init_Genv
+        X.cluster_src X.cluster_src X.cluster_opt
+    ; mk_subj "entity_registry" [] "entries"
+        ER.init_Gstore ER.init_Genv
+        X.entity_registry_src X.entity_registry_src X.entity_registry_opt
+    ; mk_subj "window_store" [] "segments"
+        KWS.init_Gstore KWS.init_Genv
+        X.window_store_src X.window_store_src X.window_store_opt
+    ; mk_subj "range_delete" [] "orders"
+        ERD.init_Gstore ERD.init_Genv
+        X.range_delete_src X.range_delete_src X.range_delete_opt
+    ; mk_subj "min_delete" [] "orders"
+        EMD.init_Gstore EMD.init_Genv
+        X.min_delete_src X.min_delete_src X.min_delete_opt
+    ; mk_subj "composite_key" [] "items"
+        ECK.init_Gstore ECK.init_Genv
+        X.composite_key_src X.composite_key_src X.composite_key_opt
+    ; mk_subj "composite_keyed_delete" ce_ckd "items"
+        CKD.init_Gstore CKD.init_Genv
+        X.composite_keyed_delete_src X.composite_keyed_delete_src X.composite_keyed_delete_opt
+    ; mk_subj "composite_two_deletes" ce_ckd "items"
+        CKD.init_Gstore CKD.init_Genv
+        X.composite_two_deletes_src X.composite_two_deletes_src X.composite_two_deletes_opt
+    ; mk_subj "composite_key_decl" ce_ckdecl "items"
+        CKDecl.init_Gstore CKDecl.init_Genv
+        X.composite_key_decl_src X.composite_key_decl_src X.composite_key_decl_opt
+    ; mk_subj "keyed_dict_delete" ce_kdtd "items"
+        KDTD.init_Gstore KDTD.init_Genv
+        X.keyed_dict_delete_src X.keyed_dict_delete_src X.keyed_dict_delete_opt
+    ; mk_subj "keyed_two_deletes" ce_kdtd "items"
+        KDTD.init_Gstore KDTD.init_Genv
+        X.keyed_two_deletes_src X.keyed_two_deletes_src X.keyed_two_deletes_opt
+    ; mk_subj "named_cache_lru" ce_nc "cache"
+        NC.init_Gstore NC.init_Genv
+        X.named_cache_lru_src X.named_cache_lru_src X.named_cache_lru_opt
+    ; mk_subj "named_cache_lru_ordered" ce_nc "cache"
+        NC.init_Gstore NC.init_Genv
+        X.named_cache_lru_ordered_src X.named_cache_lru_ordered_src X.named_cache_lru_ordered_opt
+    ; mk_subj "named_cache_lru_noevict" ce_nc "cache"
+        NC.init_Gstore NC.init_Genv
+        X.named_cache_lru_noevict_src X.named_cache_lru_noevict_src X.named_cache_lru_noevict_opt
+    ; mk_subj "item_deletion" [] "registrations"
+        JID.init_Gstore JID.init_Genv
+        JID.elaborated X.item_deletion_src X.item_deletion_opt
+    ; mk_subj "sat4j" ce_s4j "records"
+        S4J.init_Gstore S4J.init_Genv
+        X.sat4j_src X.sat4j_src X.sat4j_opt
+    ; mk_subj "dependent_plugins" [] "deps"
+        JDP.init_Gstore JDP.init_Genv
+        X.dependent_plugins_src X.dependent_plugins_src X.dependent_plugins_opt ].
+
+  Definition elaborate_subj (s : subj) : result command :=
+    elaborate (s_ce s) (s_tbl s) (s_Gstore s) (s_Genv s) (s_sel s) (s_opt s).
+
   Definition checks : list (string * bool) :=
-    [ ("keycloak", elaborated_fully (elaborate ce_kc "actions"
-         KC.init_Gstore KC.init_Genv X.keycloak_src X.keycloak_opt))
-    ; ("named_cache", elaborated_fully (elaborate ce_nc "cache"
-         NC.init_Gstore NC.init_Genv X.named_cache_src X.named_cache_opt))
-    ; ("area_registry", elaborated_fully (elaborate ce_ar "areas"
-         AR.init_Gstore AR.init_Genv X.area_registry_src X.area_registry_opt))
-    ; ("lookin", elaborated_fully (elaborate [] "functions"
-         LF.init_Gstore LF.init_Genv X.lookin_src X.lookin_opt))
-    ; ("user_search", elaborated_fully (elaborate ce_ju "users"
-         JU.init_Gstore JU.init_Genv X.user_search_src X.user_search_opt))
-    ; ("cluster", elaborated_fully (elaborate [] "partitions"
-         KCl.init_Gstore KCl.init_Genv X.cluster_src X.cluster_opt))
-    ; ("entity_registry", elaborated_fully (elaborate [] "entries"
-         ER.init_Gstore ER.init_Genv X.entity_registry_src X.entity_registry_opt))
-    ; ("window_store", elaborated_fully (elaborate [] "segments"
-         KWS.init_Gstore KWS.init_Genv X.window_store_src X.window_store_opt))
-    ; ("range_delete", elaborated_fully (elaborate [] "orders"
-         ERD.init_Gstore ERD.init_Genv X.range_delete_src X.range_delete_opt))
-    ; ("min_delete", elaborated_fully (elaborate [] "orders"
-         EMD.init_Gstore EMD.init_Genv X.min_delete_src X.min_delete_opt))
-    ; ("composite_key", elaborated_fully (elaborate [] "items"
-         ECK.init_Gstore ECK.init_Genv X.composite_key_src X.composite_key_opt))
-    ; ("composite_keyed_delete", elaborated_fully (elaborate ce_ckd "items"
-         CKD.init_Gstore CKD.init_Genv
-         X.composite_keyed_delete_src X.composite_keyed_delete_opt))
-    ; ("composite_two_deletes", elaborated_fully (elaborate ce_ckd "items"
-         CKD.init_Gstore CKD.init_Genv
-         X.composite_two_deletes_src X.composite_two_deletes_opt))
-    ; ("composite_key_decl", elaborated_fully (elaborate ce_ckdecl "items"
-         CKDecl.init_Gstore CKDecl.init_Genv
-         X.composite_key_decl_src X.composite_key_decl_opt))
-    ; ("keyed_dict_delete", elaborated_fully (elaborate ce_kdtd "items"
-         KDTD.init_Gstore KDTD.init_Genv
-         X.keyed_dict_delete_src X.keyed_dict_delete_opt))
-    ; ("keyed_two_deletes", elaborated_fully (elaborate ce_kdtd "items"
-         KDTD.init_Gstore KDTD.init_Genv
-         X.keyed_two_deletes_src X.keyed_two_deletes_opt))
-    ; ("named_cache_lru", elaborated_fully (elaborate ce_nc "cache"
-         NC.init_Gstore NC.init_Genv X.named_cache_lru_src X.named_cache_lru_opt))
-    ; ("named_cache_lru_ordered", elaborated_fully (elaborate ce_nc "cache"
-         NC.init_Gstore NC.init_Genv
-         X.named_cache_lru_ordered_src X.named_cache_lru_ordered_opt))
-    ; ("named_cache_lru_noevict", elaborated_fully (elaborate ce_nc "cache"
-         NC.init_Gstore NC.init_Genv
-         X.named_cache_lru_noevict_src X.named_cache_lru_noevict_opt))
-    (* item_deletion is the one subject whose two extracted columns are not
-       source and optimized: Extract.v pairs configuration 0 (the same basic
-       rewrites, NO index) against TableRep, so that what is measured is what
-       TableRep alone is worth.  The left column is therefore already
-       optimizer output, and the selector must be shown the ELABORATED
-       program instead -- which is also the one SelectorTests pins
-       (select_choices [] "registrations" JID.elaborated = [TableRep LikeSet]).
-       The table's type is the same either way; only the demands differ. *)
-    ; ("item_deletion", elaborated_fully (elaborate [] "registrations"
-         JID.init_Gstore JID.init_Genv JID.elaborated X.item_deletion_opt))
-    ; ("sat4j", elaborated_fully (elaborate ce_s4j "records"
-         S4J.init_Gstore S4J.init_Genv X.sat4j_src X.sat4j_opt))
-    ; ("dependent_plugins", elaborated_fully (elaborate [] "deps"
-         JDP.init_Gstore JDP.init_Genv
-         X.dependent_plugins_src X.dependent_plugins_opt)) ].
+    List.map (fun s => (s_name s, elaborated_fully (elaborate_subj s))) subjects.
 
   Definition still_failing : list string :=
     List.map fst (List.filter (fun p => negb (snd p)) checks).
@@ -232,5 +261,107 @@ Section WithConcreteMaps.
 
   Lemma how_many_subjects : List.length checks = 22.
   Proof. reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
+     What crosses the boundary: both columns of every subject, FULLY
+     TYPE-ANNOTATED.
+
+     The source column needs nothing special -- plain typecheck elaborates
+     it, which Annotations.every_source_elaborates establishes -- and the
+     optimized column goes through `elaborate` above.  Both are reduced to
+     a normal form here, exactly as eval/Extract.v does for the unannotated
+     terms, so what the backend receives is DATA and no part of the
+     optimizer or the checker is extracted alongside it.
+
+     CSkip as the failure value is not a silent fallback: the two theorems
+     above say neither arm is reachable, and a CSkip appearing downstream
+     would be a loud failure rather than a quiet wrong answer, since every
+     subject's store comparison would disagree. *)
+  Definition tc_or_skip (Gstore Genv : ctenv) (c : command) : command :=
+    match typecheck Gstore Genv c with
+    | Success c' => c'
+    | Failure _ => CSkip
+    end.
+
+  Definition elab_or_skip (r : result command) : command :=
+    match r with
+    | Success c => c
+    | Failure _ => CSkip
+    end.
+
+  Definition annotated : list (string * command * command) :=
+    List.map (fun s =>
+                (s_name s,
+                  tc_or_skip (s_Gstore s) (s_Genv s) (s_src s),
+                  elab_or_skip (elaborate_subj s)))
+      subjects.
+
+  (* and the check that no arm above was taken, on the very list that gets
+     extracted rather than on the definitions it was built from *)
+  Definition no_skips : bool :=
+    forallb (fun '(_, src, opt) =>
+               match src, opt with
+               | CSkip, _ | _, CSkip => false
+               | _, _ => true
+               end) annotated.
+
+  Theorem annotated_terms_are_real : no_skips = true.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
+     The two table types, per subject.
+
+     WHY THESE HAVE TO CROSS TOO.  The annotations give the backend every
+     collection a program CREATES, which is most of what it needs -- but
+     not the table's own record.  `CLetMut (ERecord [("id_tag", ...);
+     ("aux_tag", ...)]) tbl c'` is built by ERecord, which carries no
+     annotation, so the record pairing the rows with their indexes is
+     exactly the type a reader of the annotations alone cannot see.  It is
+     also the most important one: it is where the dictionaries live, and a
+     backend that cannot name it cannot monomorphize the table at all.
+
+     Nothing new is computed here.  transformed_tbl_ty is what the
+     elaboration above already used, so these are the types the terms were
+     annotated AGAINST rather than a second opinion about them. *)
+  Definition tbl_tys (s : subj) : result (type * type) :=
+    t <- orig_tbl_ty (s_Gstore s) (s_Genv s) (s_sel s) ;;
+    Success (t,
+      transformed_tbl_ty (select_choices (s_ce s) (s_tbl s) (s_sel s)) t
+        (installed_of (s_opt s))).
+
+  Definition tbl_types : list (string * type * type) :=
+    List.map (fun s =>
+                match tbl_tys s with
+                | Success (a, b) => (s_name s, a, b)
+                | Failure _ => (s_name s, TUnit, TUnit)
+                end)
+      subjects.
+
+  (* A table is a list of records, so TUnit is a value no real answer takes
+     and its absence is the check that no Failure arm was reached. *)
+  Definition no_unit_tbl_ty : bool :=
+    forallb (fun '(_, a, b) =>
+               match a, b with
+               | TUnit, _ | _, TUnit => false
+               | _, _ => true
+               end) tbl_types.
+
+  Theorem tbl_types_are_real : no_unit_tbl_ty = true.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------
+     The store and environment types, per subject.
+
+     The generated code needs these for its INPUTS.  A workload arrives as
+     the generators built it -- `queries`, and for most subjects a table
+     read out of the environment -- and the compiled program has to know
+     what each name holds in order to give it a monomorphic type.  Handed
+     over as association lists rather than as the map, so the boundary
+     carries no coqutil representation into OCaml, exactly as ref_run
+     does. *)
+  Definition envs : list (string * list (string * type) * list (string * type)) :=
+    List.map (fun s =>
+                (s_name s, map.tuples (s_Gstore s), map.tuples (s_Genv s)))
+      subjects.
 
 End WithConcreteMaps.
