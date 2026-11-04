@@ -35,4 +35,6 @@ fiat2/prototype
 # extracted by src/fiat2/eval/Extract.v
 fiat2/harness/generated/*.ml
 fiat2/harness/generated/*.mli
+# emitted by harness/mono.ml (main.exe types); derived, like generated/
+fiat2/harness/monotypes.ml
 fiat2/harness/_build/

@@ -1,0 +1,12 @@
+; monotypes.ml is written by the generator, not by hand: dune runs it.  So a
+; fresh tree builds the generator first and this second, with no manual step
+; -- unlike generated/, which the Rocq build writes.
+(rule
+ (target monotypes.ml)
+ (action (with-stdout-to monotypes.ml (run %{exe:../main.exe} types))))
+
+(executable
+ (name compiled)
+ (modules monotypes compiled)
+ (libraries conquord_harness)
+ (flags (:standard -w +a-4-9-26-27-32..70)))

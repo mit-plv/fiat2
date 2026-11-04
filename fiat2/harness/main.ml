@@ -3,6 +3,12 @@
    quietly diverge from the others.
 
      report         what is in the extracted terms; evaluates nothing
+     types          the OCaml type declarations the compiled backend needs:
+                    one record per Conquord record type, with a structural
+                    compare and hash, and a Map/Hashtbl/Set instance per key
+                    type with dict_kind deciding tree or hash.  Writes to
+                    stdout; harness/monotypes.ml is where it goes, and
+                    `dune build @check` is what type-checks it
      stores         the dictionary store against a reference map: that it is a
                     finite map on the keys these subjects use, and that one
                     delete removes one binding.  It exists because a library
@@ -53,6 +59,7 @@ let () =
   | _ :: "report" :: _ | [ _ ] -> Report.run ()
   | _ :: "check" :: _ -> ignore (Probe.run ()); Differential.run ()
   | _ :: "stores" :: _ -> ignore (Probe.run ())
+  | _ :: "types" :: _ -> Mono.run ()
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
   | _ :: "csv" :: rest -> Bench.csv (List.filter_map int_of_string_opt rest)
   | _ :: "timing" :: rest -> Bench.timing rest
@@ -66,7 +73,7 @@ let () =
       Bench.alternatives_cost (List.filter_map int_of_string_opt rest)
   | _ :: other :: _ ->
       Printf.eprintf
-        "unknown command %s; expected report, stores, check, bench, csv, \
+        "unknown command %s; expected report, stores, types, check, bench, csv, \
          timing, baseline, threeway, matched or alternatives, optionally with \
          typed, trees or hashes\n"
         other;

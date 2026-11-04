@@ -173,6 +173,13 @@ module rec V : sig
   (* for CCHashTrie's functor, which wants an equal and a hash *)
   val equal : t -> t -> bool
   val hash : t -> int
+  (* exported so that rt.ml -- the runtime the COMPILED side and the author
+     transcriptions share -- charges a string comparison by calling this one
+     rather than by carrying a copy of its rule.  The two sides of the author
+     comparison then differ in their REPRESENTATION and not in what a byte
+     costs. *)
+  val string_compare : string -> string -> int
+  val list_compare : ('a -> 'a -> int) -> 'a list -> 'a list -> int
   (* the one fold that may look inside a store, so that callers outside this
      module never case-split on the representation *)
   val dfold : (t -> t -> 'a -> 'a) -> dstore -> 'a -> 'a

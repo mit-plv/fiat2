@@ -1,3 +1,17 @@
+; The shared modules as a library, and the generator as an executable over it.
+;
+; They have to be separate: main.exe WRITES monotypes.ml, so main.exe cannot
+; also link it -- that is a dependency cycle.  compiled/ is where the
+; generated module and anything built on it live, and it depends on this
+; library like any other consumer.
+(library
+ (name conquord_harness)
+ (wrapped false)
+ (modules count value rt eval bridge free gen probe report differential
+          bench baseline mono)
+ (libraries conquord_extracted containers-data))
+
 (executable
  (name main)
- (libraries conquord_extracted containers-data))
+ (modules main)
+ (libraries conquord_harness))

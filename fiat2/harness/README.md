@@ -7,6 +7,13 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
 
     generated/        extracted by src/fiat2/eval/Extract.v -- derived, not checked in
     count.ml          the counters the measurement is made of
+    rt.ml             the runtime the COMPILED code and the author
+                      transcriptions share: counted scalar compares and
+                      hashes, charging by value.ml's own rules (its string
+                      comparison IS value.ml's, not a copy)
+    mono.ml           the type level of the compiled backend: a Conquord type
+                      becomes an OCaml type, and the declarations that takes
+    monotypes.ml      what mono.ml emitted -- derived, not checked in
     value.ml          values, and the representation choice the cost model rests on
     eval.ml           the evaluator: Interpret.v transcribed onto those values
     bridge.ml         the bijection between the two representations, written out
@@ -27,6 +34,8 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe report  # what is in the terms
     ./_build/default/main.exe check   # the store check, then the differential test
     ./_build/default/main.exe stores  # the store check alone
+    ./_build/default/main.exe types > monotypes.ml   # the backend's types
+    dune build @check                 # and type-check what it emitted
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
     ./_build/default/main.exe threeway      # all three programs in one table:
