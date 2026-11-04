@@ -13,7 +13,13 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
                       comparison IS value.ml's, not a copy)
     mono.ml           the type level of the compiled backend: a Conquord type
                       becomes an OCaml type, and the declarations that takes
-    monotypes.ml      what mono.ml emitted -- derived, not checked in
+    opcount.ml        what the subject terms are made of, which decided the
+                      order the operators were implemented in
+    codegen.ml        expressions and commands, type-directed; asks
+                      Extracted.synth for every node's type rather than
+                      carrying a second typechecker
+    compiled/         the generated module, its four correctness checks and
+                      its measurement; written by a dune rule, not by hand
     value.ml          values, and the representation choice the cost model rests on
     eval.ml           the evaluator: Interpret.v transcribed onto those values
     bridge.ml         the bijection between the two representations, written out
@@ -34,8 +40,10 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe report  # what is in the terms
     ./_build/default/main.exe check   # the store check, then the differential test
     ./_build/default/main.exe stores  # the store check alone
-    ./_build/default/main.exe types > monotypes.ml   # the backend's types
-    dune build @check                 # and type-check what it emitted
+    ./_build/default/compiled/compiled.exe           # the compiled backend's
+                                                     # four correctness checks
+    ./_build/default/compiled/compiled.exe time [n ...]   # seconds, by phase
+    ./_build/default/compiled/compiled.exe work [n ...]   # the same, counted
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
     ./_build/default/main.exe threeway      # all three programs in one table:
@@ -392,6 +400,52 @@ interpreter would therefore buy a factor of roughly **1.3** here, not an order o
 magnitude: what separates these seconds from hand-written code is the **representation**
 (boxed dynamic values compared structurally) and the **structure choice** (tree where the
 original used a hash), not the evaluation strategy.
+
+## The compiled backend
+
+`compiled/` is the other half of the answer to "what would a backend cost",
+and it exists because the interpreter's own seconds cannot answer it: this
+file measured that the interpreter's dispatch and environment lookups are
+about a fifth of the cost at 1600 rows, so **generating OCaml from the
+interpreter would buy roughly 1.3x**.  What separates those seconds from
+hand-written code is the representation and the structure choice, so the
+backend monomorphizes: a row becomes an OCaml record with fields at constant
+offsets and no run-time names, a `TInt` an unboxed `int`, an `Unranged`
+dictionary a persistent hash trie and a `Ranged` one an ordered tree --
+**the type system making the structure choice, not the harness**.
+
+Correctness is four checks, each catching what the one before cannot, and
+all of them over the generators' own workloads: the readers accept their
+inputs; the generated equality agrees with `Value.compare` on both answers;
+the compiled source and optimized columns leave the same store (bench.ml's
+store comparison, on compiled code -- a witness of each subject's soundness
+theorem on that input); and the compiled optimized column agrees with the
+**interpreter** on the same term, which is the one a codegen that dropped
+the same work from both columns could not pass.
+
+**The seconds, by phase.**  `time` runs each column with no queries and then
+with twenty, and subtracts: an index that is built once and probed twenty
+times otherwise looks slow, which is an artifact and not a result.  At 1600
+rows the ops phase runs **851x** on `item_deletion`, **272x** on
+`dependent_plugins`, **237x** on `sat4j` and **158x** on `keycloak`, and the
+ratio GROWS with the table wherever an exponent changed -- `dependent_plugins`
+is 20x at 100 rows, 73x at 400 and 272x at 1600, which is the quadratic
+source against the linear derived form, in seconds.
+
+**What `below res` means in that table, and why it is a finding.**  The ops
+phase is a difference of two measurements, and several optimized columns are
+too cheap to resolve against their own build phase.  Rather than print a
+ratio computed from noise, those cells say so.  Making them numbers needs
+bench.ml's discipline -- time each op KIND and scale the op count until the
+difference clears the floor -- which cannot simply be lifted here, because
+the op queries include writes and scaling those would measure a table that
+grew while being measured.
+
+**What it does NOT yet measure: the author comparison.**  `baseline.ml` is
+still written against the boxed dynamic value, so timing a compiled column
+against it would compare two *representations* rather than two programs --
+the same confound the matched columns exist to defuse.  Both sides have to be
+monomorphic before that ratio means anything.
 
 ## The originals, beside the optimizer's output
 

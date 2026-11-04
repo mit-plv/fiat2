@@ -100,6 +100,16 @@ let interp_of (name : string) (sp : Gen.spec) : unit =
         sizes
 
 let () =
+  (* `compiled.exe time [sizes]` measures; with no argument it CHECKS, so a
+     measurement is never the thing that runs by accident *)
+  match Array.to_list Sys.argv with
+  | _ :: "time" :: rest ->
+      Timing.run (List.filter_map int_of_string_opt rest);
+      exit 0
+  | _ :: "work" :: rest ->
+      Timing.work (List.filter_map int_of_string_opt rest);
+      exit 0
+  | _ -> ();
   List.iter
     (fun (name, sp) ->
        readers_of name sp;
