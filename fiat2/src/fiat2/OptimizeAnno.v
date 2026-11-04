@@ -2531,6 +2531,20 @@ end.
     apply compose_basic_transfs_preserve_cenv_respected; assumption.
   Qed.
 
+  (* below_n_letmuts_pre_syn builds its nest from the INSIDE --
+     `S n` wraps the predicate and recurses at n -- which is the right shape
+     for pre_transported_below_n, whose induction is on the predicate.  An
+     induction on a PROGRAM needs it peeled from the outside instead: one
+     letmut, then the rest.  The two agree, and this says so. *)
+  Lemma below_n_letmuts_pre_syn_peel : forall n P (Gstore Genv : ctenv) c,
+      below_n_letmuts_pre_syn n (below_letmut_pre_syn P) Gstore Genv c
+      <-> below_letmut_pre_syn (below_n_letmuts_pre_syn n P) Gstore Genv c.
+  Proof.
+    induction n; cbn [below_n_letmuts_pre_syn]; intros.
+    1: reflexivity.
+    1: apply IHn.
+  Qed.
+
   Lemma apply_below_n_letmuts_id : forall n f,
       (forall (Gstore Genv : ctenv) c, f Gstore Genv c = c) ->
       forall (Gstore Genv : ctenv) c, apply_below_n_letmuts n f Gstore Genv c = c.
@@ -2722,6 +2736,114 @@ end.
         apply_all_transfs_constrained ce depth 10000 fs cics icss Gstore Genv c
     end.
 
+  (* ------------------------------------------------------------------
+     The premise, read off the surface program instead of written into the
+     theorem statement.
+
+     The two results below used to be stated at a hard-coded depth, with
+     the cenv CONSTRUCTED beside the program from the same tbl/row_ty/ds.
+     That is what made them one-per-shape: write the shape out and you have
+     fixed the depth.  This lemma inducts on the program instead.  The
+     SLetMut case peels one level and uses that level's own synthesis fact;
+     the SLetConstrained case is elab_cenv_respected, which is where the
+     declarations stop being a hint about the program and become part of it.
+     ------------------------------------------------------------------ *)
+  Lemma elab_spine_pre :
+    forall sc ce free_vars (Gstore Genv : ctenv),
+      tenv_wf Gstore -> tenv_wf Genv ->
+      incl (get_free_vars Genv) free_vars ->
+      declared_spine_wf (tenv := ctenv) sc ->
+      spine_synthesizes Gstore Genv sc ->
+      well_typed Gstore Genv (elab ce free_vars sc) ->
+      below_n_letmuts_pre_syn (decl_depth sc)
+        (cenv_respected_atom (cenv_above ce sc)) Gstore Genv (elab ce free_vars sc).
+  Proof.
+    induction sc as [ | sc1 IH1 sc2 IH2 | e0 x0 sc' IH | e0 x0 sc' IH
+                    | x0 rt ds sc' IH | x0 e0 pol IHpol | e0 sc1 IH1 sc2 IH2
+                    | e0 x0 sc' IH ];
+      intros ce free_vars Gstore Genv H_Gs H_Ge H_fv H_sp H_syn H_wt;
+      cbn [declared_spine_wf] in H_sp; try contradiction.
+    (* SLetMut: one level off the spine *)
+    - cbn [spine_synthesizes] in H_syn.
+      destruct H_syn as [ t [ a [ E_syn H_syn' ] ] ].
+      cbn [elab] in H_wt.
+      apply typechecker_sound in E_syn as H_t; auto.
+      assert (H_Gs' : tenv_wf (map.put Gstore x0 t)).
+      1:{ apply tenv_wf_step; [ assumption | ].
+          eapply type_of__type_wf; [ exact H_Gs | exact H_Ge | exact H_t ]. }
+      invert_well_typed.
+      lazymatch goal with
+        H : type_of Gstore Genv e0 ?t' |- _ =>
+          pose proof (synthesizable_ty_unique Gstore Genv e0 t' H H_Gs H_Ge a t E_syn)
+            as E_eq; subst t'
+      end.
+      cbn [decl_depth cenv_above elab].
+      apply below_n_letmuts_pre_syn_peel.
+      cbn [below_letmut_pre_syn].
+      exists t, a; split; [ exact E_syn | ].
+      apply IH; assumption.
+    (* SLetConstrained: the bottom of the spine *)
+    - destruct H_sp as [ H_rt H_ds ].
+      pose proof (elab_cenv_respected (locals := clocals)
+                    sc' ce free_vars Gstore Genv x0 rt ds
+                    H_Gs H_Ge H_rt H_fv H_ds H_wt) as H_ce.
+      cbn [decl_depth cenv_above below_n_letmuts_pre_syn].
+      cbn [elab] in H_ce |- *.
+      cbn [cenv_respected_atom].
+      exact H_ce.
+  Qed.
+
+  (* ------------------------------------------------------------------
+     The top-level theorem: ONE statement, any depth.
+
+     Nothing about the program's shape appears in it.  The declaration
+     environment and the depth are READ OFF the surface program by
+     cenv_above and decl_depth, which follow elab's own recursion, so there
+     is no "right cenv" to construct beside the program and no opportunity
+     for the two to disagree.  The two results below it are instances.
+     ------------------------------------------------------------------ *)
+  (* What cenv_above computes, spelled out at a depth no example reaches,
+     because the ORDER of the cenv_rm's is the part a reader has to check:
+     each enclosing binding shadows on the way down, and the declared entry
+     goes on last.  Both existing results below are instances of the
+     theorem at depths 0 and 1 with four-line proofs, which is the evidence
+     that the depth is not special-cased anywhere. *)
+  Lemma cenv_above_shadows_outermost_first :
+    forall e1 x1 e2 x2 e3 x3 tbl row_ty ds sc (ce : cenv),
+      decl_depth (SLetMut e1 x1 (SLetMut e2 x2
+                    (SLetMut e3 x3 (SLetConstrained tbl row_ty ds sc))))
+         = S (S (S O))
+      /\ cenv_above ce (SLetMut e1 x1 (SLetMut e2 x2
+                          (SLetMut e3 x3 (SLetConstrained tbl row_ty ds sc))))
+         = (tbl, (row_ty, ds))
+             :: cenv_rm tbl (cenv_rm x3 (cenv_rm x2 (cenv_rm x1 ce))).
+  Proof. intros; split; reflexivity. Qed.
+
+  Theorem elab_apply_optimize_anno_constrained_sound' :
+    forall sc ce free_vars fs cics icss (Gstore Genv : ctenv),
+      tenv_wf Gstore -> tenv_wf Genv ->
+      incl (get_free_vars Genv) free_vars ->
+      declared_spine_wf (tenv := ctenv) sc ->
+      spine_synthesizes Gstore Genv sc ->
+      well_typed Gstore Genv (elab ce free_vars sc) ->
+      well_typed Gstore Genv
+        (apply_optimize_anno_constrained
+           (CAC (cenv_above ce sc) (decl_depth sc) fs cics icss
+              (elab ce free_vars sc)) Gstore Genv)
+      /\ forall (store env : clocals),
+          locals_wf Gstore store -> locals_wf Genv env ->
+          interp_command store env
+            (apply_optimize_anno_constrained
+               (CAC (cenv_above ce sc) (decl_depth sc) fs cics icss
+                  (elab ce free_vars sc)) Gstore Genv)
+          = interp_command store env (elab ce free_vars sc).
+  Proof.
+    intros * H_Gs H_Ge H_fv H_sp H_syn H_wt.
+    cbn [apply_optimize_anno_constrained].
+    apply apply_all_transfs_constrained_sound; try assumption.
+    apply elab_spine_pre; assumption.
+  Qed.
+
   (* The end of the chain: on a program the surface language elaborated, the
      whole pipeline -- basic rewrites, the declared index, and whatever
      unconstrained indexes were chosen -- is sound with no side condition
@@ -2746,13 +2868,15 @@ end.
                   (elab ce free_vars (SLetConstrained tbl row_ty ds sc))) Gstore Genv)
           = interp_command store env (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).
   Proof.
+    (* an instance of the general theorem at a program whose outermost
+       binding IS the declared one, so its depth is O and its cenv is the
+       one cenv_above computes *)
     intros * H_Gs H_Ge H_rt H_fv H_ds H_wt.
-    pose proof (elab_cenv_respected (locals := clocals)
-                  sc ce free_vars Gstore Genv tbl row_ty ds
-                  H_Gs H_Ge H_rt H_fv H_ds H_wt) as H_ce.
-    cbn [apply_optimize_anno_constrained].
-    cbn [elab] in H_wt, H_ce |- *.
-    apply apply_all_transfs_constrained_sound; assumption.
+    apply (elab_apply_optimize_anno_constrained_sound'
+             (SLetConstrained tbl row_ty ds sc) ce free_vars fs cics icss
+             Gstore Genv); try assumption.
+    1: cbn [declared_spine_wf]; split; assumption.
+    1: cbn [spine_synthesizes]; exact I.
   Qed.
 
   (* ------------------------------------------------------------------
@@ -2788,24 +2912,16 @@ end.
           = interp_command store env
               (elab ce free_vars (SLetMut e x (SLetConstrained tbl row_ty ds sc))).
   Proof.
+    (* and the same theorem one level down.  What used to be this proof --
+       transporting the premise through the enclosing letmut by hand, with
+       synthesizable_ty_unique to reconcile the two derivations -- is now
+       elab_spine_pre's SLetMut case, done once for every depth. *)
     intros * H_Gs H_Ge H_rt H_fv H_ds E_syn H_wt.
-    cbn [apply_optimize_anno_constrained].
-    apply apply_all_transfs_constrained_sound; [ assumption .. | ].
-    apply typechecker_sound in E_syn as H_t; auto.
-    assert (H_Gs' : tenv_wf (map.put Gstore x t)).
-    1:{ apply tenv_wf_step; [ assumption | ].
-        eapply type_of__type_wf; [ exact H_Gs | exact H_Ge | exact H_t ]. }
-    cbn [elab] in H_wt |- *.
-    cbn [below_n_letmuts_pre_syn below_letmut_pre_syn].
-    exists t, a; split; [ exact E_syn | ].
-    invert_well_typed.
-    lazymatch goal with
-      H : type_of Gstore Genv e ?t' |- _ =>
-        pose proof (synthesizable_ty_unique Gstore Genv e t' H H_Gs H_Ge a t E_syn)
-          as E_eq; subst t'
-    end.
-    cbn [cenv_respected_atom].
-    apply elab_cenv_respected; assumption.
+    apply (elab_apply_optimize_anno_constrained_sound'
+             (SLetMut e x (SLetConstrained tbl row_ty ds sc)) ce free_vars
+             fs cics icss Gstore Genv); try assumption.
+    1: cbn [declared_spine_wf]; split; assumption.
+    1: cbn [spine_synthesizes]; exists t, a; split; [ exact E_syn | exact I ].
   Qed.
 
 End WithConcreteMaps.

@@ -307,6 +307,39 @@ Fixpoint elab (ce : cenv) (free_vars : list string) (sc : scommand) : command :=
   | SForeach e x c => CForeach e x (elab ce (x :: free_vars) c)
   end.
 
+(* ------------------------------------------------------------------
+   The spine above a declared table, read off the surface program.
+
+   The constrained pipeline needs three things about the program it is
+   given: how many mutable bindings sit above the declared table, which
+   declaration environment is in force at it, and that the declaration is
+   well formed.  Each was previously supplied by WRITING THE PROGRAM SHAPE
+   OUT in the theorem statement -- which is why there was one theorem per
+   shape, at a hard-coded depth, with the cenv CONSTRUCTED beside the
+   program rather than derived from it.
+
+   These three read it off instead.  Each one follows `elab`'s own
+   recursion above, case for case, so there is nothing to keep in sync:
+   SLetMut threads `cenv_rm x ce` and SLetConstrained prepends its entry,
+   exactly as elab does.
+   ------------------------------------------------------------------ *)
+
+(* how many mutable bindings elab emits above the declared one *)
+Fixpoint decl_depth (sc : scommand) : nat :=
+  match sc with
+  | SLetMut _ _ sc' => S (decl_depth sc')
+  | _ => O
+  end.
+
+(* and the cenv in force at the declared binding, which is the one elab
+   passes into it *)
+Fixpoint cenv_above (ce : cenv) (sc : scommand) : cenv :=
+  match sc with
+  | SLetMut _ x sc' => cenv_above (cenv_rm x ce) sc'
+  | SLetConstrained x row_ty ds _ => (x, (row_ty, ds)) :: cenv_rm x ce
+  | _ => ce
+  end.
+
 Section WithWord.
   Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
@@ -377,6 +410,32 @@ Section WithWord.
     unfold constrs_of_decls; induction ds; cbn [List.map]; intros H_wf H_ds; auto.
     invert_Forall. constructor; auto using decl_wf__constr_wf.
   Qed.
+
+  (* The spine ends in a declaration, and that declaration is well formed.
+     `False` on every other shape is deliberate: it is what says there IS a
+     declared table at the bottom of the spine, so this one predicate
+     carries both the shape requirement and the well-formedness side
+     conditions the per-shape theorems used to quantify by hand. *)
+  Fixpoint declared_spine_wf (sc : scommand) : Prop :=
+    match sc with
+    | SLetMut _ _ sc' => declared_spine_wf sc'
+    | SLetConstrained _ row_ty ds _ =>
+        type_wf row_ty /\ Forall (decl_wf row_ty) ds
+    | _ => False
+    end.
+
+  (* Every initializer above the declared table synthesizes.  This is
+     below_letmut_pre_syn's requirement, stated on the SURFACE program, and
+     it is what the depth-1 corollary used to carry as a bare
+     `synthesize_expr Gstore Genv e = Success (t, a)` hypothesis -- one per
+     level, which is why there could not be a statement for every depth. *)
+  Fixpoint spine_synthesizes (Gstore Genv : tenv) (sc : scommand) : Prop :=
+    match sc with
+    | SLetMut e x sc' =>
+        exists t a, synthesize_expr Gstore Genv e = Success (t, a)
+                    /\ spine_synthesizes (map.put Gstore x t) Genv sc'
+    | _ => True
+    end.
 
   Lemma type_of_snoc_inv : forall (Gstore Genv : tenv) row tbl ta t,
       type_of Gstore Genv
