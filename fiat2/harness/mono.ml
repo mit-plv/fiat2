@@ -29,26 +29,33 @@
               fold collects.  Both uniform answers are wrong by one to four
               orders of magnitude; the list is right for every bag these
               programs build.
-     TSet     Set.Make over the element's compare
-     TDict    the KIND decides, which is what dict_kind is for: Ranged gets
-              Map.Make (an ordered tree, because a range query is a question
-              only an ordered store can answer) and Unranged gets
-              CCHashTrie.Make.  The type system makes that choice, not this
-              file.
+     TSet     Rt.SelSet, whose storage the run's `structures` setting names.
+              Nothing in a TSet says the key order is unread -- that is what a
+              set_kind would say -- so a set is created Unlicensed: a tree
+              under `typed` and `trees`, a hash under `hashes`.
+     TDict    the KIND decides, which is what dict_kind is for.  Ranged gets
+              Map.Make, an ordered tree, in EVERY setting, because codegen
+              emits ODictRange as a `split` and no hash table answers a range
+              query.  Unranged gets Rt.SelMap created Licensed: a hash under
+              `typed` and `hashes`, because the type says the order is unread,
+              and a tree only under the conservative floor.
 
-              CCHashTrie and NOT Hashtbl.Make, which would be the obvious
-              reading of "a hash table".  Conquord's dictionary operations
-              are FUNCTIONAL -- OInsert returns a new dictionary -- so an
-              imperative table would have to be copied per insert, which is
-              O(n) and destroys the incrementality the whole measurement
-              exists to demonstrate.  A persistent hash-array-mapped trie is
-              what a backend holding an Unranged dictionary would really
-              use, and it is what value.ml already charges for on the
-              interpreted side, so the two sides stay comparable.
+              Rt.SelMap's hash storage is CCHashTrie and NOT Hashtbl.Make,
+              which would be the obvious reading of "a hash table".
+              Conquord's dictionary operations are FUNCTIONAL -- OInsert
+              returns a new dictionary -- so an imperative table would have to
+              be copied per insert, which is O(n) and destroys the
+              incrementality the whole measurement exists to demonstrate.  A
+              persistent hash-array-mapped trie is what a backend holding an
+              Unranged dictionary would really use, and it is what value.ml
+              already charges for on the interpreted side, so the two sides
+              stay comparable.
 
    KEY TYPES ARE INTERNED ONCE and get all three functors, so a dictionary, a
    set and a hash table keyed on the same type share one comparison and one
-   hash.  Nothing here picks a structure that the type does not license. *)
+   hash.  Nothing here picks a structure that the type does not license: what
+   the type does not determine is deferred to the setting, where the author
+   transcriptions read the same parameter from the same place. *)
 
 open Extracted
 
@@ -149,8 +156,7 @@ and eq_of (t : type0) : string =
          other *)
       let m = key_module k ^ "_Tbl" in
       Printf.sprintf
-        "(fun a b -> %s.cardinal a = %s.cardinal b && %s.fold ~f:(fun acc kk vv -> acc && (match %s.get kk b with Some w -> %s vv w | None -> false)) ~x:true a)"
-        m m m m (eq_of v)
+        "(%s.equal %s)" m (eq_of v)
 
 and hash_of (t : type0) : string =
   match t with
@@ -161,8 +167,28 @@ and hash_of (t : type0) : string =
   | TOption t -> "(Rt.hash_option " ^ hash_of t ^ ")"
   | TList t | TBag t -> "(Rt.hash_list " ^ hash_of t ^ ")"
   | TRecord _ -> "hash_" ^ record_name t
-  | TSet _ | TDict _ ->
-      "(fun _ -> failwith \"no hash on a collection key\")"
+  (* A COLLECTION CAN BE A KEY, and under `hashes` it is hashed rather than
+     compared: user_search's trigram intersection folds a SET OF SETS, whose
+     outer store the setting hashes.  This used to be a refusal, which was
+     right only for as long as a set was Set.Make and its `hash` was never
+     called.
+
+     The combination is ADDITIVE and therefore order-independent, which is not
+     a convenience: a hashed store hands its elements over in no particular
+     order, so a hash that depended on the order would differ between two
+     equal sets.  It is value.ml's rule to the digit -- seed 47 for a set, 41
+     for a dictionary with the key mixed at 31 -- so the boxed value and the
+     monomorphic one hash to the same cost. *)
+  | TSet e ->
+      Printf.sprintf
+        "(fun s -> Rt.node (); %s_Set.fold (fun x acc -> acc + %s x) s 47)"
+        (key_module e) (hash_of e)
+  | TDict (dk, k, v) ->
+      Printf.sprintf
+        "(fun d -> Rt.node (); %s_%s.fold (fun kk vv acc -> acc + (%s kk * 31) + %s vv) d 41)"
+        (key_module k)
+        (match dk with Ranged -> "Map" | Unranged -> "Tbl")
+        (hash_of k) (hash_of v)
 
 (* ---------- records ---------- *)
 
@@ -272,7 +298,7 @@ and of_expr (t : type0) : string =
          against the comment that used to be here saying it could not be. *)
       let m = key_module e ^ "_Set" in
       Printf.sprintf
-        "(fun v -> Value.sfold (fun e acc -> %s.add (%s e) acc) (Rt.as_set v) %s.empty)"
+        "(fun v -> Value.sfold (fun e acc -> %s.add (%s e) acc) (Rt.as_set v) (%s.make Count.Unlicensed))"
         m (of_expr e) m
   | TDict (dk, k, v) ->
       let m = key_module k in
@@ -283,7 +309,7 @@ and of_expr (t : type0) : string =
              m (of_expr k) (of_expr v) m
        | Unranged ->
            Printf.sprintf
-             "(fun d -> Value.dfold (fun kk vv acc -> %s_Tbl.add (%s kk) (%s vv) acc) (Rt.as_dict d) %s_Tbl.empty)"
+             "(fun d -> Value.dfold (fun kk vv acc -> %s_Tbl.add (%s kk) (%s vv) acc) (Rt.as_dict d) (%s_Tbl.make Count.Licensed))"
              m (of_expr k) (of_expr v) m)
 
 (* ---------- key modules ---------- *)
@@ -295,15 +321,38 @@ and key_module (t : type0) : string =
   | None ->
       (* the key's own type and operations first *)
       let ty = ocaml_ty t and cmp = cmp_of t and hash = hash_of t in
+      (* EQUALITY IS NOT ALWAYS `compare = 0`, and which one a key gets
+         matters once the storage can be a hash, because that is the operation
+         the leaf comparison performs.
+
+         A COLLECTION gets its own: a set's eq_of is the cardinality-and-
+         membership test, where compare would sort both sides to produce an
+         order a hashed store does not have -- and that is the operation a
+         real backend would perform on a hashed set of sets, which
+         user_search's trigram intersection is.  A dictionary has no
+         comparison at all, so it has no other option.
+
+         EVERYTHING ELSE keeps `compare = 0`, deliberately including a BAG:
+         eq_of decides multiset equality by sorting while cmp_of is
+         positional, so the two do not agree, and the ordering a tree is built
+         on has to be the one its membership test uses.  No subject keys
+         anything on a bag; this says what would happen if one did. *)
+      let eq =
+        match t with
+        | TSet _ | TDict _ -> eq_of t
+        | _ -> Printf.sprintf "(fun a b -> %s a b = 0)" cmp in
       let n = fresh "K" in
       Hashtbl.replace names k n;
       emit
         (Printf.sprintf
-           "module %s = struct\n  type t = %s\n  let compare = %s\n  let equal a b = %s a b = 0\n  let hash = %s\nend"
-           n ty cmp cmp hash);
+           "module %s = struct\n  type t = %s\n  let compare = %s\n  let equal = %s\n  let hash = %s\nend"
+           n ty cmp eq hash);
+      (* Ranged is Map.Make unconditionally; the other two hold the storage
+         the run's setting names.  See Rt.SelMap/Rt.SelSet for why only these
+         two are selectable and what the dispatch costs. *)
       emit (Printf.sprintf "module %s_Map = Map.Make (%s)" n n);
-      emit (Printf.sprintf "module %s_Tbl = CCHashTrie.Make (%s)" n n);
-      emit (Printf.sprintf "module %s_Set = Set.Make (%s)" n n);
+      emit (Printf.sprintf "module %s_Tbl = Rt.SelMap (%s)" n n);
+      emit (Printf.sprintf "module %s_Set = Rt.SelSet (%s)" n n);
       n
 
 (* ---------- which types a program needs ---------- *)

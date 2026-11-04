@@ -23,11 +23,13 @@
    see the note at the call site for why, and for what that does and does
    not affect.
 
-   WHAT THIS DOES NOT YET MEASURE: the author comparison.  baseline.ml is
-   still written against the boxed dynamic value, so timing our compiled
-   column against it would compare two REPRESENTATIONS and not two
-   programs -- the same confound the matched columns exist to defuse.  Both
-   sides have to be monomorphic before that ratio means anything. *)
+   THE AUTHOR COMPARISON IS HERE, in `threeway` and `matched` below.  It was
+   not, at first, and the reason is worth keeping: baseline.ml is written
+   against the boxed dynamic value, so timing our compiled column against it
+   would have compared two REPRESENTATIONS and not two programs.  Both sides
+   had to be monomorphic first -- which is what compiled/authors.ml is -- and
+   then both had to be able to hold the same STORAGE, which is Rt.SelMap and
+   Rt.SelSet and what `matched` measures. *)
 
 (* Each phase is repeated to at least this long, so each is precise to about
    a percent -- but the OPS phase is a DIFFERENCE of two such numbers, and
@@ -282,15 +284,15 @@ let writes (sizes : int list) : unit =
    magnitude, trust the counters at a factor.
 
    READ opt/auth WITH THE STRUCTURE CHOICE IN MIND.  Where the two sides
-   chose differently the ratio carries that and not the algorithm, which is
-   the confound harness/README's `matched` columns exist to defuse -- and
-   this table reproduces it rather than hiding it: lookin at 3.41 and
-   item_deletion at 3.21 are a TSet charged as a tree (TSet carries no kind)
-   against the author's hash set, and named_cache at 0.30 is the mirror
-   image, our trie against the NavigableMap the author chose.  Those three
-   are the `set_kind` gap and the dict-kind asymmetry, already priced in the
-   counted tables.  Re-plumbing the setting to the compiled side is what
-   would turn them into one number each. *)
+   chose differently the ratio carries that and not the algorithm: lookin and
+   item_deletion are a TSet stored as a tree (TSet carries no kind) against
+   the author's hash set, and named_cache is the mirror image, our trie
+   against the NavigableMap the author chose.  THIS TABLE REPRODUCES THAT
+   RATHER THAN HIDING IT, which is why it is only half the answer; `matched`
+   below is the other half, measuring every row at a storage both sides
+   hold.  Read the two together: this one says what each column costs as the
+   type system has it today, and that one says how much of the difference was
+   the structure. *)
 
 (* The same per-kind difference, COUNTED.  Counters are deterministic, so
    this needs no repetition and carries no noise -- which makes it the
@@ -347,3 +349,124 @@ let threeway (sizes : int list) : unit =
                   sp.Gen.kinds)
              sizes)
     Gen.specs
+
+(* ---------- the structure choice, taken out of the comparison ----------
+
+   This is bench.ml's `matched` table on compiled code, and it closes the one
+   gap `threeway` above names: three of its rows carry a structure choice
+   rather than an algorithm, because the generated column stored what its type
+   said and the transcription stored what its author wrote, and nothing could
+   bring the two to a common storage.  Rt.SelMap and Rt.SelSet can, so each
+   row below is measured three times and the question "did the compiler arrive
+   where the author did" is asked at a storage both sides hold.
+
+   WHAT THE THREE COLUMNS MEAN is count.ml's, unchanged:
+
+     typed   what the type system licenses today -- an Unranged dictionary is
+             a hash because dict_kind says so, a set is a tree because no
+             set_kind says otherwise, and the transcriptions store what their
+             authors wrote.  This is the column every earlier table printed.
+     trees   everything a balanced tree, on both sides: the conservative floor.
+     hashes  a hash wherever the semantics permits, on both sides -- our sets
+             included, which is what a set_kind would license.
+
+   HOW TO READ A ROW.  Each cell is opt/author, so 1.00 is parity, and parity
+   IS the expected result: the compiler is supposed to arrive back at what the
+   author built by hand.  A row whose three columns agree has no structure
+   choice in it -- window_store and range_delete read their key order, so
+   nothing can hash them.  A row that MOVES across the columns is one where
+   the choice was carrying part of the ratio, and the column in which the two
+   sides hold the same storage is the one that answers the question about the
+   algorithm.
+
+   THE SECONDS AND THE WORK COLUMN SAY DIFFERENT THINGS and both are printed,
+   for the reason the header of `threeway` sets out: at a point read of about
+   200ns the clock measures how a column happens to be written, so the counted
+   figure is the verdict at a factor and the seconds at an order of magnitude.
+
+   AND READ AN UNSTABLE SECONDS CELL AS A BROKEN EXPERIMENT, not as a large
+   result.  Two defects in Rt.SelSet -- see the comment on its `union` -- made
+   an index build and a keyed delete quadratic.  The delete is inside the ops
+   phase and the COUNTERS priced it exactly, 1031x and 10595x, identical on
+   two runs.  The build is not: this table subtracts it, so what the defect
+   produced was one seconds cell reading 14.95, 916.44 and 1073.55 on three
+   runs of the same measurement.  A per-op difference cannot see a pathological
+   build, and that instability is the only signal it has to offer.
+
+   ONLY THE SUBJECTS WITH A TRANSCRIPTION APPEAR.  Every cell here is a ratio
+   against an author, so a subject with no author has nothing to put in three
+   columns and is left out rather than printed with dashes -- `threeway` above
+   is the table that lists all of them.  `range_delete` is marked, because
+   what stands in for its author is the implementation its structure asks for.
+
+   `agree` is the fourth check from compiled.exe re-made at each setting: the
+   two columns computed the same answer.  It is not decoration -- a walk over
+   a hashed store has no order, so `hashes` is where an order-sensitive
+   accumulation in either column would show up as NO. *)
+
+let settings = [ Count.Typed; Count.Trees; Count.Hashes ]
+
+let matched (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 1600 ] else sizes in
+  let saved = !Count.structures in
+  Printf.printf
+    "The optimizer's compiled output against the original author's code,\n\
+     each pair measured at a storage BOTH sides hold.  Every cell is\n\
+     opt/author, so 1.00 is parity and parity is the expected result; `s` is\n\
+     seconds per operation and `w` is the crossing data-work figure\n\
+     count.ml defines.  See the comment above this table in\n\
+     compiled/timing.ml for what the three settings mean and which of the two\n\
+     instruments to believe.\n\n";
+  Printf.printf "%-20s %-15s %5s  %-15s %-15s %-15s %5s\n" "subject" "kind"
+    "rows" "typed    s / w" "trees    s / w" "hashes   s / w" "agree";
+  Printf.printf "%s\n" (String.make 96 '-');
+  List.iter
+    (fun (name, sp) ->
+       match
+         (List.assoc_opt name Monotypes.programs,
+          List.assoc_opt name Authors.runners,
+          List.assoc_opt name Authors.checks)
+       with
+       | Some (_, popt), Some pauth, Some chk ->
+           List.iter
+             (fun rows ->
+                List.iter
+                  (fun (kind, _) ->
+                     let scalable = not (List.mem kind sp.Gen.mutating) in
+                     let cell st =
+                       Count.structures := st;
+                       let m p = per_op p sp ~rows ~kind ~scalable in
+                       let wk p = per_op_work p sp ~rows ~kind in
+                       let r x y =
+                         match x, y with
+                         | Some a, Some b when b > 0. ->
+                             let v = a /. b in
+                             Printf.sprintf
+                               (if v < 0.01 then format_of_string "%6.4f"
+                                else format_of_string "%6.2f") v
+                         | _ -> "     -" in
+                       let s = r (m popt) (m pauth)
+                       and w = r (wk popt) (wk pauth) in
+                       (* the fourth check, re-made here so that an
+                          agreement is asserted at the setting the numbers
+                          beside it were taken at and not at some other one.
+                          At 50 rows rather than at `rows`: compiled.exe
+                          already runs every check at every setting, and what
+                          this column adds is the pairing, not a new size. *)
+                       let ok =
+                         chk (Gen.workload sp ~rows:50 ~ops:5 ~only:None) in
+                       (s ^ " /" ^ w, ok) in
+                     let cells = List.map cell settings in
+                     Printf.printf "%-20s %-15s %5d  %-15s %-15s %-15s %5s%s\n"
+                       name kind rows
+                       (fst (List.nth cells 0)) (fst (List.nth cells 1))
+                       (fst (List.nth cells 2))
+                       (if List.for_all snd cells then "yes" else "NO")
+                       (if List.mem name Authors.hand_written then
+                          "  (no author)"
+                        else if scalable then "" else "  (write)"))
+                  sp.Gen.kinds)
+             sizes
+       | _ -> ())
+    Gen.specs;
+  Count.structures := saved

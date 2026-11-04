@@ -41,11 +41,15 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe check   # the store check, then the differential test
     ./_build/default/main.exe stores  # the store check alone
     ./_build/default/compiled/compiled.exe           # the compiled backend's
-                                                     # four correctness checks
+                                                     # four correctness checks,
+                                                     # under all three settings
     ./_build/default/compiled/compiled.exe time [n ...]   # seconds, by phase
     ./_build/default/compiled/compiled.exe work [n ...]   # the same, counted
     ./_build/default/compiled/compiled.exe kinds [n ...]  # per op kind, scaled
     ./_build/default/compiled/compiled.exe writes [n ...] # the write path
+    ./_build/default/compiled/compiled.exe threeway [n ...] # opt vs the author
+    ./_build/default/compiled/compiled.exe matched [n ...]  # the same, at each
+                                                     # of the three settings
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
     ./_build/default/main.exe threeway      # all three programs in one table:
@@ -55,11 +59,13 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe alternatives  # a side note: what the selector's
                                             # own choice is worth
 
-Any command takes a **structure setting** -- `typed`, `trees` or `hashes` -- which says
-what every point-access collection is charged as, **on both sides at once**:
+Any command of either executable takes a **structure setting** -- `typed`, `trees` or
+`hashes` -- which says what every point-access collection is charged as, **on both sides
+at once**, in the interpreted columns and the compiled ones alike:
 
     ./_build/default/main.exe check hashes
     ./_build/default/main.exe csv trees 1600
+    ./_build/default/compiled/compiled.exe kinds hashes 1600
 
 | setting | our side | the originals |
 |---|---|---|
@@ -138,6 +144,15 @@ intersection and difference have no trie counterpart to call, so where either si
 hashed they iterate one side and probe the other, which is the cost model the old
 `set_pair` already described, with the probes now real. Two trees still merge, because
 that is what a backend holding two trees would do.
+
+`Rt.SelSet` is the compiled side of the same thing, with one deliberate difference:
+`value.ml` calls `scardinal` to iterate the *smaller* side, which it can afford because
+it charges only key accesses and a cardinal is not one; a compiled structure cannot,
+because there the cardinal is real time and both libraries fold to compute it. So the
+compiled one chooses statically — `b` in all three, which is the smaller in every shape
+`codegen` emits. **Getting that wrong is also where it was learned that the seconds and
+the counters catch different things**; see *the structure choice, taken out of the
+compiled comparison* below.
 
 **A bag is a list under every setting, and that is a finding rather than an omission.**
 It has three implementations here -- a list, a multiset over a tree, a multiset over a
@@ -494,11 +509,77 @@ optimizer buys (`src/opt`, 100x to 2000x, where the gap is enormous); the
 counters remain the right instrument for whether it arrived where the author
 was, which is a question about factors.
 
-**Still carried over:** `baseline.ml`'s structure setting.  The monomorphized
-transcriptions fix one structure each -- the one the author chose -- so the
-`matched` columns are not yet available on the compiled side, and the
-`set_kind` gap shows up as `item_deletion` at 2.68x counted (our TSet is a
-tree, their HashSet is a hash) rather than as one number.
+### The structure choice, taken out of the compiled comparison
+
+`threeway` reproduces one confound rather than hiding it: where the two sides chose
+different storage, part of the ratio is that choice and not the algorithm.  That used to
+be unavoidable here, because the generated column stored what its *type* said and each
+transcription stored what its *author* wrote, and nothing could bring the two to a common
+structure.  `Rt.SelMap` and `Rt.SelSet` now can -- one selectable map and one selectable
+set per interned key type, both columns creating theirs through the same functor, with
+what the author wrote recorded as a `Count.situation` at the creation site instead of in
+the choice of module.  `compiled.exe matched` is the table that needed it, and it is
+`bench.ml`'s `matched` on compiled code.
+
+Each cell is opt/author, so **1.00 is parity and parity is the expected result**.  Data
+work at 1600 rows, which is the right instrument for a factor:
+
+| | `typed` | `trees` | `hashes` | what the spread is |
+|---|---|---|---|---|
+| `item_deletion/containsHit` | 2.68 | **1.02** | 1.05 | the `set_kind` gap: our `TableRep` set is a tree because `TSet` carries no kind, theirs is a `HashSet` |
+| `item_deletion/containsMiss` | 4.44 | **1.02** | 1.08 | the same, on the miss |
+| `item_deletion/register` | 6.26 | **1.03** | 1.17 | and on the write |
+| `lookin/varyingKey` | 4.08 | **1.04** | 1.10 | the same subject from the other end |
+| `named_cache/get` | **0.33** | 1.07 | 1.26 | the *mirror*: at `typed` we read below 1, which was our trie against their `NavigableMap` |
+| `named_cache/delete` | **0.24** | 1.01 | 1.04 | the same, and the larger of the two |
+| `window_store/fetchAll` | 1.24 | 1.24 | 1.24 | a `Ranged` dict: no structure choice in it at all |
+| `range_delete/countBand` | 1.29 | 1.29 | 1.29 | the same, and the three columns say so |
+| `cluster/forNode` | 2.35 | 2.24 | 2.35 | **not** the structure: their composite-key descent really is cheaper |
+| `dependent_plugins/resolveAll` | 0.0077 | 0.0044 | 0.0077 | the author built nothing, so a win is expected |
+
+**The set gap was almost all of it, and the answer is parity.** `item_deletion` is the
+subject the missing `set_kind` showed up in, and at a common storage the three read
+**1.02**, **1.02** and **1.03** where `typed` read 2.68, 4.44 and 6.26.  So what was
+reported as a 2.68x residual was the structure and not the compiler.
+
+**And it removes a win as well as a loss**, which is the part that matters for honesty.
+`named_cache` is the mirror image: at `typed` we read **0.33** and **0.24**, which looked
+like the optimizer beating a hand-written `NavigableMap`, and at a common storage that
+advantage is gone.  A parameter that only ever helped us would be a dial.
+
+**A row that does not move has no structure choice in it.** `window_store` and
+`range_delete` read their key order, so nothing can hash them and the three columns are
+identical -- the same refusal `count.ml`'s `ordered` makes, now visible on compiled code.
+`cluster/forNode` is the useful opposite: it barely moves and is *not* parity, so what it
+reports is a real difference in the algorithm.
+
+**`hashes` is not uniformly cheaper, and where it is dearer is the argument for what a
+`set_kind` would have to be.** A hashed set has no least element, so `min_elt_opt` folds
+the store where a tree descends; and its set algebra becomes one key access per element
+of the side iterated, where two trees merge.  Both are what a backend that chose a hash
+set would really have to do.  So a `set_kind` could not be a free switch: like
+`dict_kind` with `ODictRange`, it would have to be a *capability* annotation, and a set
+the program takes a minimum of or intersects is not licensed for one by anything.
+
+**Two defects, found by two different instruments.**  Writing `Rt.SelSet` wrong made an
+index build and a keyed delete quadratic, and the way each surfaced is worth keeping.
+The delete is inside the ops phase, and the **counters** priced it exactly --
+`item_deletion/deregister` at 1031x and `user_search/remove` at 10595x, bit-identical
+across two runs, which is what a deterministic counter is for.  The build is not: this
+table subtracts it, so what that defect produced was one seconds cell reading **14.95,
+916.44 and 1073.55 on three runs of the same measurement**.  A per-op difference cannot
+see a pathological build, and that instability is the only signal it has.  So a counted
+figure that moves is a finding, and a timed figure that moves between runs is not a small
+version of one.
+
+**Why this does not invalidate the earlier numbers.** Putting two storages behind one
+interface costs a match on a two-constructor variant per operation -- under a percent of a
+200ns point access, and paid by all three columns alike.  It is still a real change, so
+the `typed` column is re-measured rather than assumed, and all four correctness checks now
+run **under each of the three settings**: 44 reader runs, src = opt on 44, compiled =
+interpreter on 44, author = compiled on 20, **0 failures in each**.  `hashes` is the
+demanding pass, because a walk over a hashed store has no order and anything accumulated
+from one by insertion has to be order-insensitive to survive it.
 
 ## The originals, beside the optimizer's output
 

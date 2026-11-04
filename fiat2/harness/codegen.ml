@@ -161,9 +161,16 @@ and atom (a : atom) : string =
   | ANone _ -> "None"
   | AUnit -> "()"
   | AEmptyBag _ -> "[]"
-  | AEmptySet (Some t) -> Mono.key_module t ^ "_Set.empty"
+  (* The SITUATION each creation is in, which is what Rt.SelMap/Rt.SelSet
+     resolve against the run's setting.  Unlicensed for a set because a TSet
+     carries no kind; Licensed for an Unranged dictionary because its kind is
+     exactly the statement that the order is never read; and a Ranged
+     dictionary is not selectable at all. *)
+  | AEmptySet (Some t) ->
+      paren (Mono.key_module t ^ "_Set.make Count.Unlicensed")
   | AEmptyDict (Ranged, Some (k, _)) -> Mono.key_module k ^ "_Map.empty"
-  | AEmptyDict (Unranged, Some (k, _)) -> Mono.key_module k ^ "_Tbl.empty"
+  | AEmptyDict (Unranged, Some (k, _)) ->
+      paren (Mono.key_module k ^ "_Tbl.make Count.Licensed")
   | AEmptySet None | AEmptyDict (_, None) -> unsupported "unannotated atom"
 
 and unop (c : ctx) (o : unop) (a : expr) : string =
@@ -183,13 +190,13 @@ and unop (c : ctx) (o : unop) (a : expr) : string =
       let m = Mono.key_module (elem_of (ty_of c a)) ^ "_Set" in
       paren
         (Printf.sprintf
-           "(let l = %s in Count.visit (List.length l); List.fold_left (fun s x -> %s.add x s) %s.empty l)"
+           "(let l = %s in Count.visit (List.length l); List.fold_left (fun s x -> %s.add x s) (%s.make Count.Unlicensed) l)"
            g m m)
   | OSetOfBag ->
       let m = Mono.key_module (elem_of (ty_of c a)) ^ "_Set" in
       paren
         (Printf.sprintf
-           "(let l = %s in Count.visit (List.length l); List.fold_left (fun s x -> %s.add x s) %s.empty l)"
+           "(let l = %s in Count.visit (List.length l); List.fold_left (fun s x -> %s.add x s) (%s.make Count.Unlicensed) l)"
            g m m)
   | OSetSize -> paren (Mono.key_module (elem_of (ty_of c a)) ^ "_Set.cardinal " ^ g)
   | ODictValues -> dict_values c a
@@ -206,7 +213,7 @@ and dict_values (c : ctx) (a : expr) : string =
   | TDict (Unranged, k, _) ->
       paren
         (Printf.sprintf
-           "(%s_Tbl.fold ~f:(fun acc _ v -> Count.visit 1; v :: acc) ~x:[] %s)"
+           "(%s_Tbl.fold (fun _ v acc -> Count.visit 1; v :: acc) %s [])"
            (Mono.key_module k) (gen c a))
   | _ -> unsupported "ODictValues on a non-dictionary"
 
@@ -258,7 +265,7 @@ and flatmap (c : ctx) (tag : collection_tag) (a : expr) (x : string) (b : expr)
       let rm = Mono.key_module (elem_of (ty_of c' b)) ^ "_Set" in
       paren
         (Printf.sprintf
-           "(Count.visit (%s.cardinal %s); %s.fold (fun %s acc -> %s.union acc %s) %s %s.empty)"
+           "(Count.visit (%s.cardinal %s); %s.fold (fun %s acc -> %s.union acc %s) %s (%s.make Count.Unlicensed))"
            em (gen c a) em (binder x et) rm (gen c' b) (gen c a) rm)
 
 and binop (c : ctx) (o : binop) (a : expr) (b : expr) : string =

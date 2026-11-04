@@ -217,19 +217,17 @@ let queries_of (w : Gen.workload) (var : string) : Value.t list =
    [situation] is what the structure's creator CLAIMS about its key order, and
    it is the one thing written by hand at each site, because it is the one
    thing that is a judgement rather than a measurement.  See count.ml for what
-   the three mean.  The kind is resolved per access rather than stored, so a
-   structure built before the setting was read cannot capture a stale one. *)
+   the three mean, and [kmake] below for when the claim is resolved against
+   the setting. *)
 
-type situation =
-  | Licensed    (* the author wrote a hash map, and nothing reads the order *)
-  | Unlicensed  (* the author wrote an ordered map, but the operations this *)
-                (* subject models never read that order *)
-  | NeedsOrder  (* the operations DO read it: subMap, headMap, firstKey *)
+(* Count's own, re-exported so the constructors can be written unqualified
+   at the sites below.  It used to be declared here; it moved when the
+   compiled columns needed the same three words, because two copies of this
+   vocabulary is exactly how the author comparison would start comparing two
+   conventions again. *)
+type situation = Count.situation = Licensed | Unlicensed | NeedsOrder
 
-let kind_of = function
-  | Licensed -> Count.licensed ()
-  | Unlicensed -> Count.unlicensed ()
-  | NeedsOrder -> Count.ordered
+let kind_of = Count.kind_of
 
 (* The same two stores Value.dstore offers a dictionary, polymorphic in the
    payload because these structures hold rows, posting lists, segments and

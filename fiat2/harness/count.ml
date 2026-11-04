@@ -164,6 +164,12 @@
    their tree and the number flattered us for a reason that had nothing to do
    with the optimizer.
 
+   ALL FOUR COLUMNS read it now, not two: value.ml's dstore and sstore for the
+   interpreted pair, and Rt.SelMap and Rt.SelSet for the compiled pair.  The
+   compiled side used to be fixed at what each program's type or each author's
+   code said, which left `matched` unavailable there; `situation` below is the
+   vocabulary that closed it.
+
    The three settings are three honest columns, not one right answer:
 
      Typed   what the type system licenses TODAY.  An Unranged dictionary is
@@ -247,6 +253,39 @@ let unlicensed () : kind =
    structure choice confounding the comparison, not to pretend a structure can
    do what it cannot. *)
 let ordered : kind = Ordered
+
+(* ---------- what a call site CLAIMS about one structure ----------
+
+   The three classifiers above answer "what does this setting charge an
+   Ordered/Hashed structure", and that was enough while only the interpreted
+   columns existed.  The COMPILED columns need the question asked the other
+   way round: a generated set or a transcribed HashMap has to pick a storage
+   at the moment it is created, and what decides that is the setting together
+   with one claim about THAT structure.  So the claim is named here, beside
+   the settings it is resolved against, rather than in either column -- it is
+   the vocabulary the comparison is conducted in, and there must be exactly
+   one copy of it.
+
+     Licensed    something in the program says the key order is never read:
+                 a TDict Unranged, at which ODictRange is untypeable, or an
+                 original whose author wrote a hash map.
+     Unlicensed  the order happens not to be read, but nothing in the
+                 program says so -- our sets, whose TSet carries no kind, and
+                 an original whose author chose an ordered map for
+                 operations this subject does not model.
+     NeedsOrder  the order IS read: ODictRange, or subMap/headMap/firstKey.
+
+   The resolution is the three functions above, so a structure created under
+   a setting gets the storage that setting names and the counters then see
+   its real work.  Writing the claim at the site is deliberate: it is the one
+   part that is a judgement rather than a measurement. *)
+
+type situation = Licensed | Unlicensed | NeedsOrder
+
+let kind_of : situation -> kind = function
+  | Licensed -> licensed ()
+  | Unlicensed -> unlicensed ()
+  | NeedsOrder -> ordered
 
 let comparisons = ref 0
 let steps = ref 0

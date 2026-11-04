@@ -216,3 +216,284 @@ let words (seps : string) (s : string) : string list =
     s;
   flush ();
   List.rev !out
+
+(* ---------- the two structures whose storage the RUN chooses ----------
+
+   count.ml's `structures` parameter was built for the interpreted columns,
+   where value.ml's dstore and sstore already hold either a balanced tree or
+   CCHashTrie's persistent HAMT and the setting picks between them.  The
+   compiled columns had no equivalent: a generated set was Set.Make because
+   its type said TSet, a transcription's HashMap was CCHashTrie because its
+   author wrote a hash map, and the two could not be brought to a common
+   storage at all.  That is what left `matched` unavailable on this side and
+   made the missing set_kind show up as a per-subject ratio -- item_deletion
+   at 2.68x, our tree against their hash -- rather than as one number.
+
+   These two functors close it.  A key module gets one selectable map and one
+   selectable set, each holding the storage its SITUATION and the setting name
+   between them, and both columns create theirs through the same functor.  So
+   the claim "the two sides run the same data structure" holds on the compiled
+   side for the same reason it holds on the interpreted one: there is one
+   implementation, not two priced alike.
+
+   WHAT IS NOT SELECTABLE, and why that is the point rather than a gap.  A
+   Ranged dictionary stays Map.Make under every setting, because codegen emits
+   ODictRange as a `split` and no hash table answers a range query.  That is
+   count.ml's `ordered` and it is the same refusal: the parameter exists to
+   stop the structure choice confounding the comparison, not to pretend a
+   structure can do what it cannot.
+
+   WHAT THE DISPATCH COSTS.  One match on a two-constructor variant per
+   operation, against a point access of roughly 200ns -- under a percent, and
+   paid by all three columns alike, so it cannot move a ratio by more than
+   that.  It is still a real change to the `typed` numbers, which is why those
+   are re-measured rather than assumed to be the ones printed before.
+
+   WHERE A SETTING CHANGES AN ASYMPTOTIC AND NOT A CONSTANT.  Two places, and
+   both are in the set.  A hashed set has no least element, so min_elt_opt and
+   max_elt_opt fold the whole store where a tree answers from a leftmost
+   descent; and the set algebra becomes |a| probes where a tree merges two
+   ordered structures -- see the comment on `union` below.  Neither is a
+   defect in the Hashes column: they are what a backend that chose a hash set
+   would really have to do, and they are the argument that a set_kind would
+   have to be a CAPABILITY annotation in the manner of dict_kind and
+   ODictRange rather than a free switch.  Hashing a set that the program takes
+   a minimum of, or intersects, is not licensed by anything. *)
+
+module type KEY = sig
+  type t
+  val compare : t -> t -> int
+  val equal : t -> t -> bool
+  val hash : t -> int
+end
+
+(* A keyed map.  The operation names are CCHashTrie's where the two libraries
+   disagree (`get`, not `find_opt`) because the generated code was written
+   against a trie; `find_opt` is offered as well so that a transcription of an
+   author's TreeMap still reads like one. *)
+module SelMap (K : KEY) = struct
+  module T = Map.Make (K)
+  module H = CCHashTrie.Make (K)
+
+  type key = K.t
+  type 'v t = Tree of 'v T.t | Hash of 'v H.t
+
+  (* The situation and the setting pick the storage ONCE, when the structure
+     is created.  Nothing reads the setting between a `make` and the accesses
+     on the result within a run, so this cannot capture a stale choice -- the
+     same argument baseline.ml's kmake rests on. *)
+  let make (sit : Count.situation) : 'v t =
+    match Count.kind_of sit with
+    | Count.Ordered -> Tree T.empty
+    | Count.Hashed -> Hash H.empty
+
+  let get (k : key) (d : 'v t) : 'v option =
+    match d with Tree m -> T.find_opt k m | Hash h -> H.get k h
+
+  let find_opt = get
+
+  let add (k : key) (v : 'v) (d : 'v t) : 'v t =
+    match d with Tree m -> Tree (T.add k v m) | Hash h -> Hash (H.add k v h)
+
+  let remove (k : key) (d : 'v t) : 'v t =
+    match d with Tree m -> Tree (T.remove k m) | Hash h -> Hash (H.remove k h)
+
+  let mem (k : key) (d : 'v t) : bool =
+    match d with Tree m -> T.mem k m | Hash h -> H.mem k h
+
+  (* Neither is a key access and neither is charged as one: java.util.HashMap
+     keeps its own size, and a walk charges the rows its caller looks at. *)
+  let cardinal (d : 'v t) : int =
+    match d with Tree m -> T.cardinal m | Hash h -> H.cardinal h
+
+  (* NOT `cardinal d = 0`: cardinal is a FOLD in both libraries -- OCaml's
+     Map keeps a height per node and CCHashTrie keeps nothing -- so asking for
+     the size to compare it with zero walks the whole store. *)
+  let is_empty (d : 'v t) : bool =
+    match d with Tree m -> T.is_empty m | Hash h -> H.is_empty h
+
+  (* Map's argument order, for both storages, so that generated code reads the
+     same whichever kind of dictionary it holds.  A WALK OVER A HASHED STORE
+     HAS NO ORDER: anything a caller builds by insertion from one of these has
+     to be order-insensitive, and `agree` at every size is what checks it. *)
+  let fold (f : key -> 'v -> 'a -> 'a) (d : 'v t) (init : 'a) : 'a =
+    match d with
+    | Tree m -> T.fold f m init
+    | Hash h -> H.fold ~f:(fun acc k v -> f k v acc) ~x:init h
+
+  let iter (f : key -> 'v -> unit) (d : 'v t) : unit =
+    match d with Tree m -> T.iter f m | Hash h -> H.iter ~f h
+
+  (* equal bindings, decided without producing a key order a trie does not
+     have: same cardinality, and every binding of one found in the other *)
+  let equal (eq : 'v -> 'v -> bool) (a : 'v t) (b : 'v t) : bool =
+    match a, b with
+    (* a tree can decide this by walking the two in step, which stops at the
+       first difference; the cardinal-and-membership form below is what a store
+       WITHOUT a key order has to do, and taking it for the tree as well would
+       charge the ordered column for an absence it does not have *)
+    | Tree x, Tree y -> T.equal eq x y
+    | _ ->
+        cardinal a = cardinal b
+        && fold (fun k v acc -> acc && (match get k b with
+                                        | Some w -> eq v w
+                                        | None -> false))
+             a true
+end
+
+(* A set.  `elements` is ASCENDING under both storages -- sorted where the
+   store has no order -- because compare and equal are built on it and the
+   `agree` and `interp` checks compare stores across columns: a set must mean
+   the same thing under every setting even where it costs something
+   different. *)
+module SelSet (K : KEY) = struct
+  module T = Set.Make (K)
+  module H = CCHashTrie.Make (K)
+
+  type elt = K.t
+  type t = Tree of T.t | Hash of unit H.t
+
+  let make (sit : Count.situation) : t =
+    match Count.kind_of sit with
+    | Count.Ordered -> Tree T.empty
+    | Count.Hashed -> Hash H.empty
+
+  let add (x : elt) (s : t) : t =
+    match s with Tree m -> Tree (T.add x m) | Hash h -> Hash (H.add x () h)
+
+  let mem (x : elt) (s : t) : bool =
+    match s with Tree m -> T.mem x m | Hash h -> H.mem x h
+
+  let remove (x : elt) (s : t) : t =
+    match s with Tree m -> Tree (T.remove x m) | Hash h -> Hash (H.remove x h)
+
+  let cardinal (s : t) : int =
+    match s with Tree m -> T.cardinal m | Hash h -> H.cardinal h
+
+  let is_empty (s : t) : bool =
+    match s with Tree m -> T.is_empty m | Hash h -> H.is_empty h
+
+  let fold (f : elt -> 'a -> 'a) (s : t) (init : 'a) : 'a =
+    match s with
+    | Tree m -> T.fold f m init
+    | Hash h -> H.fold ~f:(fun acc k () -> f k acc) ~x:init h
+
+  let iter (f : elt -> unit) (s : t) : unit = fold (fun x () -> f x) s ()
+
+  let elements (s : t) : elt list =
+    match s with
+    | Tree m -> T.elements m
+    | Hash h -> List.sort K.compare (List.map fst (H.to_list h))
+
+  (* An empty set is an empty set whichever storage it is in, so a `make` on
+     one side and a `make` on the other still compare equal; nothing in a run
+     mixes the two, and this costs nothing to be right about. *)
+  let compare (a : t) (b : t) : int =
+    match a, b with
+    | Tree x, Tree y -> T.compare x y
+    | _ -> cmp_list K.compare (elements a) (elements b)
+
+  (* HashSet.equals compares the two sizes before it compares the elements,
+     and with java.util.HashSet's O(1) size that is free.  A hash trie's
+     cardinal is a fold, so the size test below would be O(n) -- and the
+     commonest caller is an EMPTINESS test, `equal (diff bkt {x}) empty`,
+     which is what codegen emits to decide whether a keyed delete has emptied
+     a bucket.  The two is_empty probes are the faithful stand-in for the size
+     check that matters, and they keep that test O(1) as it is on a tree.
+
+     value.ml ANSWERS THE SAME ARM FOR THE SAME REASON: its OEq against the
+     empty BAG is special-cased, because asking whether a bucket has emptied
+     asks nothing about order, and before it was answered directly it sorted
+     the bucket to find out.  Same shape, same caller, a different
+     collection. *)
+  let equal (a : t) (b : t) : bool =
+    match a, b with
+    | Tree x, Tree y -> T.equal x y
+    | _ when is_empty a -> is_empty b
+    | _ when is_empty b -> false
+    | _ -> cardinal a = cardinal b && fold (fun x acc -> acc && mem x b) a true
+
+  (* A HASHED SET HAS NO LEAST ELEMENT.  The tree answers from a leftmost
+     descent, which iterates no stored element and compares no key; the trie
+     has to look at all of them.  See the header: this is one of the two
+     places a setting moves an exponent, and it is the honest consequence of
+     hashing a structure whose operations read the key order. *)
+  let min_elt_opt (s : t) : elt option =
+    match s with
+    | Tree m -> T.min_elt_opt m
+    | Hash _ ->
+        fold
+          (fun x acc ->
+             match acc with
+             | None -> Some x
+             | Some m -> if K.compare x m < 0 then Some x else acc)
+          s None
+
+  let max_elt_opt (s : t) : elt option =
+    match s with
+    | Tree m -> T.max_elt_opt m
+    | Hash _ ->
+        fold
+          (fun x acc ->
+             match acc with
+             | None -> Some x
+             | Some m -> if K.compare x m > 0 then Some x else acc)
+          s None
+
+  (* THE SET ALGEBRA IS WHERE A TREE AND A HASH DIVERGE MOST, and the shapes
+     below are the two real implementations rather than one emulating the
+     other.  A tree combines two sets by MERGING them, walking both in key
+     order and reusing whole subtrees; a hash table has no order to merge on,
+     so java.util.HashSet's addAll, retainAll and removeAll iterate one side
+     and probe or mutate the other -- one key access per element of the side
+     they iterate, where the merge does far fewer.  That is why `hashes` is not uniformly the cheaper column, and
+     item_deletion is where it shows: a whole-row key must be hashed in full,
+     where a comparison stops at the first differing field.
+
+     WHICH SIDE IS ITERATED IS NOT A FREE CHOICE, and getting it wrong is how
+     this was first written.  ALL THREE ITERATE `b`, working into a copy of
+     one operand, because `b` is the smaller in every shape codegen emits:
+     `union acc {x}` for a LikeSet flatmap, `diff bucket {x}` for a keyed
+     delete, and `inter bucket accumulator` for the trigram intersection,
+     whose accumulator shrinks monotonically.  Iterating `a` instead walks the
+     whole accumulator or bucket to add or remove ONE element, which turns an
+     index build and a delete into n^2.
+
+     value.ml DOES NOT DO IT THIS WAY, and the difference is not an oversight
+     in either: its sunion and sinter call scardinal to pick the smaller side,
+     the way AbstractSet does, which it can afford because it charges only key
+     accesses and a cardinal is not one.  Here the cardinal is real time --
+     both libraries fold to compute it -- so paying one per operation would
+     itself be the n^2.  A compiled structure has to choose statically; these
+     are the choices the emitted shapes make right.
+
+     HOW THE TWO DEFECTS WERE FOUND, because they were found differently and
+     that is the useful part.  The `diff` one is inside the ops phase, and the
+     COUNTERS measured it exactly: item_deletion/deregister at 1031x and
+     user_search/remove at 10595x, bit-identical across two runs, which is
+     what a deterministic counter is for.  The `union` one is inside the index
+     BUILD, which `matched` subtracts, so neither column measured it at all --
+     what it produced was an UNSTABLE ratio in the seconds, the same cell
+     reading 14.95, 916.44 and 1073.55 on three runs, which is the difference
+     of two large noisy numbers and a symptom that the experiment had broken
+     rather than a measurement of anything.
+
+     So: a counted figure that moves is a finding, and a timed figure that
+     moves BETWEEN RUNS is not a small version of one.  A per-op difference
+     cannot see a pathological build, and the instability is the only thing it
+     has to say so with. *)
+  let union (a : t) (b : t) : t =
+    match a, b with
+    | Tree x, Tree y -> Tree (T.union x y)
+    | _ -> fold (fun x acc -> add x acc) b a
+
+  let inter (a : t) (b : t) : t =
+    match a, b with
+    | Tree x, Tree y -> Tree (T.inter x y)
+    | _ -> fold (fun x acc -> if mem x a then acc else remove x acc) b b
+
+  let diff (a : t) (b : t) : t =
+    match a, b with
+    | Tree x, Tree y -> Tree (T.diff x y)
+    | _ -> fold (fun x acc -> remove x acc) b a
+end

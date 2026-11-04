@@ -23,12 +23,13 @@
    In_<subject>.t_queries and t_row, which the generator emits for exactly
    this purpose.
 
-   ONE THING NOT YET CARRIED OVER.  baseline.ml takes its structure from
-   Count.structures, so that `matched` can run both sides as trees or as
-   hashes.  The modules below fix a tree, which is what the `typed` column
-   charges a set as -- TSet carries no kind.  Re-plumbing that parameter to
-   the compiled side is work, and until it is done only the `typed` column
-   is available here. *)
+   AND THE STRUCTURE IS THE RUN'S, not each author's.  baseline.ml takes its
+   storage from Count.structures so that `matched` can run both sides as trees
+   or as hashes; the modules below used to fix whatever their author wrote, so
+   only the `typed` column was available on this side.  They now go through
+   Rt.SelMap and Rt.SelSet, which the GENERATED column goes through too, and
+   what the author wrote is recorded as a Count.situation at each creation
+   site.  compiled/timing.ml's `matched` is the table that needed it. *)
 
 open Monotypes
 
@@ -36,12 +37,15 @@ open Monotypes
    Their comparison and hash are rt.ml's, so they are priced exactly as the
    generated structures are -- which is the whole point of this file.
 
-   WHICH STRUCTURE FOR WHICH AUTHOR.  A Java HashMap and a Python dict or set
-   are hashed, so those become the persistent trie; a Java NavigableMap or
-   TreeMap is ordered, so that becomes the ordered map.  A TSet on our side
-   carries no kind, so the typed column charges it as a tree -- which is the
-   asymmetry harness/README already names and prices, and it is reproduced
-   here rather than quietly removed. *)
+   WHICH SITUATION FOR WHICH AUTHOR.  A Java HashMap and a Python dict or set
+   say the key order is never read, so those are created `Licensed` -- a hash
+   under `typed` and `hashes`, a tree only under the conservative floor.  A
+   Java NavigableMap or TreeMap whose order none of the MODELLED operations
+   reads is `Unlicensed`: a tree under `typed`, hashed only under `hashes`,
+   where the column is a hypothetical about a smaller program rather than a
+   claim the author chose badly.  An original that really does range-query
+   stays ordered under every setting, and for those the module is Map.Make
+   directly, because `split` is the operation and no hash answers it. *)
 module SKey = struct
   type t = string
 
@@ -50,9 +54,16 @@ module SKey = struct
   let hash = Rt.hash_string
 end
 
-module SSet = Set.Make (SKey)
-module STrie = CCHashTrie.Make (SKey)
-module SMap = Map.Make (SKey)
+(* One selectable map and one selectable set on string keys, shared by every
+   transcription below.  There used to be three modules here -- a Set.Make, a
+   CCHashTrie and a Map.Make -- because each transcription stored what its
+   author wrote.  The storage is now the run's `structures` setting, so what
+   the author wrote is said at the CREATION SITE as a Count.situation instead:
+   `Licensed` where the original is a HashMap or HashSet, `Unlicensed` where it
+   is a TreeMap whose order none of the modelled operations reads.  That is the
+   same word, resolved by the same function, as the generated column uses. *)
+module SSet = Rt.SelSet (SKey)
+module SSel = Rt.SelMap (SKey)
 
 (* baseline.ml's kprobe: a probe that YIELDS a row charges one row, where a
    membership test charges none because it yields a boolean.  Reproduced, so
@@ -90,7 +101,7 @@ module Lookin = struct
     let names =
       List.fold_left
         (fun s (r : In_lookin.t_row) -> SSet.add r.f_name s)
-        SSet.empty functions in
+        (SSet.make Count.Licensed) functions in
     let outputs = ref [] in
     let say (s : string) = outputs := s :: !outputs in
     let has (k : string) = SSet.mem k names in
@@ -131,13 +142,14 @@ module Keycloak = struct
   type state = {
     mutable rows : In_keycloak.t_row list;   (* requiredActionProviderList *)
     mutable size : int;                      (* ArrayList's own size field *)
-    mutable by_id : In_keycloak.t_row STrie.t;    (* requiredActionProviders *)
-    mutable by_alias : In_keycloak.t_row STrie.t; (* ...ByAlias *)
+    mutable by_id : In_keycloak.t_row SSel.t;    (* requiredActionProviders *)
+    mutable by_alias : In_keycloak.t_row SSel.t; (* ...ByAlias *)
   }
 
   let run (queries : In_keycloak.t_queries) : string list =
     let st =
-      { rows = []; size = 0; by_id = STrie.empty; by_alias = STrie.empty } in
+      { rows = []; size = 0; by_id = SSel.make Count.Licensed;
+        by_alias = SSel.make Count.Licensed } in
     let outputs = ref [] in
     let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
     List.iter
@@ -150,15 +162,15 @@ module Keycloak = struct
              let row = q.f_new_action in
              st.rows <- row :: st.rows;
              st.size <- st.size + 1;
-             st.by_id <- STrie.add row.f_id row st.by_id;
-             st.by_alias <- STrie.add row.f_alias row st.by_alias
+             st.by_id <- SSel.add row.f_id row st.by_id;
+             st.by_alias <- SSel.add row.f_alias row st.by_alias
          (* getRequiredActionProviderById(id) -> ...get(id) *)
          | 1 ->
-             say (match probe (STrie.get q.f_k st.by_id) with
+             say (match probe (SSel.get q.f_k st.by_id) with
                   | Some _ -> 1 | None -> 0)
          (* getRequiredActionProviderByAlias(alias) -> ...ByAlias().get(alias) *)
          | 2 ->
-             say (match probe (STrie.get q.f_k st.by_alias) with
+             say (match probe (SSel.get q.f_k st.by_alias) with
                   | Some _ -> 1 | None -> 0)
          (* getRequiredActionProviderList(), counted: ArrayList.size() *)
          | _ -> say st.size)
@@ -187,22 +199,22 @@ module NamedCache = struct
      subject does not model -- so a hashed variant would be a hypothetical
      about a smaller program, not a claim that the author chose badly. *)
   type state = {
-    mutable cache : In_named_cache.t_row SMap.t;
+    mutable cache : In_named_cache.t_row SSel.t;
     mutable total : int;                     (* currentSizeBytes *)
   }
 
   let run (ops : In_named_cache.t_ops) : string list =
-    let st = { cache = SMap.empty; total = 0 } in
+    let st = { cache = SSel.make Count.Unlicensed; total = 0 } in
     let outputs = ref [] in
     let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
     (* remove(key), maintaining the total: the node has to be READ to know what
        to subtract, which is the one row a delete touches, and is why the
        optimizer's own delete probes rather than scans *)
     let remove (k : string) =
-      match probe (SMap.find_opt k st.cache) with
+      match probe (SSel.find_opt k st.cache) with
       | Some (old : In_named_cache.t_row) ->
           st.total <- st.total - old.f_size;
-          st.cache <- SMap.remove k st.cache
+          st.cache <- SSel.remove k st.cache
       | None -> () in
     List.iter
       (fun (q : In_named_cache.t_ops_elem) ->
@@ -214,13 +226,13 @@ module NamedCache = struct
              let node = q.f_node in
              let k = node.f_k in
              remove k;
-             st.cache <- SMap.add k node st.cache;
+             st.cache <- SSel.add k node st.cache;
              st.total <- st.total + node.f_size
          (* sizeInBytes() -- :196: a field read, no row *)
          | 2 -> say st.total
          (* get(key) -- :200-201 *)
          | _ ->
-             say (match probe (SMap.find_opt q.f_k st.cache) with
+             say (match probe (SSel.find_opt q.f_k st.cache) with
                   | Some _ -> 1
                   | None -> 0))
       ops;
@@ -257,8 +269,13 @@ module ItemDeletion = struct
     let hash = In_item_deletion.hash_row
   end
 
-  (* a HashSet, so a trie keyed on the row, with unit values *)
-  module Reg = CCHashTrie.Make (Key)
+  (* A HashSet keyed on the ROW.  This is the subject the missing set_kind
+     showed up in: the author's storage is a hash and ours was a tree under
+     every setting, so the gap was a per-subject ratio rather than a number.
+     Both sides now hold what the setting names -- Licensed here because the
+     author wrote `new HashSet<>()` -- and `hashes` is the column in which the
+     two agree. *)
+  module Reg = Rt.SelSet (Key)
 
   let run (items : In_item_deletion.t_items_tbl)
       (queries : In_item_deletion.t_queries) : string list =
@@ -269,8 +286,8 @@ module ItemDeletion = struct
     let reg =
       ref
         (List.fold_left
-           (fun t (r : In_item_deletion.t_row) -> Reg.add r () t)
-           Reg.empty items) in
+           (fun t (r : In_item_deletion.t_row) -> Reg.add r t)
+           (Reg.make Count.Licensed) items) in
     let outputs = ref [] in
     let say (s : string) = outputs := s :: !outputs in
     List.iter
@@ -282,7 +299,7 @@ module ItemDeletion = struct
             record, which Rt's generated hash does per field rather than by a
             convention. *)
          | 0 -> say (if Reg.mem item !reg then "deleting" else "free")
-         | 1 -> reg := Reg.add item () !reg
+         | 1 -> reg := Reg.add item !reg
          | _ -> reg := Reg.remove item !reg)
       queries;
     !outputs
@@ -305,7 +322,7 @@ module UserSearch = struct
   let run (suggested0 : In_user_search.t_suggested)
       (queries : In_user_search.t_queries) :
       In_user_search.t_outputs * In_user_search.t_suggested =
-    let by_id = ref STrie.empty in
+    let by_id = ref (SSel.make Count.Licensed) in
     let outputs = ref [] in
     let suggested = ref suggested0 in
     let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
@@ -315,12 +332,12 @@ module UserSearch = struct
          (* User.get(id, true) -> AllUsers.putIfAbsent *)
          | 0 ->
              let u = q.f_new_user in
-             by_id := STrie.add u.f_id u !by_id
+             by_id := SSel.add u.f_id u !by_id
          (* AllUsers.remove(id) *)
-         | 1 -> by_id := STrie.remove q.f_k !by_id
+         | 1 -> by_id := SSel.remove q.f_k !by_id
          (* find(id): the ConcurrentHashMap lookup *)
          | 2 ->
-             say (match probe (STrie.get q.f_k !by_id) with
+             say (match probe (SSel.get q.f_k !by_id) with
                   | Some _ -> 1 | None -> 0)
          (* suggest(token): the author's own scan over every user *)
          | _ ->
@@ -339,15 +356,15 @@ module UserSearch = struct
                 answer.  A number that moves when the storage changes
                 underneath it is measuring the harness. *)
              let hits = ref [] in
-             STrie.iter
-               ~f:(fun _ (u : In_user_search.t_row) ->
+             SSel.iter
+               (fun _ (u : In_user_search.t_row) ->
                  Count.visit 1;
                  if Rt.str_contains u.f_fullName tok then hits := u :: !hits)
                !by_id;
              suggested :=
                List.fold_left
                  (fun s u -> In_user_search.M_suggested.add u s)
-                 In_user_search.M_suggested.empty
+                 (In_user_search.M_suggested.make Count.Unlicensed)
                  (List.sort In_user_search.cmp_row !hits))
       queries;
     (!outputs, !suggested)
@@ -386,42 +403,43 @@ module AreaRegistry = struct
      _aliases_index key on each element of a per-row collection, which is the
      gap the survey recorded and nothing here builds. *)
   type state = {
-    mutable data : In_area_registry.t_row STrie.t;   (* self.data *)
-    mutable floors : unit STrie.t STrie.t;           (* _floors_index *)
+    mutable data : In_area_registry.t_row SSel.t;   (* self.data *)
+    mutable floors : unit SSel.t SSel.t;           (* _floors_index *)
   }
 
   let run (queries : In_area_registry.t_queries) : string list =
-    let st = { data = STrie.empty; floors = STrie.empty } in
+    let st = { data = SSel.make Count.Licensed;
+               floors = SSel.make Count.Licensed } in
     let outputs = ref [] in
     let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
     (* _index_entry: the primary dict, then the floor posting list *)
     let index_entry (key : string) (row : In_area_registry.t_row) =
-      st.data <- STrie.add key row st.data;
+      st.data <- SSel.add key row st.data;
       match row.f_floor with
       | None -> ()                                 (* `if ... is not None` *)
       | Some f ->
           let b =
-            match STrie.get f st.floors with
+            match SSel.get f st.floors with
             | Some b -> b
-            | None -> STrie.empty in
-          st.floors <- STrie.add f (STrie.add key () b) st.floors in
+            | None -> SSel.make Count.Licensed in
+          st.floors <- SSel.add f (SSel.add key () b) st.floors in
     (* _unindex_entry, then UserDict.__delitem__ (registry.py:61) *)
     let unindex_entry (key : string) =
-      match probe (STrie.get key st.data) with
+      match probe (SSel.get key st.data) with
       | None -> ()                                 (* HA raises; nothing to do *)
       | Some (row : In_area_registry.t_row) ->
           (match row.f_floor with
            | None -> ()
            | Some f -> (
-               match STrie.get f st.floors with
+               match SSel.get f st.floors with
                | None -> ()
                | Some b ->
-                   let b = STrie.remove key b in
+                   let b = SSel.remove key b in
                    (* `if not entries: del index[value]` -- registry.py:56 *)
                    st.floors <-
-                     (if STrie.cardinal b = 0 then STrie.remove f st.floors
-                      else STrie.add f b st.floors)));
-          st.data <- STrie.remove key st.data in
+                     (if SSel.is_empty b then SSel.remove f st.floors
+                      else SSel.add f b st.floors)));
+          st.data <- SSel.remove key st.data in
     List.iter
       (fun (q : In_area_registry.t_queries_elem) ->
          match q.f_kind with
@@ -433,20 +451,20 @@ module AreaRegistry = struct
          | 1 -> unindex_entry q.f_k
          (* async_get_area(area_id) -- area_registry.py:241, a dict get at :247 *)
          | 2 ->
-             say (match probe (STrie.get q.f_k st.data) with
+             say (match probe (SSel.get q.f_k st.data) with
                   | Some _ -> 1 | None -> 0)
          (* get_areas_for_floor(floor), counted *)
          | _ ->
              say
-               (match STrie.get q.f_fl st.floors with
+               (match SSel.get q.f_fl st.floors with
                 | None -> 0
                 | Some b ->
-                    STrie.fold
-                      ~f:(fun acc key () ->
-                        match probe (STrie.get key st.data) with
+                    SSel.fold
+                      (fun key () acc ->
+                        match probe (SSel.get key st.data) with
                         | Some _ -> acc + 1
                         | None -> acc)
-                      ~x:0 b))
+                      b 0))
       queries;
     !outputs
 end
@@ -462,7 +480,7 @@ module IKey = struct
 end
 
 module IMap = Map.Make (IKey)
-module ITrie = CCHashTrie.Make (IKey)
+module ISel = Rt.SelMap (IKey)
 
 (* subMap(lo, true, hi, false): the entries in [lo, hi), by two splits.
    Map.split is the ordered-map primitive that Java's subMap is, with one
@@ -526,42 +544,42 @@ module Cluster = struct
       h
   end
 
-  module TPTrie = CCHashTrie.Make (TPKey)
+  module TPSel = Rt.SelMap (TPKey)
 
   type row = In_cluster.t_row
 
   (* computeIfAbsent(k, _ -> new ArrayList<>()).add(p) *)
-  let sbucket_add (h : row list STrie.t) (k : string) (r : row) : row list STrie.t =
-    match STrie.get k h with
-    | Some b -> STrie.add k (r :: b) h
-    | None -> STrie.add k [ r ] h
+  let sbucket_add (h : row list SSel.t) (k : string) (r : row) : row list SSel.t =
+    match SSel.get k h with
+    | Some b -> SSel.add k (r :: b) h
+    | None -> SSel.add k [ r ] h
 
-  let ibucket_add (h : row list ITrie.t) (k : int) (r : row) : row list ITrie.t =
-    match ITrie.get k h with
-    | Some b -> ITrie.add k (r :: b) h
-    | None -> ITrie.add k [ r ] h
+  let ibucket_add (h : row list ISel.t) (k : int) (r : row) : row list ISel.t =
+    match ISel.get k h with
+    | Some b -> ISel.add k (r :: b) h
+    | None -> ISel.add k [ r ] h
 
   (* the rows an accessor hands back, counted by its caller *)
-  let scount (h : row list STrie.t) (k : string) : int =
-    match STrie.get k h with
+  let scount (h : row list SSel.t) (k : string) : int =
+    match SSel.get k h with
     | None -> 0                                   (* getOrDefault(k, List.of()) *)
     | Some b -> let n = List.length b in Count.visit n; n
 
-  let icount (h : row list ITrie.t) (k : int) : int =
-    match ITrie.get k h with
+  let icount (h : row list ISel.t) (k : int) : int =
+    match ISel.get k h with
     | None -> 0
     | Some b -> let n = List.length b in Count.visit n; n
 
   let run (partitions : In_cluster.t_partitions_tbl)
       (queries : In_cluster.t_queries) : string list =
-    let by_tp = ref TPTrie.empty in
-    let by_topic = ref STrie.empty in
-    let available = ref STrie.empty in
-    let by_node = ref ITrie.empty in
+    let by_tp = ref (TPSel.make Count.Licensed) in
+    let by_topic = ref (SSel.make Count.Licensed) in
+    let available = ref (SSel.make Count.Licensed) in
+    let by_node = ref (ISel.make Count.Licensed) in
     List.iter
       (fun (p : row) ->
          by_tp :=
-           TPTrie.add { TPKey.partition = p.f_partition; topic = p.f_topic } p
+           TPSel.add { TPKey.partition = p.f_partition; topic = p.f_topic } p
              !by_tp;
          by_topic := sbucket_add !by_topic p.f_topic p;
          match p.f_leader with
@@ -582,7 +600,7 @@ module Cluster = struct
              say
                (match
                   probe
-                    (TPTrie.get
+                    (TPSel.get
                        { TPKey.partition = q.f_part; topic = q.f_topic }
                        !by_tp)
                 with
@@ -608,18 +626,20 @@ module WindowStore = struct
      the inner map once per segment and enumerates only the rows that match.
 
      The outer level is the ordered one: subMap and headMap read its key
-     order.  The inner per-segment map is ORDERED too, for the same reason
-     NamedCache's is -- the author's level is a ConcurrentNavigableMap, and
-     none of the operations this subject models reads that order. *)
+     order, so it is Map.Make under every setting.  The inner per-segment map
+     is `Unlicensed`, for the same reason NamedCache's is -- the author's
+     level is a ConcurrentNavigableMap, so it is the tree they wrote under
+     `typed`, and none of the operations this subject models reads that order,
+     so `hashes` may hash it. *)
   let run (segments0 : In_window_store.t_segments_tbl)
       (queries : In_window_store.t_queries) : string list =
-    let segments = ref (IMap.empty : In_window_store.t_row SMap.t IMap.t) in
+    let segments = ref (IMap.empty : In_window_store.t_row SSel.t IMap.t) in
     let put (r : In_window_store.t_row) =
       let seg =
         match IMap.find_opt r.f_time !segments with
         | Some s -> s
-        | None -> SMap.empty in
-      segments := IMap.add r.f_time (SMap.add r.f_k r seg) !segments in
+        | None -> SSel.make Count.Unlicensed in
+      segments := IMap.add r.f_time (SSel.add r.f_k r seg) !segments in
     List.iter put segments0;
     let outputs = ref [] in
     let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
@@ -632,7 +652,7 @@ module WindowStore = struct
              say
                (IMap.fold
                   (fun _ seg acc ->
-                     let c = SMap.cardinal seg in
+                     let c = SSel.cardinal seg in
                      Count.visit c;
                      acc + c)
                   (sub_range lo hi !segments) 0)
@@ -641,7 +661,7 @@ module WindowStore = struct
              say
                (IMap.fold
                   (fun _ seg acc ->
-                     match probe (SMap.find_opt q.f_key seg) with
+                     match probe (SSel.find_opt q.f_key seg) with
                      | Some _ -> acc + 1
                      | None -> acc)
                   (sub_range lo hi !segments) 0)

@@ -22,6 +22,7 @@
                transcription computes. *)
 
 let failures = ref []
+let setting = ref ""
 let reads = ref 0
 let yes = ref 0
 let no = ref 0
@@ -36,7 +37,8 @@ let lookup_of (w : Gen.workload) (n : string) : Value.t option =
   | Some v -> Some v
   | None -> List.assoc_opt n w.Gen.store
 
-let fail (s : string) : unit = failures := s :: !failures
+let fail (s : string) : unit =
+  failures := (!setting ^ ": " ^ s) :: !failures
 
 let guard (what : string) (f : unit -> unit) : unit =
   try f () with e -> fail (what ^ ": " ^ Printexc.to_string e)
@@ -125,8 +127,21 @@ let authors () : unit =
 
 let () =
   (* `compiled.exe time [sizes]` measures; with no argument it CHECKS, so a
-     measurement is never the thing that runs by accident *)
-  match Array.to_list Sys.argv with
+     measurement is never the thing that runs by accident.
+
+     A structure setting may appear anywhere in the arguments, exactly as
+     main.exe takes one, so that any single-setting table can be taken under
+     `trees` or `hashes` as well.  It is pulled out first so it composes with
+     the size lists.  `matched` reads all three itself and ignores it; the
+     checks run all three too. *)
+  let argv =
+    List.filter
+      (fun a ->
+         match Count.structures_of_string a with
+         | Some st -> Count.structures := st; false
+         | None -> true)
+      (Array.to_list Sys.argv) in
+  match argv with
   | _ :: "time" :: rest ->
       Timing.run (List.filter_map int_of_string_opt rest);
       exit 0
@@ -142,19 +157,40 @@ let () =
   | _ :: "work" :: rest ->
       Timing.work (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "matched" :: rest ->
+      Timing.matched (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ -> ();
+  (* ALL FOUR CHECKS UNDER ALL THREE SETTINGS.  Rt.SelMap and Rt.SelSet put a
+     choice of storage behind one interface, and the thing that has to be
+     established about such an interface is that it does not change what a
+     program COMPUTES -- only what the program costs.  So each setting gets
+     its own full pass: the readers accept their inputs, the generated
+     equality still decides, src still equals opt, the compiled column still
+     equals the interpreter, and each author transcription still equals the
+     compiled optimized column.  `hashes` is the demanding one, because a walk
+     over a hashed store has no order and anything built by insertion from one
+     has to be order-insensitive to survive it. *)
   List.iter
-    (fun (name, sp) ->
-       readers_of name sp;
-       agree_of name sp;
-       interp_of name sp)
-    Gen.specs;
-  authors ();
-  Printf.printf
-    "compiled: %d reader runs; equality agreed on %d equal and %d unequal \
-     pairs; src = opt on %d runs; compiled = interpreter on %d runs; \
-     author = compiled on %d runs (%d of 10 transcriptions); %d failures\n"
-    !reads !yes !no !agreed !matched !authored (List.length Authors.done_so_far)
-    (List.length !failures);
+    (fun st ->
+       Count.structures := st;
+       setting := Count.structures_name st;
+       reads := 0; yes := 0; no := 0; agreed := 0; matched := 0; authored := 0;
+       let before = List.length !failures in
+       List.iter
+         (fun (name, sp) ->
+            readers_of name sp;
+            agree_of name sp;
+            interp_of name sp)
+         Gen.specs;
+       authors ();
+       Printf.printf
+         "%-6s: %d reader runs; equality agreed on %d equal and %d unequal \
+          pairs; src = opt on %d runs; compiled = interpreter on %d runs; \
+          author = compiled on %d runs (%d of 10 transcriptions); %d failures\n"
+         !setting !reads !yes !no !agreed !matched !authored
+         (List.length Authors.done_so_far)
+         (List.length !failures - before))
+    [ Count.Typed; Count.Trees; Count.Hashes ];
   List.iter (fun s -> Printf.printf "  %s\n" s) (List.rev !failures);
   if !failures <> [] then exit 1
