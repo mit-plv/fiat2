@@ -118,3 +118,44 @@ let as_dict = function
 let as_bag_list = function
   | Value.VBag b -> Value.bcanon b
   | _ -> failwith "of_value: expected a bag"
+
+(* ---------- equality ----------
+
+   value.ml defines `equal a b = compare a b = 0`, so these charge exactly as
+   the comparisons do and the two sides stay priced alike.
+
+   Why a generated EQUALITY and not a generated compare, for the collections.
+   The semantics compares collections by canonical form, and value.ml has to
+   produce that form for a hashed store because it needs an ORDERING.  An
+   equality needs no order: equal bindings are an equal map, which a
+   cardinality check and a fold-and-probe decide.  That is also why a record
+   holding a dictionary has no compare -- a persistent trie has no key order
+   to offer -- while it does have this.  Used only by the store comparison,
+   which runs outside the timed region. *)
+
+let eq_int (a : int) (b : int) : bool = cmp_int a b = 0
+let eq_bool (a : bool) (b : bool) : bool = cmp_bool a b = 0
+let eq_unit (a : unit) (b : unit) : bool = cmp_unit a b = 0
+let eq_string (a : string) (b : string) : bool = cmp_string a b = 0
+
+let eq_option (eq : 'a -> 'a -> bool) (a : 'a option) (b : 'a option) : bool =
+  incr Count.comparisons;
+  match a, b with
+  | None, None -> true
+  | Some a, Some b -> eq a b
+  | _ -> false
+
+let rec eq_list (eq : 'a -> 'a -> bool) (a : 'a list) (b : 'a list) : bool =
+  incr Count.comparisons;
+  match a, b with
+  | [], [] -> true
+  | x :: a, y :: b -> eq x y && eq_list eq a b
+  | _ -> false
+
+(* a bag's list representation has no canonical order of its own -- the
+   program built it by consing and appending -- so equality is of MULTISETS,
+   and sorting both is the cheapest way to decide it *)
+let eq_bag (cmp : 'a -> 'a -> int) (a : 'a list) (b : 'a list) : bool =
+  incr Count.comparisons;
+  List.length a = List.length b
+  && eq_list (fun x y -> cmp x y = 0) (List.sort cmp a) (List.sort cmp b)

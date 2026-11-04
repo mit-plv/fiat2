@@ -130,6 +130,28 @@ and cmp_of (t : type0) : string =
          which shape is unsupported instead of silently ordering wrongly. *)
       "(fun _ _ -> failwith \"no comparison on a dictionary key\")"
 
+and eq_of (t : type0) : string =
+  match t with
+  | TInt -> "Rt.eq_int"
+  | TBool -> "Rt.eq_bool"
+  | TString -> "Rt.eq_string"
+  | TUnit -> "Rt.eq_unit"
+  | TOption e -> "(Rt.eq_option " ^ eq_of e ^ ")"
+  | TList e -> "(Rt.eq_list " ^ eq_of e ^ ")"
+  | TBag e -> "(Rt.eq_bag " ^ cmp_of e ^ ")"
+  | TRecord _ -> "eq_" ^ record_name t
+  | TSet e -> key_module e ^ "_Set.equal"
+  | TDict (Ranged, k, v) ->
+      Printf.sprintf "(%s_Map.equal %s)" (key_module k) (eq_of v)
+  | TDict (Unranged, k, v) ->
+      (* equal bindings, decided without producing a key order a trie does
+         not have: same cardinality, and every binding of one found in the
+         other *)
+      let m = key_module k ^ "_Tbl" in
+      Printf.sprintf
+        "(fun a b -> %s.cardinal a = %s.cardinal b && %s.fold ~f:(fun acc kk vv -> acc && (match %s.get kk b with Some w -> %s vv w | None -> false)) ~x:true a)"
+        m m m m (eq_of v)
+
 and hash_of (t : type0) : string =
   match t with
   | TInt -> "Rt.hash_int"
@@ -161,7 +183,9 @@ and record_name (t : type0) : string =
               information either, so unit is faithful *)
            emit (Printf.sprintf "type %s = unit" n);
            emit (Printf.sprintf "let cmp_%s (_ : %s) (_ : %s) = Rt.cmp_unit () ()" n n n);
-           emit (Printf.sprintf "let hash_%s (_ : %s) = Rt.hash_unit ()" n n)
+           emit (Printf.sprintf "let hash_%s (_ : %s) = Rt.hash_unit ()" n n);
+           emit (Printf.sprintf "let eq_%s (_ : %s) (_ : %s) = true" n n n);
+           emit (Printf.sprintf "let of_%s (_ : Value.t) : %s = ()" n n)
        | _ ->
            emit
              (Printf.sprintf "type %s = { %s }" n
@@ -193,6 +217,15 @@ and record_name (t : type0) : string =
                       (fun (fn, ft, _) ->
                          Printf.sprintf "  let h = (h * 31) + %s x.%s in\n"
                            (hash_of ft) fn)
+                      parts)));
+           emit
+             (Printf.sprintf
+                "let eq_%s (x : %s) (y : %s) : bool =\n  Rt.cmp_node ();\n%s"
+                n n n
+                (String.concat " &&\n"
+                   (List.map
+                      (fun (fn, ft, _) ->
+                         Printf.sprintf "  %s x.%s y.%s" (eq_of ft) fn fn)
                       parts)));
            (* and the way in from a boxed value: the Conquord field NAME is
               what the assoc list is keyed on, not the mangled one *)
@@ -350,25 +383,39 @@ let emit_readers () : unit =
           type-checked.  ignore, because what is being tested is that the
           conversion accepts the data, not what it produces -- there is no
           way back yet to compare against. *)
-       let call (n, _) =
+       let call (n, t) =
+         (* read it TWICE and check the generated equality agrees.  That
+            exercises of_value and eq_ together on real data, which is what
+            found the bag and set bugs: a reader that type-checks can still
+            be reading the wrong constructor. *)
          Printf.sprintf
-           "    (match lookup \"%s\" with Some v -> ignore (%s v) | None -> ());"
-           n (field_name n) in
+           "    (match lookup \"%s\" with\n     | Some v ->\n         let a = %s v and b = %s v in\n         if not (%s a b) then failwith \"%s: re-read differs\"\n     | None -> ());"
+           n (field_name n) (field_name n) (eq_of t) n in
+       (* The read-twice check above would pass if eq_ always said true.
+          This one pins it against the reference: for two workloads, the
+          generated equality on the converted values must agree with
+          Value.compare on the boxed ones, which exercises BOTH answers. *)
+       let cross (n, t) =
+         Printf.sprintf
+           "    (match l1 \"%s\", l2 \"%s\" with\n     | Some v1, Some v2 ->\n         let got = %s (%s v1) (%s v2) in\n         if got <> (Value.compare v1 v2 = 0) then\n           failwith \"%s: generated equality disagrees with Value.compare\";\n         if got then incr yes else incr no\n     | _ -> ());"
+           n n (eq_of t) (field_name n) (field_name n) n in
        emit
          (Printf.sprintf
-            "module %s = struct\n%s\n\n  let run (lookup : string -> Value.t option) : unit =\n%s\n    ()\nend"
+            "module %s = struct\n%s\n\n  let run (lookup : string -> Value.t option) : unit =\n%s\n    ()\n\n  let cross (l1 : string -> Value.t option) (l2 : string -> Value.t option) (yes : int ref) (no : int ref) : unit =\n%s\n    ()\nend"
             (module_name subject)
             (String.concat "\n" (List.map one names))
-            (String.concat "\n" (List.map call names)));
+            (String.concat "\n" (List.map call names))
+            (String.concat "\n" (List.map cross names)));
        subjects := (subject, module_name subject) :: !subjects)
     Extracted.envs_nf;
   (* one registry, so a consumer need not know the module names *)
   emit
     (Printf.sprintf
-       "let readers : (string * ((string -> Value.t option) -> unit)) list =\n  [ %s ]"
+       "let readers : (string * (((string -> Value.t option) -> unit) * ((string -> Value.t option) -> (string -> Value.t option) -> int ref -> int ref -> unit))) list =\n  [ %s ]"
        (String.concat ";\n    "
           (List.rev_map
-             (fun (subject, m) -> Printf.sprintf "(\"%s\", %s.run)" subject m)
+             (fun (subject, m) ->
+                Printf.sprintf "(\"%s\", (%s.run, %s.cross))" subject m m)
              !subjects)))
 
 (* ---------- the emitted module ---------- *)
