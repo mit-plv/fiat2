@@ -27,6 +27,7 @@ let yes = ref 0
 let no = ref 0
 let agreed = ref 0
 let matched = ref 0
+let authored = ref 0
 
 let sizes = [ 7; 50 ]
 
@@ -99,6 +100,29 @@ let interp_of (name : string) (sp : Gen.spec) : unit =
                       name rows)))
         sizes
 
+(* and the author transcriptions that have been monomorphized so far.
+   Parity is the expected result: the compiler is supposed to arrive back at
+   what the author built, so a difference is a bug in the transcription or in
+   the backend, not a finding. *)
+let authors () : unit =
+  List.iter
+    (fun (name, check) ->
+       match List.assoc_opt name Gen.specs with
+       | None -> fail (name ^ ": no spec for the transcription")
+       | Some sp ->
+           List.iter
+             (fun rows ->
+                let w = Gen.workload sp ~rows ~ops:5 ~only:None in
+                guard (Printf.sprintf "%s/%d author" name rows) (fun () ->
+                    if check w then incr authored
+                    else
+                      fail
+                        (Printf.sprintf
+                           "%s at %d rows: the author transcription and the                             compiled optimized column disagree"
+                           name rows)))
+             sizes)
+    Authors.checks
+
 let () =
   (* `compiled.exe time [sizes]` measures; with no argument it CHECKS, so a
      measurement is never the thing that runs by accident *)
@@ -122,10 +146,12 @@ let () =
        agree_of name sp;
        interp_of name sp)
     Gen.specs;
+  authors ();
   Printf.printf
     "compiled: %d reader runs; equality agreed on %d equal and %d unequal \
-     pairs; src = opt on %d runs; compiled = interpreter on %d runs; %d \
-     failures\n"
-    !reads !yes !no !agreed !matched (List.length !failures);
+     pairs; src = opt on %d runs; compiled = interpreter on %d runs; \
+     author = compiled on %d runs (%d of 11 transcriptions); %d failures\n"
+    !reads !yes !no !agreed !matched !authored (List.length Authors.done_so_far)
+    (List.length !failures);
   List.iter (fun s -> Printf.printf "  %s\n" s) (List.rev !failures);
   if !failures <> [] then exit 1

@@ -359,6 +359,16 @@ let rec tys_command (acc : type0 list) (c : command) : type0 list =
    type-correct: compiled/compiled.ml runs them over the generators' own
    workloads. *)
 
+let sanitize_id (s : string) : string =
+  let b = Bytes.of_string s in
+  Bytes.iteri
+    (fun i c ->
+       match c with
+       | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> ()
+       | _ -> Bytes.set b i '_')
+    b;
+  Bytes.to_string b
+
 let module_name (subject : string) : string =
   let b = Bytes.of_string subject in
   Bytes.iteri
@@ -399,10 +409,29 @@ let emit_readers () : unit =
          Printf.sprintf
            "    (match l1 \"%s\", l2 \"%s\" with\n     | Some v1, Some v2 ->\n         let got = %s (%s v1) (%s v2) in\n         if got <> (Value.compare v1 v2 = 0) then\n           failwith \"%s: generated equality disagrees with Value.compare\";\n         if got then incr yes else incr no\n     | _ -> ());"
            n n (eq_of t) (field_name n) (field_name n) n in
+       (* Stable aliases, so that code written BY HAND against these types --
+          the author transcriptions -- names t_queries and t_row rather than
+          row23 and row17.  The generated numbering is positional: adding a
+          subject renumbers everything, and hand-written code referring to a
+          number would break silently on the next run. *)
+       let aliases =
+         List.map
+           (fun (n, t) ->
+              Printf.sprintf "  type t_%s = %s" (sanitize_id n) (ocaml_ty t))
+           names
+         @ (match
+              List.find_opt
+                (fun ((s, _), _) -> String.equal s subject)
+                Extracted.tbl_types_nf
+            with
+            | Some ((_, TList r), _) | Some ((_, TBag r), _) ->
+                [ Printf.sprintf "  type t_row = %s" (ocaml_ty r) ]
+            | _ -> []) in
        emit
          (Printf.sprintf
-            "module %s = struct\n%s\n\n  let run (lookup : string -> Value.t option) : unit =\n%s\n    ()\n\n  let cross (l1 : string -> Value.t option) (l2 : string -> Value.t option) (yes : int ref) (no : int ref) : unit =\n%s\n    ()\nend"
+            "module %s = struct\n%s\n%s\n\n  let run (lookup : string -> Value.t option) : unit =\n%s\n    ()\n\n  let cross (l1 : string -> Value.t option) (l2 : string -> Value.t option) (yes : int ref) (no : int ref) : unit =\n%s\n    ()\nend"
             (module_name subject)
+            (String.concat "\n" aliases)
             (String.concat "\n" (List.map one names))
             (String.concat "\n" (List.map call names))
             (String.concat "\n" (List.map cross names)));

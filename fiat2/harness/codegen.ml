@@ -469,6 +469,48 @@ let emit_runner (prefix : string) (subject : string)
       (fname prefix subject) args
     :: !runners
 
+let stores : string list ref = ref []
+
+(* A typed getter for a column's final store, so that code written BY HAND --
+   an author transcription -- has something to be checked against.  Returns
+   the store names as a tuple, in the order the envs list gives them, so the
+   type is determined and no conversion back to a boxed value is needed. *)
+let emit_store (prefix : string) (subject : string)
+    (store : (string * type0) list) (env : (string * type0) list) : unit =
+  let m = Mono.module_name subject in
+  let inputs =
+    List.map
+      (fun (n, _) ->
+         Printf.sprintf "  let %s_in = %s.%s (get %S) in" (var n) m
+           (Mono.field_name n) n)
+      env in
+  let refs =
+    List.map
+      (fun (n, _) ->
+         Printf.sprintf "  let %s = ref (%s.%s (get %S)) in" (loc n) m
+           (Mono.field_name n) n)
+      store in
+  let args =
+    String.concat " "
+      (List.map (fun (n, _) -> loc n) store
+       @ List.map (fun (n, _) -> Printf.sprintf "%s_in" (var n)) env) in
+  let ret =
+    match store with
+    | [] -> "()"
+    | l -> "(" ^ String.concat ", " (List.map (fun (n, _) -> "!" ^ loc n) l) ^ ")" in
+  let rty =
+    match store with
+    | [] -> "unit"
+    | l -> "(" ^ String.concat " * " (List.map (fun (_, t) -> Mono.ocaml_ty t) l) ^ ")" in
+  stores :=
+    Printf.sprintf
+      "let store_%s_%s (lookup : string -> Value.t option) : %s =\n  let get n = match lookup n with Some v -> v | None -> failwith (\"missing input \" ^ n) in\n%s\n%s\n  %s %s;\n  %s"
+      prefix (sanitize subject) rty
+      (String.concat "\n" inputs)
+      (String.concat "\n" refs)
+      (fname prefix subject) args ret
+    :: !stores
+
 let agrees : string list ref = ref []
 
 let emit_agree (subject : string) (store : (string * type0) list)
@@ -582,6 +624,8 @@ let run () =
                [ wa; wb ];
              emit_runner "src" subject store env;
              emit_runner "opt" subject store env;
+             emit_store "src" subject store env;
+             emit_store "opt" subject store env;
              emit_agree subject store env;
              emit_vs_interp subject store env;
              Some (a ^ "\n\n" ^ b))
@@ -600,6 +644,7 @@ let run () =
      \   Do not edit by hand. *)\n\n" ^ Mono.module_text () ^ "\n"
     ^ String.concat "\n\n" fns ^ "\n\n"
     ^ String.concat "\n\n" (List.rev !runners) ^ "\n\n"
+    ^ String.concat "\n\n" (List.rev !stores) ^ "\n\n"
     ^ String.concat "\n\n" (List.rev !agrees) ^ "\n\n"
     ^ String.concat "\n\n" (List.rev !interps) ^ "\n\n" ^ registry ^ "\n\n"
     ^ Printf.sprintf

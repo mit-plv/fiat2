@@ -7,6 +7,6 @@
 
 (executable
  (name compiled)
- (modules monotypes compiled timing)
+ (modules monotypes compiled timing authors)
  (libraries conquord_harness)
  (flags (:standard -w +a-4-9-26-27-32..70)))
