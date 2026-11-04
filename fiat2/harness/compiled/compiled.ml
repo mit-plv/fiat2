@@ -130,6 +130,9 @@ let () =
   | _ :: "time" :: rest ->
       Timing.run (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "threeway" :: rest ->
+      Timing.threeway (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ :: "writes" :: rest ->
       Timing.writes (List.filter_map int_of_string_opt rest);
       exit 0
@@ -150,7 +153,7 @@ let () =
   Printf.printf
     "compiled: %d reader runs; equality agreed on %d equal and %d unequal \
      pairs; src = opt on %d runs; compiled = interpreter on %d runs; \
-     author = compiled on %d runs (%d of 11 transcriptions); %d failures\n"
+     author = compiled on %d runs (%d of 10 transcriptions); %d failures\n"
     !reads !yes !no !agreed !matched !authored (List.length Authors.done_so_far)
     (List.length !failures);
   List.iter (fun s -> Printf.printf "  %s\n" s) (List.rev !failures);

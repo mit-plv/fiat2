@@ -57,6 +57,11 @@ module SMap = Map.Make (SKey)
 (* baseline.ml's kprobe: a probe that YIELDS a row charges one row, where a
    membership test charges none because it yields a boolean.  Reproduced, so
    the rows column means the same thing on both sides. *)
+let lookup_of (w : Gen.workload) (n : string) : Value.t option =
+  match List.assoc_opt n w.Gen.env with
+  | Some v -> Some v
+  | None -> List.assoc_opt n w.Gen.store
+
 let probe (o : 'a option) : 'a option =
   (match o with Some _ -> Count.visit 1 | None -> ());
   o
@@ -348,6 +353,528 @@ module UserSearch = struct
     (!outputs, !suggested)
 end
 
+(* ---------- area registry: a dict and a secondary index on floor ------ *)
+
+module AreaRegistry = struct
+  let name = "area_registry"
+
+  (* home-assistant/core, commit e751cd2b.
+     homeassistant/helpers/area_registry.py:169 (class AreaRegistryItems),
+     with the write hooks in homeassistant/helpers/registry.py:38, :56, :61
+     and area_registry.py:180, :199, :211.
+
+     The dict and ONE secondary index, maintained by hand on every insert and
+     every delete.  This is the only subject here whose writes are its own:
+     the other eight build once.
+
+     Two structural details are the author's and are transcribed as such.
+
+     The secondary index stores KEYS, not rows -- `_floors_index[floor]` is a
+     dict of ids -- so get_areas_for_floor resolves every posting through the
+     primary dict.  Our index stores the rows themselves.  Both enumerate the
+     same rows, so the row column is parity; HA pays a probe per posting
+     where we pay the storage, and that is a backend's choice, which is why
+     it shows up in cmps and not in rows.
+
+     And _unindex_entry READS the row before removing it (area_registry.py:199),
+     because the row is where the floor it has to unindex is written.  So a
+     delete costs exactly one row on the author's side -- which is what the
+     optimizer's keyed delete costs too, and is the line this subject exists
+     for.
+
+     Only _floors_index is modelled, as in the subject: _labels_index and
+     _aliases_index key on each element of a per-row collection, which is the
+     gap the survey recorded and nothing here builds. *)
+  type state = {
+    mutable data : In_area_registry.t_row STrie.t;   (* self.data *)
+    mutable floors : unit STrie.t STrie.t;           (* _floors_index *)
+  }
+
+  let run (queries : In_area_registry.t_queries) : string list =
+    let st = { data = STrie.empty; floors = STrie.empty } in
+    let outputs = ref [] in
+    let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
+    (* _index_entry: the primary dict, then the floor posting list *)
+    let index_entry (key : string) (row : In_area_registry.t_row) =
+      st.data <- STrie.add key row st.data;
+      match row.f_floor with
+      | None -> ()                                 (* `if ... is not None` *)
+      | Some f ->
+          let b =
+            match STrie.get f st.floors with
+            | Some b -> b
+            | None -> STrie.empty in
+          st.floors <- STrie.add f (STrie.add key () b) st.floors in
+    (* _unindex_entry, then UserDict.__delitem__ (registry.py:61) *)
+    let unindex_entry (key : string) =
+      match probe (STrie.get key st.data) with
+      | None -> ()                                 (* HA raises; nothing to do *)
+      | Some (row : In_area_registry.t_row) ->
+          (match row.f_floor with
+           | None -> ()
+           | Some f -> (
+               match STrie.get f st.floors with
+               | None -> ()
+               | Some b ->
+                   let b = STrie.remove key b in
+                   (* `if not entries: del index[value]` -- registry.py:56 *)
+                   st.floors <-
+                     (if STrie.cardinal b = 0 then STrie.remove f st.floors
+                      else STrie.add f b st.floors)));
+          st.data <- STrie.remove key st.data in
+    List.iter
+      (fun (q : In_area_registry.t_queries_elem) ->
+         match q.f_kind with
+         (* __setitem__ with a fresh key: the build's insert *)
+         | 0 ->
+             let row = q.f_new_area in
+             index_entry row.f_id row
+         (* __delitem__ *)
+         | 1 -> unindex_entry q.f_k
+         (* async_get_area(area_id) -- area_registry.py:241, a dict get at :247 *)
+         | 2 ->
+             say (match probe (STrie.get q.f_k st.data) with
+                  | Some _ -> 1 | None -> 0)
+         (* get_areas_for_floor(floor), counted *)
+         | _ ->
+             say
+               (match STrie.get q.f_fl st.floors with
+                | None -> 0
+                | Some b ->
+                    STrie.fold
+                      ~f:(fun acc key () ->
+                        match probe (STrie.get key st.data) with
+                        | Some _ -> acc + 1
+                        | None -> acc)
+                      ~x:0 b))
+      queries;
+    !outputs
+end
+
+(* ---------- the ordered helpers, shared by the two ordered subjects ---- *)
+
+module IKey = struct
+  type t = int
+
+  let compare = Rt.cmp_int
+  let equal a b = Rt.cmp_int a b = 0
+  let hash = Rt.hash_int
+end
+
+module IMap = Map.Make (IKey)
+module ITrie = CCHashTrie.Make (IKey)
+
+(* subMap(lo, true, hi, false): the entries in [lo, hi), by two splits.
+   Map.split is the ordered-map primitive that Java's subMap is, with one
+   difference worth stating: Java's is a lazy VIEW and this rebuilds the
+   subtree, so it charges the author a few comparisons extra and no rows. *)
+let sub_range (lo : int) (hi : int) (m : 'a IMap.t) : 'a IMap.t =
+  let _, at_lo, above = IMap.split lo m in
+  let below_hi, _, _ = IMap.split hi above in
+  match at_lo with
+  | Some v when lo < hi -> IMap.add lo v below_hi
+  | _ -> below_hi
+
+(* headMap(lo, false).clear(): keep [lo, inf).  One split, and no row is read
+   -- the entries are unlinked, not inspected. *)
+let keep_from (lo : int) (m : 'a IMap.t) : 'a IMap.t =
+  let _, at_lo, above = IMap.split lo m in
+  match at_lo with Some v -> IMap.add lo v above | None -> above
+
+(* ---------- cluster: four maps, and no list ---------- *)
+
+module Cluster = struct
+  let name = "cluster"
+
+  (* apache/kafka, commit 995cfcf9, common/Cluster.java:47-50, built at
+     :142-:157 and :164-:184, read at :289, :298, :317, :326.
+
+     Cluster has a field for every map and NO field for `partitions`, which is
+     the erasure the subject is about; four probes, four buckets, no scan.
+
+     Two things to read carefully.  The subject counts what each accessor
+     RETURNS, so these walk the bucket they hand back, which is what :298's
+     and :317's and :326's callers do.  Kafka also has partitionCountForTopic
+     at :307, answering the count in O(1) from ArrayList.size(); that one the
+     optimizer cannot match, since it would need a maintained aggregate PER
+     BUCKET -- the dict-of-aggregates combinator this development
+     deliberately does not build.  And onePartition is the other way round:
+     the key is composite, `new TopicPartition(p.topic(), p.partition())`,
+     Kafka has a map on it, and the optimizer probes one attribute and filters
+     the bucket.
+
+     THE COMPOSITE KEY IS A RECORD, and it is charged exactly as a generated
+     two-field record is: the record's own node, then its fields in
+     name-sorted order.  That is what baseline.ml's key2 built as a VRecord,
+     and writing it out here is what keeps the two sides priced alike. *)
+  module TPKey = struct
+    (* fields in the order the type system keeps them: partition < topic *)
+    type t = { partition : int; topic : string }
+
+    let compare (a : t) (b : t) : int =
+      Rt.cmp_node ();
+      let c = Rt.cmp_int a.partition b.partition in
+      if c <> 0 then c else Rt.cmp_string a.topic b.topic
+
+    let equal a b = compare a b = 0
+
+    let hash (x : t) : int =
+      Rt.node ();
+      let h = 37 in
+      let h = (h * 31) + Rt.hash_int x.partition in
+      let h = (h * 31) + Rt.hash_string x.topic in
+      h
+  end
+
+  module TPTrie = CCHashTrie.Make (TPKey)
+
+  type row = In_cluster.t_row
+
+  (* computeIfAbsent(k, _ -> new ArrayList<>()).add(p) *)
+  let sbucket_add (h : row list STrie.t) (k : string) (r : row) : row list STrie.t =
+    match STrie.get k h with
+    | Some b -> STrie.add k (r :: b) h
+    | None -> STrie.add k [ r ] h
+
+  let ibucket_add (h : row list ITrie.t) (k : int) (r : row) : row list ITrie.t =
+    match ITrie.get k h with
+    | Some b -> ITrie.add k (r :: b) h
+    | None -> ITrie.add k [ r ] h
+
+  (* the rows an accessor hands back, counted by its caller *)
+  let scount (h : row list STrie.t) (k : string) : int =
+    match STrie.get k h with
+    | None -> 0                                   (* getOrDefault(k, List.of()) *)
+    | Some b -> let n = List.length b in Count.visit n; n
+
+  let icount (h : row list ITrie.t) (k : int) : int =
+    match ITrie.get k h with
+    | None -> 0
+    | Some b -> let n = List.length b in Count.visit n; n
+
+  let run (partitions : In_cluster.t_partitions_tbl)
+      (queries : In_cluster.t_queries) : string list =
+    let by_tp = ref TPTrie.empty in
+    let by_topic = ref STrie.empty in
+    let available = ref STrie.empty in
+    let by_node = ref ITrie.empty in
+    List.iter
+      (fun (p : row) ->
+         by_tp :=
+           TPTrie.add { TPKey.partition = p.f_partition; topic = p.f_topic } p
+             !by_tp;
+         by_topic := sbucket_add !by_topic p.f_topic p;
+         match p.f_leader with
+         | Some n ->
+             (* `if (p.leader() == null) continue` -- :150 *)
+             by_node := ibucket_add !by_node n p;
+             available := sbucket_add !available p.f_topic p
+         | None -> ())
+      partitions;
+    let outputs = ref [] in
+    let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
+    List.iter
+      (fun (q : In_cluster.t_queries_elem) ->
+         match q.f_kind with
+         | 0 -> say (scount !by_topic q.f_topic)
+         | 1 -> say (icount !by_node q.f_node)
+         | 2 ->
+             say
+               (match
+                  probe
+                    (TPTrie.get
+                       { TPKey.partition = q.f_part; topic = q.f_topic }
+                       !by_tp)
+                with
+                | Some _ -> 1 | None -> 0)
+         | _ -> say (scount !available q.f_topic))
+      queries;
+    !outputs
+end
+
+(* ---------- window store: two ordered levels ---------- *)
+
+module WindowStore = struct
+  let name = "window_store"
+
+  (* apache/kafka, commit 995cfcf9, state/internals/InMemoryWindowStore.java:78,
+     read at :398, :287, :221, :637.
+
+     TWO ordered levels, time then key, which is the one place in this file
+     where the author's structure is strictly richer than the derived one.
+     The subject flattens the rows and the optimizer chooses the nesting: a
+     Ranged dict on time whose buckets are unindexed bags.  So fetchAll is
+     parity -- both walk the window -- and `fetch` is the gap: Kafka descends
+     the inner map once per segment and enumerates only the rows that match.
+
+     The outer level is the ordered one: subMap and headMap read its key
+     order.  The inner per-segment map is ORDERED too, for the same reason
+     NamedCache's is -- the author's level is a ConcurrentNavigableMap, and
+     none of the operations this subject models reads that order. *)
+  let run (segments0 : In_window_store.t_segments_tbl)
+      (queries : In_window_store.t_queries) : string list =
+    let segments = ref (IMap.empty : In_window_store.t_row SMap.t IMap.t) in
+    let put (r : In_window_store.t_row) =
+      let seg =
+        match IMap.find_opt r.f_time !segments with
+        | Some s -> s
+        | None -> SMap.empty in
+      segments := IMap.add r.f_time (SMap.add r.f_k r seg) !segments in
+    List.iter put segments0;
+    let outputs = ref [] in
+    let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
+    List.iter
+      (fun (q : In_window_store.t_queries_elem) ->
+         let lo = q.f_lo and hi = q.f_hi in
+         match q.f_kind with
+         (* fetchAll: every row in the window *)
+         | 0 ->
+             say
+               (IMap.fold
+                  (fun _ seg acc ->
+                     let c = SMap.cardinal seg in
+                     Count.visit c;
+                     acc + c)
+                  (sub_range lo hi !segments) 0)
+         (* fetch: the window's segments, each asked for the one key *)
+         | 1 ->
+             say
+               (IMap.fold
+                  (fun _ seg acc ->
+                     match probe (SMap.find_opt q.f_key seg) with
+                     | Some _ -> acc + 1
+                     | None -> acc)
+                  (sub_range lo hi !segments) 0)
+         (* put: computeIfAbsent, then the inner put.  No row is read. *)
+         | 2 -> put q.f_new_rec
+         (* removeExpiredSegments *)
+         | _ -> segments := keep_from lo !segments)
+      queries;
+    !outputs
+end
+
+(* ---------- range delete: the one subject with NO author ---------- *)
+
+module RangeDelete = struct
+  let name = "range_delete"
+
+  (* NOT A TRANSCRIPTION, and listed in `hand_written` so the report says so
+     beside the numbers.  Ex_RangeDelete.v is our own example -- the witness
+     for ODictRangeDelete -- so there is no original author.  What stands in
+     is the implementation the structure asks for: an ordered map from price
+     to the rows at that price, the band read as a subMap, and the band
+     withdrawal as subMap(lo, hi).clear(). *)
+  let run (orders : In_range_delete.t_orders_tbl)
+      (queries : In_range_delete.t_queries) : string list =
+    let by_price = ref (IMap.empty : In_range_delete.t_row list IMap.t) in
+    let add (row : In_range_delete.t_row) =
+      let b =
+        match IMap.find_opt row.f_price !by_price with Some b -> b | None -> [] in
+      by_price := IMap.add row.f_price (row :: b) !by_price in
+    List.iter add orders;
+    let outputs = ref [] in
+    let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
+    List.iter
+      (fun (q : In_range_delete.t_queries_elem) ->
+         let lo = q.f_lo and hi = q.f_hi in
+         match q.f_type with
+         (* insert *)
+         | 0 -> add q.f_new_order
+         (* count the band: subMap, then its rows *)
+         | 1 ->
+             say
+               (IMap.fold
+                  (fun _ b acc ->
+                     let c = List.length b in
+                     Count.visit c;
+                     acc + c)
+                  (sub_range lo hi !by_price) 0)
+         (* withdraw the band: subMap(lo, hi).clear(), the band's keys removed
+            one at a time as TreeMap's iterator does it.  No row is read. *)
+         | _ ->
+             by_price :=
+               IMap.fold
+                 (fun k _ acc -> IMap.remove k acc)
+                 (sub_range lo hi !by_price) !by_price)
+      queries;
+    !outputs
+end
+
+(* ---------- dependent plugins: the author built NOTHING ---------- *)
+
+module DependentPlugins = struct
+  let name = "dependent_plugins"
+
+  (* jenkins, core/src/main/java/hudson/PluginManager.java:1042,
+     resolveDependentPlugins(), over the field `plugins` at :325.
+
+     THIS ROW IS THE OPPOSITE OF EVERY OTHER ROW, and that is not a bug in
+     it.  Everywhere else the author built a structure, we took it away to
+     make the `src` column, and the question is whether the optimizer puts it
+     back -- so parity with `opt` is the result.  Here the author built
+     NOTHING: resolveDependentPlugins is a raw nested loop with no map, no
+     index and no cache.  So the expected result is parity with `src`, a
+     large gap to `opt`, and what that gap measures is a speedup over code as
+     SHIPPED rather than over a form we constructed.
+
+     Transcribed as written in two places the subject could not be.  The
+     dependency list is kept NESTED inside the plugin, which is what Jenkins
+     has and what the development cannot express; and the `break` is kept,
+     which the subject drops because after flattening at most one row can
+     match.  On the measured workload each plugin declares exactly ONE
+     dependency, so the inner list has length one and the break saves
+     nothing -- at higher fan-out it would make this column up to 2x cheaper
+     than `src` while leaving the exponent at 2, which is the one respect in
+     which the subject's numbers flatter the optimizer. *)
+
+  type dependency = { dep_name : string; optional : bool }
+  type plugin = { short_name : string; deleted : bool; deps : dependency list }
+
+  let run (edges : In_dependent_plugins.t_deps_tbl)
+      (plugin_rows : In_dependent_plugins.t_plugins_tbl)
+      (queries : In_dependent_plugins.t_queries) : string list =
+    (* Group the edges ONCE.  Filtering the edge list per plugin would be
+       quadratic before the method even starts, and Jenkins pays no such
+       cost: a PluginWrapper already owns its dependency list, parsed from
+       the manifest.
+
+       A PLAIN Hashtbl, and the only one in this file: it is SETUP and not
+       algorithm, so it must stay UNCHARGED.  Charging it would charge the
+       author for work Jenkins does not do, which is the opposite of what the
+       paragraph above is for.  The same goes for the two accumulators in
+       [resolve]. *)
+    let by_dependent : (string, dependency list) Hashtbl.t =
+      Hashtbl.create 4096 in
+    List.iter
+      (fun (e : In_dependent_plugins.t_deps_tbl_elem) ->
+         let d = { dep_name = e.f_dependency; optional = e.f_optional } in
+         Hashtbl.replace by_dependent e.f_dependent
+           (d :: (try Hashtbl.find by_dependent e.f_dependent with Not_found -> [])))
+      edges;
+    let deps_of (nm : string) : dependency list =
+      try Hashtbl.find by_dependent nm with Not_found -> [] in
+    let plugins =
+      List.map
+        (fun (r : In_dependent_plugins.t_plugins_tbl_elem) ->
+           { short_name = r.f_name; deleted = false; deps = deps_of r.f_name })
+        plugin_rows in
+    let outputs = ref [] in
+    let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
+    let resolve () =
+      List.iter
+        (fun plugin ->
+           (* uncharged, deliberately: these are the two result sets
+              setDependents/setOptionalDependents receive, and a HashSet
+              insert into them is a cost this column does not charge -- an
+              omission that runs AGAINST the optimizer, since it makes the
+              author's column cheaper than it should be *)
+           let dependents = Hashtbl.create 64 in
+           let optional_dependents = Hashtbl.create 64 in
+           List.iter
+             (fun possible ->
+                (* this inner iteration INSPECTS a stored plugin, which is
+                   what the row column counts *)
+                Count.visit 1;
+                incr Count.comparisons;
+                if possible.short_name = plugin.short_name then ()
+                else if possible.deleted then ()
+                else
+                  (* the inner loop, with the break *)
+                  let rec scan = function
+                    | [] -> ()
+                    | d :: rest ->
+                        Count.visit 1;
+                        incr Count.comparisons;
+                        if d.dep_name = plugin.short_name then begin
+                          Hashtbl.replace dependents possible.short_name ();
+                          if d.optional then
+                            Hashtbl.replace optional_dependents
+                              possible.short_name ()
+                        end
+                        else scan rest in
+                  scan possible.deps)
+             plugins;
+           (* setDependents / setOptionalDependents, as the two counts the
+              subject reports *)
+           say (Hashtbl.length dependents);
+           say (Hashtbl.length optional_dependents))
+        plugins in
+    List.iter (fun _ -> resolve ()) queries;
+    !outputs
+end
+
+(* The subjects above that no third party wrote, so a report can say so next
+   to them instead of leaving a reader to assume an author. *)
+let hand_written : string list = [ RangeDelete.name ]
+
+(* ---------- prepared runners, for the measurement ----------
+
+   Shaped exactly like the generated ones: the inputs are converted first and
+   a closure is returned, so marshalling happens before the clock starts and
+   is not charged to either column. *)
+
+let prepared (f : (string -> Value.t) -> 'a)
+    (lookup : string -> Value.t option) : unit -> unit =
+  let get n =
+    match lookup n with
+    | Some v -> v
+    | None -> failwith ("missing input " ^ n) in
+  fun () -> ignore (f get)
+
+(* Shaped exactly like Monotypes.programs' entries, so the same measurement
+   code drives all three columns -- including the per-kind scaling, which the
+   author column needs most: its ops phase at 1600 rows is a few
+   microseconds, and the difference of two whole-program timings cannot
+   resolve that (it moved named_cache from 0.30 to 3.34 between two runs
+   before this). *)
+let runners : (string * ((string -> Value.t option) -> unit -> unit)) list =
+  [ ( "keycloak",
+      prepared (fun get ->
+          Keycloak.run (Monotypes.In_keycloak.f_queries (get "queries"))) );
+    ( "named_cache",
+      prepared (fun get ->
+          NamedCache.run (Monotypes.In_named_cache.f_ops (get "ops"))) );
+    ( "area_registry",
+      prepared (fun get ->
+          AreaRegistry.run
+            (Monotypes.In_area_registry.f_queries (get "queries"))) );
+    ( "lookin",
+      prepared (fun get ->
+          Lookin.run
+            (Monotypes.In_lookin.f_functions_tbl (get "functions_tbl"))
+            (Monotypes.In_lookin.f_queries (get "queries"))) );
+    ( "cluster",
+      prepared (fun get ->
+          Cluster.run
+            (Monotypes.In_cluster.f_partitions_tbl (get "partitions_tbl"))
+            (Monotypes.In_cluster.f_queries (get "queries"))) );
+    ( "window_store",
+      prepared (fun get ->
+          WindowStore.run
+            (Monotypes.In_window_store.f_segments_tbl (get "segments_tbl"))
+            (Monotypes.In_window_store.f_queries (get "queries"))) );
+    ( "item_deletion",
+      prepared (fun get ->
+          ItemDeletion.run
+            (Monotypes.In_item_deletion.f_items_tbl (get "items_tbl"))
+            (Monotypes.In_item_deletion.f_queries (get "queries"))) );
+    ( "user_search",
+      prepared (fun get ->
+          UserSearch.run
+            (Monotypes.In_user_search.f_suggested (get "suggested"))
+            (Monotypes.In_user_search.f_queries (get "queries"))) );
+    ( "range_delete",
+      prepared (fun get ->
+          RangeDelete.run
+            (Monotypes.In_range_delete.f_orders_tbl (get "orders_tbl"))
+            (Monotypes.In_range_delete.f_queries (get "queries"))) );
+    ( "dependent_plugins",
+      prepared (fun get ->
+          DependentPlugins.run
+            (Monotypes.In_dependent_plugins.f_deps_tbl (get "deps_tbl"))
+            (Monotypes.In_dependent_plugins.f_plugins_tbl (get "plugins_tbl"))
+            (Monotypes.In_dependent_plugins.f_queries (get "queries"))) ) ]
+
 (* ---------- what has been monomorphized so far ----------
 
    One module, as a pilot: the pattern is proved end to end -- including the
@@ -357,7 +884,8 @@ end
 
 let done_so_far =
   [ Lookin.name; Keycloak.name; NamedCache.name; ItemDeletion.name;
-    UserSearch.name ]
+    UserSearch.name; AreaRegistry.name; Cluster.name;
+    WindowStore.name; RangeDelete.name; DependentPlugins.name ]
 
 (* ---------- and the check ----------
 
@@ -366,11 +894,6 @@ let done_so_far =
    compiler is supposed to arrive back at what the author built, so a
    difference is a bug in the transcription (or in the backend) and not a
    finding. *)
-
-let lookup_of (w : Gen.workload) (n : string) : Value.t option =
-  match List.assoc_opt n w.Gen.env with
-  | Some v -> Some v
-  | None -> List.assoc_opt n w.Gen.store
 
 let check_lookin (w : Gen.workload) : bool =
   let get n =
@@ -428,8 +951,63 @@ let check_user_search (w : Gen.workload) : bool =
   Rt.eq_list Rt.eq_string mine_out theirs_out
   && Monotypes.In_user_search.M_suggested.equal mine_sug theirs_sug
 
+let check_area_registry (w : Gen.workload) : bool =
+  let get n =
+    match lookup_of w n with
+    | Some v -> v
+    | None -> failwith ("missing input " ^ n) in
+  let mine = Monotypes.store_opt_area_registry (lookup_of w) in
+  let theirs =
+    AreaRegistry.run (Monotypes.In_area_registry.f_queries (get "queries")) in
+  Rt.eq_list Rt.eq_string mine theirs
+
+let simple (name : string) (f : (string -> Value.t) -> string list)
+    (mine : (string -> Value.t option) -> string list) (w : Gen.workload) : bool =
+  ignore name;
+  let get n =
+    match lookup_of w n with
+    | Some v -> v
+    | None -> failwith ("missing input " ^ n) in
+  Rt.eq_list Rt.eq_string (mine (lookup_of w)) (f get)
+
+let check_cluster =
+  simple "cluster"
+    (fun get ->
+      Cluster.run
+        (Monotypes.In_cluster.f_partitions_tbl (get "partitions_tbl"))
+        (Monotypes.In_cluster.f_queries (get "queries")))
+    Monotypes.store_opt_cluster
+
+let check_window_store =
+  simple "window_store"
+    (fun get ->
+      WindowStore.run
+        (Monotypes.In_window_store.f_segments_tbl (get "segments_tbl"))
+        (Monotypes.In_window_store.f_queries (get "queries")))
+    Monotypes.store_opt_window_store
+
+let check_range_delete =
+  simple "range_delete"
+    (fun get ->
+      RangeDelete.run
+        (Monotypes.In_range_delete.f_orders_tbl (get "orders_tbl"))
+        (Monotypes.In_range_delete.f_queries (get "queries")))
+    Monotypes.store_opt_range_delete
+
 let checks : (string * (Gen.workload -> bool)) list =
   [ ("lookin", check_lookin);
+    ("dependent_plugins",
+      simple "dependent_plugins"
+        (fun get ->
+          DependentPlugins.run
+            (Monotypes.In_dependent_plugins.f_deps_tbl (get "deps_tbl"))
+            (Monotypes.In_dependent_plugins.f_plugins_tbl (get "plugins_tbl"))
+            (Monotypes.In_dependent_plugins.f_queries (get "queries")))
+        Monotypes.store_opt_dependent_plugins);
+    ("cluster", check_cluster);
+    ("window_store", check_window_store);
+    ("range_delete", check_range_delete);
+    ("area_registry", check_area_registry);
     ("user_search", check_user_search);
     ("item_deletion", check_item_deletion);
     ("keycloak", check_keycloak);

@@ -470,11 +470,35 @@ environment print `src: none`, because their source build does nothing at
 all and there is no ratio to take, only the absolute cost of index
 construction.
 
-**What it does NOT yet measure: the author comparison.**  `baseline.ml` is
-still written against the boxed dynamic value, so timing a compiled column
-against it would compare two *representations* rather than two programs --
-the same confound the matched columns exist to defuse.  Both sides have to be
-monomorphic before that ratio means anything.
+**All three columns, compiled.**  `threeway` is the comparison this was for:
+the query as written, the program the optimizer derives, and the author's own
+code, all three compiled, all three monomorphic, all three charging through
+`rt.ml`.  Within a row the representation is the same, so a ratio compares two
+programs -- which is what monomorphizing `baseline.ml` was necessary for, and
+all ten transcriptions are done, each checked against the compiled optimized
+column.
+
+**The finding that decides which instrument to believe.**  At a point read
+both columns take about **200 nanoseconds**, and at that granularity the
+clock measures how a column happens to be written rather than its algorithm.
+The counters are exact and deterministic, and they say *parity* exactly where
+parity is predicted -- `keycloak/byId` 13.4 units against 11.4,
+`cluster/forTopic` 9.0 against 8.0 -- while the same rows read 0.38 and 0.42
+in **seconds**.  Where the difference really is algorithmic the two agree
+sharply: `user_search/suggest` 0.02 counted and 0.01 in seconds,
+`dependent_plugins/resolveAll` 0.01 and 0.02.
+
+So: **trust the seconds at an order of magnitude and the counters at a
+factor.**  The compiled seconds are the right instrument for what the
+optimizer buys (`src/opt`, 100x to 2000x, where the gap is enormous); the
+counters remain the right instrument for whether it arrived where the author
+was, which is a question about factors.
+
+**Still carried over:** `baseline.ml`'s structure setting.  The monomorphized
+transcriptions fix one structure each -- the one the author chose -- so the
+`matched` columns are not yet available on the compiled side, and the
+`set_kind` gap shows up as `item_deletion` at 2.68x counted (our TSet is a
+tree, their HashSet is a hash) rather than as one number.
 
 ## The originals, beside the optimizer's output
 
