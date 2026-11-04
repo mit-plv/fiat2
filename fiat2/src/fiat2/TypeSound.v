@@ -187,7 +187,17 @@ Section WithWord.
     1, 2, 4, 5: repeat destruct_match;
     [ destruct_compare_types; invert_result; invert_type_wf; auto
     | invert_result; constructor; invert_type_wf; auto ].
-    1: repeat destruct_match; destruct_compare_types; invert_type_wf; auto.
+    (* AEmptyDict.  Its Some case is the one this line always handled; its
+       None case is new, and has one test more than its four siblings'
+       because the KIND has to agree with the expected type's -- which is
+       what TyAEmptyDict' says, fixing dk on both sides of the rule. *)
+    1: repeat destruct_match.
+    1: { destruct_compare_types; invert_type_wf; auto. }
+    1: { repeat match goal with
+                | H : dict_kind_beq _ _ = true |- _ =>
+                    apply dict_kind_beq_eq in H; subst
+                end;
+         invert_result; constructor; invert_type_wf; auto. }
   Qed.
 
   Lemma fst_map_fst : forall (A B C : Type) (l : list (A * B)) (f : A -> B -> C),

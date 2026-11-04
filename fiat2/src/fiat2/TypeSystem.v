@@ -521,9 +521,38 @@ Definition analyze_atom (expected : type) (a : atom) : result atom :=
                         | _ => error:(a "is a list but expected" expected)
                         end
               end
+  (* The None case takes both types from the expected type, exactly as the
+     four siblings around it do, and keeps the kind fixed -- which is what
+     TyAEmptyDict' above says: AEmptyDict dk None has type TDict dk kt vt for
+     the SAME dk.  Without this branch the checker rejects an unannotated
+     empty dictionary in either direction, and since every index's to_idx
+     seeds its fold with AEmptyDict _ None, that made the optimizer's output
+     untypeable BY THE ALGORITHM while remaining typeable by the relation.
+     Nothing depended on the gap: the examples call typecheck as a boolean
+     sanity check on their SOURCE, and the two theorems that are about the
+     checker -- TypeSound.atom_typechecker_sound, which this branch is
+     covered by, and TypeSound.command_typechecker_sound -- both conclude
+     about its INPUT, so neither says anything about what it accepts.  A
+     backend, by contrast, needs the elaborated term.
+
+     NOTE this branch is necessary and NOT sufficient.  analyze_expr pushes
+     an expected type down through EFold into the accumulator seed, so a
+     to_idx-shaped fold IS analyzable once this case exists.  But the
+     optimizer emits the index inside a CLetMut whose bound ERecord must be
+     SYNTHESIZED to give the table its new type, and synthesize_atom cannot
+     invent a dictionary's key and value types -- nor should it, since
+     IndexInterface.to_idx_ty quantifies ONE to_idx expression over every
+     admissible table type, which is exactly why these annotations are None
+     in the first place.  See eval/Annotations.v. *)
   | AEmptyDict dk t => match t with
                     | Some (kt, vt) => compare_types expected (TDict dk kt vt) a
-                    | _ => error:(a "is a dictionary but expected" expected)
+                    | None => match expected with
+                              | TDict dk' kt' vt' =>
+                                  if dict_kind_beq dk dk'
+                                  then Success (AEmptyDict dk (Some (kt', vt')))
+                                  else error:(a "is a dictionary of another kind than" expected)
+                              | _ => error:(a "is a dictionary but expected" expected)
+                              end
                     end
   | AEmptyBag t => match t with
                    | Some t => compare_types expected (TBag t) a
