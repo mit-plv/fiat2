@@ -130,6 +130,28 @@ Proof.
       try apply IHl; auto; rewrite Bool.andb_true_iff in *; intuition idtac.
 Qed.
 
+(* The converse.  type_wf_comp is a DECISION procedure for type_wf, and only
+   one direction of that was ever needed: a checker that accepts tells you the
+   type is well formed.  The other direction is what lets a premise stated
+   with type_wf discharge a GUARD stated with type_wf_comp -- which is what
+   synthesize_atom puts in front of an annotated empty collection, so a
+   declared table born as EAtom (ANil (Some row_ty)) synthesizes from
+   `type_wf row_ty` alone and needs no extra hypothesis beside it. *)
+Lemma type_wf__type_wf_comp : forall t, type_wf t -> type_wf_comp t = true.
+Proof.
+  intros t H; induction t using type_IH; inversion H; subst; simpl in *;
+    repeat rewrite Bool.andb_true_iff; intuition auto.
+  - apply NoDup_comp_true_iff; assumption.
+  - apply StronglySorted_comp_true_iff; assumption.
+  (* the nested fix over the record's fields, by the same shape
+     type_wf_comp_sound uses on the way back *)
+  - clear H H2 H3.
+    induction l as [ | [ x tx ] l IH ]; auto.
+    cbn [List.map] in H0, H4 |- *.
+    inversion H0; subst. inversion H4; subst.
+    rewrite Bool.andb_true_iff; split; auto.
+Qed.
+
 (* Inductive typing relation *)
 Inductive type_of_atom : atom -> type -> Prop :=
 | TyAInt n : type_of_atom (AInt n) TInt
