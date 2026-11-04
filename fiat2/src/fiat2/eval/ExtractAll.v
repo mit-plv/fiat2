@@ -1,4 +1,6 @@
-Require Import fiat2.Language fiat2.Value fiat2.Interpret.
+Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
+Require Import coqutil.Datatypes.Result.
 Require fiat2.eval.Extract fiat2.eval.Elaborate.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
@@ -40,9 +42,34 @@ Definition tbl_types_nf : list (string * type * type) :=
 Definition envs_nf : list (string * list (string * type) * list (string * type)) :=
   Eval vm_compute in Elaborate.envs.
 
+(* ============================================================
+   The typechecker itself, callable from OCaml.
+
+   The backend is a type-directed pass: at every node it needs to know what
+   it is compiling, in order to pick a record layout, an unboxed scalar or a
+   structure.  The annotations give it the collection types a program
+   creates; for everything else it has to ask.
+
+   It asks THIS function.  Writing a second synthesizer in OCaml would be
+   the one thing the development's own comments warn against -- "being in
+   sync is not something to keep checking, it is the same function" -- and
+   the gap would be invisible, since a wrong type produces compiling code
+   that computes the wrong thing.  Environments cross as association lists
+   so that no coqutil representation does.
+   ============================================================ *)
+
+Section Synth.
+  Instance stenv : map.map string type := SortedListString.map _.
+  Instance stenv_ok : map.ok stenv := SortedListString.ok _.
+
+  Definition synth (store env : list (string * type)) (e : expr)
+    : result (type * expr) :=
+    synthesize_expr (map.of_list store) (map.of_list env) e.
+End Synth.
+
 Extraction Language OCaml.
 Set Extraction Output Directory "harness/generated".
 
 Extraction "extracted.ml"
   Extract.subjects Extract.alternatives Extract.ref_run
-  annotated_nf tbl_types_nf envs_nf.
+  annotated_nf tbl_types_nf envs_nf synth.

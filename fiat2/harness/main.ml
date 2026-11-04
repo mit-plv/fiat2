@@ -59,7 +59,8 @@ let () =
   | _ :: "report" :: _ | [ _ ] -> Report.run ()
   | _ :: "check" :: _ -> ignore (Probe.run ()); Differential.run ()
   | _ :: "stores" :: _ -> ignore (Probe.run ())
-  | _ :: "types" :: _ -> Mono.run ()
+  | _ :: "types" :: _ -> Codegen.run ()
+  | _ :: "ops" :: _ -> Opcount.run ()
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
   | _ :: "csv" :: rest -> Bench.csv (List.filter_map int_of_string_opt rest)
   | _ :: "timing" :: rest -> Bench.timing rest

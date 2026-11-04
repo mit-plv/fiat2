@@ -159,3 +159,60 @@ let eq_bag (cmp : 'a -> 'a -> int) (a : 'a list) (b : 'a list) : bool =
   incr Count.comparisons;
   List.length a = List.length b
   && eq_list (fun x y -> cmp x y = 0) (List.sort cmp a) (List.sort cmp b)
+
+(* ---------- the operators the generated code calls ----------
+
+   Each one charges what eval.ml's transcription of the same operator
+   charges, so the compiled and interpreted sides are priced alike wherever
+   the work is the same.  Arithmetic charges nothing on either side: it is
+   neither a key comparison nor a byte, and no exponent turns on it.
+
+   `rows` is charged at the SITES eval.ml charges Count.visit, by the
+   generated code itself rather than here, because only the generator knows
+   how many elements a construct iterated. *)
+
+let add_int (a : int) (b : int) : int = a + b
+let sub_int (a : int) (b : int) : int = a - b
+let mul_int (a : int) (b : int) : int = a * b
+let div_int (a : int) (b : int) : int = if b = 0 then 0 else a / b
+let mod_int (a : int) (b : int) : int = if b = 0 then a else a mod b
+
+(* the digits an int-to-string emits *)
+let string_of_int_c (n : int) : string =
+  let s = string_of_int n in
+  Count.chars (String.length s);
+  s
+
+(* the bytes a concatenation writes *)
+let concat_string (a : string) (b : string) : string =
+  Count.chars (String.length a + String.length b);
+  a ^ b
+
+(* the positions a naive substring scan really compares before it stops --
+   eval.ml's str_contains, which is the function the author transcriptions
+   call too, so the subject that is ABOUT string matching is priced the same
+   on all three columns *)
+let str_contains (s : string) (p : string) : bool = Eval.str_contains s p
+
+(* three-character windows in order, charged as the bytes each one copies *)
+let trigrams (s : string) : string list =
+  let n = String.length s in
+  let k = max 0 (n - 2) in
+  Count.chars (3 * k);
+  List.init k (fun i -> String.sub s i 3)
+
+(* split on any separator, charging the string once and each word's bytes *)
+let words (seps : string) (s : string) : string list =
+  Count.chars (String.length s);
+  let out = ref [] and buf = Buffer.create 16 in
+  let flush () =
+    if Buffer.length buf > 0 then begin
+      Count.chars (Buffer.length buf);
+      out := Buffer.contents buf :: !out;
+      Buffer.clear buf
+    end in
+  String.iter
+    (fun c -> if String.contains seps c then flush () else Buffer.add_char buf c)
+    s;
+  flush ();
+  List.rev !out
