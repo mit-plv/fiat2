@@ -44,6 +44,8 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
                                                      # four correctness checks
     ./_build/default/compiled/compiled.exe time [n ...]   # seconds, by phase
     ./_build/default/compiled/compiled.exe work [n ...]   # the same, counted
+    ./_build/default/compiled/compiled.exe kinds [n ...]  # per op kind, scaled
+    ./_build/default/compiled/compiled.exe writes [n ...] # the write path
     ./_build/default/main.exe bench   # the measurement; takes table sizes
     ./_build/default/main.exe baseline      # against the originals' own code
     ./_build/default/main.exe threeway      # all three programs in one table:
@@ -432,14 +434,41 @@ ratio GROWS with the table wherever an exponent changed -- `dependent_plugins`
 is 20x at 100 rows, 73x at 400 and 272x at 1600, which is the quadratic
 source against the linear derived form, in seconds.
 
-**What `below res` means in that table, and why it is a finding.**  The ops
-phase is a difference of two measurements, and several optimized columns are
-too cheap to resolve against their own build phase.  Rather than print a
-ratio computed from noise, those cells say so.  Making them numbers needs
-bench.ml's discipline -- time each op KIND and scale the op count until the
-difference clears the floor -- which cannot simply be lifted here, because
-the op queries include writes and scaling those would measure a table that
-grew while being measured.
+**Per op kind, which is where the numbers get precise.**  `kinds` does what
+the paragraph above said was needed: it times ONE kind at a time, using
+`Gen.workload`'s `~only`, and doubles the op count until the difference
+clears 2ms.  **44 of the 47 read kinds** then give a ratio at 1600 rows:
+
+| | | | |
+|---|---|---|---|
+| `item_deletion/containsMiss` | 2054x | `min_delete/readMin` | 245x |
+| `item_deletion/containsHit` | 1664x | `named_cache/get` | 208x |
+| `keycloak/byAlias` | 996x | `entity_registry/forDevice` | 206x |
+| `keycloak/byId` | 297x | `user_search/suggest` | 42x |
+| `dependent_plugins/resolveAll` | 278x | `window_store/fetchAll` | 17x |
+
+and the two deliberately-linear fallback kinds come out **0.67x** and
+**0.66x** -- slightly slower optimized, which is what they are there to be.
+The three reads with no ratio are whole-collection reads answered from a
+cached field: O(1), and so unmeasurable rather than unmeasured.
+
+**The write path, priced by the build phase's slope.**  A write cannot be
+scaled -- more operations would measure a table that grew while being
+measured -- so all forty write kinds are `below res` however long the clock
+runs, because the problem is the experiment.  `writes` answers it differently:
+the build phase *is* a sequence of writes, so `(build at 2n - build at n) / n`
+is the cost of one write, with no subtraction of two nearly equal numbers.
+
+The result is the opposite of the usual expectation, and the reason matters:
+on every subject that builds its own table the optimized write is **30x to
+100x CHEAPER** (`keycloak` 0.01x, the composite and keyed subjects 0.02-0.03x,
+`named_cache_lru` 0.61x where order is observed).  That is not "indexes are
+free on writes" -- it is that our SOURCE form elaborates a declared-key
+uniqueness guard into a table scan, so it pays O(n) per insert where the
+optimized form probes an index.  The subjects handed their table in the
+environment print `src: none`, because their source build does nothing at
+all and there is no ratio to take, only the absolute cost of index
+construction.
 
 **What it does NOT yet measure: the author comparison.**  `baseline.ml` is
 still written against the boxed dynamic value, so timing a compiled column

@@ -128,3 +128,123 @@ let work (sizes : int list) : unit =
                   (ratio sb ob) so oo (ratio so oo))
              sizes)
     Gen.specs
+
+(* ---------- per op KIND, with the op count scaled ----------
+
+   The whole-program table above leaves cells saying `below res`, and the
+   reason is structural: the ops phase is a difference of two timings, and an
+   optimized read can be too cheap to separate from its own build.  bench.ml
+   solves that by timing ONE op kind at a time and DOUBLING the op count
+   until the difference clears the floor, and Gen.workload's ~only parameter
+   is what makes it possible here too.
+
+   A kind named in `spec.mutating` is never scaled.  Timing a read with more
+   operations is sound; timing a WRITE with more operations silently measures
+   a table that grew while it was being measured, which is a different
+   experiment.  That exclusion is declared in gen.ml rather than detected,
+   and this honours it. *)
+
+let floor_secs = 0.002
+let max_ops = 20480
+
+(* the per-operation cost of one kind: scale until the difference between the
+   build and the build-plus-ops clears the floor, then divide *)
+let per_op (p : (string -> Value.t option) -> unit -> unit) (sp : Gen.spec)
+    ~(rows : int) ~(kind : string) ~(scalable : bool) : float option =
+  let build = timed (p (lookup_of (Gen.workload sp ~rows ~ops:0 ~only:None))) in
+  let rec go (ops : int) : float option =
+    let w = Gen.workload sp ~rows ~ops ~only:(Some kind) in
+    let full = timed (p (lookup_of w)) in
+    let d = full -. build in
+    if d >= floor_secs then Some (d /. float_of_int ops)
+    else if (not scalable) || ops * 4 > max_ops then None
+    else go (ops * 4) in
+  go 20
+
+let kinds (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 1600 ] else sizes in
+  Printf.printf "%-22s %-16s %6s %12s %12s %9s\n" "subject" "kind" "rows"
+    "src s/op" "opt s/op" "speedup";
+  Printf.printf "%s\n" (String.make 82 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           List.iter
+             (fun rows ->
+                List.iter
+                  (fun (kind, _) ->
+                     let scalable = not (List.mem kind sp.Gen.mutating) in
+                     let s = per_op psrc sp ~rows ~kind ~scalable in
+                     let o = per_op popt sp ~rows ~kind ~scalable in
+                     let fmt = function
+                       | Some x -> Printf.sprintf "%12.3g" x
+                       | None -> "  below res " in
+                     let ratio =
+                       match s, o with
+                       | Some a, Some b when b > 0. -> Printf.sprintf "%9.2f" (a /. b)
+                       | _ -> "        -" in
+                     Printf.printf "%-22s %-16s %6d %s %s %s%s\n" name kind rows
+                       (fmt s) (fmt o) ratio
+                       (if scalable then "" else "  (write)"))
+                  sp.Gen.kinds)
+             sizes)
+    Gen.specs
+
+(* ---------- the write side, priced by the build phase's slope ----------
+
+   Forty op kinds are writes, and a write cannot be scaled: more operations
+   would measure a table that grew while it was being measured.  So they come
+   out `below res` above, and raising the repetition count does not help,
+   because the problem is the EXPERIMENT and not the clock.
+
+   The build phase answers it instead.  For the subjects whose table is grown
+   by queries the build IS a sequence of writes, so
+
+     (build at 2n  -  build at n) / n
+
+   is the cost of one write at that size, with no scaling and no subtraction
+   of two nearly equal numbers -- the two builds differ by a factor, not by a
+   hair.  For the subjects handed their table in the environment the same
+   slope prices one ROW of index construction, which is the other thing a
+   write pays for.  Both are what the optimizer trades reads against, so this
+   is the column its claim has to survive. *)
+
+let build_slope (p : (string -> Value.t option) -> unit -> unit)
+    (sp : Gen.spec) ~(rows : int) : float =
+  let at n = timed (p (lookup_of (Gen.workload sp ~rows:n ~ops:0 ~only:None))) in
+  let a = at rows and b = at (2 * rows) in
+  (b -. a) /. float_of_int rows
+
+let writes (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 800 ] else sizes in
+  Printf.printf "%-24s %6s %13s %13s %9s\n" "subject" "rows" "src s/write"
+    "opt s/write" "opt cost";
+  Printf.printf "%s\n" (String.make 70 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           List.iter
+             (fun rows ->
+                let s = build_slope psrc sp ~rows
+                and o = build_slope popt sp ~rows in
+                (* Reported as opt/src, since on the write path a number
+                   above 1 is a price paid and not a win.
+                   A source slope at or below a nanosecond per row is not a
+                   small measurement, it is NO measurement: those subjects
+                   are HANDED their table in the environment, so their source
+                   build does nothing at all and there is no ratio to take --
+                   only the absolute cost of index construction, which the
+                   opt column already prints. *)
+                let nothing = 1e-9 in
+                Printf.printf "%-24s %6d %13.3g %13.3g %9s\n" name rows
+                  (if abs_float s < nothing then 0. else s)
+                  o
+                  (if abs_float s < nothing then "src: none"
+                   else if s > 0. && o > 0. then Printf.sprintf "%.2fx" (o /. s)
+                   else "below res"))
+             sizes)
+    Gen.specs

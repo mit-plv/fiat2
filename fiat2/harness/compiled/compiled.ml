@@ -106,6 +106,12 @@ let () =
   | _ :: "time" :: rest ->
       Timing.run (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "writes" :: rest ->
+      Timing.writes (List.filter_map int_of_string_opt rest);
+      exit 0
+  | _ :: "kinds" :: rest ->
+      Timing.kinds (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ :: "work" :: rest ->
       Timing.work (List.filter_map int_of_string_opt rest);
       exit 0
