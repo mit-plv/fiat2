@@ -470,3 +470,485 @@ let matched (sizes : int list) : unit =
        | _ -> ())
     Gen.specs;
   Count.structures := saved
+
+(* ---------- the write-fraction sweep ----------
+
+   WHY THIS TABLE EXISTS, and what was wrong with the ones above.  Every
+   figure above is a difference of two whole-program timings -- the subject
+   with no queries, and with k -- and at the k those tables use that difference
+   is often a few percent of the build or inside its noise.  Nine of the
+   twenty-two optimized op phases come out NEGATIVE in `run`.  Repeating a
+   measurement cannot fix that, because a repetition re-runs the build with
+   everything else; the only thing that can is running more OPERATIONS.
+
+   For a read that is enough, and `per_op` does it.  For a write it is not:
+   more writes mean a bigger table part-way through, so the experiment changes
+   as it runs, and that is why all forty write kinds read `below res` and are
+   priced instead by the build slope.
+
+   PAIRING THE WRITES REMOVES THE OBSTACLE.  Gen.mixed interleaves one insert
+   with one removal -- Gen.churn, declared per subject -- so the table returns
+   to [rows] after every pair and a mixed workload can run as long as the
+   clock needs.  The write fraction then becomes a parameter of the experiment
+   rather than a thing to be avoided, which is what this table sweeps.
+
+   THE OPS PHASE IS MADE TO DOMINATE, not assumed to.  The op count is scaled
+   until the difference is at least [dominance] times the build.  `per_op`'s
+   floor is an ABSOLUTE 2ms, which against a 39ms build accepts a difference
+   that is 5% of it -- that is the criterion that let an unstable cell
+   through, and a relative test is what it should have been.
+
+   WHY [dominance] IS 3 AND NOT 20, which is what it was first.  Each phase is
+   a mean repeated to [min_secs], so its own precision is some sigma -- call it
+   a percent of its value.  The difference inherits that from the LARGER of the
+   two, so
+
+       sigma(d) / d  ~=  sigma(full) / d  =  1% * (1 + build/d)
+
+   and the dominance factor enters only through that second term: 20 buys
+   1.05% and 3 buys 1.33%.  Demanding 20 therefore bought a twentieth of a
+   percent and cost nine cells, because a subject whose build is expensive
+   against ONE operation -- lookin's set construction against one membership
+   test -- cannot reach it inside any op count that fits in memory.  3 is the
+   point past which more dominance buys nothing measurable.
+
+   AND THAT DERIVATION IS NOT THE WHOLE ERROR, which is worth saying plainly
+   because it was quoted as though it were.  1.33% is one cell's precision
+   against its own repeats.  Running the entire sweep twice moves the median
+   cell by 1.8% and the worst of 63 by 13%, and the read-only column is the
+   noisy one while the 50% column reproduces inside 5%.  So the dominance
+   factor is not what limits these figures, machine variance is, and nothing
+   is gained by tightening it.
+
+   The two columns are kept in the conventions their neighbours use: `src/opt`
+   is a SPEEDUP, as in `kinds`, so bigger is better; `opt/auth` is a PARITY
+   figure, as in `threeway` and `matched`, so 1.00 is arriving where the author
+   did.
+
+   WHAT A ROW WITH NO WRITE COLUMNS MEANS.  A subject with no removal in it
+   has nothing to pair an insert with, and Gen.mixed returns None rather than
+   inventing a pairing: keycloak, entity_registry and composite_key_decl are
+   insert-only, and lookin, cluster and dependent_plugins write nothing at
+   all.  Those rows carry their read-only column and dashes beside it, which
+   is the honest shape of the question for them. *)
+
+let dominance = 3.0
+let max_mixed_ops = 262144
+
+(* enough ops that the requested fraction is actually represented: at 1% a
+   400-op list holds four writes, and the scaling multiplies from there *)
+let start_ops (writes : int) : int =
+  if writes <= 0 then 8 else max 8 (400 / writes)
+
+(* ONE OP COUNT FOR EVERY COLUMN OF A CELL.
+
+   The first version of this scaled each column on its own, until that
+   column's ops phase cleared its own build, and divided by that column's own
+   op count.  Seconds per operation sounds as though it licenses that -- a
+   rate should not care how many operations it was averaged over.  The `scale`
+   table below says otherwise, and says it twice.
+
+   First, per-operation cost DRIFTS with the length of the list: on the src
+   column sat4j reads 1.53e-5 at 512 ops and 8.09e-6 at 131072, a spread of
+   1.89x, and cluster, range_delete, entity_registry and keyed_dict_delete all
+   move by half again.  The drift is monotone, so it is not noise.
+
+   Second, and worse, the drift was being sampled in ONE DIRECTION.  The opt
+   column is so much cheaper per operation that it clears the 2ms floor only
+   at 32768 ops and above, while the src column clears it at 512.  So
+   independent scaling priced src at the small counts where it is dearest
+   against opt at the large counts where it is cheapest, in every cell, and
+   every src/opt figure inherited that bias.  It is why lowering the dominance
+   factor -- which changes nothing but the chosen counts -- moved cells by
+   29-88% when their own precision allows 1.3%.
+
+   So a cell now picks one op count that satisfies every column in it, and
+   measures them all there.  The count is found per column first, cheaply,
+   because the expensive column clears early and stops; the maximum of those
+   is the count, and only the columns that did not already land on it are
+   re-measured.  A column that cannot clear at any affordable count is still
+   dashed on its own, without taking its neighbours with it.
+
+   The returned op count is printed in its own table, because a reader has to
+   be able to see that the three figures in a cell came from the same
+   workload. *)
+
+let mixed_cell (ps : ((string -> Value.t option) -> unit -> unit) list)
+    (sp : Gen.spec) ~(rows : int) ~(writes : int) :
+    (int * float option list) option =
+  let probe (p : (string -> Value.t option) -> unit -> unit) =
+    let build = timed (p (lookup_of (Gen.workload sp ~rows ~ops:0 ~only:None))) in
+    let rec go (ops : int) =
+      match Gen.mixed sp ~rows ~ops ~writes with
+      | None -> None
+      | Some w ->
+          let d = timed (p (lookup_of w)) -. build in
+          if d >= floor_secs && d >= dominance *. build then Some (build, ops, d)
+          else if ops * 4 > max_mixed_ops then None
+          else go (ops * 4) in
+    go (start_ops writes) in
+  let probes = List.map probe ps in
+  let n =
+    List.fold_left
+      (fun acc pr -> match pr with None -> acc | Some (_, ops, _) -> max acc ops)
+      0 probes in
+  if n = 0 then None
+  else
+    match Gen.mixed sp ~rows ~ops:n ~writes with
+    | None -> None
+    | Some w ->
+        let at p pr =
+          match pr with
+          | None -> None
+          | Some (build, ops, d) ->
+              (* d only grows with ops, so a column that cleared at a lower
+                 count clears here too; the test is kept as a guard, not as a
+                 hope *)
+              let d = if ops = n then d else timed (p (lookup_of w)) -. build in
+              if d >= floor_secs && d >= dominance *. build then
+                Some (d /. float_of_int n)
+              else None in
+        Some (n, List.map2 at ps probes)
+
+(* the same difference, counted.  Deterministic, so one op count suffices and
+   no scaling is needed -- and it is also what the stationarity check reads. *)
+let mixed_per_op_work (p : (string -> Value.t option) -> unit -> unit)
+    (sp : Gen.spec) ~(rows : int) ~(writes : int) ~(ops : int) : float option =
+  match Gen.mixed sp ~rows ~ops ~writes with
+  | None -> None
+  | Some w ->
+      let c ww = fst (counted (p (lookup_of ww))) in
+      let b = c (Gen.workload sp ~rows ~ops:0 ~only:None) in
+      let f = c w in
+      if f - b <= 0 then None
+      else Some (float_of_int (f - b) /. float_of_int ops)
+
+let fractions = [ 0; 1; 10; 50 ]
+
+(* The same sweep, COUNTED, printed beside the seconds for the reason
+   `matched`'s header gives: at these per-operation costs the clock partly
+   measures how a column was written, and the counters are exact.  It needs no
+   scaling, since a counter does not have to clear a floor -- so one op count
+   serves, and it is large enough that the build it subtracts is a small part
+   of the whole. *)
+let sweep_work (rows : int) : unit =
+  let ops = 4096 in
+  Printf.printf
+    "\nAnd the same thing COUNTED -- data work per operation, which is exact\n\
+     where the seconds above are not.  Read the two together: a ratio the two\n\
+     agree on is algorithmic, and one they disagree on is telling you about\n\
+     the constant factor of how a column happens to be written.\n\n";
+  Printf.printf "%-22s %5s" "subject" "rows";
+  List.iter (fun f -> Printf.printf "  %13s" (Printf.sprintf "%d%% writes" f))
+    fractions;
+  Printf.printf "\n%-22s %5s" "" "";
+  List.iter (fun _ -> Printf.printf "  %13s" "src/opt opt/au") fractions;
+  Printf.printf "\n%s\n" (String.make 92 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           let auth = List.assoc_opt name Authors.runners in
+           Printf.printf "%-22s %5d" name rows;
+           List.iter
+             (fun writes ->
+                let m p = mixed_per_op_work p sp ~rows ~writes ~ops in
+                let o = m popt and sc = m psrc in
+                let a = match auth with None -> None | Some p -> m p in
+                let r x y =
+                  match x, y with
+                  | Some a, Some b when b > 0. ->
+                      let v = a /. b in
+                      Printf.sprintf
+                        (if v < 0.01 then format_of_string "%6.4f"
+                         else if v >= 1000. then format_of_string "%6.0f"
+                         else format_of_string "%6.2f") v
+                  | _ -> "     -" in
+                Printf.printf "  %s %s" (r sc o) (r o a))
+             fractions;
+           Printf.printf "\n")
+    Gen.specs
+
+let sweep (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 1600 ] else sizes in
+  let chosen = ref [] in
+  Printf.printf
+    "One operation at a time, with the build made negligible rather than\n\
+     subtracted from: the op count is scaled until the ops phase is at least\n\
+     %.0fx the build FOR EVERY COLUMN OF THE CELL AT ONCE, so the figures in\n\
+     one cell come from one workload -- `mixed_cell` says why that is not the\n\
+     pedantry it looks like, and the second table below gives each cell's\n\
+     count.  Its precision is MEASURED and not derived: repeating the whole\n\
+     sweep moves the median cell by 1.8%% and the worst by 13%%, so these are\n\
+     two-significant-figure numbers and a FACTOR should be read off the\n\
+     counted table below, which is identical across runs to the digit.\n\
+     Writes are\n\
+     PAIRED -- one insert, one removal in a slot pool above the table's own\n\
+     rows -- so the table stays at `rows` however long the list, and every\n\
+     read keeps the selectivity it has in the per-kind tables.  That is what\n\
+     makes a write fraction a parameter instead of an obstacle.  `src/opt` is a speedup, so\n\
+     bigger is better; `opt/auth` is parity, so 1.00 is arriving where the\n\
+     author did.  A dash is a column the subject cannot be asked for -- see\n\
+     the comment above this table.\n\n"
+    dominance;
+  Printf.printf "%-22s %5s" "subject" "rows";
+  List.iter (fun f -> Printf.printf "  %13s" (Printf.sprintf "%d%% writes" f))
+    fractions;
+  Printf.printf "\n%-22s %5s" "" "";
+  List.iter (fun _ -> Printf.printf "  %13s" "src/opt opt/au") fractions;
+  Printf.printf "\n%s\n" (String.make 92 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           let auth = List.assoc_opt name Authors.runners in
+           List.iter
+             (fun rows ->
+                Printf.printf "%-22s %5d%!" name rows;
+                let counts = ref [] in
+                List.iter
+                  (fun writes ->
+                     let ps =
+                       psrc :: popt
+                       :: (match auth with None -> [] | Some p -> [ p ]) in
+                     let s, o, a =
+                       match mixed_cell ps sp ~rows ~writes with
+                       | None ->
+                           counts := None :: !counts;
+                           (None, None, None)
+                       | Some (n, vs) ->
+                           counts := Some n :: !counts;
+                           (match vs with
+                            | [ s; o ] -> (s, o, None)
+                            | [ s; o; a ] -> (s, o, a)
+                            | _ -> (None, None, None)) in
+                     let r x y =
+                       match x, y with
+                       | Some a, Some b when b > 0. ->
+                           let v = a /. b in
+                           Printf.sprintf
+                             (if v < 0.01 then format_of_string "%6.4f"
+                              else if v >= 1000. then format_of_string "%6.0f"
+                              else format_of_string "%6.2f") v
+                       | _ -> "     -" in
+                     Printf.printf "  %s %s%!" (r s o) (r o a))
+                  fractions;
+                Printf.printf "\n%!";
+                chosen := (name, rows, List.rev !counts) :: !chosen)
+             sizes)
+    Gen.specs;
+  (* the op counts the cells were taken at.  Printed, not buried: the whole
+     correction above is that the figures in one cell share a workload, and a
+     reader can only check that if the count is on the page. *)
+  Printf.printf
+    "\nThe op count each cell was measured at -- one count for all three\n\
+     columns of the cell, chosen as the smallest that clears the 2ms floor\n\
+     and %.0fx the build for every column in it.\n\n"
+    dominance;
+  Printf.printf "%-22s %5s" "subject" "rows";
+  List.iter (fun f -> Printf.printf " %10s" (Printf.sprintf "%d%% writes" f))
+    fractions;
+  Printf.printf "\n%s\n" (String.make 76 '-');
+  List.iter
+    (fun (name, rows, counts) ->
+       Printf.printf "%-22s %5d" name rows;
+       List.iter
+         (fun c ->
+            Printf.printf " %10s"
+              (match c with Some n -> string_of_int n | None -> "-"))
+         counts;
+       Printf.printf "\n")
+    (List.rev !chosen);
+  List.iter sweep_work sizes
+
+(* ---------- is the table actually stationary? ----------
+
+   The sweep rests entirely on the claim that a paired write leaves |table|
+   at `rows`, so the claim needs its own evidence rather than its own
+   argument.  If a removal ever missed -- deleting a key already gone -- the
+   inserts would outrun it and the table would GROW; if a removal took a row
+   the inserts had not replaced, it would DRAIN, the deletes would turn into
+   no-ops and the reads would start answering nothing.
+
+   Count.rows is a direct probe of the size, on the SOURCE column: nearly
+   every source read scans the table, so rows-per-op is proportional to the
+   table it scanned, with the constant being how many nesting levels the term
+   charges (see the note in count.ml -- a derived read can count the same rows
+   more than once, so the ABSOLUTE value is not the table size, but it is
+   proportional to it).
+
+   So the test is a ratio against itself: measure rows-per-op at two op counts
+   a factor apart, and they must agree.  A drain or a growth of any size shows
+   up as a number that moves with the op count, and the printed pair is what
+   makes the judgement checkable instead of asserted.
+
+   WHAT IT DOES NOT CATCH, which is worth knowing because it did not: a
+   SLIDING window keeps the size exactly right while moving the live keys out
+   from under the reads, and this test passed 42 of 42 on one.  Size
+   stationarity is not selectivity stationarity.  The pool is what makes the
+   second hold, by construction rather than by measurement -- see Gen.churn. *)
+
+let stationary_rows (p : (string -> Value.t option) -> unit -> unit)
+    (sp : Gen.spec) ~(rows : int) ~(writes : int) ~(ops : int) : float option =
+  match Gen.mixed sp ~rows ~ops ~writes with
+  | None -> None
+  | Some w ->
+      let c ww = snd (counted (p (lookup_of ww))) in
+      let b = c (Gen.workload sp ~rows ~ops:0 ~only:None) in
+      let f = c w in
+      if f - b <= 0 then None
+      else Some (float_of_int (f - b) /. float_of_int ops)
+
+(* the tolerance.  Not tight, deliberately: a read's key spread advances with
+   the op index, so which rows each one answers -- and therefore rows-per-op --
+   wanders a little even where the size is exact.  What the test has to catch
+   is a table that grew or drained, and either of those moves this figure by a
+   factor rather than by a tenth.  Measured, the worst cell is 0.4% off. *)
+let stationary_tol = 1.25
+
+let stationary (sizes : int list) : (string * int * float * float) list =
+  let sizes = if sizes = [] then [ 400 ] else sizes in
+  List.concat_map
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> []
+       | Some (psrc, _) ->
+           List.concat_map
+             (fun rows ->
+                List.filter_map
+                  (fun writes ->
+                     (* 256 against 16384, a 64x span that CROSSES THE TEN
+                        THOUSAND at which List.init changes implementation --
+                        the boundary the sweep's op counts straddle and the
+                        one a narrower span would have stayed inside *)
+                     let a = stationary_rows psrc sp ~rows ~writes ~ops:256 in
+                     let b = stationary_rows psrc sp ~rows ~writes ~ops:16384 in
+                     match a, b with
+                     | Some x, Some y -> Some (name, writes, x, y)
+                     | _ -> None)
+                  [ 1; 10; 50 ])
+             sizes)
+    Gen.specs
+
+let stationary_report (sizes : int list) : unit =
+  Printf.printf
+    "Is the table stationary?  rows enumerated per op on the SOURCE column, at\n\
+     256 ops and at 16384.  A table that grew or drained would move this by a\n\
+     factor; see the comment above this table for why the absolute value is\n\
+     not the table size and the ratio is what is being read.\n\n";
+  Printf.printf "%-24s %7s %12s %12s %8s %s\n" "subject" "writes" "rows/op @256"
+    "rows/op @16k" "ratio" "";
+  Printf.printf "%s\n" (String.make 78 '-');
+  List.iter
+    (fun (name, writes, x, y) ->
+       let r = if x > 0. then y /. x else 0. in
+       Printf.printf "%-24s %6d%% %12.1f %12.1f %8.3f %s\n" name writes x y r
+         (if r <= stationary_tol && r >= 1. /. stationary_tol then "" else "  DRIFTS"))
+    (stationary sizes)
+
+(* ---------- is the per-operation cost scale-invariant? ----------
+
+   THE QUESTION THE SWEEP DEPENDED ON AND DID NOT ASK, now asked and ANSWERED
+   NO -- so `mixed_cell` above measures every column of a cell at one count,
+   and this table is the evidence for that discipline rather than a loose end.
+   The version it corrected scaled each column independently until that
+   column's ops phase cleared the build, so the src figure and the opt figure
+   in one cell could be taken at op counts an order of magnitude apart.  Dividing by the op count makes that sound
+   harmless -- seconds per operation, so the counts need not match.  It is
+   harmless only if the per-operation cost does not DEPEND on the count, and a
+   longer op list is a larger working set: more cache pressure, more minor
+   collections, a longer list to walk.
+
+   The evidence that this is not hypothetical: lowering the dominance factor
+   from 20 to 3, which changes nothing but the op counts chosen, moved
+   window_store's cell from 28.47 to 15.12 and keycloak's from 93.67 to
+   130.35.  Those are far outside the ~1.3% the difference's own precision
+   predicts, so something that is not noise is tracking the op count.
+
+   This prints the ladder, so the question is answered by measurement.  A
+   column whose numbers are flat across it can be compared against another
+   column measured elsewhere on it; a column that drifts cannot, and then the
+   cell has to be taken at ONE op count for every column in it.
+
+   WHAT IT MEASURED, at 1600 rows: the src column drifts, monotonically and
+   downwards, by up to 1.89x (sat4j 1.53e-5 at 512 ops against 8.09e-6 at
+   131072; cluster 1.70x, range_delete 1.67x, keyed_dict_delete 1.54x,
+   entity_registry 1.49x), while the opt column is flat to within 1.1x
+   wherever two of its rungs resolve.  And the `-` cells are the other half of
+   it: the opt column does not clear the 2ms floor below 32768 ops, where the
+   src column clears it at 512, so independent scaling did not merely sample
+   two points of a drifting curve -- it sampled the dear end for src and the
+   cheap end for opt, every time. *)
+
+(* The ladder is CLIMBED, not swept.  Each rung costs four times the one below
+   it, and on a 1600-row table the src column is two to three orders dearer
+   per operation than the opt column, so the top rung of a slow subject is an
+   hour by itself -- and `timed` runs its argument at least twice.  A column
+   therefore stops climbing once the next rung's predicted cost passes
+   [scale_budget], and prints `>` for the rungs it declined.
+
+   That costs the question nothing.  A column resolved over 512..8192 still
+   spans 16x, and 16x is already wider than the gap between the two op counts
+   a single sweep cell's columns are chosen at -- which is the thing being
+   checked.  Each cell is printed and FLUSHED as it is measured, because the
+   earlier attempt at this table buffered 44 rows into a file and showed
+   nothing for 78 minutes of CPU. *)
+let scale_budget = 8.0
+
+let scale (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 1600 ] else sizes in
+  let ladder = [ 512; 2048; 8192; 32768; 131072 ] in
+  Printf.printf
+    "Seconds per operation at a ladder of op counts, 0%% writes, with the\n\
+     build subtracted at each.  If a row is flat, per-op cost is independent\n\
+     of the list length and two columns may be measured at different counts.\n\
+     If it drifts, they may not.  `-` is below the 2ms floor; `>` is a rung\n\
+     the column declined as too dear.\n\n";
+  Printf.printf "%-22s %5s %-4s" "subject" "rows" "col";
+  List.iter (fun n -> Printf.printf " %11s" (string_of_int n ^ " ops")) ladder;
+  Printf.printf "   spread\n%s\n%!" (String.make 96 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           List.iter
+             (fun rows ->
+                List.iter
+                  (fun (tag, p) ->
+                     Printf.printf "%-22s %5d %-4s%!" name rows tag;
+                     let build =
+                       timed (p (lookup_of
+                                   (Gen.workload sp ~rows ~ops:0 ~only:None))) in
+                     let spent = ref build and got = ref [] in
+                     List.iter
+                       (fun ops ->
+                          let cell =
+                            if 4.0 *. !spent > scale_budget then ">"
+                            else
+                              match Gen.mixed sp ~rows ~ops ~writes:0 with
+                              | None -> "-"
+                              | Some w ->
+                                  let full = timed (p (lookup_of w)) in
+                                  spent := full;
+                                  let d = full -. build in
+                                  if d >= floor_secs then begin
+                                    let per = d /. float_of_int ops in
+                                    got := per :: !got;
+                                    Printf.sprintf "%.3g" per
+                                  end
+                                  else "-" in
+                          Printf.printf " %11s%!" cell)
+                       ladder;
+                     (match !got with
+                      | [] -> Printf.printf "        -\n%!"
+                      | g :: _ as all ->
+                          let lo = List.fold_left min g all
+                          and hi = List.fold_left max g all in
+                          Printf.printf "   %6.2fx\n%!"
+                            (if lo > 0. then hi /. lo else 0.)))
+                  [ ("src", psrc); ("opt", popt) ])
+             sizes)
+    Gen.specs

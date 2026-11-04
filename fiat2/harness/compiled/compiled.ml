@@ -29,6 +29,8 @@ let no = ref 0
 let agreed = ref 0
 let matched = ref 0
 let authored = ref 0
+let mixed_agreed = ref 0
+let mixed_matched = ref 0
 
 let sizes = [ 7; 50 ]
 
@@ -102,6 +104,51 @@ let interp_of (name : string) (sp : Gen.spec) : unit =
                       name rows)))
         sizes
 
+(* ---------- the same three checks, on MIXED workloads ----------
+
+   The sweep measures a workload no other table uses: a long op list at a
+   declared write fraction, with the writes paired in a slot pool so the table
+   stays at `rows`.  A workload that nothing checks is a workload that can be
+   wrong, and the way it would be wrong is subtle -- a removal that misses, or
+   a churn key that collides with the body -- so src = opt and
+   compiled = interpreter are re-made on it at every fraction.
+
+   What this does NOT by itself establish is that the reads still hit, which
+   is the flaw the slot pool exists to prevent.  That is guaranteed by
+   construction: the churn addresses keys rows..rows+63 and every read kind
+   addresses [0, rows), so the two ranges are disjoint.  Gen.churn_slots and
+   the stationarity table are the other two legs of it. *)
+let mixed_of (name : string) (sp : Gen.spec) : unit =
+  List.iter
+    (fun writes ->
+       match Gen.mixed sp ~rows:50 ~ops:400 ~writes with
+       | None -> ()
+       | Some w ->
+           let what = Printf.sprintf "%s/%d%% mixed" name writes in
+           (match List.assoc_opt name Monotypes.agreements with
+            | None -> fail (name ^ ": no generated program")
+            | Some agree ->
+                guard (what ^ " agree") (fun () ->
+                    if agree (lookup_of w) then incr mixed_agreed
+                    else fail (what ^ ": src and opt stores differ")));
+           (match
+              (List.find_opt (fun ((n, _), _) -> String.equal n name)
+                 Extracted.annotated_nf,
+               List.assoc_opt name Monotypes.vs_interps)
+            with
+            | Some ((_, _), opt_term), Some vs ->
+                guard (what ^ " vs interp") (fun () ->
+                    let final =
+                      Eval.interp_command
+                        (Gen.locals_of w.Gen.store)
+                        (Gen.locals_of w.Gen.env)
+                        opt_term in
+                    let iget n = Eval.get_local final n in
+                    if vs (lookup_of w) iget then incr mixed_matched
+                    else fail (what ^ ": compiled opt differs from the interpreter"))
+            | _ -> fail (name ^ ": no annotated term or vs_interp")))
+    [ 0; 1; 10; 50 ]
+
 (* and the author transcriptions that have been monomorphized so far.
    Parity is the expected result: the compiler is supposed to arrive back at
    what the author built, so a difference is a bug in the transcription or in
@@ -112,17 +159,30 @@ let authors () : unit =
        match List.assoc_opt name Gen.specs with
        | None -> fail (name ^ ": no spec for the transcription")
        | Some sp ->
+           let compare_on (what : string) (w : Gen.workload) : unit =
+             guard what (fun () ->
+                 if check w then incr authored
+                 else
+                   fail
+                     (what
+                      ^ ": the author transcription and the compiled optimized \
+                         column disagree")) in
            List.iter
              (fun rows ->
-                let w = Gen.workload sp ~rows ~ops:5 ~only:None in
-                guard (Printf.sprintf "%s/%d author" name rows) (fun () ->
-                    if check w then incr authored
-                    else
-                      fail
-                        (Printf.sprintf
-                           "%s at %d rows: the author transcription and the                             compiled optimized column disagree"
-                           name rows)))
-             sizes)
+                compare_on
+                  (Printf.sprintf "%s/%d author" name rows)
+                  (Gen.workload sp ~rows ~ops:5 ~only:None))
+             sizes;
+           (* and on the MIXED workloads, because the sweep measures the
+              author column on those and nothing else checked it there *)
+           List.iter
+             (fun writes ->
+                match Gen.mixed sp ~rows:50 ~ops:400 ~writes with
+                | None -> ()
+                | Some w ->
+                    compare_on
+                      (Printf.sprintf "%s/%d%% mixed author" name writes) w)
+             [ 0; 1; 10; 50 ])
     Authors.checks
 
 let () =
@@ -160,6 +220,15 @@ let () =
   | _ :: "matched" :: rest ->
       Timing.matched (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "sweep" :: rest ->
+      Timing.sweep (List.filter_map int_of_string_opt rest);
+      exit 0
+  | _ :: "scale" :: rest ->
+      Timing.scale (List.filter_map int_of_string_opt rest);
+      exit 0
+  | _ :: "stationary" :: rest ->
+      Timing.stationary_report (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ -> ();
   (* ALL FOUR CHECKS UNDER ALL THREE SETTINGS.  Rt.SelMap and Rt.SelSet put a
      choice of storage behind one interface, and the thing that has to be
@@ -176,20 +245,24 @@ let () =
        Count.structures := st;
        setting := Count.structures_name st;
        reads := 0; yes := 0; no := 0; agreed := 0; matched := 0; authored := 0;
+       mixed_agreed := 0; mixed_matched := 0;
        let before = List.length !failures in
        List.iter
          (fun (name, sp) ->
             readers_of name sp;
             agree_of name sp;
-            interp_of name sp)
+            interp_of name sp;
+            mixed_of name sp)
          Gen.specs;
        authors ();
        Printf.printf
          "%-6s: %d reader runs; equality agreed on %d equal and %d unequal \
           pairs; src = opt on %d runs; compiled = interpreter on %d runs; \
-          author = compiled on %d runs (%d of 10 transcriptions); %d failures\n"
+          author = compiled on %d runs (%d of 10 transcriptions); \
+          mixed: src = opt on %d, = interpreter on %d; %d failures\n"
          !setting !reads !yes !no !agreed !matched !authored
          (List.length Authors.done_so_far)
+         !mixed_agreed !mixed_matched
          (List.length !failures - before))
     [ Count.Typed; Count.Trees; Count.Hashes ];
   List.iter (fun s -> Printf.printf "  %s\n" s) (List.rev !failures);

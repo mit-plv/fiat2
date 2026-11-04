@@ -61,6 +61,50 @@ type spec = {
      measures a table that grew while it was being measured.  A kind named here
      is never scaled. *)
   mutating : string list;
+  (* A STATIONARY write pair, for the mixed workloads [mixed] builds.
+
+     The problem it solves.  Everything above is measured by running the
+     subject twice, with no queries and with k, and subtracting -- and at the
+     k the tables use that difference is often a few percent of the build or
+     inside its noise, so nine of the twenty-two optimized op phases come out
+     NEGATIVE.  Raising k fixes that for a read.  It cannot fix it for a write,
+     because more writes mean a bigger table part-way through the measurement:
+     the experiment changes as it runs.
+
+     Unless the writes are PAIRED, and paired in a SLOT POOL above the body.
+     Both take a slot u in [0, churn_slots): [grow] inserts the row keyed
+     [rows + u] and [shrink] removes that same row, so each pair leaves the
+     table at exactly [rows] and successive pairs walk different slots, hence
+     different buckets.  A mixed workload can then run as long as the clock
+     needs.
+
+     WHY A POOL AND NOT A SLIDING WINDOW, which is what this was first.
+     Inserting [rows + t] and deleting [t] also keeps the size right, and the
+     stationarity check passes on it -- but it moves the live keys to
+     {t+1, ..., rows + t} while every read kind still probes [0, rows).  At a
+     high write fraction the churn outruns the table and EVERY read that was
+     meant to hit silently becomes a miss, so the sweep would have reported the
+     cost of missing.  The pool never touches the body, so each read keeps
+     exactly the selectivity it has in the per-kind tables, and the keys stay
+     short instead of drifting upward.
+
+     WHAT THE POOL COSTS, stated because all three columns pay it and so it
+     cancels in a ratio but not in an absolute: the removal takes the row the
+     insert just added, so its path is warm.  A lagged pool would avoid that
+     and would make every removal before the lag a no-op, which at the small op
+     counts the 1% fraction starts from is most of them.
+
+     None where the subject has no removal that can take a tail row:
+     keycloak, entity_registry and composite_key_decl have no removal at all,
+     and window_store's is a prefix expiry, which cannot drop a fresh row
+     without first dropping the whole body.  Those are reported as insert-only
+     rather than given an invented pairing. *)
+  churn : (churn option);
+}
+
+and churn = {
+  grow : int -> int -> value;    (* rows -> slot -> insert the row keyed rows+slot *)
+  shrink : int -> int -> value;  (* rows -> slot -> remove the row keyed rows+slot *)
 }
 
 (* records must be built in the canonical field order, because that is the
@@ -84,6 +128,12 @@ let buckets (rows : int) : int = max 1 (rows / bucket_size)
    never collides with the spread the reads use *)
 let victim (rows : int) (j : int) : int = if rows <= 0 then 0 else (rows - 1 - j) mod rows
 
+(* How many slots the churn pool holds.  Enough that successive pairs land in
+   different buckets -- [buckets] is rows/8, so 64 slots spread across them --
+   and few enough that the keys stay short and the table stays within a
+   fraction of a percent of [rows]. *)
+let churn_slots = 64
+
 let outputs_only = [ ("outputs", VList []) ]
 let no_table _ = []
 let no_build _ = []
@@ -103,7 +153,10 @@ let keycloak =
       [ ("byId", fun rows j -> q 1 (Printf.sprintf "i%d" (spread rows j)));
         ("byAlias", fun rows j -> q 2 (Printf.sprintf "a%d" (spread rows j)));
         ("wholeList", fun _ _ -> q 3 "") ];
-    mutating = [] }
+    mutating = [];
+    (* no removal: the subject's only write is the build's insert, so there is
+       nothing to pair one with.  Insert-only, and reported as such. *)
+    churn = None }
 
 (* ---------- named cache: a unique key and a maintained total ---------- *)
 
@@ -118,7 +171,14 @@ let named_cache =
       [ ("get", fun rows j -> q 3 (Printf.sprintf "k%d" (spread rows j)));
         ("sizeInBytes", fun _ _ -> q 2 "");
         ("delete", fun rows j -> q 0 (Printf.sprintf "k%d" (victim rows j))) ];
-    mutating = [ "delete" ] }
+    mutating = [ "delete" ];
+    (* put is the build's own kind 1; the op kinds above expose only the
+       delete, so the insert is written here rather than added to [kinds],
+       which would change every existing table's round robin *)
+    churn = Some { grow = (fun rows u ->
+                     rcd [ ("kind", i 1); ("k", s ""); ("node", row (rows + u)) ]);
+                   shrink = (fun rows u ->
+                     q 0 (Printf.sprintf "k%d" (rows + u))) } }
 
 (* ---------- the LRU chain on the same cache ----------
 
@@ -151,7 +211,10 @@ let named_cache_lru =
         ("evict", fun _ _ -> q 3 "" (row 0));
         ("delete", fun rows j ->
            q 0 (Printf.sprintf "k%d" (victim rows j)) (row 0)) ];
-    mutating = [ "getTouch"; "put"; "evict"; "delete" ] }
+    mutating = [ "getTouch"; "put"; "evict"; "delete" ];
+    churn = Some { grow = (fun rows u -> q 1 "" (row (rows + u)));
+                   shrink = (fun rows u ->
+                     q 0 (Printf.sprintf "k%d" (rows + u)) (row 0)) } }
 
 (* ---------- area registry: bucketed on floor, keyed on id ---------- *)
 
@@ -169,7 +232,12 @@ let area_registry =
       [ ("byId", fun rows j -> q rows 2 (Printf.sprintf "i%d" (spread rows j)) "");
         ("byFloor", fun rows j -> q rows 3 "" (Printf.sprintf "f%d" (j mod buckets rows)));
         ("remove", fun rows j -> q rows 1 (Printf.sprintf "i%d" (victim rows j)) "") ];
-    mutating = [ "remove" ] }
+    mutating = [ "remove" ];
+    churn = Some { grow = (fun rows u ->
+                     rcd [ ("kind", i 0); ("k", s ""); ("fl", s "");
+                           ("new_area", row rows (rows + u)) ]);
+                   shrink = (fun rows u ->
+                     q rows 1 (Printf.sprintf "i%d" (rows + u)) "") } }
 
 (* ---------- lookin: a membership test over a preloaded table ----------
 
@@ -193,7 +261,10 @@ let lookin =
     kinds =
       [ ("varyingKey", fun rows j -> q 0 (Printf.sprintf "f%d" (spread rows j)));
         ("literalKey", fun _ _ -> q 1 "") ];
-    mutating = [] }
+    mutating = [];
+    (* the component writes nothing at all, so there is no mix to sweep: a
+       read-only subject, and the only honest column for it *)
+    churn = None }
 
 (* ---------- user search: a unique key and a trigram index ----------
 
@@ -252,7 +323,12 @@ let user_search =
         ("suggestLong", fun rows j ->
            q 3 (String.sub (Printf.sprintf "user%04d" (spread rows j)) 3 5));
         ("remove", fun rows j -> q 1 (Printf.sprintf "u%d" (victim rows j))) ];
-    mutating = [ "remove" ] }
+    mutating = [ "remove" ];
+    churn = Some { grow = (fun rows u ->
+                     rcd [ ("kind", i 0); ("k", s "");
+                           ("new_user", row (rows + u)) ]);
+                   shrink = (fun rows u ->
+                     q 1 (Printf.sprintf "u%d" (rows + u))) } }
 
 (* ---------- cluster: conjunctive reads over a preloaded table ----------
 
@@ -276,7 +352,9 @@ let cluster =
            let p = spread rows j in
            q 2 (Printf.sprintf "t%d" (p mod buckets rows)) p 0);
         ("available", fun rows j -> q 3 (Printf.sprintf "t%d" (j mod buckets rows)) 0 0) ];
-    mutating = [] }
+    mutating = [];
+    (* the table arrives in the environment and is only read *)
+    churn = None }
 
 (* ---------- entity_registry: a THREE-attribute conjunctive read ----------
 
@@ -337,7 +415,11 @@ let entity_registry =
            is a FRESH one -- registering an entity that already exists takes
            the update path, which is not modelled. *)
         ("register", fun rows j -> q rows 3 "" "" "" "" "" (rows + j)) ];
-    mutating = [ "register" ] }
+    mutating = [ "register" ];
+    (* _index_entry has no inverse in the subject -- async_get_or_create's
+       update path is not modelled -- so there is no removal to pair the
+       register with.  Insert-only, and reported as such. *)
+    churn = None }
 
 (* ---------- window store: a range, a key, and an expiry ---------- *)
 
@@ -374,7 +456,15 @@ let window_store =
                  ("new_rec", row rows (rows + j)) ]);
         (* removeExpiredSegments(): advances the live bound by one *)
         ("expire", fun rows j -> q rows 3 j 0 "") ];
-    mutating = [ "put"; "expire" ] }
+    mutating = [ "put"; "expire" ];
+    (* NO CHURN PAIR, and the reason is the subject's own shape:
+       removeExpiredSegments advances a lower bound, so the only rows it can
+       drop are the OLDEST.  It cannot take back a row the churn just added
+       without first dropping the whole body, which is the sliding window the
+       pool exists to avoid.  Kafka's store really is a sliding window, so
+       this is a property of the original and not of the harness -- and the
+       honest consequence is that window_store has no write column here. *)
+    churn = None }
 
 (* ---------- range delete: a band read and a band delete ---------- *)
 
@@ -390,7 +480,12 @@ let range_delete =
            let lo = spread rows j in q 1 lo (lo + bucket_size) (row 0));
         ("insert", fun rows j -> q 0 0 0 (row (rows + j)));
         ("deleteBand", fun _ j -> q 2 j (j + 1) (row 0)) ];
-    mutating = [ "insert"; "deleteBand" ] }
+    mutating = [ "insert"; "deleteBand" ];
+    (* prices are the row index, so the band [rows+u, rows+u+1) holds exactly
+       the slot's row *)
+    churn = Some { grow = (fun rows u -> q 0 0 0 (row (rows + u)));
+                   shrink = (fun rows u ->
+                     q 2 (rows + u) (rows + u + 1) (row 0)) } }
 
 (* ---------- min delete: a cached minimum under deletes that do and do not
    remove it ----------
@@ -425,7 +520,14 @@ let min_delete =
         ("insert", fun rows j -> q 1 0 (row (rows + j)));
         ("deleteMin", fun _ j -> q 0 j (row 0));
         ("deleteOther", fun rows j -> q 0 (rows - 1 - j) (row 0)) ];
-    mutating = [ "insert"; "deleteMin"; "deleteOther" ] }
+    mutating = [ "insert"; "deleteMin"; "deleteOther" ];
+    (* kind 0 deletes AT A NAMED PRICE, so the pair takes back its own slot.
+       That is the deleteOther branch -- the slot's price is above the body, so
+       it is never the minimum and the cached value survives.  The recompute
+       branch is the deleteMin kind in the per-kind tables; this sweep prices
+       the cheap branch, and says so rather than blending the two. *)
+    churn = Some { grow = (fun rows u -> q 1 0 (row (rows + u)));
+                   shrink = (fun rows u -> q 0 (rows + u) (row 0)) } }
 
 (* ---------- item deletion: whole-row membership over a preloaded table ----------
 
@@ -467,7 +569,9 @@ let item_deletion =
         ("containsMiss", fun rows j -> q 0 (row (rows + j)));
         ("register", fun rows j -> q 1 (row (rows + j)));
         ("deregister", fun rows j -> q 2 (row (victim rows j))) ];
-    mutating = [ "register"; "deregister" ] }
+    mutating = [ "register"; "deregister" ];
+    churn = Some { grow = (fun rows u -> q 1 (row (rows + u)));
+                   shrink = (fun rows u -> q 2 (row (rows + u))) } }
 
 (* ---------- the table ---------- *)
 
@@ -516,7 +620,10 @@ let sat4j =
         ("updateLevel", fun rows j ->
            let v = spread rows j in
            rcd [ ("kind", i 2); ("v", i v); ("new_rec", row_at v 99) ]) ];
-    mutating = [ "remove"; "updateLevel" ] }
+    mutating = [ "remove"; "updateLevel" ];
+    churn = Some { grow = (fun rows u ->
+                     rcd [ ("kind", i 0); ("v", i 0); ("new_rec", row (rows + u)) ]);
+                   shrink = (fun rows u -> q 1 (rows + u)) } }
 
 (* ---------- dependent plugins: a nested-loop join over real state ----------
 
@@ -553,7 +660,9 @@ let dependent_plugins =
     build = no_build;
     (* one query is one resolveDependentPlugins() *)
     kinds = [ ("resolveAll", fun _ _ -> i 0) ];
-    mutating = [] }
+    mutating = [];
+    (* one query is one whole resolve, and nothing is written *)
+    churn = None }
 
 (* ---------- composite_key: the composite index's own regression file ----------
 
@@ -584,7 +693,11 @@ let composite_key =
         (* the delete's key is the key OF A ROW, so it removes exactly one *)
         ("deleteAtKey", fun rows j ->
            let p = victim rows j in q rows 4 (k1 p) (k2 p) p 0) ];
-    mutating = [ "insert"; "deleteAtKey" ] }
+    mutating = [ "insert"; "deleteAtKey" ];
+    (* k3 is the row index, so the triple names exactly the slot's row *)
+    churn = Some { grow = (fun rows u -> q rows 3 "" "" 0 (rows + u));
+                   shrink = (fun rows u ->
+                     q rows 4 (k1 (rows + u)) (k2 (rows + u)) (rows + u) 0) } }
 
 (* ---------- composite_keyed_delete: two deletes on one table ----------
 
@@ -623,7 +736,10 @@ let composite_keyed_delete =
            in the kind the first does not have. *)
         ("deleteById", fun rows j ->
            let p = victim rows j in q 3 "" "" (Printf.sprintf "i%d" p) 0) ];
-    mutating = [ "insert"; "deleteById" ] }
+    mutating = [ "insert"; "deleteById" ];
+    churn = Some { grow = (fun rows u -> q 1 "" "" "" (rows + u));
+                   shrink = (fun rows u ->
+                     q 3 "" "" (Printf.sprintf "i%d" (rows + u)) 0) } }
 
 (* and the same table WITH the composite-key delete as well, which is where
    the two deletes are seen to coexist.  It used to be where the one that
@@ -649,7 +765,12 @@ let composite_two_deletes =
            let p = victim rows j in q 2 (k1 p) (k2 p) "" 0);
         ("deleteById", fun rows j ->
            let p = victim rows j in q 3 "" "" (Printf.sprintf "i%d" p) 0) ];
-    mutating = [ "insert"; "deleteAtKey"; "deleteById" ] }
+    mutating = [ "insert"; "deleteAtKey"; "deleteById" ];
+    (* the DECLARED-key delete is the one paired, so the sweep's write side
+       is the operation this subject exists to price *)
+    churn = Some { grow = (fun rows u -> q 1 "" "" "" (rows + u));
+                   shrink = (fun rows u ->
+                     q 3 "" "" (Printf.sprintf "i%d" (rows + u)) 0) } }
 
 (* ---------- composite_key_decl: a DECLARED composite key ----------
 
@@ -675,7 +796,10 @@ let composite_key_decl =
       [ ("readAtKey", fun rows j ->
            let p = spread rows j in q 0 (k1 p) (k2 p) 0);
         ("insert", fun rows j -> q 1 "" "" (rows + j)) ];
-    mutating = [ "insert" ] }
+    mutating = [ "insert" ];
+    (* two kinds only, and no delete among them: what this subject prices is
+       the declared check on the WRITE, so it is insert-only by design *)
+    churn = None }
 
 (* ---------- keyed_dict_delete / keyed_two_deletes ----------
 
@@ -712,7 +836,10 @@ let keyed_dict_delete =
         ("insert", fun rows j -> q rows 1 "" "" (rows + j));
         ("deleteById", fun rows j ->
            q rows 3 "" (Printf.sprintf "i%d" (victim rows j)) 0) ];
-    mutating = [ "insert"; "deleteById" ] }
+    mutating = [ "insert"; "deleteById" ];
+    churn = Some { grow = (fun rows u -> q rows 1 "" "" (rows + u));
+                   shrink = (fun rows u ->
+                     q rows 3 "" (Printf.sprintf "i%d" (rows + u)) 0) } }
 
 let keyed_two_deletes =
   let row rows j =
@@ -731,7 +858,10 @@ let keyed_two_deletes =
            q rows 2 (Printf.sprintf "f%d" (victim rows j mod buckets rows)) "" 0);
         ("deleteById", fun rows j ->
            q rows 3 "" (Printf.sprintf "i%d" (victim rows j)) 0) ];
-    mutating = [ "insert"; "deleteAtFloor"; "deleteById" ] }
+    mutating = [ "insert"; "deleteAtFloor"; "deleteById" ];
+    churn = Some { grow = (fun rows u -> q rows 1 "" "" (rows + u));
+                   shrink = (fun rows u ->
+                     q rows 3 "" (Printf.sprintf "i%d" (rows + u)) 0) } }
 
 let specs =
   [ ("keycloak", keycloak); ("named_cache", named_cache);
@@ -764,6 +894,70 @@ let workload (sp : spec) ~(rows : int) ~(ops : int) ~(only : string option) : wo
       (List.init ops (fun j -> j)) in
   { store = sp.store;
     env = (sp.queries_var, VList (sp.build rows @ phase)) :: sp.table rows }
+
+(* ---------- a mixed workload of a declared write fraction ----------
+
+   [ops] is a TOTAL op count here, not a count per kind, because the point of
+   it is to be large: the whole reason this exists is that a difference of two
+   whole-program timings cannot resolve a 200ns read against its own build, and
+   the fix is to run enough operations that the build is a rounding correction
+   rather than to time more cleverly.
+
+   [writes] is a percentage, and the write positions are spread EVENLY by the
+   same carry test a line-drawing algorithm uses -- op m is a write exactly
+   when floor(m*w/100) differs from floor((m-1)*w/100).  So 10 means every
+   tenth op and 1 means every hundredth, with no clustering and no randomness:
+   two runs of the same parameters produce the same list, which the
+   differential test and every re-measurement depend on.
+
+   The writes alternate grow and shrink, and a (grow, shrink) pair is one
+   CHURN STEP, so the table returns to [rows] after each pair.  See [churn].
+
+   Reads come round robin from the kinds that are not named in [mutating],
+   indexed by how many reads have been emitted so far, so each read kind sees
+   the same spread of keys it sees in the per-kind tables.
+
+   Returns None when a write fraction is asked of a subject with no [churn] --
+   the honest answer, rather than a number produced by an invented pairing. *)
+let mixed (sp : spec) ~(rows : int) ~(ops : int) ~(writes : int) : workload option =
+  let reads = List.filter (fun (n, _) -> not (List.mem n sp.mutating)) sp.kinds in
+  if reads = [] && writes < 100 then None
+  else
+    match (if writes = 0 then Some { grow = (fun _ _ -> VUnit);
+                                     shrink = (fun _ _ -> VUnit) }
+           else sp.churn) with
+    | None -> None
+    | Some ch ->
+        let nreads = List.length reads in
+        (* EVERY POSITION IS A PURE FUNCTION OF ITS INDEX, and that is not
+           style.  List.init does not specify the order in which it applies
+           its argument, and it has two implementations either side of a
+           length of ten thousand -- which this crosses, because the whole
+           point is a long list.  Written with a mutable counter, the writes
+           would be numbered in whatever order the list happened to be built,
+           and a pair numbered backwards is a SHRINK BEFORE ITS GROW: the
+           removal misses, the insert stays, and the table grows by one per
+           pair.  The stationarity check would have caught that at the op
+           counts it uses and not at the ones the sweep reaches.
+
+           [nw m] is how many of the first m ops are writes, so the write
+           index and the read index are both read off m directly. *)
+        let nw m = m * writes / 100 in
+        let phase =
+          List.init ops (fun m ->
+            let k = nw m in
+            if writes > 0 && nw (m + 1) > k then
+              (* one pair per slot, walking the pool, so successive pairs land
+                 in different buckets *)
+              let slot = k / 2 mod churn_slots in
+              (if k mod 2 = 0 then ch.grow else ch.shrink) rows slot
+            else
+              let k = m - k in
+              let _, f = List.nth reads (k mod nreads) in
+              f rows (k / nreads)) in
+        Some { store = sp.store;
+               env = (sp.queries_var, VList (sp.build rows @ phase))
+                     :: sp.table rows }
 
 let of_subject (name : string) ~(rows : int) ~(ops : int) : workload option =
   match List.assoc_opt name specs with
