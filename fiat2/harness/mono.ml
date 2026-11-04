@@ -415,9 +415,29 @@ let emit_readers () : unit =
           subject renumbers everything, and hand-written code referring to a
           number would break silently on the next run. *)
        let aliases =
-         List.map
+         List.concat_map
            (fun (n, t) ->
-              Printf.sprintf "  type t_%s = %s" (sanitize_id n) (ocaml_ty t))
+              Printf.sprintf "  type t_%s = %s" (sanitize_id n) (ocaml_ty t)
+              :: (* the ELEMENT of a list-typed input, which a hand-written
+                    fold over it has to annotate its binder with -- and, for
+                    a collection, the MODULE, because a type alias names one
+                    but cannot build one *)
+                 (match t with
+                  | TList e | TBag e ->
+                      [ Printf.sprintf "  type t_%s_elem = %s" (sanitize_id n)
+                          (ocaml_ty e) ]
+                  | TSet e ->
+                      [ Printf.sprintf "  module M_%s = %s_Set" (sanitize_id n)
+                          (key_module e);
+                        Printf.sprintf "  type t_%s_elem = %s" (sanitize_id n)
+                          (ocaml_ty e) ]
+                  | TDict (dk, k, v) ->
+                      [ Printf.sprintf "  module M_%s = %s_%s" (sanitize_id n)
+                          (key_module k)
+                          (match dk with Ranged -> "Map" | Unranged -> "Tbl");
+                        Printf.sprintf "  type t_%s_val = %s" (sanitize_id n)
+                          (ocaml_ty v) ]
+                  | _ -> []))
            names
          @ (match
               List.find_opt
@@ -425,7 +445,15 @@ let emit_readers () : unit =
                 Extracted.tbl_types_nf
             with
             | Some ((_, TList r), _) | Some ((_, TBag r), _) ->
-                [ Printf.sprintf "  type t_row = %s" (ocaml_ty r) ]
+                (* and the row's own operations, so that a hand-written
+                   structure keyed on a ROW -- which ItemDeletion's author
+                   built, since its question is about a whole row and no
+                   attribute answers it -- can name them without naming a
+                   generated number *)
+                [ Printf.sprintf "  type t_row = %s" (ocaml_ty r);
+                  Printf.sprintf "  let cmp_row = %s" (cmp_of r);
+                  Printf.sprintf "  let hash_row = %s" (hash_of r);
+                  Printf.sprintf "  let eq_row = %s" (eq_of r) ]
             | _ -> []) in
        emit
          (Printf.sprintf
