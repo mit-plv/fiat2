@@ -270,12 +270,84 @@ let lookin =
 
    Names are four digits wide so that a three-digit token is a real trigram
    and selects a handful of rows; a token that matched a constant fraction
-   of the table would be linear however it was indexed. *)
+   of the table would be linear however it was indexed.
+
+   THE ALPHABET IS A PARAMETER, and it is under test.  Those four digits draw
+   on TEN symbols, so there are at most 1000 distinct digit trigrams however
+   large the table gets: past that point a bigger table cannot add buckets and
+   has to crowd the ones that exist, which makes a single-trigram probe linear
+   in the table.  That is the suspected cause of `suggest`'s eroding
+   advantage -- data work `a` = 1.39 over 3200 to 25,600 rows, speedup 82x
+   falling to 47.6x -- and if it is the cause then it is a property of the
+   WORKLOAD and not of the index, so a 26-symbol alphabet with its 17,576
+   trigrams should remove the growth and leave the index's flatness behind.
+
+   Three modes, because that comparison needs a control:
+
+     Committed  the names and tokens every table in this repository was
+                measured with: `user%04d`, and `suggest` probing `%03d` of a
+                fixed thousand-space.  THE DEFAULT, so no existing figure
+                moves and no committed number has to be re-read.
+     Narrow     the same ten digits, but every token drawn as a prefix of a
+                REAL name, so that the only difference from Wide is the size
+                of the alphabet.
+     Digits     a synonym for Narrow, spelled the way the flag reads.
+     Wide       four base-26 letters, tokens drawn the same way.
+
+   Narrow against Wide is the experiment; Committed is what the repository's
+   other tables mean. *)
+
+type names = Committed | Narrow | Wide
+
+let names_mode = ref Committed
+
+let names_of_string (a : string) : names option =
+  match a with
+  | "names=committed" -> Some Committed
+  | "names=narrow" | "names=digits" -> Some Narrow
+  | "names=wide" | "names=letters" -> Some Wide
+  | _ -> None
+
+let names_name (m : names) : string =
+  match m with
+  | Committed -> "committed" | Narrow -> "narrow" | Wide -> "wide"
+
+(* four symbols, distinct for every j the generators ask for: 10^4 widens
+   past 9999 and keeps distinctness, and 26^4 = 456,976 covers every size
+   this harness runs *)
+let name_field (j : int) : string =
+  match !names_mode with
+  | Committed | Narrow -> Printf.sprintf "%04d" j
+  | Wide ->
+      let b = Bytes.create 4 in
+      let r = ref j in
+      for k = 3 downto 0 do
+        Bytes.set b k (Char.chr (Char.code 'a' + (!r mod 26)));
+        r := !r / 26
+      done;
+      Bytes.to_string b
+
+let full_name (j : int) : string = "user" ^ name_field j
+
+(* the token `suggest` probes.  Committed keeps the published formula to the
+   character; the other two take a prefix of a name that EXISTS, which is what
+   makes the alphabet the only variable between them. *)
+let name_token (width : int) (rows : int) (j : int) : string =
+  match !names_mode with
+  | Committed ->
+      if width = 3 then Printf.sprintf "%03d" (spread 1000 j)
+      else Printf.sprintf "%02d" (spread 100 j)
+  | Narrow | Wide -> String.sub (name_field (spread rows j)) 0 width
+
+(* a token that occurs in NO name, which is what isolates the fallback's fixed
+   cost -- so it has to come from outside whichever alphabet is in use *)
+let absent_token () : string =
+  match !names_mode with Committed | Narrow -> "zz" | Wide -> "99"
 
 let user_search =
   let row j =
     rcd [ ("id", s (Printf.sprintf "u%d" j));
-          ("fullName", s (Printf.sprintf "user%04d" j)) ] in
+          ("fullName", s (full_name j)) ] in
   let q kind k = rcd [ ("kind", i kind); ("k", s k); ("new_user", row 0) ] in
   { queries_var = "queries";
     store = ("suggested", VSet (Value.sempty ())) :: outputs_only;
@@ -285,7 +357,7 @@ let user_search =
         rcd [ ("kind", i 0); ("k", s ""); ("new_user", row j) ]));
     kinds =
       [ ("byId", fun rows j -> q 2 (Printf.sprintf "u%d" (spread rows j)));
-        ("suggest", fun _ j -> q 3 (Printf.sprintf "%03d" (spread 1000 j)));
+        ("suggest", fun rows j -> q 3 (name_token 3 rows j));
         (* Three characters is the shortest token the trigram rule probes
            for, so these two kinds sit on the other side of its guard: the
            kind above always probes, these two always take the FALLBACK
@@ -300,8 +372,8 @@ let user_search =
            the fallback pays.  A token that occurs in no name isolates the
            fixed part: coercing the table to a set, and walking it.  A token
            drawn from the names also pays for the answer. *)
-        ("suggestMiss", fun _ _ -> q 3 "zz");
-        ("suggestShort", fun _ j -> q 3 (Printf.sprintf "%02d" (spread 100 j)));
+        ("suggestMiss", fun _ _ -> q 3 (absent_token ()));
+        ("suggestShort", fun rows j -> q 3 (name_token 2 rows j));
         (* A token with MORE THAN ONE trigram, which is the only kind that
            tells the two trigram rules apart.
 
@@ -321,7 +393,7 @@ let user_search =
            That is the asymmetry gin_trgm_consistent exploits for LIKE, and
            without a kind like this one our measurement could not see it. *)
         ("suggestLong", fun rows j ->
-           q 3 (String.sub (Printf.sprintf "user%04d" (spread rows j)) 3 5));
+           q 3 (String.sub (full_name (spread rows j)) 3 5));
         ("remove", fun rows j -> q 1 (Printf.sprintf "u%d" (victim rows j))) ];
     mutating = [ "remove" ];
     churn = Some { grow = (fun rows u ->

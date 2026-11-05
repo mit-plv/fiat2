@@ -670,6 +670,104 @@ let sweep_work (rows : int) : unit =
            Printf.printf "\n")
     Gen.specs
 
+(* ---------- a THIRD instrument: bytes allocated per operation ----------
+
+   This table exists for the one place where the counters and the clock
+   disagree about a DIRECTION rather than a size.  `range_delete`'s advantage
+   WIDENS with the write fraction on the clock -- 17x to 24x at 1600 rows --
+   and NARROWS counted, 91x to 63x.  Both cannot be the statement about the
+   algorithm, so the README reports the counted one and leaves the clock
+   unexplained.  The obvious candidate is worth measuring rather than
+   asserting: `data work` is comparisons, hashing, string characters and
+   record fields -- every access a structure makes to a KEY -- and it charges
+   nothing at all for BUILDING a result.  In compiled OCaml that cost is
+   allocation, and a source form that deletes from a list by filtering it
+   rebuilds the list where ours rewrites one path of a tree.
+
+   If that is what the clock is seeing, the allocation ratio should follow the
+   SECONDS and not the counters: it should rise with the write fraction where
+   `data work` falls.  If it does not, the explanation is somewhere else and
+   this table says so.
+
+   `Gc.allocated_bytes` is a counter the runtime already keeps, so this needs
+   no floor, no dominance and no repeats -- the same work allocates the same
+   bytes.  It is read like `sweep_work` and not like `sweep`. *)
+let allocated (f : unit -> unit) : float =
+  f ();  (* warm once, for the same reason `timed` does: first-run work that
+            a later run would not repeat belongs to neither figure *)
+  let a0 = Gc.allocated_bytes () in
+  f ();
+  Gc.allocated_bytes () -. a0
+
+let mixed_per_op_alloc (p : (string -> Value.t option) -> unit -> unit)
+    (sp : Gen.spec) ~(rows : int) ~(writes : int) ~(ops : int) : float option =
+  match Gen.mixed sp ~rows ~ops ~writes with
+  | None -> None
+  | Some w ->
+      let b =
+        allocated (p (lookup_of (Gen.workload sp ~rows ~ops:0 ~only:None))) in
+      let f = allocated (p (lookup_of w)) in
+      if f -. b <= 0. then None else Some ((f -. b) /. float_of_int ops)
+
+let sweep_alloc (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 400 ] else sizes in
+  let ops = 2048 in
+  Printf.printf
+    "Bytes ALLOCATED per operation, the third instrument.  `data work` prices\n\
+     every access a structure makes to a key and prices building a result at\n\
+     nothing; in compiled OCaml that cost is allocation, so where the clock\n\
+     and the counters disagree this table says which of them allocation is\n\
+     following.  Deterministic, so there are no repeats and no floor.\n\n";
+  Printf.printf "%-22s %5s" "subject" "rows";
+  List.iter (fun f -> Printf.printf "  %13s" (Printf.sprintf "%d%% w" f))
+    fractions;
+  Printf.printf "   %s\n" "src B/op @0%  opt B/op @0%  src @50%  opt @50%";
+  Printf.printf "%-22s %5s" "" "";
+  List.iter (fun _ -> Printf.printf "  %13s" "src/opt opt/au") fractions;
+  Printf.printf "\n%s\n" (String.make 130 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           (* the author column too, because the parity question has the same
+              shape: `item_deletion` reads 1.02 counted at a common storage
+              and 0.62 on the clock, and whether allocation is what the clock
+              is seeing there is the same question this table was built for *)
+           let auth = List.assoc_opt name Authors.runners in
+           List.iter
+             (fun rows ->
+                Printf.printf "%-22s %5d%!" name rows;
+                let cells =
+                  List.map
+                    (fun writes ->
+                       let m p = mixed_per_op_alloc p sp ~rows ~writes ~ops in
+                       (m psrc, m popt,
+                        match auth with None -> None | Some p -> m p))
+                    fractions in
+                let r x y =
+                  match x, y with
+                  | Some a, Some b when b > 0. ->
+                      let v = a /. b in
+                      Printf.sprintf
+                        (if v < 0.01 then format_of_string "%6.4f"
+                         else if v >= 1000. then format_of_string "%6.0f"
+                         else format_of_string "%6.2f") v
+                  | _ -> "     -" in
+                List.iter
+                  (fun (sc, o, a) ->
+                     Printf.printf "  %s %s%!" (r sc o) (r o a))
+                  cells;
+                let abs = function
+                  | Some (x : float) -> Printf.sprintf "%12.0f" x
+                  | None -> Printf.sprintf "%12s" "-" in
+                let s0, o0, _ = List.nth cells 0
+                and s5, o5, _ = List.nth cells (List.length fractions - 1) in
+                Printf.printf "   %s  %s  %s  %s\n%!" (abs s0) (abs o0)
+                  (abs s5) (abs o5))
+             sizes)
+    Gen.specs
+
 let sweep (sizes : int list) : unit =
   let sizes = if sizes = [] then [ 1600 ] else sizes in
   let chosen = ref [] in

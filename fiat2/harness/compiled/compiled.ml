@@ -223,6 +223,9 @@ let () =
   | _ :: "sweep" :: rest ->
       Timing.sweep (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "alloc" :: rest ->
+      Timing.sweep_alloc (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ :: "scale" :: rest ->
       Timing.scale (List.filter_map int_of_string_opt rest);
       exit 0

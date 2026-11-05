@@ -700,19 +700,88 @@ them.**  `named_cache_lru_noevict` rises 125x to 151x and the counters agree (33
 a guard the source pays as a scan.  `range_delete` rises 17x to 24x on the clock while the
 counters fall **91x to 63x**.  Both cannot be the algorithmic statement, and the counted
 one is -- so our relative advantage on `range_delete` genuinely narrows as writes rise, and
-what widens is traversal the key-work model does not charge for.  Reported rather than
-reconciled.
+what widens is a cost the key-work model does not charge for.  Which cost, exactly, is no
+longer a guess: the next section measures it.
 
 **`user_search` is the honest outlier at 1.33x to 1.93x**, and it is a blend, not a
 failure: `suggest` alone is 42x in the per-kind table, and the two fallback kinds beside it
 are deliberately linear in both columns.  Averaging a large win with two ties gives
 roughly a tie, which is what a mixed workload should report.
 
-**Where the parity column disagrees with its counted twin, that is also reported.**
+**Where the parity column disagrees with its counted twin, that is also reported --**
 `item_deletion` reads 0.93 on the clock and **3.25** counted, and `lookin` 1.03 against
-3.44: we perform three times the author's key accesses and still finish level or ahead.
-That is a real divergence between the two instruments on the same pair of programs, not a
-rounding difference, and nothing in this document resolves it.
+3.44, so on those two we perform three times the author's key accesses and still finish
+level or ahead.  That was carried here as unresolved for one revision of this file.  It is
+the storage choice, and the next section but one settles it on three instruments at once.
+
+### Which instrument the clock was following, measured
+
+The `range_delete` disagreement above is a disagreement about a *direction*, which is the
+one kind that cannot be split the difference on, so it is worth a third instrument rather
+than a paragraph of regret.  `data work` prices every access a structure makes to a key --
+comparisons, hashing, the characters of a string key, the fields a projection walks -- and
+prices **building a result at nothing**.  In compiled OCaml that cost is allocation.
+`compiled.exe alloc` reads `Gc.allocated_bytes` around the same differenced pair of phases
+the other tables use; it is a counter the runtime already keeps, so it needs no floor, no
+dominance and no repeats.
+
+| subject | alloc `src/opt` 0% | 1% | 10% | 50% | what the row says |
+|---|---|---|---|---|---|
+| `range_delete` | 0.29 | 0.35 | 0.95 | **4.52** | rises **15.6x** across the sweep: it follows the CLOCK (17x to 24x), not the counters (91x to 63x) |
+| `sat4j` | 1.09 | 2.11 | 7.20 | **11.92** | the other subject that gains with writes on the clock, and allocation says why |
+| `named_cache_lru` | 179 | 38.0 | 5.25 | **1.66** | the control: where both instruments fall, allocation falls with them |
+| `named_cache_lru_noevict` | 179 | 167 | 108 | **57.4** | and the pair that does not collapse does not collapse here either |
+
+**The clock was not measuring noise and the counters were not wrong; they price two
+different real costs.**  `range_delete`'s source deletes from a list by filtering it,
+which allocates a fresh spine for the whole table, and its allocation per operation goes
+**643 to 7,536 bytes** as the write fraction rises while ours *falls*, 2,209 to 1,666,
+because a dictionary delete allocates the path it rewrites and nothing else.  So the
+honest statement about that subject is two statements: our advantage **narrows in key work
+and widens in allocation** as writes rise.  The counted column remains the algorithmic
+claim, because key accesses are what an index changes; the allocation column is the cost
+the key-work model declines to charge, now named and measured instead of guessed at.
+
+**The control is the part that makes this evidence rather than a story.**  An instrument
+that rose with the write fraction everywhere would explain nothing.  `named_cache_lru`
+collapses on all three -- 335x to 2.4x counted, 7.3x to 2.0x on the clock, 179x to 1.7x
+allocated -- and `named_cache_lru_noevict` holds on all three.  Allocation rises where the
+clock rises and falls where the clock falls, which is what a third instrument has to do
+before it is allowed to settle an argument between the first two.
+
+**And it settles the parity divergence, which was the last thing in this file reported
+without an explanation.**  `item_deletion` and `lookin` read near parity on the clock and
+three times the author's key work counted, and the suspicion was always the one the
+`matched` table above names -- our `TableRep` set is a tree because `TSet` carries no kind,
+and the authors wrote `new HashSet<>()`.  Measuring the same pair at a storage both sides
+hold settles it, and the third instrument comes along for the ride:
+
+| `opt/auth`, 400 rows | clock | counted | allocated |
+|---|---|---|---|
+| `item_deletion` at `typed` | 0.93 | 3.25 | 2.65 |
+| `item_deletion` at `trees` | **0.62** | **1.02** | **0.82** |
+| `lookin` at `typed` | 1.03 | 3.44 | 3.53 |
+| `lookin` at `trees` | **0.65** | **1.04** | **0.96** |
+| `range_delete` -- no structure choice in it | 0.68 | 1.26 | **1.30 at both** |
+| `window_store` -- no structure choice in it | 0.62 | 1.13 | **1.24 at both** |
+
+**At a common storage all three instruments land within 1.6x of parity, and in our
+favour.**  The counted figure goes to 1.02 and 1.04 -- the compiler makes the same number
+of key accesses as the structure the author built by hand, which is what the parity column
+was asked -- and allocation follows it from 2.65 to 0.82 and from 3.53 to 0.96 rather than
+staying put.  So the divergence was a confound and not a finding, and the thing that was
+being measured as "three times the author's work" was a balanced tree against a hash
+table.  The last two rows are the control that makes this readable as evidence: they have
+no structure choice in them, and their allocation figures are **identical to the digit**
+at both settings, as are their counted ones.
+
+**Two places where allocation disagrees with the clock, reported for the same reason.**
+At 0% writes we allocate **3.4x more** than the source on `range_delete` (2,209 against
+643 bytes) and 3.8x more on `window_store`, while the clock has us 17x and 15x ahead --
+so allocation is a second term in the cost and not the leading one, and a table that
+quoted it alone would be as partial as one that quoted key work alone.  `item_deletion`
+allocates **714x** less than its source, which is the whole-row coercion the source pays,
+and that one every instrument agrees about.
 
 ### The same sweep at four times the table
 
@@ -783,12 +852,15 @@ is also the reason the next section's 25,600-row comparison is counted and not t
 dominance needs operations in proportion to the table while per-operation cost stays flat,
 so a timed sweep runs out of ladder before it runs out of table.
 
-**The parity divergence widens with the table rather than closing.**  `item_deletion`
-reads 1.01-1.06 against the author on the clock at 6400 where it read 0.93 at 1600, while
-its counted figure went 3.25 to **3.60-3.83**; `lookin` moved 1.03 to 1.09 on the clock
-against 3.44 to **3.99** counted.  We do nearly four times the author's key accesses and
-finish level or ahead, by more of a margin at the larger table.  Still unresolved, and
-recorded in both directions.
+**The parity divergence grows with the table, and the rate it grows at is the clue that
+identified it.**  `item_deletion` reads 1.01-1.06 against the author on the clock at 6400
+where it read 0.93 at 1600, while its counted figure went 3.25 to **3.60-3.83**; `lookin`
+moved 1.03 to 1.09 on the clock against 3.44 to **3.99** counted.  A 4x table multiplied
+every other counted row in this sweep by 3.4x-4.1x and multiplied this one by **1.11x to
+1.18x** -- which is what `log n` does over that span (log2 1600 = 10.6, log2 6400 = 12.6,
+a ratio of 1.19), and a balanced-tree descent against a flat hash probe is the one thing
+that grows that way.  The section above measures it directly and finds parity at a common
+storage.
 
 ### The same question at sixteen times the table
 

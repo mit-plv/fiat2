@@ -53,7 +53,12 @@ let () =
       (fun a ->
          match Count.structures_of_string a with
          | Some s -> Count.structures := s; false
-         | None -> true)
+         | None -> (
+             (* and the name alphabet, the same way: a parameter of the
+                WORKLOAD rather than of the storage, declared in gen.ml *)
+             match Gen.names_of_string a with
+             | Some m -> Gen.names_mode := m; false
+             | None -> true))
       argv in
   match argv with
   | _ :: "report" :: _ | [ _ ] -> Report.run ()
