@@ -471,7 +471,9 @@ clears 2ms.  **44 of the 47 read kinds** then give a ratio at 1600 rows:
 | `dependent_plugins/resolveAll` | 278x | `window_store/fetchAll` | 17x |
 
 and the two deliberately-linear fallback kinds come out **0.67x** and
-**0.66x** -- slightly slower optimized, which is what they are there to be.
+**0.66x** -- slightly slower optimized, which is what they are there to be, and the
+section "the last cell with no explanation" below says exactly why they are slower, since
+it turns out to be one extra traversal and not a constant of the code.
 The three reads with no ratio are whole-collection reads answered from a
 cached field: O(1), and so unmeasurable rather than unmeasured.
 
@@ -703,10 +705,12 @@ one is -- so our relative advantage on `range_delete` genuinely narrows as write
 what widens is a cost the key-work model does not charge for.  Which cost, exactly, is no
 longer a guess: the next section measures it.
 
-**`user_search` is the honest outlier at 1.33x to 1.93x**, and it is a blend, not a
-failure: `suggest` alone is 42x in the per-kind table, and the two fallback kinds beside it
-are deliberately linear in both columns.  Averaging a large win with two ties gives
-roughly a tie, which is what a mixed workload should report.
+**`user_search` is the honest outlier at 1.33x to 1.93x**, and it is a blend: `suggest`
+alone is 42x in the per-kind table, and the two fallback kinds beside it are deliberately
+linear in both columns.  Those two are **98.6% of the optimized column's key work** in the
+blend and about the same share of its seconds, so what the cell reports is very nearly
+just them -- and they are not the ties this paragraph used to call them.  The section
+below measures what they are.
 
 **Where the parity column disagrees with its counted twin, that is also reported --**
 `item_deletion` reads 0.93 on the clock and **3.25** counted, and `lookin` 1.03 against
@@ -783,6 +787,62 @@ quoted it alone would be as partial as one that quoted key work alone.  `item_de
 allocates **714x** less than its source, which is the whole-row coercion the source pays,
 and that one every instrument agrees about.
 
+### The last cell with no explanation, and it was an extra pass
+
+`user_search` at 1% writes and 6400 rows reads **0.97** on the clock -- the only cell at
+either size where the optimized column is slower than the source -- while the counters
+read 1.93 on the same cell.  Chased to the bottom with four instruments, at 1600 rows,
+where a per-kind measurement is still reliable (`compiled.exe kinds|kalloc 1600
+only=user_search`, and the per-kind counters from `main.exe csv only=user_search`):
+
+| `suggestMiss` / `suggestShort`, src against opt | verdict |
+|---|---|
+| data work | 288,180 vs 288,460 and 352,437 vs 342,095 -- **1.00x and 1.03x, parity** |
+| bytes allocated | 716,832 vs 755,344 and 754,122 vs 785,794 -- **0.95x and 0.96x, parity** |
+| seconds | 4.0e-5 vs 8.8e-5 and 5.2e-5 vs 1.1e-4 -- **the optimized column is 2.1x slower** |
+| **rows touched** | 32,000 vs **64,000** and 33,032 vs **64,000** -- **2.00x and 1.94x** |
+
+**The optimized column walks the table twice where the source walks it once.**  The
+source's fallback scans its list; ours coerces the primary-key dictionary into a set --
+the `OSetOfBag` rule that lets the list field be erased in the first place -- and then
+scans the set.  `rows_touched` reads that second pass exactly, 2.00x, and the clock reads
+2.1x, so the clock was right and the two parity instruments were blind to it.  They are
+blind for a reason worth stating: the second pass moves rows from one container to another
+without comparing a key or allocating per row, so `data work` charges nothing for it and
+`steps` charges only **+14%**, a coercion being one linear primitive rather than an
+evaluated body.
+
+**It is not the storage choice.**  The optimized column's seconds on `suggestShort` are
+1.11e-4, 1.06e-4 and 1.12e-4 at `typed`, `trees` and `hashes` -- flat within 6% -- and the
+source's are flat too, as a list scan must be.  The three-column test that explained the
+parity divergence explains nothing here, which is how it should behave on a cell it does
+not apply to.
+
+**So this is `deleteMin`'s blind spot in its constant-factor form, and the audit that
+bounded that one would not have caught this one.**  That audit looked for `rows_touched`
+*linear* while data work was *flat*, which finds a lost exponent and not a lost factor of
+two.  The honest statement of the limit is therefore slightly wider than the earlier one:
+data work misses work that touches rows without touching keys, in exactly one place as an
+exponent and in the fallback pair as a constant, and `rows_touched` is the instrument that
+settles both.
+
+**And the trade it prices is a real one.**  Erasing the list field -- the whole point of
+reading a scan out of the declared key's dictionary -- costs the fallback scan one extra
+traversal of the table.  That is the cost of the erasure, measured: 2.0x on a read that
+cannot use the index at all, against the list it removes.  The rule that would remove the
+cost is serving that scan from the dictionary's values without materialising a set; it is
+not written, and this is what it would be worth.
+
+**One measurement in this diagnosis is not usable, and it is worth saying which.**  The
+per-kind seconds for this subject at 6400 rows are junk: the source's `suggestShort` reads
+5.82e-5 s/op at 1600 and **2.87e-5 at 6400**, which a full scan cannot do, and the same
+cell moves a hundredfold between structure settings that cannot touch a list scan.  That
+is the build-subtraction problem `mixed_cell` exists to avoid -- at 6400 rows this
+subject's build is sixteen times its op phase, so a per-kind difference is two large
+nearly-equal numbers.  The sweep's own cell, which makes the build negligible instead of
+subtracting it, is the figure to quote; the per-kind table is reliable here at 1600 and
+not at 6400.
+
 ### The same sweep at four times the table
 
 The sweep above was taken at 1600 rows.  `compiled.exe sweep 6400` asks it again at 6400,
@@ -835,9 +895,11 @@ against 1.3x-1.9x at 1600.
 
 **`user_search` is the one genuine regression in either sweep.**  Its 1%-write cell reads
 **0.97** on the clock -- the only cell at either size where the optimized column is slower
-than the source -- while the counters read 1.93 at the same cell.  A disagreement in that
-direction is a constant in how our generated traversal is written, not an exponent, and it
-sits beside the erosion `eval/README.md` records for `suggest` (data work `a` = 1.39 over
+than the source -- while the counters read 1.93 at the same cell.  That disagreement is
+settled two sections above: the two fallback kinds dominate the blend and the optimized
+fallback traverses the table twice, which `rows_touched` prices at 2.00x and the clock at
+2.1x while data work and allocation both read parity.  It sits beside the erosion
+`eval/README.md` records for `suggest` (data work `a` = 1.39 over
 3200 to 25,600 rows, speedup 82x falling to 47.6x).  Both have the same suspected cause --
 the generator's `user%04d` names draw their trigrams from a ten-symbol alphabet, so a
 bigger table crowds the existing buckets instead of adding new ones -- and that is a

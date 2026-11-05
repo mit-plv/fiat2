@@ -42,6 +42,26 @@
    from noise. *)
 let min_secs = 0.2
 
+(* ---------- a subject filter, so one row can be re-measured cheaply ----------
+
+   Every table below walks `Gen.specs`, and most of them are timed, so asking
+   one question about one subject meant paying for twenty-one others.  `only=a,b`
+   anywhere in the arguments narrows every table to those subjects; with no
+   `only=` the filter is empty and `subjects ()` IS `Gen.specs`, in order, so
+   no published table changes.  It exists for the same reason `bench.ml`'s does:
+   `dependent_plugins`'s quadratic source sets the price of a whole run. *)
+let only : string list ref = ref []
+
+let only_of_string (a : string) : string list option =
+  match String.index_opt a '=' with
+  | Some i when String.sub a 0 i = "only" ->
+      Some (String.split_on_char ',' (String.sub a (i + 1) (String.length a - i - 1)))
+  | _ -> None
+
+let subjects () : (string * Gen.spec) list =
+  if !only = [] then Gen.specs
+  else List.filter (fun (n, _) -> List.mem n !only) Gen.specs
+
 let timed (f : unit -> unit) : float =
   (* warm once, so the first run's allocation is not charged to the mean *)
   f ();
@@ -101,7 +121,7 @@ let run (sizes : int list) : unit =
                 Printf.printf "%-24s %6d %10.3g %10.3g %8.2f %10.3g %10.3g %s\n"
                   name rows sb ob (ratio sb ob) so oo ops_cell)
              sizes)
-    Gen.specs
+    (subjects ())
 
 (* and the counters, in the same two phases, printed separately so that a
    seconds table and a work table can be read against each other *)
@@ -129,7 +149,7 @@ let work (sizes : int list) : unit =
                   "%-24s %6d %12d %12d %8.2f %12d %12d %8.2f\n" name rows sb ob
                   (ratio sb ob) so oo (ratio so oo))
              sizes)
-    Gen.specs
+    (subjects ())
 
 (* ---------- per op KIND, with the op count scaled ----------
 
@@ -192,7 +212,7 @@ let kinds (sizes : int list) : unit =
                        (if scalable then "" else "  (write)"))
                   sp.Gen.kinds)
              sizes)
-    Gen.specs
+    (subjects ())
 
 (* ---------- the write side, priced by the build phase's slope ----------
 
@@ -249,7 +269,7 @@ let writes (sizes : int list) : unit =
                    else if s > 0. && o > 0. then Printf.sprintf "%.2fx" (o /. s)
                    else "below res"))
              sizes)
-    Gen.specs
+    (subjects ())
 
 (* ---------- all three columns, compiled ----------
 
@@ -348,7 +368,7 @@ let threeway (sizes : int list) : unit =
                         else "  (write)"))
                   sp.Gen.kinds)
              sizes)
-    Gen.specs
+    (subjects ())
 
 (* ---------- the structure choice, taken out of the comparison ----------
 
@@ -468,7 +488,7 @@ let matched (sizes : int list) : unit =
                   sp.Gen.kinds)
              sizes
        | _ -> ())
-    Gen.specs;
+    (subjects ());
   Count.structures := saved
 
 (* ---------- the write-fraction sweep ----------
@@ -668,7 +688,7 @@ let sweep_work (rows : int) : unit =
                 Printf.printf "  %s %s" (r sc o) (r o a))
              fractions;
            Printf.printf "\n")
-    Gen.specs
+    (subjects ())
 
 (* ---------- a THIRD instrument: bytes allocated per operation ----------
 
@@ -708,6 +728,50 @@ let mixed_per_op_alloc (p : (string -> Value.t option) -> unit -> unit)
         allocated (p (lookup_of (Gen.workload sp ~rows ~ops:0 ~only:None))) in
       let f = allocated (p (lookup_of w)) in
       if f -. b <= 0. then None else Some ((f -. b) /. float_of_int ops)
+
+(* the same instrument per OP KIND, which is what the fallback question needs:
+   `kinds` times one kind at a time, and the two fallback kinds are the ones
+   where the clock and the counters disagree about which column is cheaper *)
+let per_op_alloc (p : (string -> Value.t option) -> unit -> unit) (sp : Gen.spec)
+    ~(rows : int) ~(kind : string) ~(ops : int) : float option =
+  let b = allocated (p (lookup_of (Gen.workload sp ~rows ~ops:0 ~only:None))) in
+  let f = allocated (p (lookup_of (Gen.workload sp ~rows ~ops ~only:(Some kind)))) in
+  if f -. b <= 0. then None else Some ((f -. b) /. float_of_int ops)
+
+let kinds_alloc (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 1600 ] else sizes in
+  let ops = 20 in
+  Printf.printf
+    "Bytes ALLOCATED per operation, one OP KIND at a time -- the instrument\n\
+     `alloc` applies to a mixed workload, applied where `kinds` disagrees with\n\
+     the counters about which column is cheaper.  Deterministic.\n\n";
+  Printf.printf "%-22s %-16s %6s %13s %13s %9s\n" "subject" "kind" "rows"
+    "src B/op" "opt B/op" "src/opt";
+  Printf.printf "%s\n" (String.make 84 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs with
+       | None -> ()
+       | Some (psrc, popt) ->
+           List.iter
+             (fun rows ->
+                List.iter
+                  (fun (kind, _) ->
+                     let m p = per_op_alloc p sp ~rows ~kind ~ops in
+                     let sc = m psrc and o = m popt in
+                     let cell = function
+                       | Some (x : float) -> Printf.sprintf "%13.0f" x
+                       | None -> Printf.sprintf "%13s" "-" in
+                     let r =
+                       match sc, o with
+                       | Some a, Some b when b > 0. ->
+                           Printf.sprintf "%9.2f" (a /. b)
+                       | _ -> Printf.sprintf "%9s" "-" in
+                     Printf.printf "%-22s %-16s %6d %s %s %s\n%!" name kind rows
+                       (cell sc) (cell o) r)
+                  sp.Gen.kinds)
+             sizes)
+    (subjects ())
 
 let sweep_alloc (sizes : int list) : unit =
   let sizes = if sizes = [] then [ 400 ] else sizes in
@@ -766,7 +830,7 @@ let sweep_alloc (sizes : int list) : unit =
                 Printf.printf "   %s  %s  %s  %s\n%!" (abs s0) (abs o0)
                   (abs s5) (abs o5))
              sizes)
-    Gen.specs
+    (subjects ())
 
 let sweep (sizes : int list) : unit =
   let sizes = if sizes = [] then [ 1600 ] else sizes in
@@ -836,7 +900,7 @@ let sweep (sizes : int list) : unit =
                 Printf.printf "\n%!";
                 chosen := (name, rows, List.rev !counts) :: !chosen)
              sizes)
-    Gen.specs;
+    (subjects ());
   (* the op counts the cells were taken at.  Printed, not buried: the whole
      correction above is that the figures in one cell share a workload, and a
      reader can only check that if the count is on the page. *)
@@ -928,7 +992,7 @@ let stationary (sizes : int list) : (string * int * float * float) list =
                      | _ -> None)
                   [ 1; 10; 50 ])
              sizes)
-    Gen.specs
+    (subjects ())
 
 let stationary_report (sizes : int list) : unit =
   Printf.printf
@@ -1049,4 +1113,4 @@ let scale (sizes : int list) : unit =
                             (if lo > 0. then hi /. lo else 0.)))
                   [ ("src", psrc); ("opt", popt) ])
              sizes)
-    Gen.specs
+    (subjects ())

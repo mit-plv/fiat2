@@ -891,6 +891,22 @@ blind spot is real, bounded, and in the opposite direction from the one that key
 on `window_store/fetchAll`: no single column is sufficient, and the aggregate table above
 is therefore reported on steps.
 
+**That audit's criterion was too narrow, and a second instance turned up where the
+criterion could not see it.** Looking for `rows_touched` *linear* while data work is
+*flat* finds a lost exponent; it does not find a lost factor of two. `Jenkins_UserSearch`'s
+two fallback kinds are the constant-factor case: at 1600 rows `suggestMiss` and
+`suggestShort` read data work **1.00x and 1.03x** and bytes allocated 0.95x and 0.96x --
+parity on both -- while `rows_touched` reads 32,000 against **64,000** and 33,032 against
+**64,000**, and the clock reads the optimized column 2.1x slower. The optimized fallback
+walks the table twice: it coerces the primary-key dictionary into a set, which is the
+`OSetOfBag` rule that lets the list field be erased at all, and then scans the set. The
+second pass moves rows between containers without comparing a key, so data work charges
+nothing for it and steps charges 14%. The honest statement of the limit is therefore:
+**data work misses work that touches rows without touching keys** -- once as an exponent
+(`deleteMin`) and once as a constant (the fallback pair) -- and `rows_touched` settles
+both. It also prices the erasure: removing the list field costs the one read that cannot
+use the index a second traversal, 2.0x, measured against the list it removes.
+
 
 ## Against the originals' own structures
 

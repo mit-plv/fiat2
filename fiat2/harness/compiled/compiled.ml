@@ -199,7 +199,11 @@ let () =
       (fun a ->
          match Count.structures_of_string a with
          | Some st -> Count.structures := st; false
-         | None -> true)
+         | None -> (
+             (* and `only=a,b`, which narrows every table to those subjects *)
+             match Timing.only_of_string a with
+             | Some ns -> Timing.only := ns; false
+             | None -> true))
       (Array.to_list Sys.argv) in
   match argv with
   | _ :: "time" :: rest ->
@@ -222,6 +226,9 @@ let () =
       exit 0
   | _ :: "sweep" :: rest ->
       Timing.sweep (List.filter_map int_of_string_opt rest);
+      exit 0
+  | _ :: "kalloc" :: rest ->
+      Timing.kinds_alloc (List.filter_map int_of_string_opt rest);
       exit 0
   | _ :: "alloc" :: rest ->
       Timing.sweep_alloc (List.filter_map int_of_string_opt rest);
