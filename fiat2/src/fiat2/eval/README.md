@@ -753,7 +753,10 @@ from 32x to **340x** against its scan form.
   work is `a` = 1.39, not 0.30, because the candidate bucket it rechecks grows with the
   table while the source's scan grows linearly. Its advantage therefore peaks and
   erodes -- 82x at 1600 rows, 92x at 3200, then 78x, 51x and 47.6x at 25,600. See the
-  section below; nothing else in this table moved.
+  section below, where the cause is now measured rather than suspected and turns out to
+  be the generator's names: the same read is flat at `a` = **0.030** to 25,600 rows once
+  the names are drawn from an alphabet that can hold them. Nothing else in this table
+  moved.
 
 Two entries have left this list, and both left the same way -- a rule named in the note
 that described them.
@@ -846,8 +849,37 @@ Real text has a far larger trigram vocabulary, and `suggestLong`'s three-trigram
 intersection shows the other side of the same effect -- flat to 6400 rows and still 160x
 at 25,600. So the honest statement is that this subject's advantage depends on the
 selectivity of the token against the data, which is a property of the workload and is
-exactly what `pg_trgm` tunes for; the measurement to add is the name alphabet, not a
-larger table.
+exactly what `pg_trgm` tunes for.
+
+**That was the measurement to add, and it has been made: it is the alphabet.** `gen.ml`
+now takes the name alphabet as a parameter with three modes -- `committed`, which is the
+published workload to the character and the default, so no figure above moves; and
+`narrow` and `wide`, which differ **only** in whether the four symbols are ten digits or
+twenty-six letters, with the probed token drawn as a prefix of a name that exists in both.
+`main.exe csv only=user_search names=wide ...` is the whole recipe. Optimized data work
+for `suggest`, fitted over 6400 to 25,600 rows:
+
+| alphabet | 6400 | 12,800 | 25,600 | `a` | rows touched per probe |
+|---|---|---|---|---|---|
+| ten digits | 19,337 | 89,125 | 225,683 | **1.77** | 393 to 1,104 to 2,432 |
+| twenty-six letters | 38,080 | 38,382 | 39,706 | **0.030** | 599 to 599 to **619** |
+
+**The index is flat and the workload was not.** Under an alphabet that can hold the table,
+the probe touches 599 rows at 6400 and 619 at 25,600 -- a constant, at four times the
+table, measured on the same code that reads `a` = 1.77 with digits. The letters cost more
+in absolute terms (38,080 against 19,337 at 6400), which is the honest shape of the trade:
+a wider alphabet buys the exponent and pays a constant.
+
+**And it corrects how this file described the cause.** The paragraph above said a bigger
+table crowds the buckets that exist, and crowding alone turns out to be mild: within the
+four-digit range, 400 to 6400 rows, the digit arm's bucket goes 279, 279, 298, 331, 393,
+which is `a` ~ 0.12. The large term arrives past 9,999 rows, where `user%04d` needs a
+FIFTH digit and a three-character token gains a third position it can sit in. The two are
+not independent effects, which is why the alphabet is the right name for the cause: ten
+symbols cannot label 25,600 rows in four places and twenty-six can (26^4 = 456,976), so a
+small alphabet forces the longer name that multiplies the positions. Checked rather than
+assumed: the differential test passes under all three modes, 1200 configurations and 0
+mismatches each.
 
 **And one instrument was caught by the larger sizes.** `Ex_MinDelete`'s `deleteMin` reads
 `a` = 0.08 in data work and `a` = 0.95 in steps, because it recomputes the minimum by
