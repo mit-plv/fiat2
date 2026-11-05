@@ -714,6 +714,115 @@ roughly a tie, which is what a mixed workload should report.
 That is a real divergence between the two instruments on the same pair of programs, not a
 rounding difference, and nothing in this document resolves it.
 
+### The same sweep at four times the table
+
+The sweep above was taken at 1600 rows.  `compiled.exe sweep 6400` asks it again at 6400,
+and the question is not whether the numbers get bigger.  It is whether the three things
+the 1600 table claims -- the win survives writes, the LRU order read is the one place it
+does not, and the maintenance we pay is a constant -- are statements about the subjects or
+statements about the one size they were measured at.  Counted figures below, because what
+is being compared across two sizes is an exponent.
+
+| subject | counted `src/opt`, 0% writes: 1600 -> 6400 | counted `src/opt`, 50% writes: 1600 -> 6400 |
+|---|---|---|
+| `item_deletion` | 1722 -> 7132 (4.1x) | 827 -> 3396 (4.1x) |
+| `composite_key` | 197 -> 785 (4.0x) | 117 -> 468 (4.0x) |
+| `min_delete` | 67.6 -> 268 (4.0x) | 64.7 -> 244 (3.8x) |
+| `sat4j` | 121 -> 470 (3.9x) | 175 -> 688 (3.9x) |
+| `area_registry` | 413 -> 1495 (3.6x) | 132 -> 501 (3.8x) |
+| `named_cache` | 232 -> 825 (3.6x) | 288 -> 1022 (3.6x) |
+| `named_cache_lru_noevict` | 335 -> 1221 (3.6x) | 407 -> 1459 (3.6x) |
+| `keyed_dict_delete` | 492 -> 1722 (3.5x) | 134 -> 507 (3.8x) |
+| `range_delete` | 90.6 -> 309 (3.4x) | 62.6 -> 215 (3.4x) |
+| **`named_cache_lru`** | 335 -> 1221 (3.6x) | **2.43 -> 2.53 (1.04x)** |
+| **`user_search`** | **1.94 -> 1.92 (0.99x)** | **2.68 -> 2.78 (1.04x)** |
+
+**The write fraction costs a constant and the table buys an exponent, and the two are
+separable.**  For a 4x table the counted advantage multiplies by **3.4x to 4.1x at 0%
+writes and by 3.4x to 4.1x again at 50%** -- the same band at both ends of the sweep, on
+sixteen of eighteen subjects.  Adding writes moves a column down by a factor; growing the
+table moves it up by an exponent; neither changes what the other does.  On the clock at
+50% writes the range is **114x to 3664x**, against 24x to 900x at 1600 rows, so both ends
+of that range moved by about the factor the table did.
+
+**The LRU row is the exception, and it is sharper here than at 1600.**  At 50% writes
+`named_cache_lru` reads 2.43 at 1600 and 2.53 at 6400: *flat*.  At that write fraction the
+order-observing read has no asymptotic advantage at all, only a constant one, and the
+collapse across the sweep therefore deepens with the table -- 335x down to 2.4x at 1600
+rows (138x), 1221x down to 2.5x at 6400 (483x).  `named_cache_lru_noevict`, the same
+subject with that one read removed, grows with the table at every fraction (335 -> 1221 at
+0%, 407 -> 1459 at 50%).  The 1600 table said the write tax belongs to one read rather
+than to the optimizer; the 6400 table says that read is also the only place where the
+win fails to scale.
+
+**More subjects are now faster with more writes, and the cause is on the source side.**
+Four gain on the clock from 0% to 50% at 6400 rows -- `named_cache` 596x to 800x,
+`named_cache_lru_noevict` 376x to 771x, `range_delete` 69x to 114x, `sat4j` 204x to 276x --
+where two did at 1600.  A declared key elaborates into a guard the source pays as a scan,
+so the source's cost *per write* grows with the table while ours stays a probe; at a
+larger table that outgrows the index maintenance we pay, and a write becomes a better
+trade for us than a read.  The worst falloff from 0% to 50% is `item_deletion` at 2.07x,
+against 1.3x-1.9x at 1600.
+
+**`user_search` is the one genuine regression in either sweep.**  Its 1%-write cell reads
+**0.97** on the clock -- the only cell at either size where the optimized column is slower
+than the source -- while the counters read 1.93 at the same cell.  A disagreement in that
+direction is a constant in how our generated traversal is written, not an exponent, and it
+sits beside the erosion `eval/README.md` records for `suggest` (data work `a` = 1.39 over
+3200 to 25,600 rows, speedup 82x falling to 47.6x).  Both have the same suspected cause --
+the generator's `user%04d` names draw their trigrams from a ten-symbol alphabet, so a
+bigger table crowds the existing buckets instead of adding new ones -- and that is a
+property of the workload to be measured, not yet a measured result.
+
+**One cell is a dash here that was a number at 1600, and the reason is a ceiling rather
+than a failure.**  `min_delete` at 1% writes declines, because a 1%-write cell's op ladder
+runs 400, 1,600, ... 102,400 and the next rung exceeds `max_mixed_ops` = 262,144, while at
+6400 rows the optimized column's build has grown enough that 102,400 operations no longer
+make it negligible.  Most 0%-write cells now sit on the ladder's top rung (131,072).  That
+is also the reason the next section's 25,600-row comparison is counted and not timed:
+dominance needs operations in proportion to the table while per-operation cost stays flat,
+so a timed sweep runs out of ladder before it runs out of table.
+
+**The parity divergence widens with the table rather than closing.**  `item_deletion`
+reads 1.01-1.06 against the author on the clock at 6400 where it read 0.93 at 1600, while
+its counted figure went 3.25 to **3.60-3.83**; `lookin` moved 1.03 to 1.09 on the clock
+against 3.44 to **3.99** counted.  We do nearly four times the author's key accesses and
+finish level or ahead, by more of a margin at the larger table.  Still unresolved, and
+recorded in both directions.
+
+### The same question at sixteen times the table
+
+The sweep stops at 6400 rows for the reason just given -- the op ladder, not the
+machine. The interpreted ladder has since been extended to 25,600 -- its own section in
+`eval/README.md` reports that -- and the compiled backend was asked the same question,
+counted, at 1600, 6400 and 25,600 rows (`compiled.exe work 1600 6400 25600`). Counted
+rather than timed, because what is being compared across sizes is an exponent and the
+counters are exact.
+
+| subject | ops `src/opt` @1600 | @6400 | @25,600 | what the row is |
+|---|---|---|---|---|
+| `item_deletion` | 723 | 3,082 | **12,702** | whole-row membership, flat against a scan |
+| `dependent_plugins` | 815 | 3,081 | **11,895** | quadratic source against a linear derived form |
+| `named_cache_lru_noevict` | 417 | 1,512 | **5,767** | the LRU subject with the order read removed |
+| `cluster` | 337 | 1,262 | **5,074** | bucketed reads |
+| `composite_key_decl` | 210 | 794 | **3,021** | a declared composite key |
+| `sat4j` | 145 | 572 | **2,234** | the third-party subject |
+| `named_cache_lru` | 2.21 | 2.26 | **2.25** | the order read: a CONSTANT, at every size |
+| `named_cache_lru_ordered` | 1.78 | 1.80 | **1.80** | the same, in its other configuration |
+| `user_search` | 2.07 | 2.09 | **2.05** | linear fallbacks blended with a flat read |
+
+**The ratio quadruples per 4x table wherever an exponent differs, and is flat wherever it
+does not.** Those are the two behaviours an asymptotic claim is made of, and they appear
+in one table on the same instrument: `item_deletion` 723 to 12,702 over a 16x table is
+15.6x, and `named_cache_lru` is 2.21 to 2.25 over the same span. A reader can check which
+rows are constants and which are exponents without taking our word for which is which.
+
+**The build column says the same thing about the write path.** The source's declared-key
+uniqueness guard is a scan, so building the table is O(n^2) there and one probe per row
+here: `keycloak`'s build ratio is 190x at 1600 rows, 670x at 6400 and **2,596x** at
+25,600. That is the cost the four declared-key subjects pay in the source and collect
+here, growing with the table.
+
 ## The originals, beside the optimizer's output
 
 `main.exe baseline` is the other comparison, and the more important one. Everything above

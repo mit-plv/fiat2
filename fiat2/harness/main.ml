@@ -62,7 +62,18 @@ let () =
   | _ :: "types" :: _ -> Codegen.run ()
   | _ :: "ops" :: _ -> Opcount.run ()
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
-  | _ :: "csv" :: rest -> Bench.csv (List.filter_map int_of_string_opt rest)
+  | _ :: "csv" :: rest ->
+      (* `only=a,b` restricts the subjects; anything else numeric is a size *)
+      let only =
+        List.concat_map
+          (fun a ->
+             match String.index_opt a '=' with
+             | Some i when String.sub a 0 i = "only" ->
+                 String.split_on_char ','
+                   (String.sub a (i + 1) (String.length a - i - 1))
+             | _ -> [])
+          rest in
+      Bench.csv ~only (List.filter_map int_of_string_opt rest)
   | _ :: "timing" :: rest -> Bench.timing rest
   | _ :: "baseline" :: rest ->
       Bench.baseline (List.filter_map int_of_string_opt rest)

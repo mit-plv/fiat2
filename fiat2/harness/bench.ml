@@ -253,8 +253,19 @@ let exp_str (f : fitted option) : string =
    is in the table.  Nothing here is derived -- the exponents in the table
    are computed from exactly these numbers. *)
 
-let csv (sizes : int list) =
+(* A SUBJECT FILTER, which exists for one reason: the asymptotic claim wants
+   the widest table it can get, and one subject costs more than all the others
+   together.  dependent_plugins's source is quadratic -- that is the point of
+   it -- so the whole run grows as n^1.9 and 12800 rows would be fifty minutes
+   of which that subject is most.  `csv only=<name>,<name> 3200 6400` measures
+   a named few, so the large sizes can be reached for the 21 subjects whose
+   source is linear and the quadratic one kept to sizes where it is affordable.
+   Naming no subject measures all of them, as before. *)
+let csv ?(only : string list = []) (sizes : int list) =
   let sizes = if sizes = [] then default_sizes else sizes in
+  let subjects =
+    if only = [] then subjects
+    else List.filter (fun ((n, _), _) -> List.mem n only) subjects in
   print_string
     "subject,kind,program,rows,work,data_work,steps,overhead,cmps,hashing,\
      strings,fields,rows_touched\n";

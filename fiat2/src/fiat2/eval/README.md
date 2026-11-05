@@ -227,12 +227,6 @@ is. The delete there is 906x and goes from `a` = 1.02 to `a` = -0.01, and the ro
 erased across BOTH writes, so the table is its index through an insert and a delete
 alike.
 
-**A caveat on the exponent table below**: its base count was taken when it was written
-and the harness now measures 56 op kinds across 14 programs, so the totals in it are
-stale by more than the rows added since. The per-subject numbers in each file's own
-header are generated fresh and are the ones to trust; regenerating this table is a
-separate pass.
-
 **What the order asks for** -- `Kafka_WindowStore`. The only file whose index is
 `Ranged`, and so the only one that obliges a backend to provide a structure that can
 answer a key range; every other member in these files may be a hash table. Kafka made
@@ -636,7 +630,7 @@ running the produced programs, which happens outside this directory: `Extract.v`
 the terms to OCaml and the harness beside them evaluates them over generated workloads.
 How the evaluator is built, and what it assumes, is documented where it lives; the two
 things worth repeating here are that the evaluator is checked against the Gallina
-interpreter on all eighteen programs over 300 configurations, and that every run compares
+interpreter on all twenty-two programs over 1200 configurations, and that every run compares
 the source program's final store against the optimized one's, so each measurement is
 also a concrete witness of that subject's soundness theorem on that input.
 
@@ -649,20 +643,43 @@ reported elsewhere play no part here. Wall-clock seconds are printed alongside, 
 as a check that the counters have the right shape: they time a tree-walking interpreter
 over an extracted AST, so their constants say nothing about a backend.
 
-Each op kind is measured at six sizes -- 50, 100, 200, 400, 800, 1600 -- and what is
+Each op kind is measured at six sizes -- 50, 100, 200, 400, 800, 1600 -- with a
+further four, 3200 to 25,600, reported in their own section below, and what is
 reported is the exponent `a` in `cost ~ rows^a`, fitted by least squares on the logs. A
 ratio between two sizes would not settle the question it looks like it settles: over an
 8x range, `n` grows 8.0x and `n log n` grows 9.4x.
 
-Forty-six reads and writes across the twelve programs the harness runs -- the eleven
-files above plus `Ex_RangeDelete` -- by the exponent of their STEP count:
+**Eighty-seven** reads and writes across the **twenty-two** programs the harness runs,
+by the exponent of their STEP count. The twenty-two are eleven of the corpus files above
+-- `Kafka_NamedCache` in four configurations, since its LRU program is a second subject
+and is measured with and without eviction -- plus six `Ex_` regression files. Three
+corpus files are **not** measured at all: `Kafka_ConsumerProtocol`,
+`Netbox_ChangelogRetention` and `Netbox_TemplateExtensions`, the three order-observing
+subjects, which have a verified optimized form and no runtime number.
+
+This table is generated from `main.exe csv`, one row per (subject, kind, program, size),
+and fitted by a script rather than counted by hand -- which is why it is now right. The
+version it replaces said "46 reads and writes across 12 programs" and had been stale in
+its denominators for longer than its own caveat admitted.
 
 | | source | optimized |
 |---|---|---|
-| **quadratic**, `a` = 2.00 | **1 of 46** | 0 of 46 |
-| linear in the table, `a` = 0.87 to 1.05 | 39 of 46 | 4 of 46 |
-| independent of it, `a` = -0.01 to 0.02 | 6 of 46 | 41 of 46 |
-| sublinear, `a` = 0.19 | 0 of 46 | 1 of 46 |
+| **quadratic**, `a` = 2.00 | **1 of 87** | 0 of 87 |
+| linear in the table, `a` = 0.87 to 1.46 | 78 of 87 | 12 of 87 |
+| sublinear, `a` = 0.11 to 0.15 | 0 of 87 | 2 of 87 |
+| independent of it, `a` = -0.01 to 0.02 | 8 of 87 | **73 of 87** |
+
+**The twelve that still grow in the optimized column are four groups, and only one of
+them is a cost.** Eight are the LRU program's order-observing operations -- `delete`,
+`evict`, `getTouch` and `put` in each of its two order-reading configurations -- which is
+the price of reading row position and is the finding of that subject rather than a defect
+in this one. Two are `Jenkins_UserSearch`'s guarded fallbacks, linear because a substring
+match has to look at every row. One is `Jenkins_DependentPlugins`'s `resolveAll` at
+`a` = 1.00, which is quadratic-to-linear and optimal for a method that answers one
+question per plugin. The twelfth is the only genuine gap: `Ex_MinDelete`'s `deleteMin` at
+`a` = 0.95, which recomputes the minimum by scanning -- `rows_touched` says so exactly,
+511,790 rows at 25,600 for twenty operations -- and which a rule reading the minimum out
+of the index would make flat.
 
 The quadratic row is new and is the only one of its kind:
 `Jenkins_DependentPlugins`'s `resolveAll`, which is
@@ -680,24 +697,25 @@ implementation that answers all of them is linear however the inner lookup is
 done. What the optimizer removes is the inner scan, and the exponent it
 removes is the one that came from the nesting.
 
-Ten of those forty-one are `Sat4j_LiteralStorage`, added last and the only subject whose
+Ten of those seventy-three are `Sat4j_LiteralStorage`, added last and the only subject whose
 query mix is not ours. **All ten go from linear to flat** -- the seven key reads, the
 whole-table count, and both writes -- which is the cleanest column in the table and is
 the reason to report the subject rather than only the rule it found. The low end of the
 source band, `a` = 0.87, is its `size()`, a whole-table count whose per-row cost carries
 a constant offset.
 
-Six in the source column do not grow in steps, and they are two different things.
-Four are genuinely O(1) writes -- `window_store/put`, `range_delete/insert`,
-`item_deletion/register` and `entity_registry/register` -- because a prepend is a
-prepend whether or not anything is indexed. The other two are `Jenkins_ItemDeletion`'s two membership reads, which are one
+Eight in the source column do not grow in steps, and they are two different things.
+Six are genuinely O(1) writes -- `window_store/put`, `range_delete/insert`,
+`item_deletion/register`, `entity_registry/register`, `composite_key/insert` and
+`min_delete/insert` -- because a prepend is a prepend whether or not anything is
+indexed. The other two are `Jenkins_ItemDeletion`'s two membership reads, which are one
 `OSetMem` step over a collection the step counter does not walk and whose cost is
 therefore entirely in COMPARISONS, at `a` = 1.22. That is not a blind spot in the
 instrument but where `count.ml` puts a tree operation's cost, and it is why the table
 below that subject reports comparisons.
 
-The forty-one independent ones in the optimized column are not merely flatter, they
-are flat: the
+The seventy-three independent ones in the optimized column are not merely flatter,
+they are flat: the
 Lookin membership test, to take one, costs **exactly 300 steps at every one of the six
 sizes**. Their comparison counts are where the index shows through, at `a` = 0.08 to
 0.31, which is `log n` appearing as the weak power law it is -- the same subject's
@@ -706,8 +724,10 @@ across twenty queries. Three of the forty-one do no comparisons at all (`a` = 0.
 `getRequiredActionProviderList`'s count, `sizeInBytes` and `sat4j/size`, which are
 maintained aggregates and so are field reads, cheaper than a probe.
 
-**The three that still grow are the interesting column, and every one of them is a correct
-answer rather than a cost.** Their exponents are 0.98, 0.98 and 0.19.
+**Of the fourteen that still grow or bend, eleven are a correct answer rather than a
+cost** -- the eight order-observing LRU operations, the two substring fallbacks and the
+quadratic-to-linear join. The exceptions are named in the table above and immediately
+below.
 
 One entry has left this list since it was written, and it left the way the two at the end
 of this section did -- a rule named in the note that described it. `HA_EntityRegistry`'s
@@ -726,8 +746,14 @@ from 32x to **340x** against its scan form.
   be erased. The price is one extra linear pass per query -- `ODictValues` producing the
   member's values -- measured at 32,180 steps for 20 queries over 1600 rows, exactly one
   pass each, or 14% on top of the source's own scan. The comparison counts stay flat.
-* `Jenkins_UserSearch`'s `suggest`, `a` = 0.19 -- sublinear, and it is the answer growing
-  rather than the search: a three-character token matches more of a larger table.
+* `Jenkins_UserSearch`'s `suggest`, `a` = 0.15 in steps and 0.30 in data work over the
+  six sizes -- sublinear, and it is the answer growing rather than the search: a
+  three-character token matches more of a larger table. **This is the one row the larger
+  sizes revised, and it is revised downward**: fitted over 3200 to 25,600 rows its data
+  work is `a` = 1.39, not 0.30, because the candidate bucket it rechecks grows with the
+  table while the source's scan grows linearly. Its advantage therefore peaks and
+  erodes -- 82x at 1600 rows, 92x at 3200, then 78x, 51x and 47.6x at 25,600. See the
+  section below; nothing else in this table moved.
 
 Two entries have left this list, and both left the same way -- a rule named in the note
 that described them.
@@ -775,6 +801,64 @@ program builds. An earlier version of that file introduced the table with
 the component the table then stayed empty at every n, and the subject could not be
 measured at all. The fix was to model the input as an input, which is what
 `Kafka_Cluster` -- immutable for the same reason -- already did.
+
+### At sixteen times the table
+
+Every number above this was taken at 1600 rows or below, which was the one place prior
+work reached further than we did: Fiat's single benchmarked example ran to 20,000 books.
+So the ladder was extended to **3200, 6400, 12,800 and 25,600 rows** -- sixteen times the
+old top size -- for the twenty-one subjects whose source is linear. The quadratic subject
+was taken to 3200 alone, because the whole run grows as `n^1.9` and its share of that is
+most of it; the full large ladder cost three hours of CPU.
+
+**The exponents hold.** Of 172 fitted series, 168 sit in the same bucket over 3200-25,600
+as over 50-1600. The source column is 78 linear and 8 flat in both ranges; the optimized
+column is 56 flat, 18 log-ish, 11 linear and 1 sublinear against 54, 21, 11 and 1. Four
+series moved by 0.15 or more, and two of those are `keyed_two_deletes/deleteAtFloor`
+moving *toward* its asymptote -- source 1.46 to 1.01, optimized 0.31 to 0.09 -- which is
+a small-size constant washing out, the expected direction.
+
+**The speedup grows with the table, which is what an exponent difference means.** Across
+86 kinds measured at both 1600 and 25,600 rows, the median `src/opt` grew by **14.6x**
+for a 16x table; 67 of the 86 grew by more than 1.3x and only 2 shrank. At 25,600 rows
+the reads are: `item_deletion/containsMiss` **28,491x**, `cluster/forTopic` 16,278x,
+`entity_registry/getEntityId` 15,632x, `sat4j/findRecord` 16,001x,
+`composite_keyed_delete/readAtKey` 12,181x. `Jenkins_DependentPlugins`'s `resolveAll`,
+measured at 3200, reads **1936x** against 968x at 1600 -- exactly double for a doubled
+table, which is the quadratic-to-linear claim confirmed at a second size rather than
+asserted from one.
+
+**The index-maintenance tax is a constant, not a growing one.** The rows where the
+optimized program is *slower* are writes, and they stay where they were: `item_deletion`'s
+`register` 0.1x at both sizes, `range_delete/insert` 0.2x to 0.1x, `window_store/put`
+0.3x, `min_delete/insert` 0.3x, `composite_key/insert` 0.4x. Sixteen times the table does
+not make them worse, which is the statable form of the trade -- a bounded multiple on a
+write buys an unbounded factor on a read.
+
+**The one erosion, and why it is not a general one.** `user_search/suggest` is the only
+read whose advantage shrinks: 82x at 1600, peaking at 92x at 3200, then 78x, 51x and
+47.6x at 25,600. The components say where it goes -- `rows_touched` 120 to 1268 and
+character comparisons 2167 to 73,386 -- so the cost is rechecking a candidate bucket that
+grows with the table. A trigram bucket is the one bucket in `gen.ml` that is **not**
+bounded by construction: the generator's names are `user%04d`, so their trigrams are drawn
+from a ten-symbol alphabet and a given trigram matches a constant fraction of any table.
+Real text has a far larger trigram vocabulary, and `suggestLong`'s three-trigram
+intersection shows the other side of the same effect -- flat to 6400 rows and still 160x
+at 25,600. So the honest statement is that this subject's advantage depends on the
+selectivity of the token against the data, which is a property of the workload and is
+exactly what `pg_trgm` tunes for; the measurement to add is the name alphabet, not a
+larger table.
+
+**And one instrument was caught by the larger sizes.** `Ex_MinDelete`'s `deleteMin` reads
+`a` = 0.08 in data work and `a` = 0.95 in steps, because it recomputes the minimum by
+folding over the table and a fold that compares values rather than keys barely crosses
+the data-structure boundary that `data_work` charges for. `rows_touched` settles it:
+511,790 rows for twenty operations at 25,600. Auditing all 87 kinds for that signature --
+`rows_touched` linear while data work is flat -- finds **exactly one**, this one. So the
+blind spot is real, bounded, and in the opposite direction from the one that key work had
+on `window_store/fetchAll`: no single column is sufficient, and the aggregate table above
+is therefore reported on steps.
+
 
 ## Against the originals' own structures
 
