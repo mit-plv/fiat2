@@ -1258,6 +1258,106 @@ Section WithIndexUse.
                 apply H_all; exact H_g. } }
       Qed.
 
+      (* ----------------------------------------------------------------
+         THE THRESHOLD RULE'S CANDIDATE POOL.
+
+         dyn_cands' narrows by intersection; this widens by union.  Same
+         bucket set, same bridge, one constructor apart -- and the
+         characterisation flips an "every" into a "some", which is exactly
+         the difference between a substring query and a threshold one.
+         ---------------------------------------------------------------- *)
+      Definition thr_cands (p : expr) : expr :=
+        EOptMatch (EACIFold AGUnion (tri_buckets p))
+          (EAtom (AEmptySet None)) b (EVar b).
+
+      Lemma interp_thr_cands :
+        forall (store env : locals) (p : expr) (pv : string)
+               (td : list (value * value)),
+          interp_expr store env tri_e = VDict td ->
+          Forall (fun e : value * value =>
+                    match snd e with VSet _ => True | _ => False end) td ->
+          interp_expr store env p = VString pv ->
+          (3 <= String.length pv)%nat ->
+          exists cl,
+            interp_expr store env (thr_cands p) = VSet cl /\
+              (forall v, In v cl <->
+                           (exists g, In g (trigrams pv) /\
+                                      In v (tri_bucket (VString g) (VDict td)))).
+      Proof.
+        intros store env p pv td E_tri H_sets E_p H_len.
+        destruct (union_all_chara (bucket_set pv (VDict td))
+                    (bucket_set_not_nil _ _ H_len)
+                    (bucket_set_VSet _ _)) as [ cl [ E_ua H_cl ] ].
+        exists cl; split.
+        1:{ unfold thr_cands.
+            rewrite interp_EOptMatch, interp_EACIFold,
+              (interp_tri_buckets store env p pv td E_tri H_sets E_p).
+            unfold union_all in E_ua.
+            cbn [interp_aci_aggr fst snd] in E_ua |- *.
+            rewrite E_ua, interp_EVar.
+            unfold get_local; rewrite map.get_put_same. reflexivity. }
+        1:{ intros v; rewrite H_cl; split.
+            1:{ intros [ l' [ H_in H_v ] ].
+                apply In_bucket_set_inv in H_in as [ g [ H_g E_l ] ]; subst l'.
+                exists g; split; [ exact H_g | exact H_v ]. }
+            1:{ intros [ g [ H_g H_v ] ].
+                exists (tri_bucket (VString g) (VDict td)); split;
+                  [ apply In_bucket_set; exact H_g | exact H_v ]. } }
+      Qed.
+
+      (* ----------------------------------------------------------------
+         HOW MANY OF THE PATTERN'S TRIGRAMS HOLD A GIVEN KEY: the ntrue of
+         gin_trgm_consistent, asked of the index rather than of the row.
+
+         The trigrams are DEDUPLICATED, and here that is correctness and
+         not the saved probe it is for the intersection: the Jaccard
+         predicate counts a trigram once however often it occurs, so a
+         pattern repeating one would inflate the count and admit rows the
+         predicate rejects.  OSetOfList is what deduplicates.
+         ---------------------------------------------------------------- *)
+      Definition thr_count (p : expr) : expr :=
+        EUnop OSetSize
+          (flatmap_filter_set (EUnop OSetOfList (EUnop OTrigrams p)) cgram
+             (EBinop OSetMem (tri_bucket_e (EVar cgram)) (EVar k))
+             cgram None None).
+
+      Definition count_set (pv : string) (d kv : value) : list value :=
+        list_to_set
+          (filter (fun gv => set_mem kv (tri_bucket gv d))
+             (list_to_set (List.map VString (trigrams pv)))).
+
+      Lemma interp_thr_count :
+        forall (store env : locals) (p : expr) (pv : string) (kv : value)
+               (td : list (value * value)),
+          cgram <> k ->
+          interp_expr store env tri_e = VDict td ->
+          Forall (fun e : value * value =>
+                    match snd e with VSet _ => True | _ => False end) td ->
+          interp_expr store env p = VString pv ->
+          map.get env k = Some kv ->
+          interp_expr store env (thr_count p)
+          = VInt (Z.of_nat (List.length (count_set pv (VDict td) kv))).
+      Proof.
+        intros store env p pv kv td H_ne E_tri H_sets E_p E_k.
+        unfold thr_count, count_set.
+        rewrite interp_EUnop, interp_flatmap_filter_set,
+          interp_EUnop, interp_EUnop, E_p.
+        cbn [interp_unop].
+        do 4 f_equal.
+        apply filter_ext; intros gv.
+        assert (H_tri' : interp_expr store (map.put env cgram gv) tri_e = VDict td).
+        1:{ rewrite (interp_tbl_access_env_irrel store _ env aux_tag tri_tag).
+            exact E_tri. }
+        rewrite interp_EBinop.
+        rewrite (interp_tri_bucket_e store _ _ gv td
+                   ltac:(rewrite interp_EVar; unfold get_local;
+                         rewrite map.get_put_same; reflexivity)
+                   H_tri' H_sets).
+        rewrite interp_EVar; unfold get_local.
+        rewrite map.get_put_diff by congruence.
+        rewrite E_k. cbn [interp_binop]. reflexivity.
+      Qed.
+
       (* ==================================================================
          The all-trigram rule.
 
