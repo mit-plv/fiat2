@@ -203,7 +203,21 @@ let () =
              (* and `only=a,b`, which narrows every table to those subjects *)
              match Timing.only_of_string a with
              | Some ns -> Timing.only := ns; false
-             | None -> true))
+             | None -> (
+                 (* and the WORKLOAD parameters, which main.exe already
+                    takes and this executable did not: without them a
+                    compiled table could not be taken under the same
+                    workload as a counted one, so the two instruments
+                    would be measuring different experiments. *)
+                 match Gen.names_of_string a with
+                 | Some m -> Gen.names_mode := m; false
+                 | None -> (
+                     match Gen.titles_of_string a with
+                     | Some m -> Gen.titles_mode := m; false
+                     | None -> (
+                         match Gen.words_of_string a with
+                         | Some w -> Gen.title_words := w; false
+                         | None -> true)))))
       (Array.to_list Sys.argv) in
   match argv with
   | _ :: "time" :: rest ->
