@@ -5,7 +5,7 @@ Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.HA_EntityRegistry
-  fiat2.eval.Jenkins_UserSearch
+  fiat2.eval.Jenkins_UserSearch fiat2.eval.Wagtail_FuzzySearch
   fiat2.Ex_RangeDelete fiat2.Ex_Inventory fiat2.Ex_Sum fiat2.Ex_SumDelete
   fiat2.Ex_CompositeKey fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
   fiat2.Ex_MinDelete fiat2.Ex_Range fiat2.Ex_FlagFilter fiat2.Ex_Orders
@@ -41,6 +41,7 @@ Module CKD := Ex_CompositeKeyedDelete.
 Module CKDecl := Ex_CompositeKeyDecl.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
+Module WFS := Wagtail_FuzzySearch.
 Module JID := Jenkins_ItemDeletion.
 
 (* ---------- the constrained subjects: the annotation itself ---------- *)
@@ -129,6 +130,32 @@ Lemma jenkins_user_search :
     (JU.elaborated JU.decls)
   = JU.anno.
 Proof. vm_compute; reflexivity. Qed.
+
+(* The THRESHOLD read over the same index, and the demand that reaches it.
+
+   No operator announces this read: OTrigrams is applied to the query and to
+   the fold's word binder, never to the attribute, so DSubstr's one-line
+   pattern cannot see it and neither can any pattern over OTrigrams and the
+   attribute.  What `trigram_demand` reads instead is the pair of operators
+   the read applies to the attribute -- it SPLITS THE ATTRIBUTE INTO WORDS
+   and it COMPUTES TRIGRAMS -- which is the index's own body and says nothing
+   about the threshold, the Jaccard formula, the padding, the per-word fold
+   or any binder name.
+
+   It is consulted LAST, after every other demand and after the conjunct
+   descent, so no pick above this line changes. *)
+Lemma wagtail_fuzzy_search :
+  select_anno (("entries", (WFS.row_ty, WFS.decls)) :: cenv_rm "entries" [])
+    "entries" O (WFS.elaborated WFS.decls)
+  = WFS.anno.
+Proof. vm_compute; reflexivity. Qed.
+
+(* and the substring read keeps the demand it had, from the operator *)
+Lemma the_substring_read_still_reads_as_a_substring :
+  pred_demand "r" (EBinop OStrContains (EAccess (EVar "r") "fullName")
+                     (EAccess (EVar "q") "k"))
+  = Some (DSubstr "fullName").
+Proof. reflexivity. Qed.
 
 (* ---------- the unconstrained subjects ---------- *)
 

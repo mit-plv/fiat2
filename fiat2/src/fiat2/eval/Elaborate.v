@@ -8,6 +8,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
+  fiat2.eval.Wagtail_FuzzySearch
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
   fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
   fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
@@ -58,6 +59,7 @@ Module AR := HA_AreaRegistry.
 Module ER := HA_EntityRegistry.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
+Module WFS := Wagtail_FuzzySearch.
 Module KCl := Kafka_Cluster.
 Module KWS := Kafka_WindowStore.
 Module JID := Jenkins_ItemDeletion.
@@ -143,6 +145,8 @@ Section WithConcreteMaps.
   Definition ce_nc : cenv := ("cache", (NC.row_ty, NC.decls)) :: cenv_rm "cache" [].
   Definition ce_ar : cenv := ("areas", (AR.row_ty, AR.decls)) :: cenv_rm "areas" [].
   Definition ce_ju : cenv := ("users", (JU.row_ty, JU.decls)) :: cenv_rm "users" [].
+  Definition ce_wfs : cenv :=
+    ("entries", (WFS.row_ty, WFS.decls)) :: cenv_rm "entries" [].
   Definition ce_ckd : cenv := ("items", (CKD.row_ty, CKD.decls)) :: cenv_rm "items" [].
   Definition ce_ckdecl : cenv :=
     ("items", (CKDecl.row_ty, CKDecl.decls)) :: cenv_rm "items" [].
@@ -184,6 +188,9 @@ Section WithConcreteMaps.
     ; mk_subj "user_search" ce_ju "users"
         JU.init_Gstore JU.init_Genv
         X.user_search_src X.user_search_src X.user_search_opt
+    ; mk_subj "fuzzy_search" ce_wfs "entries"
+        WFS.init_Gstore WFS.init_Genv
+        X.fuzzy_search_src X.fuzzy_search_src X.fuzzy_search_opt
     ; mk_subj "cluster" [] "partitions"
         KCl.init_Gstore KCl.init_Genv
         X.cluster_src X.cluster_src X.cluster_opt
@@ -259,7 +266,7 @@ Section WithConcreteMaps.
   Theorem every_optimized_program_elaborates : still_failing = [].
   Proof. vm_compute; reflexivity. Qed.
 
-  Lemma how_many_subjects : List.length checks = 22.
+  Lemma how_many_subjects : List.length checks = 23.
   Proof. reflexivity. Qed.
 
   (* ------------------------------------------------------------------

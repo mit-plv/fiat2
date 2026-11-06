@@ -305,14 +305,6 @@ Definition subjects : list (string * command * command) :=
   ; ("area_registry", area_registry_src, area_registry_opt)
   ; ("lookin", lookin_src, lookin_opt)
   ; ("user_search", user_search_src, user_search_opt)
-  (* Its choice list is HAND-WRITTEN, unlike every other entry here, and
-     that is a fact about the selector rather than about the rule: the
-     demand language has no threshold demand, so select_choices asks for
-     [UniqueDictIdx "id"] on this program where it asks for
-     [TrigramIdx "fullName" "id"] on user_search.  So this subject
-     measures a rewrite the framework VERIFIES, not one it FINDS, and it
-     is deliberately absent from eval/Elaborate.v's selector-checked list
-     for the same reason the 18 alternative configurations are. *)
   ; ("fuzzy_search", fuzzy_search_src, fuzzy_search_opt)
   ; ("cluster", cluster_src, cluster_opt)
   ; ("entity_registry", entity_registry_src, entity_registry_opt)

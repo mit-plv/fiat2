@@ -75,6 +75,9 @@ Variant demand :=
   | DRange (attr : string)   (* range_filter_to_dict_range, and the two
                                 range-shaped write rules *)
   | DSubstr (attr : string)  (* trigram_lookup_guarded *)
+  | DSimilar (attr : string) (* thr_lookup: a THRESHOLD read over the same
+                                index, which no operator announces -- see
+                                trigram_demand below for what does *)
   | DDelKey (key : string)   (* a write that keeps the rows an equality
                                 does NOT match: filter_neq_to_delete,
                                 filter_neq_to_unique_delete,
@@ -201,6 +204,100 @@ Definition composite_attrs (x : string) (p : expr) : option (list string) :=
   | None => None
   end.
 
+(* ---------- a trigram-shaped read, read off the operators ----------
+
+   DSubstr is detected from the OStrContains OPERATOR in one line.  A
+   threshold-similarity predicate offers no such operator: it is an
+   ELet/EFold term whose dependence on the row runs through OWords, a
+   fold's word binder, padding and OTrigrams.  In particular OTrigrams is
+   NEVER applied to the attribute -- it is applied to the QUERY and to the
+   word binder -- so no pattern over OTrigrams and the attribute sees it.
+
+   So this demand is detected the same way DSubstr is, from the operators
+   the read applies to the attribute, and not from the shape of the
+   predicate around them:
+
+     the read SPLITS THE ATTRIBUTE INTO WORDS, and it COMPUTES TRIGRAMS.
+
+   That is the index's own body -- TrigramIndexImpl keys on the trigrams of
+   each padded word of the attribute -- and it is all this says.  It says
+   nothing about the threshold, the Jaccard formula, the padding, the
+   per-word fold or any binder name, so a read with another threshold,
+   another aggregation or another arrangement of the same arithmetic is
+   detected too.
+
+   It over-approximates on purpose.  A demand only OFFERS a candidate, and
+   an index installed but never read is dropped by PruneDeadIndexes and the
+   pipeline re-run, so a candidate too many costs a measurement rather than
+   a wrong program.
+
+   The one limit is DSubstr's limit too: the read has to use the language's
+   operator.  A hand-rolled trigram extraction -- which Ex_TrigramSimilarity
+   keeps deliberately, as an expressibility witness -- is not detected. *)
+
+Definition or_opt (o1 o2 : option string) : option string :=
+  match o1 with Some a => Some a | None => o2 end.
+
+(* which attribute of the row x, if any, this expression splits into words *)
+Fixpoint words_attr (x : string) (e : expr) : option string :=
+  match e with
+  | EVar _ | ELoc _ | EAtom _ => None
+  | EUnop _ e1 => words_attr x e1
+  | EBinop o e1 e2 =>
+      or_opt
+        (match o, e2 with
+         | OWords, EAccess (EVar x1) a =>
+             if String.eqb x x1 then Some a else None
+         | _, _ => None
+         end)
+        (or_opt (words_attr x e1) (words_attr x e2))
+  | ETernop _ e1 e2 e3 =>
+      or_opt (words_attr x e1) (or_opt (words_attr x e2) (words_attr x e3))
+  | EIf e1 e2 e3 =>
+      or_opt (words_attr x e1) (or_opt (words_attr x e2) (words_attr x e3))
+  | ELet e1 _ e2 => or_opt (words_attr x e1) (words_attr x e2)
+  | EFlatmap _ e1 _ e2 => or_opt (words_attr x e1) (words_attr x e2)
+  | EFold e1 e2 _ _ e3 =>
+      or_opt (words_attr x e1) (or_opt (words_attr x e2) (words_attr x e3))
+  | EACFold _ e1 => words_attr x e1
+  | EACIFold _ e1 => words_attr x e1
+  | ERecord l =>
+      fold_right (fun p acc => or_opt (words_attr x (snd p)) acc) None l
+  | EAccess e1 _ => words_attr x e1
+  | EOptMatch e1 en _ es =>
+      or_opt (words_attr x e1) (or_opt (words_attr x en) (words_attr x es))
+  | ESort _ l => words_attr x l
+  end.
+
+(* and does it compute trigrams at all *)
+Fixpoint uses_trigrams (e : expr) : bool :=
+  match e with
+  | EVar _ | ELoc _ | EAtom _ => false
+  | EUnop o e1 =>
+      (match o with OTrigrams => true | _ => false end) || uses_trigrams e1
+  | EBinop _ e1 e2 => uses_trigrams e1 || uses_trigrams e2
+  | ETernop _ e1 e2 e3 => uses_trigrams e1 || uses_trigrams e2 || uses_trigrams e3
+  | EIf e1 e2 e3 => uses_trigrams e1 || uses_trigrams e2 || uses_trigrams e3
+  | ELet e1 _ e2 => uses_trigrams e1 || uses_trigrams e2
+  | EFlatmap _ e1 _ e2 => uses_trigrams e1 || uses_trigrams e2
+  | EFold e1 e2 _ _ e3 => uses_trigrams e1 || uses_trigrams e2 || uses_trigrams e3
+  | EACFold _ e1 => uses_trigrams e1
+  | EACIFold _ e1 => uses_trigrams e1
+  | ERecord l => existsb (fun '(_, e1) => uses_trigrams e1) l
+  | EAccess e1 _ => uses_trigrams e1
+  | EOptMatch e1 en _ es =>
+      uses_trigrams e1 || uses_trigrams en || uses_trigrams es
+  | ESort _ l => uses_trigrams l
+  end.
+
+Definition trigram_demand (x : string) (p : expr) : option demand :=
+  if uses_trigrams p
+  then match words_attr x p with
+       | Some a => Some (DSimilar a)
+       | None => None
+       end
+  else None.
+
 Definition indexable (x : string) (p : expr) : option demand :=
   match range_attr x p with
   | Some a => Some (DRange a)
@@ -229,8 +326,14 @@ Fixpoint pred_demand (x : string) (p : expr) : option demand :=
   | Some d => Some d
   | None =>
       match p with
-      | EBinop OAnd p1 _ => pred_demand x p1
-      | _ => None
+      | EBinop OAnd p1 _ =>
+          (* the conjunct first, then the whole predicate: a read that one
+             of the other demands matches keeps that demand *)
+          match pred_demand x p1 with
+          | Some d => Some d
+          | None => trigram_demand x p
+          end
+      | _ => trigram_demand x p
       end
   end.
 
@@ -615,6 +718,7 @@ Definition dict_of_demand (keys : list string) (ds : list demand) (d : demand)
   | DEq a => Some (if str_mem a keys then UniqueDictIdx a else DictIdx a)
   | DRange a => Some (RangedDictIdx a)
   | DSubstr a => match keys with k :: _ => Some (TrigramIdx a k) | [] => None end
+  | DSimilar a => match keys with k :: _ => Some (TrigramIdx a k) | [] => None end
   (* A delete that filters on an attribute is maintained in ONE bucket by a
      structure bucketed on that attribute -- filter_neq_to_delete for the
      plain dictionary, filter_neq_to_unique_delete for the declared one --
