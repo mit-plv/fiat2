@@ -2000,6 +2000,138 @@ Section WithIndexUse.
         apply sim_test_true__nat; exact H_test.
       Qed.
 
+      (* ----------------------------------------------------------------
+         THE EMITTED RECHECK.
+
+         probe_from with the threshold predicate in place of OStrContains:
+         turn each candidate key back into its row, and keep the row only if
+         it really passes.  Like the substring recheck this needs NO typing
+         hypothesis -- a row whose attribute is not a string makes the fold
+         over words fold over nothing, so the predicate is not a boolean, the
+         EIf yields VUnit, and a non-set body contributes nothing.  That is
+         the same reason contains_test needed none.
+         ---------------------------------------------------------------- *)
+      Definition sim_row_test (tn tdz : Z) (pv : string) (r : value) : bool :=
+        match row_key attr r with
+        | VString s => existsb (fun w => sim_test tn tdz (pad pv) (pad w))
+                         (words seps s)
+        | _ => false
+        end.
+
+      Definition thr_probe (tn tdz : Z) (cand p : expr) : expr :=
+        EFlatmap LikeSet cand k
+          (EOptMatch (EBinop OLookup pk_e (EVar k)) (EAtom (AEmptySet None))
+             y (EIf (sim_any_e tn tdz (EAccess (EVar y) attr) p)
+                  (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar y))
+                  (EAtom (AEmptySet None)))).
+
+      (* Off a non-string the predicate is not a boolean.  Stated at the
+         VALUE the text takes, so the caller destructs once and this covers
+         every non-string case at a stroke. *)
+      Lemma interp_sim_any_e_unit :
+        forall (store env : locals) (tn tdz : Z) (text p : expr) (tv : value),
+          (forall qv av,
+              interp_expr store (map.put (map.put env qsv qv) aqv av) text = tv) ->
+          (forall s, tv <> VString s) ->
+          interp_expr store env (sim_any_e tn tdz text p) = VUnit.
+      Proof.
+        intros store env tn tdz text p tv E_text H_ns.
+        unfold sim_any_e.
+        rewrite interp_ELet_step, interp_ELet_step, interp_EFold,
+          interp_EBinop, interp_EAtom, (E_text _ _).
+        cbn [interp_atom].
+        destruct tv as [ | | s | | | | | | | ]; cbn [interp_binop];
+          try reflexivity.
+        exfalso; apply (H_ns s); reflexivity.
+      Qed.
+
+      Lemma interp_thr_probe :
+        forall (store env : locals) (tn tdz : Z) (cand p : expr)
+               (cl : list value) (pv : string) (pd : list (value * value)),
+          pred_binders_ok ->
+          y <> qsv -> y <> aqv ->
+          interp_expr store env cand = VSet cl ->
+          (forall (v r : value),
+              interp_expr store (map.put (map.put env k v) y r) p = VString pv) ->
+          interp_expr store env pk_e = VDict pd ->
+          interp_expr store env (thr_probe tn tdz cand p)
+          = VSet (list_to_set
+                    (flat_map
+                       (fun kk =>
+                          match dict_lookup kk pd with
+                          | Some r =>
+                              if sim_row_test tn tdz pv r then [r] else nil
+                          | None => nil
+                          end)
+                       cl)).
+      Proof.
+        intros store env tn tdz cand p cl pv pd H_ok H_yq H_ya E_cand E_p E_pk.
+        unfold thr_probe.
+        rewrite interp_EFlatmap_set, E_cand; cbv beta iota.
+        apply (f_equal (fun z : list value => VSet (list_to_set z))).
+        apply flat_map_pointwise; intros v.
+        rewrite interp_EOptMatch, interp_EBinop.
+        rewrite (interp_tbl_access_env_irrel store (map.put env k v) env
+                   aux_tag pk_tag).
+        rewrite E_pk, interp_EVar.
+        unfold get_local; rewrite map.get_put_same.
+        cbn [interp_binop].
+        destruct (dict_lookup v pd) as [ r | ].
+        2:{ rewrite interp_EAtom; cbn [interp_atom]; reflexivity. }
+        assert (E_acc : forall qv av,
+                   interp_expr store
+                     (map.put (map.put (map.put (map.put env k v) y r) qsv qv)
+                        aqv av)
+                     (EAccess (EVar y) attr)
+                   = row_key attr r).
+        1:{ intros qv av.
+            rewrite interp_EAccess, interp_EVar; unfold get_local.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_same.
+            unfold row_key. reflexivity. }
+        rewrite interp_EIf. unfold sim_row_test.
+        destruct (row_key attr r) as [ | | s | | | | | | | ].
+        3:{ rewrite (interp_sim_any_e store _ tn tdz
+                       (EAccess (EVar y) attr) p s pv H_ok (E_p v r) E_acc).
+            destruct (existsb (fun w => sim_test tn tdz (pad pv) (pad w))
+                        (words seps s)).
+            1:{ rewrite interp_EBinop, interp_EAtom, interp_EVar.
+                unfold get_local; rewrite map.get_put_same.
+                cbn [interp_atom interp_binop set_insert]. reflexivity. }
+            1:{ rewrite interp_EAtom; cbn [interp_atom]; reflexivity. } }
+        all: rewrite (interp_sim_any_e_unit store _ tn tdz
+                        (EAccess (EVar y) attr) p _ E_acc)
+               by (intros s'; discriminate).
+        all: reflexivity.
+      Qed.
+
+      (* And the bridge: at the primary-key index of a table, the recheck IS
+         probe_body_t at the threshold test, so probe_recheck_cands_eq_t
+         applies to it unchanged.  That lemma asks only for completeness of
+         the candidate list, which is why generalising it over the test was
+         worth doing rather than copying it. *)
+      Lemma interp_thr_probe_as_probe_body :
+        forall (store env : locals) (tn tdz : Z) (cand p : expr)
+               (cl rows : list value) (pv : string),
+          pred_binders_ok ->
+          y <> qsv -> y <> aqv ->
+          interp_expr store env cand = VSet cl ->
+          (forall (v r : value),
+              interp_expr store (map.put (map.put env k v) y r) p = VString pv) ->
+          interp_expr store env pk_e
+          = VDict (UniqueDictIndexImpl.idx_entries key rows) ->
+          interp_expr store env (thr_probe tn tdz cand p)
+          = VSet (list_to_set
+                    (flat_map
+                       (probe_body_t key (sim_row_test tn tdz pv) rows) cl)).
+      Proof.
+        intros store env tn tdz cand p cl rows pv H_ok H_yq H_ya E_cand E_p E_pk.
+        rewrite (interp_thr_probe store env tn tdz cand p cl pv _
+                   H_ok H_yq H_ya E_cand E_p E_pk).
+        reflexivity.
+      Qed.
+
       (* ==================================================================
          The all-trigram rule.
 
