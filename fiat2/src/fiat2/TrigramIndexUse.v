@@ -2913,6 +2913,7 @@ Section WithIndexUse.
                     && negb (free_immut_in k p0)
                     && negb (free_immut_in y p0)
                     && negb (String.eqb y q0) && negb (String.eqb y a0)
+                    && negb (String.eqb x0 q0) && negb (String.eqb x0 a0)
                     && (0 <? tn0)%Z && (0 <? tdz0)%Z)%bool
                 then thr_probe q0 a0 r0 n0 w0 c0 tn0 tdz0
                        (thr_keep tn0 tdz0 (padded_e p0)) p0
@@ -3101,6 +3102,280 @@ Section WithIndexUse.
                     1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
                     1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
                 1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf. } }
+      Qed.
+
+      (* ------------------------------------------------------------------
+         Three small, name-agnostic steps the semantics proof needs.
+
+         The rule's guard and the parser between them leave the SOURCE's own
+         binder names in the context under whatever name destruct_subexpr
+         gave them, and `subst` picks which of two equal names survives.  So
+         every step below is stated as a lemma over explicit parameters and
+         applied with `assumption`, rather than written inline against a name
+         the script would have to guess.
+         ------------------------------------------------------------------ *)
+      Lemma get_put_two_diff :
+        forall (env : locals) (x q a : string) (rw qv av : value),
+          String.eqb x q = false -> String.eqb x a = false ->
+          map.get (map.put (map.put (map.put env x rw) q qv) a av) x
+          = Some rw.
+      Proof.
+        intros env x q a rw qv av E_q E_a.
+        apply String.eqb_neq in E_q, E_a.
+        rewrite map.get_put_diff by congruence.
+        rewrite map.get_put_diff by congruence.
+        apply map.get_put_same.
+      Qed.
+
+      (* Reading the indexed attribute off the scan's binder is exactly
+         row_key -- including off a value that is not a record, where both
+         sides give VUnit.  That is what lets the predicate's two cases be
+         decided by row_key alone. *)
+      Lemma interp_row_access :
+        forall (store env : locals) (x : string) (rw : value),
+          map.get env x = Some rw ->
+          interp_expr store env (EAccess (EVar x) attr) = row_key attr rw.
+      Proof.
+        intros store env x rw E_x.
+        rewrite interp_EAccess, interp_EVar.
+        unfold get_local; rewrite E_x.
+        destruct rw; reflexivity.
+      Qed.
+
+      (* The source's filter IS sim_row_test, at every value the table can
+         hold -- a record whose attribute is a string by interp_sim_any_e, and
+         anything else by interp_sim_any_e_unit, where the predicate is not a
+         boolean at all and both sides are false. *)
+      Lemma sim_filter_pointwise :
+        forall (qsv aqv rsv cnum pwrd pacc : string)
+               (store env : locals) (x : string) (tn tdz : Z)
+               (p : expr) (pv : string) (rw : value),
+          pred_binders_ok qsv aqv rsv cnum pwrd pacc ->
+          String.eqb x qsv = false -> String.eqb x aqv = false ->
+          free_immut_in x p = false ->
+          interp_expr store env p = VString pv ->
+          match interp_expr store (map.put env x rw)
+                  (sim_any_e qsv aqv rsv cnum pwrd pacc tn tdz
+                     (EAccess (EVar x) attr) p) with
+          | VBool b => b
+          | _ => false
+          end
+          = sim_row_test tn tdz pv rw.
+      Proof.
+        intros qsv aqv rsv cnum pwrd pacc store env x tn tdz p pv rw
+          H_ok E_q E_a H_free E_p.
+        assert (E_px : interp_expr store (map.put env x rw) p = VString pv).
+        1:{ rewrite <- (not_free_immut_put_sem p x store env rw) by exact H_free.
+            exact E_p. }
+        assert (H_text : forall qv av,
+                   interp_expr store
+                     (map.put (map.put (map.put env x rw) qsv qv) aqv av)
+                     (EAccess (EVar x) attr) = row_key attr rw).
+        1:{ intros qv av. apply interp_row_access.
+            apply get_put_two_diff; assumption. }
+        destruct (row_key attr rw) as [ | | s | | | | | | | ] eqn:E_rk.
+        (* the destruct rewrites the attribute's value in H_text too, so in
+           each branch H_text already says what the text evaluates to *)
+        3:{ rewrite (interp_sim_any_e qsv aqv rsv cnum pwrd pacc store
+                       (map.put env x rw) tn tdz (EAccess (EVar x) attr) p
+                       s pv H_ok E_px H_text).
+            unfold sim_row_test; rewrite E_rk; reflexivity. }
+        all: erewrite (interp_sim_any_e_unit qsv aqv rsv cnum pwrd pacc store
+                         (map.put env x rw) tn tdz (EAccess (EVar x) attr) p);
+          [ unfold sim_row_test; rewrite E_rk; reflexivity
+          | exact H_text
+          | intros s0; discriminate ].
+      Qed.
+
+      (* ------------------------------------------------------------------
+         The threshold rule preserves semantics.
+
+         The shape is the substring rule's, and every piece it composes is
+         already proved:
+
+           interp_thr_keep                 the candidate list, filtered by
+                                           gin_trgm_consistent's own count test
+           interp_thr_probe_as_probe_body  the emitted side, as probe_body_t
+           sim_filter_pointwise            the source's filter, as sim_row_test
+           probe_recheck_cands_eq_t        candidates + recheck = the scan
+           sim_word_true__thr_complete     and the candidate list is COMPLETE
+
+         Only completeness is owed, never soundness: the recheck is the
+         source's own predicate, so a key the probe hands over that does not
+         pass is dropped by the very test the scan would have applied.
+
+         Unlike the substring rules this needs NO runtime guard on the
+         pattern.  pad_length says the padded pattern is at least three
+         characters whatever the pattern is, so it always has a trigram.
+         ------------------------------------------------------------------ *)
+      Lemma thr_lookup_head_preserve_sem :
+        forall tl rt (Gstore : tenv) (store : locals),
+          cgram <> k ->
+          access_record rt attr = Success TString ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success (TList (TRecord rt)) ->
+          match map.get store tbl with
+          | Some v =>
+              type_of_value v (TRecord tl) /\ tri_aux_wf_at v /\ unique_aux_wf_at v
+          | _ => False
+          end ->
+          preserve_sem Gstore store thr_lookup_head.
+      Proof.
+        unfold preserve_sem; intros * H_ck H_attr E_tbl E_id H_store.
+        intros e t Genv env H_Gs H_Ge H_t H_sw H_ew.
+        destruct (map.get store tbl) as [ v | ] eqn:E_v; [ | contradiction ].
+        destruct H_store as [ H_vty [ H_tri H_pk ] ].
+        destruct (invariants__probe_data tl rt v H_attr E_id H_vty H_tri H_pk)
+          as [ rv [ rv_aux [ rows [ td [ E_vrec [ E_rows [ E_aux
+             [ E_tri [ E_pk [ E_te [ H_sets H_nd ] ] ] ] ] ] ] ] ] ] ].
+        subst v.
+        repeat destruct_subexpr_keep_str.
+        unfold thr_lookup_head. cbv beta iota.
+        (* the predicate's shape, decided by the parser *)
+        lazymatch goal with
+        | |- interp_expr _ _ (match parse_sim_any ?pr with _ => _ end) = _ =>
+            destruct (parse_sim_any pr) as [ res | ] eqn:E_parse
+        end; [ | reflexivity ].
+        destruct res as
+          [[[[[[[[[[qb ab] rb] nb] wb] cb] tnum] tden] xrow] attrn] pat0].
+        apply parse_sim_any_Some in E_parse as [ E_pred H_ok ].
+        (* the rule's own guard *)
+        lazymatch goal with
+        | |- interp_expr _ _ (if ?g then _ else _) = _ => destruct g eqn:E_g
+        end; [ | reflexivity ].
+        cbn [all_eqb all_eqb' andb] in E_g.
+        repeat rewrite Bool.andb_true_iff in E_g.
+        repeat match goal with Hc : _ /\ _ |- _ => destruct Hc end.
+        repeat rewrite Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        rewrite E_pred.
+        (* the pattern is a string, and reads the same under every binder the
+           rewrite introduces *)
+        assert (H_pty : type_of Gstore Genv pat0 TString).
+        1:{ rewrite E_pred in H_t.
+            lazymatch goal with
+            | H : type_of _ _ (EFlatmap _ _ _ _) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            lazymatch goal with
+            | H : type_of _ _ (EIf _ _ _) _ |- _ =>
+                inversion H; clear H; subst
+            end.
+            lazymatch goal with
+            | H : type_of _ _ (sim_any_e _ _ _ _ _ _ _ _ _ _) _ |- _ =>
+                apply sim_any_e_ty_inv in H
+            end.
+            (* the typing hypothesis FIRST: three free_immut_in facts are in
+               context and only this one's binder is the scan's *)
+            eapply not_free_immut_put_ty; [ | eassumption ]; assumption. }
+        pose proof (type_sound Gstore Genv pat0 TString H_pty H_Gs H_Ge
+                      store env H_sw H_ew) as H_pval.
+        assert (H_pstr : exists pv, interp_expr store env pat0 = VString pv).
+        1:{ destruct (interp_expr store env pat0)
+              as [ | | pv | | | | | | | ] eqn:E_pv.
+            3: exists pv; reflexivity.
+            all: inversion H_pval. }
+        destruct H_pstr as [ pv E_pv ].
+        assert (E_ppv : interp_expr store env (padded_e pat0)
+                        = VString (pad pv))
+          by (apply interp_padded_e; exact E_pv).
+        assert (E_pad_k : forall kv,
+                   interp_expr store (map.put env k kv) (padded_e pat0)
+                   = VString (pad pv)).
+        1:{ intros kv. apply interp_padded_e.
+            erewrite <- not_free_immut_put_sem by eassumption. exact E_pv. }
+        assert (H_pv' : forall (v0 r0 : value),
+                   interp_expr store (map.put (map.put env k v0) y r0) pat0
+                   = VString pv).
+        1:{ intros v0 r0.
+            erewrite <- not_free_immut_put_sem by eassumption.
+            erewrite <- not_free_immut_put_sem by eassumption.
+            exact E_pv. }
+        (* the two members of the index record *)
+        assert (H_tri_e : interp_expr store env
+                            (EAccess (EAccess (ELoc tbl) aux_tag) tri_tag)
+                          = VDict td)
+          by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_tri ]).
+        assert (H_pk_e : interp_expr store env
+                           (EAccess (EAccess (ELoc tbl) aux_tag) pk_tag)
+                         = VDict (UniqueDictIndexImpl.idx_entries key rows))
+          by (eapply interp_tbl_field; [ exact E_v | exact E_aux | exact E_pk ]).
+        (* the candidate list: every bucket of every trigram of the PADDED
+           pattern, kept only where the count test passes *)
+        destruct (interp_thr_keep store env tnum tden (padded_e pat0)
+                    (pad pv) td H_ck H_tri_e H_sets E_pad_k E_ppv
+                    (pad_length pv))
+          as [ cl [ E_cands H_cl ] ].
+        (* completeness, which is all the recheck leaves to prove *)
+        assert (H_compl : forall (r0 : value),
+                   In r0 rows -> sim_row_test tnum tden pv r0 = true ->
+                   In (row_key key r0)
+                     (list_to_set
+                        (filter (fun kv =>
+                                   thr_test tnum tden (pad pv) (VDict td) kv)
+                           cl))).
+        1:{ intros r0 H_in H_test.
+            apply list_to_set_incl_r, filter_In.
+            unfold sim_row_test in H_test.
+            destruct (row_key attr r0) as [ | | s | | | | | | | ] eqn:E_rk;
+              try discriminate.
+            apply existsb_exists in H_test as [ w0 [ H_w0 H_sim ] ].
+            assert (E_str : TrigramIndexImpl.row_str attr r0 = s)
+              by (unfold TrigramIndexImpl.row_str; rewrite E_rk; reflexivity).
+            assert (H_tn : (0 < tnum)%Z)
+              by (lazymatch goal with
+                  | Hg : (0 <? tnum)%Z = true |- _ =>
+                      apply Z.ltb_lt in Hg; exact Hg
+                  end).
+            assert (H_td : (0 < tden)%Z)
+              by (lazymatch goal with
+                  | Hg : (0 <? tden)%Z = true |- _ =>
+                      apply Z.ltb_lt in Hg; exact Hg
+                  end).
+            assert (E_tn : Z.of_nat (Z.to_nat tnum) = tnum)
+              by (apply Z2Nat.id; lia).
+            assert (E_td : Z.of_nat (Z.to_nat tden) = tden)
+              by (apply Z2Nat.id; lia).
+            assert (H_w0' : In w0 (words seps (TrigramIndexImpl.row_str attr r0)))
+              by (rewrite E_str; exact H_w0).
+            assert (H_sim' : sim_test (Z.of_nat (Z.to_nat tnum))
+                               (Z.of_nat (Z.to_nat tden)) (pad pv) (pad w0)
+                             = true)
+              by (rewrite E_tn, E_td; exact H_sim).
+            assert (H_pos : 0 < Z.to_nat tnum) by lia.
+            destruct (sim_word_true__thr_complete rows r0 pv w0
+                        (Z.to_nat tnum) (Z.to_nat tden)
+                        H_in H_w0' H_sim' H_pos)
+              as [ H_bucket H_cnt ].
+            rewrite E_te in H_bucket, H_cnt.
+            split.
+            1: apply (proj2 (H_cl _)); exact H_bucket.
+            1:{ unfold thr_test.
+                apply Bool.negb_true_iff, Z.ltb_ge.
+                apply Nat2Z.inj_le in H_cnt.
+                rewrite !Nat2Z.inj_mul in H_cnt.
+                rewrite E_tn, E_td in H_cnt.
+                lia. } }
+        (* The SCAN side first.  filter_pointwise has to be applied while
+           the goal holds exactly one filter: once the emitted side is
+           rewritten it carries the candidate filter too, and the rewrite
+           picks that one. *)
+        rewrite interp_flatmap_filter_set, interp_ESetOf,
+          interp_EAccess, interp_ELoc.
+        unfold get_local; rewrite E_v; cbv beta iota.
+        rewrite E_rows; cbv beta iota.
+        erewrite filter_pointwise with (f2 := sim_row_test tnum tden pv).
+        2:{ intros rw. apply sim_filter_pointwise; assumption. }
+        (* the emitted side *)
+        rewrite (interp_thr_probe_as_probe_body qb ab rb nb wb cb store env
+                   tnum tden (thr_keep tnum tden (padded_e pat0)) pat0
+                   _ rows pv H_ok
+                   (ltac:(apply String.eqb_neq; assumption))
+                   (ltac:(apply String.eqb_neq; assumption))
+                   E_cands H_pv' H_pk_e).
+        rewrite (probe_recheck_cands_eq_t key rows (sim_row_test tnum tden pv)
+                   _ H_nd H_compl).
+        reflexivity.
       Qed.
 
       Lemma trigram_lookup_all_guarded_head_preserve_sem :
