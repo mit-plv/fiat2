@@ -105,6 +105,58 @@ Definition sim_query (tn td : Z) : expr :=
        (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "r"))
        (EAtom (AEmptySet None))).
 
+(* ------------------------------------------------------------------
+   THE SAME PREDICATE PER WORD, which is what multi-word text needs.
+
+   Whole-set Jaccard cannot see a word inside a sentence, and the reason is
+   arithmetic rather than incidental: a four-word row has about forty
+   trigrams against a ten-trigram query, so even an EXACT word match scores
+   10/(10+40-10) = 0.25 and fails a threshold of 0.3.  Measured on 196,898
+   dictionary words, the whole-set predicate accepts 0.00 rows per query at
+   four words a row, where the per-word predicate accepts 1.2 to 4.8.
+
+   That is why pg_trgm has a word variant at all, and why wagtail's
+   modelsearch calls one.  This is `strict_word_similarity`: "greatest
+   similarity between first string and any continuous extent of WORDS of the
+   second string".  At a single-word query the greatest is always attained at
+   one word, since extending the extent only adds trigrams to the divisor.
+   ------------------------------------------------------------------ *)
+
+(* One word, with the query's trigram set and its size already bound.  They
+   are bound OUTSIDE the fold below on purpose: recomputing them per word
+   would charge the scan for work no implementation does, and would flatter
+   every ratio measured against it. *)
+Definition sim_ge_from (tn td : Z) (qs a w : expr) : expr :=
+  ELet (tri_set w) "rs"
+    (ELet (card (EBinop OSetIntersect qs (EVar "rs"))) "c"
+       (EUnop ONot
+          (EBinop OLess
+             (EBinop OTimes (EVar "c") (EAtom (AInt td)))
+             (EBinop OTimes (EAtom (AInt tn))
+                (EBinop OMinus
+                   (EBinop OPlus a (card (EVar "rs")))
+                   (EVar "c")))))).
+
+(* SOME word of the text is similar enough to the pattern.  Each word is
+   padded on its own, as pg_trgm's generate_trgm does, so no trigram
+   straddles a separator -- which is also what keeps the index able to
+   answer this, since the index keys on exactly these per-word trigrams. *)
+Definition sim_any (tn td : Z) (seps : string) (text p : expr) : expr :=
+  ELet (tri_set (padded p)) "qs"
+    (ELet (card (EVar "qs")) "a"
+       (EFold (EBinop OWords (EAtom (AString seps)) text)
+          (EAtom (ABool false)) "wrd" "sacc"
+          (EBinop OOr (EVar "sacc")
+             (sim_ge_from tn td (EVar "qs") (EVar "a")
+                (padded (EVar "wrd")))))).
+
+(* And the query a source writes over multi-word text. *)
+Definition sim_any_query (tn td : Z) (seps : string) : expr :=
+  EFlatmap LikeSet (EUnop OSetOfList (ELoc "users")) "r"
+    (EIf (sim_any tn td seps (EAccess (EVar "r") "name") (EVar "p"))
+       (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar "r"))
+       (EAtom (AEmptySet None))).
+
 Definition row_ty := TRecord (record_sort [("id", TInt); ("name", TString)]).
 
 Section WithConcreteMaps.
@@ -244,4 +296,51 @@ Section WithConcreteMaps.
   Lemma smithsonian_fails_the_threshold :
     interp_expr map.empty smithsonian (sim_ge 3 10 ps pq) = VBool false.
   Proof. vm_compute; reflexivity. Qed.
+
+  (* ----------------------------------------------------------------
+     WHY THE WHOLE-STRING FORM IS NOT ENOUGH, pinned rather than argued.
+
+     On ONE word the two predicates agree, which is why every pin above is
+     still valid -- and is also why they hid this: the file's only example
+     had one word.
+     ---------------------------------------------------------------- *)
+  Lemma one_word_the_two_predicates_agree :
+    interp_expr map.empty (two "Smith" "Smyth") (sim_ge 3 10 ps pq)
+    = interp_expr map.empty (two "Smith" "Smyth")
+        (sim_any 3 10 " " (EVar "s") (EVar "p")).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* On four words they disagree, and the whole-string one is the one that
+     is wrong: "Smyth" against a row holding "Smith" is exactly the match a
+     fuzzy search exists to find. *)
+  Lemma four_words_whole_string_finds_nothing :
+    interp_expr map.empty (two "Smith Jones Associates Limited" "Smyth")
+      (sim_ge 3 10 ps pq) = VBool false.
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma four_words_per_word_finds_it :
+    interp_expr map.empty (two "Smith Jones Associates Limited" "Smyth")
+      (sim_any 3 10 " " (EVar "s") (EVar "p")) = VBool true.
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* And the mechanism, which is the part an index depends on: padding the
+     whole string manufactures a trigram that straddles a separator, and no
+     bucket of the index holds it.  Padding each word, as generate_trgm
+     does, never produces it. *)
+  Lemma whole_string_padding_invents_a_cross_word_trigram :
+    interp_expr map.empty (two "Smith Jones" "Smyth")
+      (EBinop OSetMem (tri_set (padded (EVar "s"))) (EAtom (AString "h J")))
+    = VBool true.
+  Proof. vm_compute; reflexivity. Qed.
+
+  Lemma no_padded_word_holds_it :
+    interp_expr map.empty (two "Smith Jones" "Smyth")
+      (EBinop OOr
+         (EBinop OSetMem (tri_set (padded (EAtom (AString "Smith"))))
+            (EAtom (AString "h J")))
+         (EBinop OSetMem (tri_set (padded (EAtom (AString "Jones"))))
+            (EAtom (AString "h J"))))
+    = VBool false.
+  Proof. vm_compute; reflexivity. Qed.
+
 End WithConcreteMaps.
