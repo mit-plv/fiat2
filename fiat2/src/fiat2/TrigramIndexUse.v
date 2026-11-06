@@ -305,6 +305,11 @@ Section WithIndexUse.
      candidate set introduces is the trigram it is looking up.  Last again,
      so the lemmas above keep the arguments they had. *)
   Context (cgram : string).
+  (* The per-word threshold PREDICATE's binders.  The query's trigram set and
+     its size are bound once, outside the fold over words; then per word, the
+     word's own trigram set and the count the two share; and the fold's own
+     two names.  Last again, so the lemmas above keep the arguments they had. *)
+  Context (qsv aqv rsv cnum pwrd pacc : string).
 
   Notation tridx :=
     (trigram_idx hole attr key tup acc gvar sacc bkt seps wrd wacc).
@@ -1605,6 +1610,112 @@ Section WithIndexUse.
       Qed.
 
       (* ----------------------------------------------------------------
+         THE PREDICATE THE RULE MATCHES, and what one word of it computes.
+
+         pg_trgm's padding, LPADDING 2 and RPADDING 1 with a space.  Each
+         word is padded ON ITS OWN, which is what keeps any trigram from
+         straddling a separator -- and therefore what keeps the index able
+         to answer the predicate at all, since the index keys on exactly
+         these per-word trigrams.
+         ---------------------------------------------------------------- *)
+      Definition padded_e (s : expr) : expr :=
+        EBinop OConcatString (EAtom (AString "  "))
+          (EBinop OConcatString s (EAtom (AString " "))).
+
+      Lemma interp_padded_e :
+        forall (store env : locals) (s : expr) (sv : string),
+          interp_expr store env s = VString sv ->
+          interp_expr store env (padded_e s) = VString (pad sv).
+      Proof.
+        intros store env s sv E_s; unfold padded_e, pad.
+        rewrite interp_EBinop, interp_EBinop, E_s.
+        cbn [interp_binop interp_expr interp_atom]. reflexivity.
+      Qed.
+
+      (* similarity(w, p) >= tn/td at ONE word, cross-multiplied:
+
+             c * td >= tn * (a + b - c)
+
+         with a = |T(p)|, b = |T(w)|, c = |T(p) INTERSECT T(w)|.  The
+         query's set and size arrive already bound, because recomputing them
+         per word would charge the scan for work no implementation does. *)
+      Definition sim_body (tn tdz : Z) (ae : expr) : expr :=
+        EUnop ONot
+          (EBinop OLess
+             (EBinop OTimes (EVar cnum) (EAtom (AInt tdz)))
+             (EBinop OTimes (EAtom (AInt tn))
+                (EBinop OMinus
+                   (EBinop OPlus ae (EUnop OSetSize (EVar rsv)))
+                   (EVar cnum)))).
+
+      Definition sim_word (tn tdz : Z) (qe ae we : expr) : expr :=
+        ELet (tri_vset we) rsv
+          (ELet (EUnop OSetSize (EBinop OSetIntersect qe (EVar rsv))) cnum
+             (sim_body tn tdz ae)).
+
+      (* What the body computes once the two lets have bound: every lookup
+         arrives as a hypothesis, so no put-diff reasoning is needed here. *)
+      Lemma interp_sim_body :
+        forall (store env : locals) (tn tdz : Z) (ae : expr)
+               (cv : nat) (rl : list value) (av : nat),
+          map.get env cnum = Some (VInt (Z.of_nat cv)) ->
+          map.get env rsv = Some (VSet rl) ->
+          interp_expr store env ae = VInt (Z.of_nat av) ->
+          interp_expr store env (sim_body tn tdz ae)
+          = VBool (negb (Z.of_nat cv * tdz
+                         <? tn * (Z.of_nat av + Z.of_nat (List.length rl)
+                                  - Z.of_nat cv))%Z).
+      Proof.
+        intros store env tn tdz ae cv rl av E_c E_r E_ae.
+        unfold sim_body.
+        repeat (rewrite interp_EUnop || rewrite interp_EBinop).
+        rewrite E_ae, !interp_EVar, !interp_EAtom.
+        unfold get_local; rewrite E_c, E_r.
+        cbn [interp_unop interp_binop apply_int_binop interp_atom].
+        reflexivity.
+      Qed.
+
+      (* The same test at the value level.  OSetIntersect filters its LEFT
+         operand by membership in its right, so the count it computes is
+         shared_count's filter exactly, which is why shared_count was
+         stated in that shape rather than as a set intersection. *)
+      Definition sim_test (tn tdz : Z) (pv wv : string) : bool :=
+        negb (Z.of_nat (shared_count pv wv) * tdz
+              <? tn * (Z.of_nat (List.length (qtris pv))
+                       + Z.of_nat (List.length (qtris wv))
+                       - Z.of_nat (shared_count pv wv)))%Z.
+
+      Lemma interp_sim_word :
+        forall (store env : locals) (tn tdz : Z) (qe ae we : expr)
+               (pv wv : string),
+          rsv <> cnum ->
+          interp_expr store env we = VString wv ->
+          (forall rv, interp_expr store (map.put env rsv rv) qe
+                      = VSet (qtris pv)) ->
+          (forall rv cv,
+              interp_expr store (map.put (map.put env rsv rv) cnum cv) ae
+              = VInt (Z.of_nat (List.length (qtris pv)))) ->
+          interp_expr store env (sim_word tn tdz qe ae we)
+          = VBool (sim_test tn tdz pv wv).
+      Proof.
+        intros store env tn tdz qe ae we pv wv H_ne E_w E_q E_a.
+        assert (E_cnt : interp_expr store (map.put env rsv (VSet (qtris wv)))
+                          (EUnop OSetSize (EBinop OSetIntersect qe (EVar rsv)))
+                        = VInt (Z.of_nat (shared_count pv wv))).
+        1:{ rewrite interp_EUnop, interp_EBinop, (E_q (VSet (qtris wv))).
+            rewrite interp_EVar; unfold get_local; rewrite map.get_put_same.
+            cbn [interp_binop interp_unop]. unfold shared_count. reflexivity. }
+        unfold sim_word, sim_test.
+        rewrite interp_ELet_step, (interp_tri_vset store env we wv E_w).
+        rewrite interp_ELet_step, E_cnt.
+        apply (interp_sim_body store _ tn tdz ae (shared_count pv wv)
+                 (qtris wv) (List.length (qtris pv))).
+        1: apply map.get_put_same.
+        1:{ rewrite map.get_put_diff by congruence. apply map.get_put_same. }
+        1: apply E_a.
+      Qed.
+
+      (* ----------------------------------------------------------------
          THE PREDICATE IS A DISJUNCTION OVER THE ROW'S WORDS.
 
          "Some word is similar enough" is written as a fold of OOr, and this
@@ -1618,10 +1729,10 @@ Section WithIndexUse.
         forall (store env : locals) (coll : expr) (ws : list value)
                (xw xa : string) (body : expr),
           interp_expr store env coll = VList ws ->
-          (forall wv av,
+          (forall wv av, In wv ws ->
               interp_expr store (map.put (map.put env xw wv) xa av) body
               = interp_expr store (map.put env xw wv) body) ->
-          (forall wv, exists bb,
+          (forall wv, In wv ws -> exists bb,
               interp_expr store (map.put env xw wv) body = VBool bb) ->
           interp_expr store env
             (EFold coll (EAtom (ABool false)) xw xa
@@ -1638,12 +1749,255 @@ Section WithIndexUse.
         clear E_coll.
         induction ws as [ | wv ws IH ]; cbn [fold_right existsb].
         1: reflexivity.
-        rewrite IH, interp_EBinop, interp_EVar.
+        assert (H_f' : forall z av, In z ws ->
+                   interp_expr store (map.put (map.put env xw z) xa av) body
+                   = interp_expr store (map.put env xw z) body)
+          by (intros z av H_in; apply H_fresh; right; exact H_in).
+        assert (H_b' : forall z, In z ws ->
+                   exists bb,
+                     interp_expr store (map.put env xw z) body = VBool bb)
+          by (intros z H_in; apply H_bool; right; exact H_in).
+        rewrite (IH H_f' H_b').
+        rewrite interp_EBinop, interp_EVar.
         unfold get_local; rewrite map.get_put_same.
-        rewrite H_fresh.
-        destruct (H_bool wv) as [ bb E_bb ]; rewrite E_bb.
+        rewrite H_fresh by (left; reflexivity).
+        destruct (H_bool wv (or_introl eq_refl)) as [ bb E_bb ]; rewrite E_bb.
         cbn [interp_binop apply_bool_binop].
         f_equal. apply Bool.orb_comm.
+      Qed.
+
+      (* ----------------------------------------------------------------
+         SOME WORD OF THE TEXT IS SIMILAR ENOUGH.
+
+         strict_word_similarity's shape: "greatest similarity between the
+         first string and any continuous extent of WORDS of the second".  At
+         a single-word query the greatest is always attained at one word,
+         since extending the extent only adds trigrams to the divisor, so a
+         disjunction over words is the whole predicate and not an
+         approximation of it.
+
+         The query's trigram set and its size are bound OUTSIDE the fold on
+         purpose.  Recomputing them per word would charge a scan for work no
+         implementation does and would flatter every ratio measured against
+         it.
+         ---------------------------------------------------------------- *)
+
+      (* The eleven ways the predicate's six binders have to differ, bundled
+         so the lemmas take one hypothesis instead of eleven -- and so the
+         rule's guard has one thing to discharge. *)
+      Definition pred_binders_ok : Prop :=
+        rsv <> cnum /\ qsv <> aqv /\
+        qsv <> rsv /\ qsv <> cnum /\ qsv <> pwrd /\ qsv <> pacc /\
+        aqv <> rsv /\ aqv <> cnum /\ aqv <> pwrd /\ aqv <> pacc /\
+        pwrd <> pacc.
+
+      Definition sim_any_e (tn tdz : Z) (text p : expr) : expr :=
+        ELet (tri_vset (padded_e p)) qsv
+          (ELet (EUnop OSetSize (EVar qsv)) aqv
+             (EFold (EBinop OWords (EAtom (AString seps)) text)
+                (EAtom (ABool false)) pwrd pacc
+                (EBinop OOr (EVar pacc)
+                   (sim_word tn tdz (EVar qsv) (EVar aqv)
+                      (padded_e (EVar pwrd)))))).
+
+      Lemma existsb_map_VString :
+        forall (f : string -> bool) (l : list string),
+          existsb (fun wv => match wv with
+                             | VString w => f w
+                             | _ => false
+                             end) (List.map VString l)
+          = existsb f l.
+      Proof.
+        intros f l; induction l as [ | w l IH ]; cbn [List.map existsb];
+          [ reflexivity | rewrite IH; reflexivity ].
+      Qed.
+
+      Lemma existsb_ext_in :
+        forall (A : Type) (f g : A -> bool) (l : list A),
+          (forall x, In x l -> f x = g x) ->
+          existsb f l = existsb g l.
+      Proof.
+        intros A f g l; induction l as [ | x l IH ]; cbn [existsb]; intros H;
+          [ reflexivity | ].
+        rewrite (H x (or_introl eq_refl)), IH;
+          [ reflexivity | intros z H_in; apply H; right; exact H_in ].
+      Qed.
+
+      Lemma interp_sim_any_e :
+        forall (store env : locals) (tn tdz : Z) (text p : expr)
+               (sv pv : string),
+          pred_binders_ok ->
+          interp_expr store env p = VString pv ->
+          (forall qv av,
+              interp_expr store (map.put (map.put env qsv qv) aqv av) text
+              = VString sv) ->
+          interp_expr store env (sim_any_e tn tdz text p)
+          = VBool (existsb (fun w => sim_test tn tdz (pad pv) (pad w))
+                     (words seps sv)).
+      Proof.
+        intros store env tn tdz text p sv pv H_ok E_p E_text.
+        destruct H_ok as [ H_rc [ H_qa [ H_qr [ H_qc [ H_qw [ H_qp
+                         [ H_ar [ H_ac [ H_aw [ H_ap H_wp ] ] ] ] ] ] ] ] ] ].
+        (* what one word's test computes, in any env that binds the three *)
+        assert (H_body : forall (E : locals) (w : string),
+                   map.get E pwrd = Some (VString w) ->
+                   (forall rv, map.get (map.put E rsv rv) qsv
+                               = Some (VSet (qtris (pad pv)))) ->
+                   (forall rv cv,
+                       map.get (map.put (map.put E rsv rv) cnum cv) aqv
+                       = Some (VInt (Z.of_nat
+                                       (List.length (qtris (pad pv)))))) ->
+                   interp_expr store E
+                     (sim_word tn tdz (EVar qsv) (EVar aqv)
+                        (padded_e (EVar pwrd)))
+                   = VBool (sim_test tn tdz (pad pv) (pad w))).
+        1:{ intros E w E_w E_q E_a.
+            apply (interp_sim_word store E tn tdz (EVar qsv) (EVar aqv)
+                     (padded_e (EVar pwrd)) (pad pv) (pad w) H_rc).
+            1:{ apply (interp_padded_e store E (EVar pwrd) w).
+                rewrite interp_EVar; unfold get_local, get_local.
+                rewrite E_w; reflexivity. }
+            1:{ intros rv; rewrite interp_EVar; unfold get_local.
+                rewrite (E_q rv); reflexivity. }
+            1:{ intros rv cv; rewrite interp_EVar; unfold get_local.
+                rewrite (E_a rv cv); reflexivity. } }
+        unfold sim_any_e.
+        rewrite interp_ELet_step.
+        rewrite (interp_tri_vset store env (padded_e p) (pad pv)
+                   (interp_padded_e store env p pv E_p)).
+        rewrite interp_ELet_step.
+        rewrite interp_EUnop, interp_EVar; unfold get_local.
+        rewrite map.get_put_same; cbn [interp_unop].
+        rewrite (interp_fold_or store _
+                   (EBinop OWords (EAtom (AString seps)) text)
+                   (List.map VString (words seps sv)) pwrd pacc
+                   (sim_word tn tdz (EVar qsv) (EVar aqv)
+                      (padded_e (EVar pwrd)))).
+        (* the three side conditions, then the existsb *)
+        4:{ intros wv H_in.
+            apply in_map_iff in H_in as [ w [ E_wv _ ] ]; subst wv.
+            exists (sim_test tn tdz (pad pv) (pad w)).
+            apply H_body; [ apply map.get_put_same | | ];
+              intros; repeat (rewrite map.get_put_diff by congruence);
+              apply map.get_put_same. }
+        3:{ intros wv av H_in.
+            apply in_map_iff in H_in as [ w [ E_wv _ ] ]; subst wv.
+            rewrite (H_body _ w), (H_body _ w); [ reflexivity | .. ];
+              try apply map.get_put_same;
+              intros; repeat (rewrite map.get_put_diff by congruence);
+              apply map.get_put_same. }
+        2:{ rewrite interp_EBinop, interp_EAtom, (E_text _ _).
+            cbn [interp_atom interp_binop]. reflexivity. }
+        1:{ f_equal.
+            rewrite <- (existsb_map_VString
+                          (fun w => sim_test tn tdz (pad pv) (pad w))).
+            apply existsb_ext_in.
+            intros x H_in.
+            apply in_map_iff in H_in as [ w [ E_x _ ] ]; subst x.
+            rewrite (H_body _ w); [ reflexivity | apply map.get_put_same | | ];
+              intros; repeat (rewrite map.get_put_diff by congruence);
+              apply map.get_put_same. }
+      Qed.
+
+      (* ----------------------------------------------------------------
+         THE ARITHMETIC BRIDGE: from the predicate's own boolean to the
+         counts thr_cands_complete_for_row asks for.
+
+         The predicate's test is in Z, because a threshold is a literal; the
+         completeness argument is in nat, because it counts list elements.
+         The two agree only because the shared count never exceeds either
+         side's trigram count, which is what keeps nat's truncating
+         subtraction from differing from Z's.  Both of those bounds are
+         proved here rather than assumed.
+         ---------------------------------------------------------------- *)
+
+      Lemma pad_length : forall s, (3 <= String.length (pad s))%nat.
+      Proof.
+        intros s; unfold pad; cbn [String.length String.append].
+        destruct s; cbn [String.length String.append]; lia.
+      Qed.
+
+      (* A padded string always has a trigram, so the query's count is
+         positive -- which is what makes a + b - c positive, and so what
+         keeps the threshold inequality from holding vacuously. *)
+      Lemma qtris_pos : forall s,
+          (3 <= String.length s)%nat -> 0 < List.length (qtris s).
+      Proof.
+        intros s H_len.
+        destruct (trigrams s) as [ | g gs ] eqn:E_tg.
+        1: exfalso; apply (trigrams_not_nil _ H_len); exact E_tg.
+        destruct (qtris s) as [ | v vs ] eqn:E_q; cbn [List.length]; [ | lia ].
+        exfalso.
+        pose proof (list_to_set_incl_r (List.map VString (trigrams s))
+                      (VString g)) as H.
+        unfold qtris in E_q; rewrite E_q in H.
+        apply H, in_map. rewrite E_tg; left; reflexivity.
+      Qed.
+
+      (* The shared count is bounded by BOTH trigram counts.  The left bound
+         is a filter shrinking its list; the right one needs the query's set
+         to be duplicate-free, since it maps the survivors injectively into
+         the word's set. *)
+      Lemma shared_le_left : forall pv ws,
+          shared_count pv ws <= List.length (qtris pv).
+      Proof.
+        intros pv ws; unfold shared_count; apply filter_length_le'.
+      Qed.
+
+      Lemma shared_le_right : forall pv ws,
+          shared_count pv ws <= List.length (qtris ws).
+      Proof.
+        intros pv ws; unfold shared_count.
+        apply NoDup_incl_length.
+        1: apply NoDup_filter; unfold qtris; apply list_to_set_NoDup.
+        1:{ intros x H_in; apply filter_In in H_in as [ _ H_mem ].
+            apply set_mem_true_iff in H_mem; exact H_mem. }
+      Qed.
+
+      Lemma sim_test_true__nat :
+        forall (tnn tdn : nat) (pv ws : string),
+          sim_test (Z.of_nat tnn) (Z.of_nat tdn) pv ws = true ->
+          shared_count pv ws * tdn
+          >= tnn * (List.length (qtris pv) + List.length (qtris ws)
+                    - shared_count pv ws).
+      Proof.
+        intros tnn tdn pv ws H.
+        unfold sim_test in H.
+        apply Bool.negb_true_iff, Z.ltb_ge in H.
+        pose proof (shared_le_left pv ws) as H_ca.
+        pose proof (shared_le_right pv ws) as H_cb.
+        lia.
+      Qed.
+
+      (* And the bridge itself: a word of the row passing the predicate puts
+         the row's key in the emitted pool and past the emitted count test. *)
+      Theorem sim_word_true__thr_complete :
+        forall (rows : list value) (r : value) (pv w : string)
+               (tnn tdn : nat),
+          In r rows ->
+          In w (words seps (TrigramIndexImpl.row_str attr r)) ->
+          sim_test (Z.of_nat tnn) (Z.of_nat tdn) (pad pv) (pad w) = true ->
+          0 < tnn ->
+          (exists g, In g (trigrams (pad pv)) /\
+                     In (row_key key r)
+                       (tri_bucket (VString g)
+                          (TrigramIndexImpl.tri_entries attr key seps rows)))
+          /\ tnn * List.length (qtris (pad pv))
+             <= List.length
+                  (count_set (pad pv)
+                     (TrigramIndexImpl.tri_entries attr key seps rows)
+                     (row_key key r)) * tdn.
+      Proof.
+        intros rows r pv w tnn tdn H_in H_w H_test H_tn.
+        pose proof (shared_le_right (pad pv) (pad w)) as H_cb.
+        pose proof (qtris_pos (pad pv) (pad_length pv)) as H_aq.
+        apply (thr_cands_complete_for_row rows (pad pv) r w tnn tdn
+                 (List.length (qtris (pad pv)))
+                 (List.length (qtris (pad w)))
+                 (shared_count (pad pv) (pad w)));
+          [ exact H_in | exact H_w | reflexivity | reflexivity | reflexivity
+          | exact H_tn | exact H_cb | lia | ].
+        apply sim_test_true__nat; exact H_test.
       Qed.
 
       (* ==================================================================
