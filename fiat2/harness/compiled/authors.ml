@@ -846,6 +846,110 @@ let prepared (f : (string -> Value.t) -> 'a)
     | None -> failwith ("missing input " ^ n) in
   fun () -> ignore (f get)
 
+(* ---------- wagtail: a threshold trigram read the author's OWN index
+     cannot serve ---------- *)
+
+module WagtailFuzzy = struct
+  let name = "fuzzy_search"
+
+  (* wagtail/modelsearch 1.3.2,
+     modelsearch/backends/database/postgres/postgres.py:
+
+       :63   DEFAULT_FUZZY_SIMILARITY_THRESHOLD = 0.3
+       :744  title_similarity = TrigramWordSimilarity(search_string, title_field)
+       :775  .filter(_fuzzy_raw_similarity__gte=threshold)
+
+     and beside it, over the same column,
+     modelsearch/management/commands/enable_trigram.py:
+
+       CREATE INDEX ... USING gin (title_text gin_trgm_ops)
+
+     THE AUTHOR BUILT AN INDEX FOR THIS COLUMN AND CANNOT USE IT.
+     TrigramWordSimilarity emits the WORD_SIMILARITY(...) FUNCTION, which is
+     not in gin_trgm_ops, so the index they create cannot serve the predicate
+     they then write; the indexable form is the %> OPERATOR, which the ORM
+     does not offer.  So what the author's code does for this read is a SCAN,
+     and this is the THIRD subject where the optimizer should come out ahead
+     rather than level -- beside user_search, where the author never built
+     the trigram index, and dependent_plugins, where they built nothing.
+
+     What the author DOES maintain is the entry table keyed by its primary
+     key, since Django writes and deletes IndexEntry rows by pk.  That is the
+     map below, so the delete is a probe on both columns and the difference
+     between them is the READ, which is the point.
+
+     WHAT THIS COLUMN DOES NOT CHARGE THE AUTHOR, stated because it is
+     deliberately conservative: Postgres maintains those four GIN indexes on
+     every insert and delete whether or not a read can use them, and this
+     transcription maintains none of them.  Charging that maintenance would
+     make the author column worse and the comparison more flattering, so it
+     is left out. *)
+
+  (* the threshold, cross-multiplied so no float appears, exactly as the
+     subject's predicate has it: c * 10 >= 3 * (a + b - c) *)
+  let tn = 3
+  let td = 10
+
+  (* pg_trgm's padding: LPADDING 2, RPADDING 1, applied per WORD *)
+  let pad (s : string) : string =
+    Rt.concat_string (Rt.concat_string "  " s) " "
+
+  let tri_set (s : string) : SSet.t =
+    List.fold_left
+      (fun acc g -> SSet.add g acc)
+      (SSet.make Count.Licensed)
+      (Rt.trigrams (pad s))
+
+  (* WORD_SIMILARITY(q, text) >= 3/10 -- the greatest similarity between the
+     query and any WORD of the text, which at a threshold test is just "some
+     word is similar enough".  Rt.trigrams and Rt.words are the same
+     functions the compiled columns call, so all three tokenize identically
+     and are charged identically for it. *)
+  let similar_enough (qs : SSet.t) (a : int) (text : string) : bool =
+    List.exists
+      (fun w ->
+         let ws = tri_set w in
+         let b = SSet.cardinal ws in
+         let c = SSet.fold (fun g n -> if SSet.mem g ws then n + 1 else n) qs 0 in
+         c * td >= tn * (a + b - c))
+      (Rt.words " " text)
+
+  let run (results0 : In_fuzzy_search.t_results)
+      (queries : In_fuzzy_search.t_queries) : In_fuzzy_search.t_results =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let results = ref results0 in
+    List.iter
+      (fun (q : In_fuzzy_search.t_queries_elem) ->
+         match q.f_kind with
+         (* the IndexEntry written when an object is saved *)
+         | 0 ->
+             let e = q.f_new_entry in
+             by_id := SSel.add e.f_id e !by_id
+         (* and removed when it is deleted *)
+         | 1 -> by_id := SSel.remove q.f_qtext !by_id
+         (* _build_fuzzy_queryset: the scan, because the index cannot serve it *)
+         | _ ->
+             let qs = tri_set q.f_qtext in
+             let a = SSet.cardinal qs in
+             (* collected and SORTED before the set is built, for the reason
+                UserSearch's transcription gives: building it as the scan
+                finds the hits makes the charge depend on the order the
+                storage happens to iterate in *)
+             let hits = ref [] in
+             SSel.iter
+               (fun _ (e : In_fuzzy_search.t_row) ->
+                  Count.visit 1;
+                  if similar_enough qs a e.f_title_text then hits := e :: !hits)
+               !by_id;
+             results :=
+               List.fold_left
+                 (fun s e -> In_fuzzy_search.M_results.add e s)
+                 (In_fuzzy_search.M_results.make Count.Unlicensed)
+                 (List.sort In_fuzzy_search.cmp_row !hits))
+      queries;
+    !results
+end
+
 (* Shaped exactly like Monotypes.programs' entries, so the same measurement
    code drives all three columns -- including the per-kind scaling, which the
    author column needs most: its ops phase at 1600 rows is a few
@@ -893,6 +997,11 @@ let runners : (string * ((string -> Value.t option) -> unit -> unit)) list =
           RangeDelete.run
             (Monotypes.In_range_delete.f_orders_tbl (get "orders_tbl"))
             (Monotypes.In_range_delete.f_queries (get "queries"))) );
+    ( "fuzzy_search",
+      prepared (fun get ->
+          WagtailFuzzy.run
+            (Monotypes.In_fuzzy_search.f_results (get "results"))
+            (Monotypes.In_fuzzy_search.f_queries (get "queries"))) );
     ( "dependent_plugins",
       prepared (fun get ->
           DependentPlugins.run
@@ -910,7 +1019,8 @@ let runners : (string * ((string -> Value.t option) -> unit -> unit)) list =
 let done_so_far =
   [ Lookin.name; Keycloak.name; NamedCache.name; ItemDeletion.name;
     UserSearch.name; AreaRegistry.name; Cluster.name;
-    WindowStore.name; RangeDelete.name; DependentPlugins.name ]
+    WindowStore.name; RangeDelete.name; DependentPlugins.name;
+    WagtailFuzzy.name ]
 
 (* ---------- and the check ----------
 
@@ -976,6 +1086,18 @@ let check_user_search (w : Gen.workload) : bool =
   Rt.eq_list Rt.eq_string mine_out theirs_out
   && Monotypes.In_user_search.M_suggested.equal mine_sug theirs_sug
 
+let check_fuzzy_search (w : Gen.workload) : bool =
+  let get n =
+    match lookup_of w n with
+    | Some v -> v
+    | None -> failwith ("missing input " ^ n) in
+  let mine = Monotypes.store_opt_fuzzy_search (lookup_of w) in
+  let theirs =
+    WagtailFuzzy.run
+      (Monotypes.In_fuzzy_search.f_results (get "results"))
+      (Monotypes.In_fuzzy_search.f_queries (get "queries")) in
+  Monotypes.In_fuzzy_search.M_results.equal mine theirs
+
 let check_area_registry (w : Gen.workload) : bool =
   let get n =
     match lookup_of w n with
@@ -1036,4 +1158,5 @@ let checks : (string * (Gen.workload -> bool)) list =
     ("user_search", check_user_search);
     ("item_deletion", check_item_deletion);
     ("keycloak", check_keycloak);
-    ("named_cache", check_named_cache) ]
+    ("named_cache", check_named_cache);
+    ("fuzzy_search", check_fuzzy_search) ]

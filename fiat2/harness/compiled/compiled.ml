@@ -282,7 +282,7 @@ let () =
        Printf.printf
          "%-6s: %d reader runs; equality agreed on %d equal and %d unequal \
           pairs; src = opt on %d runs; compiled = interpreter on %d runs; \
-          author = compiled on %d runs (%d of 10 transcriptions); \
+          author = compiled on %d runs (%d of 11 transcriptions); \
           mixed: src = opt on %d, = interpreter on %d; %d failures\n"
          !setting !reads !yes !no !agreed !matched !authored
          (List.length Authors.done_so_far)
