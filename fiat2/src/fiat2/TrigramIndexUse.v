@@ -1402,13 +1402,11 @@ Section WithIndexUse.
         1: apply SSorted_filter, list_to_set_SSorted.
       Qed.
 
-      (* How many of the query's trigrams one string really shares. *)
+      (* How many of the query's trigrams one string really shares, in the
+         shape OSetIntersect computes: it filters its LEFT operand by
+         membership in its right, so this is the predicate's own c. *)
       Definition shared_count (pv ws : string) : nat :=
-        List.length
-          (filter (fun gv => match gv with
-                             | VString g => existsb (String.eqb g) (trigrams ws)
-                             | _ => false
-                             end) (qtris pv)).
+        List.length (filter (fun gv => set_mem gv (qtris ws)) (qtris pv)).
 
       Lemma shared_le_count_set :
         forall (rows : list value) (pv : string) (r : value) (w : string),
@@ -1424,13 +1422,33 @@ Section WithIndexUse.
         rewrite count_set_canonical; unfold shared_count.
         apply filter_length_mono'.
         intros gv _ H_has.
-        destruct gv as [ | | g | | | | | | | ]; try discriminate.
-        apply existsb_exists in H_has as [ g' [ H_in' E_eq ] ].
-        apply String.eqb_eq in E_eq; subst g'.
+        apply set_mem_true_iff in H_has; unfold qtris in H_has.
+        apply list_to_set_incl, in_map_iff in H_has as [ g [ E_gv H_g ] ].
+        subst gv.
         apply set_mem_true_iff, key_at__In_tri_bucket.
         eapply TrigramIndexImpl.tri_lookup_complete_at_word;
-          [ exact H_in | | exact H_in' ].
+          [ exact H_in | | exact H_g ].
         unfold TrigramIndexImpl.row_wrds; exact H_w.
+      Qed.
+
+      (* The trigram SET of a string, by the same extractor the index uses.
+         Ex_TrigramSimilarity shows the predicate needs NO operator at all --
+         a fold over a range inserting substrings -- and keeps that form
+         compiled as the witness.  The rule uses OTrigrams instead, because
+         pg_trgm's similarity() and its GIN index both read generate_trgm,
+         so predicate and index agreeing by construction is the faithful
+         arrangement rather than a convenience. *)
+      Definition tri_vset (e : expr) : expr :=
+        EUnop OSetOfList (EUnop OTrigrams e).
+
+      Lemma interp_tri_vset :
+        forall (store env : locals) (e : expr) (sv : string),
+          interp_expr store env e = VString sv ->
+          interp_expr store env (tri_vset e) = VSet (qtris sv).
+      Proof.
+        intros store env e sv E_e; unfold tri_vset, qtris.
+        rewrite interp_EUnop, interp_EUnop, E_e.
+        cbn [interp_unop]. reflexivity.
       Qed.
 
       Lemma filter_length_le' :
@@ -1489,32 +1507,22 @@ Section WithIndexUse.
         split.
         (* in the pool *)
         1:{ subst cw; unfold shared_count in H_pos.
-            destruct (filter
-                        (fun gv => match gv with
-                                   | VString g =>
-                                       existsb (String.eqb g) (trigrams (pad w))
-                                   | _ => false
-                                   end) (qtris pv))
+            destruct (filter (fun gv => set_mem gv (qtris (pad w))) (qtris pv))
               as [ | gv rest ] eqn:E_f; [ cbn in H_pos; lia | ].
             assert (H_mem : In gv
-                      (filter
-                         (fun gv => match gv with
-                                    | VString g =>
-                                        existsb (String.eqb g) (trigrams (pad w))
-                                    | _ => false
-                                    end) (qtris pv)))
+                      (filter (fun gv => set_mem gv (qtris (pad w))) (qtris pv)))
               by (rewrite E_f; left; reflexivity).
             apply filter_In in H_mem as [ H_q H_pred ].
-            destruct gv as [ | | g | | | | | | | ]; try discriminate.
-            apply existsb_exists in H_pred as [ g' [ H_g' E_eq ] ].
-            apply String.eqb_eq in E_eq; subst g'.
+            apply set_mem_true_iff in H_pred; unfold qtris in H_pred.
+            apply list_to_set_incl, in_map_iff in H_pred as [ g [ E_gv H_g ] ].
+            subst gv.
             unfold qtris in H_q.
-            apply list_to_set_incl, in_map_iff in H_q as [ g0 [ E_gv H_g0 ] ].
-            injection E_gv as E_gv; subst g0.
+            apply list_to_set_incl, in_map_iff in H_q as [ g0 [ E_g0 H_g0 ] ].
+            injection E_g0 as E_g0; subst g0.
             exists g; split; [ exact H_g0 | ].
             apply key_at__In_tri_bucket.
             eapply TrigramIndexImpl.tri_lookup_complete_at_word;
-              [ exact H_in | | exact H_g' ].
+              [ exact H_in | | exact H_g ].
             unfold TrigramIndexImpl.row_wrds; exact H_w. }
         (* and passes the count test *)
         1:{ assert (H1 : tn * aq <= tn * (aq + bw - cw))
@@ -1527,6 +1535,48 @@ Section WithIndexUse.
             1:{ apply Nat.mul_le_mono_r. subst cw.
                 apply shared_le_count_set; [ exact H_in | exact H_w ]. }
             lia. }
+      Qed.
+
+      (* ----------------------------------------------------------------
+         THE PREDICATE IS A DISJUNCTION OVER THE ROW'S WORDS.
+
+         "Some word is similar enough" is written as a fold of OOr, and this
+         says the fold computes the disjunction.  The two side conditions are
+         what the rule's guard has to check: the body must not read the
+         accumulator, and it must be a boolean -- OOr answers VUnit otherwise
+         and the induction would not close.  Both are stated SEMANTICALLY, so
+         no syntactic free-variable analysis is needed here.
+         ---------------------------------------------------------------- *)
+      Lemma interp_fold_or :
+        forall (store env : locals) (coll : expr) (ws : list value)
+               (xw xa : string) (body : expr),
+          interp_expr store env coll = VList ws ->
+          (forall wv av,
+              interp_expr store (map.put (map.put env xw wv) xa av) body
+              = interp_expr store (map.put env xw wv) body) ->
+          (forall wv, exists bb,
+              interp_expr store (map.put env xw wv) body = VBool bb) ->
+          interp_expr store env
+            (EFold coll (EAtom (ABool false)) xw xa
+               (EBinop OOr (EVar xa) body))
+          = VBool (existsb
+                     (fun wv =>
+                        match interp_expr store (map.put env xw wv) body with
+                        | VBool bb => bb
+                        | _ => false
+                        end) ws).
+      Proof.
+        intros store env coll ws xw xa body E_coll H_fresh H_bool.
+        rewrite interp_EFold, E_coll, interp_EAtom; cbn [interp_atom].
+        clear E_coll.
+        induction ws as [ | wv ws IH ]; cbn [fold_right existsb].
+        1: reflexivity.
+        rewrite IH, interp_EBinop, interp_EVar.
+        unfold get_local; rewrite map.get_put_same.
+        rewrite H_fresh.
+        destruct (H_bool wv) as [ bb E_bb ]; rewrite E_bb.
+        cbn [interp_binop apply_bool_binop].
+        f_equal. apply Bool.orb_comm.
       Qed.
 
       (* ==================================================================
