@@ -1076,6 +1076,68 @@ Section WithIndexUse.
                     intros l' H_in'; apply H_all; right; exact H_in'. } } }
       Qed.
 
+      (* ----------------------------------------------------------------
+         THE UNION, which is the other end of the same family.
+
+         Stage 1 intersects the buckets, because an occurrence puts EVERY
+         trigram of the pattern in the text.  A THRESHOLD cannot intersect:
+         a row similar enough need not share every trigram, which is what a
+         threshold means, so the candidate pool is the UNION and the count
+         over it is what prunes.  AGUnion and AGIntersect differ by one
+         constructor, so the pool reuses tri_buckets and its bridge whole.
+         ---------------------------------------------------------------- *)
+
+      Lemma In_fold_set_insert_iff : forall (l base : list value) v0,
+          In v0 (fold_right set_insert base l) <-> In v0 l \/ In v0 base.
+      Proof.
+        induction l as [ | x l IH ]; cbn [fold_right In]; intros base v0.
+        1: intuition.
+        1: rewrite set_insert_In, IH; intuition congruence.
+      Qed.
+
+      Definition union_all (bs : list value) : value :=
+        fold_right (snd (interp_aci_aggr AGUnion))
+          (fst (interp_aci_aggr AGUnion)) bs.
+
+      (* The only fact the threshold rule needs about the aggregate, and it
+         mentions no order: a key is in the union exactly when some bucket
+         holds it.  Order-free because the operation is, which is why the
+         sorting and deduplication OSetOfList performs on the trigrams costs
+         no permutation argument -- exactly as for the intersection. *)
+      Lemma union_all_chara :
+        forall bs,
+          bs <> nil ->
+          Forall (fun s => exists l, s = VSet l) bs ->
+          exists l, union_all bs = VOption (Some (VSet l)) /\
+                      (forall v, In v l <-> exists l', In (VSet l') bs /\ In v l').
+      Proof.
+        unfold union_all; cbn [interp_aci_aggr].
+        induction bs as [ | s bs IH ]; intros H_ne H_sets; [ congruence | ].
+        invert_Forall.
+        lazymatch goal with H: exists _, s = VSet _ |- _ =>
+          destruct H as [ l0 E_s ]; subst s end.
+        destruct bs as [ | s' bs ].
+        (* one bucket: it IS the pool, with no seed to supply *)
+        1:{ exists l0; cbn [fold_right]; split; [ reflexivity | ].
+            intros v; split.
+            1: intros H_in; exists l0; split; [ left; reflexivity | exact H_in ].
+            1:{ intros [ l' [ [ E | [] ] H_in ] ].
+                injection E as E; subst l'; exact H_in. } }
+        (* at least two: widen the tail's pool by this bucket *)
+        1:{ destruct (IH ltac:(discriminate) ltac:(assumption)) as [ a [ E_a H_a ] ].
+            cbn [fold_right] in *. rewrite E_a.
+            exists (fold_right set_insert a l0); split; [ reflexivity | ].
+            intros v; rewrite In_fold_set_insert_iff; split.
+            1:{ intros [ H_in | H_in ].
+                1: exists l0; split; [ left; reflexivity | exact H_in ].
+                1:{ apply H_a in H_in as [ l' [ H_in' H_v ] ].
+                    exists l'; split; [ right; exact H_in' | exact H_v ]. } }
+            1:{ intros [ l' [ [ E | H_in' ] H_v ] ].
+                1: injection E as E; subst l'; left; exact H_v.
+                1:{ right. apply (proj2 (H_a v)).
+                    exists l'; split; [ exact H_in' | exact H_v ]. } } }
+      Qed.
+
       (* What the rule needs about the set of buckets: which buckets are in
          it (both directions, since completeness reads one way and the
          subset argument the other), that they are all sets, and that there
