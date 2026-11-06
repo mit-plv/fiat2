@@ -11,16 +11,16 @@ Local Open Scope string_scope.
    A trigram index is an inverted index: it maps each three-character
    substring of a text to the rows whose text contains it.  A lookup for a
    pattern p intersects the buckets of the trigrams of p and rechecks the
-   full containment on the rows it finds.  That is correct only because of
-   occurrence_all_trigrams below: if p occurs in s at all, then EVERY trigram
-   of p is among s's trigrams, so no bucket of any of them can miss a row,
-   and neither can their intersection.  (The converse is false -- a trigram
-   match is necessary, not sufficient -- which is why the recheck stays.)
+   full containment on the rows it finds.  That is correct because if p
+   occurs in s at all, then EVERY trigram of p is among s's trigrams, so no
+   bucket of any of them can miss a row, and neither can their intersection.
+   (The converse is false -- a trigram match is necessary, not sufficient --
+   which is why the recheck stays.)
 
-   Taking one trigram instead of all of them is the special case
-   occurrence_first_trigram, which is derived from the general fact below
-   rather than proved again: a rule that probes a single bucket is the k = 1
-   instance of the rule that intersects k of them, not a competitor to it.
+   occurrence_all_trigrams below states that for a whole text.  The index
+   keys on WORDS, so the route the lookup rules actually take is
+   sep_free_inside_word and trigrams_factor, with trigrams_pad carrying a
+   word's trigrams to its padded form.
 
    The standard library relates String.index to String.substring
    (index_correct1), and that is the only bridge it offers; the substring
@@ -121,18 +121,6 @@ Proof.
   apply in_map_iff. exists 0; split; [ reflexivity | ]. apply in_seq. lia.
 Qed.
 
-(* The single-trigram lookup's fact, as the k = 1 instance of the general
-   one.  Kept under its own name because the rule that probes one bucket is
-   still registered and still proved against it. *)
-Theorem occurrence_first_trigram : forall p s m,
-    3 <= String.length p ->
-    String.index 0 p s = Some m ->
-    In (substring 0 3 p) (trigrams s).
-Proof.
-  intros p s m H_len E_idx.
-  eapply occurrence_all_trigrams; [ exact E_idx | ].
-  apply In_trigrams_first; exact H_len.
-Qed.
 
 (* ==================================================================
    Padding.

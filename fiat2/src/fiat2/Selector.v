@@ -980,7 +980,7 @@ Definition select_anno (ce : cenv) (tbl : string) (depth : nat) (c : command)
    reason it took a feedback step to find there at all:
 
      the read it would serve is one the REWRITING leaves behind --
-       trigram_lookup_guarded_head rewrites e into
+       trigram_lookup_all_guarded_head rewrites e into
        EIf (pattern_has_trigram p) (probe) e, keeping its own input as the
        else branch -- so the coercion is nowhere in the source and no
        matcher here can see it.  A feedback step that runs the pipeline,

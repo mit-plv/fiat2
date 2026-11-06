@@ -745,7 +745,7 @@ Section WithConcreteMaps.
   (* A pattern that is not a literal cannot be measured at rewrite time, so
      the rule emits the test instead: long enough, probe; shorter than a
      trigram, scan.  The fallback is the source query, unchanged -- the
-     length condition is a soundness obligation of probe_recheck_eq, not a
+     length condition is a soundness obligation of probe_recheck_all_eq, not a
      heuristic, so it cannot be dropped.
 
      The fallback is a scan, but not of the list: with the key declared it

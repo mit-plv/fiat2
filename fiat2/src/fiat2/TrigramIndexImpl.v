@@ -31,7 +31,8 @@ Open Scope string_scope.
    What this index claims, like every other, is only that it is what to_idx
    computes, which is true of any table.  It does NOT by itself give the step
    from "the bucket of one trigram of the pattern" to "every row that contains
-   the pattern" -- that rests on occurrence_first_trigram in StringFacts --
+   the pattern" -- that rests on sep_free_inside_word and trigrams_factor in
+   StringFacts --
    nor the step back from a key to its row, which rests on the declared
    primary key. *)
 
@@ -1178,23 +1179,6 @@ Section WithHole.
         1: apply In_trigrams_first; exact H_len.
       Qed.
 
-      (* And the hypothesis above is exactly what a substring query's filter
-         computes, so nothing is lost in translation: OStrContains IS
-         String.index. *)
-      Corollary tri_lookup_complete_contains : forall (l : list value) r p,
-          In r l ->
-          sep_free seps p = true ->
-          3 <= String.length p ->
-          interp_binop OStrContains (VString (row_str r) : value) (VString p)
-          = VBool true ->
-          key_at (VString (String.substring 0 3 p)) (row_key key r) (tri_entries l).
-      Proof.
-        intros * H_in H_free H_len H_c.
-        eapply tri_lookup_complete;
-          [ exact H_in | exact H_free | exact H_len | ].
-        intro E_none. cbn [interp_binop] in H_c.
-        rewrite E_none in H_c. discriminate.
-      Qed.
 
       Instance trigram_idx : IndexInterface.index :=
         IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
