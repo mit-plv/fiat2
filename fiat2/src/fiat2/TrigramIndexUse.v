@@ -1788,6 +1788,29 @@ Section WithIndexUse.
         aqv <> rsv /\ aqv <> cnum /\ aqv <> pwrd /\ aqv <> pacc /\
         pwrd <> pacc.
 
+      (* The eleven inequalities as a decision procedure, so the rule's guard
+         can discharge pred_binders_ok from the source term alone. *)
+      Definition pred_binders_okb (q a r n w c : string) : bool :=
+        (negb (String.eqb r n) && negb (String.eqb q a)
+         && negb (String.eqb q r) && negb (String.eqb q n)
+         && negb (String.eqb q w) && negb (String.eqb q c)
+         && negb (String.eqb a r) && negb (String.eqb a n)
+         && negb (String.eqb a w) && negb (String.eqb a c)
+         && negb (String.eqb w c))%bool.
+
+      Lemma pred_binders_okb_ok : forall q a r n w c,
+          pred_binders_okb q a r n w c = true -> pred_binders_ok q a r n w c.
+      Proof.
+        unfold pred_binders_okb, pred_binders_ok; intros q a r n w c H.
+        rewrite !Bool.andb_true_iff in H.
+        repeat match goal with H : _ /\ _ |- _ => destruct H end.
+        repeat match goal with
+               | H : negb (String.eqb ?u ?v) = true |- _ =>
+                   apply Bool.negb_true_iff, String.eqb_neq in H
+               end.
+        repeat split; assumption.
+      Qed.
+
       Definition sim_any_e (qsv aqv rsv cnum pwrd pacc : string)
         (tn tdz : Z) (text p : expr) : expr :=
         ELet (tri_vset (padded_e p)) qsv
@@ -2245,6 +2268,129 @@ Section WithIndexUse.
             rewrite map.get_put_same; reflexivity. }
       Qed.
 
+      (* ----------------------------------------------------------------
+         READING THE PREDICATE OFF THE TERM.
+
+         The predicate is a twenty-five level term, and matching it inside
+         the rule's own pattern makes destruct_subexpr search a space it
+         cannot afford: every expr left in the context is a candidate to
+         destruct, each branching fifteen ways, and the surviving-goal
+         discipline backtracks across all of them.  So the shape is decided
+         HERE, by a function, and the rule's pattern stays as shallow as
+         every other rule's.
+
+         Everything internal to the predicate is checked here too -- the
+         padding literals, the separators, that each binder's occurrences
+         agree, and that different binders differ -- so the Some case yields
+         exactly the two facts the rule needs: the term IS sim_any_e, and
+         its binders are distinct.
+         ---------------------------------------------------------------- *)
+      Definition parse_sim_any (e : expr)
+        : option (string * string * string * string * string * string
+                  * Z * Z * string * string * expr) :=
+        match e with
+        | ELet (EUnop OSetOfList (EUnop OTrigrams
+                  (EBinop OConcatString (EAtom (AString lp0))
+                     (EBinop OConcatString p0 (EAtom (AString rp0)))))) q0
+            (ELet (EUnop OSetSize (EVar q1)) a0
+               (EFold (EBinop OWords (EAtom (AString sp0))
+                         (EAccess (EVar x1) attr0))
+                  (EAtom (ABool false)) w0 c0
+                  (EBinop OOr (EVar c1)
+                     (ELet (EUnop OSetOfList (EUnop OTrigrams
+                              (EBinop OConcatString (EAtom (AString lp1))
+                                 (EBinop OConcatString (EVar w1)
+                                    (EAtom (AString rp1)))))) r0
+                        (ELet (EUnop OSetSize
+                                 (EBinop OSetIntersect (EVar q2) (EVar r1)))
+                           n0
+                           (EUnop ONot
+                              (EBinop OLess
+                                 (EBinop OTimes (EVar n1) (EAtom (AInt tdz0)))
+                                 (EBinop OTimes (EAtom (AInt tn0))
+                                    (EBinop OMinus
+                                       (EBinop OPlus (EVar a1)
+                                          (EUnop OSetSize (EVar r2)))
+                                       (EVar n2)))))))))) =>
+            if (all_eqb [(q0, [q1; q2]); (a0, [a1]); (r0, [r1; r2]);
+                         (n0, [n1; n2]); (w0, [w1]); (c0, [c1]);
+                         (seps, [sp0]); (lp0, ["  "]); (lp1, ["  "]);
+                         (rp0, [" "]); (rp1, [" "])]
+                && pred_binders_okb q0 a0 r0 n0 w0 c0)%bool
+            then Some (q0, a0, r0, n0, w0, c0, tn0, tdz0, x1, attr0, p0)
+            else None
+        | _ => None
+        end.
+
+      Lemma parse_sim_any_Some :
+        forall e q a r n w c tn tdz x1 attr0 p,
+          parse_sim_any e = Some (q, a, r, n, w, c, tn, tdz, x1, attr0, p) ->
+          e = sim_any_e q a r n w c tn tdz (EAccess (EVar x1) attr0) p
+          /\ pred_binders_ok q a r n w c.
+      Proof.
+        intros e q a r n w c tn tdz x1 attr0 p H.
+        unfold parse_sim_any in H.
+        (* destruct_match_hyp takes the scrutinee of whatever match is in H
+           and records the equation under a fresh name, so this walks the
+           term one constructor at a time with no search over the context --
+           unlike destruct_subexpr, which would consider every expr in
+           scope.  That is the whole reason the shape is decided by a
+           function rather than inside the rule's own pattern. *)
+        repeat (destruct_match_hyp; try discriminate).
+        injection H; intros; subst.
+        lazymatch goal with
+        | Hg : (all_eqb _ && pred_binders_okb _ _ _ _ _ _)%bool = true |- _ =>
+            rewrite Bool.andb_true_iff in Hg; destruct Hg as [ E_eq E_ok ]
+        end.
+        cbn [all_eqb all_eqb' andb] in E_eq.
+        repeat rewrite Bool.andb_true_iff in E_eq.
+        repeat match goal with Hc : _ /\ _ |- _ => destruct Hc end.
+        repeat (rewrite eqb_eq in *; subst).
+        split; [ reflexivity | apply pred_binders_okb_ok; exact E_ok ].
+      Qed.
+
+      (* The one typing fact the rule needs out of the source's predicate.
+
+         Proved by FIVE targeted inversions rather than by repeat
+         invert_type_of_clear: that tactic inverts the first typing
+         hypothesis it finds and substitutes across the whole context, so
+         repeating it on a twenty-five level predicate inverts the entire
+         derivation and costs minutes.  Each peel below names the subterm it
+         is about, so nothing else is touched. *)
+      Lemma sim_any_e_ty_inv :
+        forall (q a r n w c : string) (Gstore Genv : tenv) (tn tdz : Z)
+               (text p : expr) (t : type),
+          type_of Gstore Genv (sim_any_e q a r n w c tn tdz text p) t ->
+          type_of Gstore Genv p TString.
+      Proof.
+        intros q a r n w c Gstore Genv tn tdz text p t H.
+        unfold sim_any_e, tri_vset, padded_e in H.
+        lazymatch goal with
+        | H0 : type_of _ _ (ELet _ _ _) _ |- _ =>
+            inversion H0; clear H0; subst
+        end.
+        lazymatch goal with
+        | H0 : type_of _ _ (EUnop OSetOfList _) _ |- _ =>
+            inversion H0; clear H0; subst
+        end.
+        lazymatch goal with
+        | H0 : type_of _ _ (EUnop OTrigrams _) _ |- _ =>
+            inversion H0; clear H0; subst
+        end.
+        lazymatch goal with
+        | H0 : type_of _ _ (EBinop OConcatString (EAtom (AString _)) _) _ |- _ =>
+            inversion H0; clear H0; subst
+        end.
+        lazymatch goal with
+        | H0 : type_of _ _ (EBinop OConcatString p _) _ |- _ =>
+            inversion H0; clear H0; subst
+        end.
+        (* the operator premises say what the argument types were; these are
+           cheap, since an op typing has no subterms to recurse into *)
+        repeat invert_type_of_op_clear.
+        assumption.
+      Qed.
+
       (* ==================================================================
          The all-trigram rule.
 
@@ -2683,6 +2829,98 @@ Section WithIndexUse.
             1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
         1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
       Qed.
+
+      (* The recheck's type: a set of the table's rows.  The predicate is
+         typed by sim_any_e_ty under the recheck's own binder, which is the
+         whole point of having parameterised it over the source's names. *)
+      Lemma thr_probe_ty :
+        forall (q a r n w c : string) (Gstore Genv : tenv) tl ctl rt kt
+               (tn tdz : Z) (cand p : expr),
+          pred_binders_ok q a r n w c ->
+          y <> q -> y <> a ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl pk_tag = Success (TDict Unranged kt (TRecord rt)) ->
+          access_record rt attr = Success TString ->
+          type_wf (TRecord rt) ->
+          type_of Gstore Genv cand (TSet kt) ->
+          type_of Gstore (map.put (map.put Genv k kt) y (TRecord rt)) p TString ->
+          type_of Gstore Genv (thr_probe q a r n w c tn tdz cand p)
+            (TSet (TRecord rt)).
+      Proof.
+        intros * H_ok H_yq H_ya E_tbl E_aux E_pk H_attr H_rtwf H_cand H_p.
+        unfold thr_probe.
+        eapply TyEFlatmap_Set with (t1 := kt); [ exact H_cand | ].
+        eapply TyEOptMatch with (t1 := TRecord rt).
+        1:{ eapply TyEBinop; [ apply TyOLookup | | ].
+            1:{ eapply TyEAccess;
+                [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
+                | exact E_pk ]. }
+            1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
+        eapply TyEIf.
+        1:{ eapply sim_any_e_ty; [ exact H_ok | exact H_p | ].
+            eapply TyEAccess; [ | exact H_attr ].
+            apply TyEVar.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            apply map.get_put_same. }
+        1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+            2: apply TyEVar; rewrite map.get_put_same; reflexivity.
+            1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf. }
+        1: apply TyEAtom; apply TyAEmptySet'; exact H_rtwf.
+      Qed.
+
+      (* ----------------------------------------------------------------
+         THE THRESHOLD RULE.
+
+         [row <- set(tbl[id_tag]), check(some word of row.attr is similar
+         enough to p), ret row]
+           -->
+         union the buckets of every trigram of the PADDED pattern, keep the
+         keys whose count passes gin_trgm_consistent's test, resolve each
+         through tbl[aux_tag][pk_tag], and recheck the source's own
+         predicate.
+
+         parse_sim_any decides the predicate's shape, so this pattern stays
+         as shallow as every other rule's.  What is left to check here is
+         what relates the predicate to the TABLE: that the text it reads is
+         this table's attribute under the scan's own binder, that the pattern
+         is free of the three binders it will be read under, and that the
+         threshold is positive.
+
+         Freeness of x0 is what makes the rewrite legitimate: the predicate's
+         only dependence on the row is the one access parse_sim_any returned,
+         so the recheck may re-emit it under y instead.  0 < tn is
+         load-bearing -- at a threshold of zero every row qualifies while the
+         count test admits nothing -- and both bounds carry the source's Z
+         literals into the nat arithmetic the completeness argument counts
+         in.  y differs from the query's two outer binders because the
+         recheck reads the row through EVar y from INSIDE the re-emitted
+         predicate, so those two puts sit between; k needs no such check,
+         since the key is read in the lookup's scrutinee before any of them
+         is bound.
+         ---------------------------------------------------------------- *)
+      Definition thr_lookup_head (e : expr) : expr :=
+        match e with
+        | flatmap_filter_set
+            (EUnop OSetOfList (EAccess (ELoc tbl0) id_tag0)) x0 pred x2 _ _ =>
+            match parse_sim_any pred with
+            | Some (q0, a0, r0, n0, w0, c0, tn0, tdz0, x1, attr0, p0) =>
+                if (all_eqb [(tbl, [tbl0]); (attr, [attr0]);
+                             (id_tag, [id_tag0]); (x0, [x1; x2])]
+                    && negb (free_immut_in x0 p0)
+                    && negb (free_immut_in k p0)
+                    && negb (free_immut_in y p0)
+                    && negb (String.eqb y q0) && negb (String.eqb y a0)
+                    && (0 <? tn0)%Z && (0 <? tdz0)%Z)%bool
+                then thr_probe q0 a0 r0 n0 w0 c0 tn0 tdz0
+                       (thr_keep tn0 tdz0 (padded_e p0)) p0
+                else e
+            | None => e
+            end
+        | _ => e
+        end.
 
       Lemma trigram_lookup_all_guarded_head_preserve_ty :
         forall tl ctl t (Gstore : tenv),
