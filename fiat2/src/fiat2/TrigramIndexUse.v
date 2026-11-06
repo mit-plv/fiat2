@@ -305,11 +305,6 @@ Section WithIndexUse.
      candidate set introduces is the trigram it is looking up.  Last again,
      so the lemmas above keep the arguments they had. *)
   Context (cgram : string).
-  (* The per-word threshold PREDICATE's binders.  The query's trigram set and
-     its size are bound once, outside the fold over words; then per word, the
-     word's own trigram set and the count the two share; and the fold's own
-     two names.  Last again, so the lemmas above keep the arguments they had. *)
-  Context (qsv aqv rsv cnum pwrd pacc : string).
 
   Notation tridx :=
     (trigram_idx hole attr key tup acc gvar sacc bkt seps wrd wacc).
@@ -1639,7 +1634,7 @@ Section WithIndexUse.
          with a = |T(p)|, b = |T(w)|, c = |T(p) INTERSECT T(w)|.  The
          query's set and size arrive already bound, because recomputing them
          per word would charge the scan for work no implementation does. *)
-      Definition sim_body (tn tdz : Z) (ae : expr) : expr :=
+      Definition sim_body (rsv cnum : string) (tn tdz : Z) (ae : expr) : expr :=
         EUnop ONot
           (EBinop OLess
              (EBinop OTimes (EVar cnum) (EAtom (AInt tdz)))
@@ -1648,25 +1643,26 @@ Section WithIndexUse.
                    (EBinop OPlus ae (EUnop OSetSize (EVar rsv)))
                    (EVar cnum)))).
 
-      Definition sim_word (tn tdz : Z) (qe ae we : expr) : expr :=
+      Definition sim_word (rsv cnum : string) (tn tdz : Z) (qe ae we : expr)
+        : expr :=
         ELet (tri_vset we) rsv
           (ELet (EUnop OSetSize (EBinop OSetIntersect qe (EVar rsv))) cnum
-             (sim_body tn tdz ae)).
+             (sim_body rsv cnum tn tdz ae)).
 
       (* What the body computes once the two lets have bound: every lookup
          arrives as a hypothesis, so no put-diff reasoning is needed here. *)
       Lemma interp_sim_body :
-        forall (store env : locals) (tn tdz : Z) (ae : expr)
+        forall (rsv cnum : string) (store env : locals) (tn tdz : Z) (ae : expr)
                (cv : nat) (rl : list value) (av : nat),
           map.get env cnum = Some (VInt (Z.of_nat cv)) ->
           map.get env rsv = Some (VSet rl) ->
           interp_expr store env ae = VInt (Z.of_nat av) ->
-          interp_expr store env (sim_body tn tdz ae)
+          interp_expr store env (sim_body rsv cnum tn tdz ae)
           = VBool (negb (Z.of_nat cv * tdz
                          <? tn * (Z.of_nat av + Z.of_nat (List.length rl)
                                   - Z.of_nat cv))%Z).
       Proof.
-        intros store env tn tdz ae cv rl av E_c E_r E_ae.
+        intros rsv cnum store env tn tdz ae cv rl av E_c E_r E_ae.
         unfold sim_body.
         repeat (rewrite interp_EUnop || rewrite interp_EBinop).
         rewrite E_ae, !interp_EVar, !interp_EAtom.
@@ -1686,8 +1682,8 @@ Section WithIndexUse.
                        - Z.of_nat (shared_count pv wv)))%Z.
 
       Lemma interp_sim_word :
-        forall (store env : locals) (tn tdz : Z) (qe ae we : expr)
-               (pv wv : string),
+        forall (rsv cnum : string) (store env : locals) (tn tdz : Z)
+               (qe ae we : expr) (pv wv : string),
           rsv <> cnum ->
           interp_expr store env we = VString wv ->
           (forall rv, interp_expr store (map.put env rsv rv) qe
@@ -1695,10 +1691,10 @@ Section WithIndexUse.
           (forall rv cv,
               interp_expr store (map.put (map.put env rsv rv) cnum cv) ae
               = VInt (Z.of_nat (List.length (qtris pv)))) ->
-          interp_expr store env (sim_word tn tdz qe ae we)
+          interp_expr store env (sim_word rsv cnum tn tdz qe ae we)
           = VBool (sim_test tn tdz pv wv).
       Proof.
-        intros store env tn tdz qe ae we pv wv H_ne E_w E_q E_a.
+        intros rsv cnum store env tn tdz qe ae we pv wv H_ne E_w E_q E_a.
         assert (E_cnt : interp_expr store (map.put env rsv (VSet (qtris wv)))
                           (EUnop OSetSize (EBinop OSetIntersect qe (EVar rsv)))
                         = VInt (Z.of_nat (shared_count pv wv))).
@@ -1708,7 +1704,7 @@ Section WithIndexUse.
         unfold sim_word, sim_test.
         rewrite interp_ELet_step, (interp_tri_vset store env we wv E_w).
         rewrite interp_ELet_step, E_cnt.
-        apply (interp_sim_body store _ tn tdz ae (shared_count pv wv)
+        apply (interp_sim_body rsv cnum store _ tn tdz ae (shared_count pv wv)
                  (qtris wv) (List.length (qtris pv))).
         1: apply map.get_put_same.
         1:{ rewrite map.get_put_diff by congruence. apply map.get_put_same. }
@@ -1785,19 +1781,21 @@ Section WithIndexUse.
       (* The eleven ways the predicate's six binders have to differ, bundled
          so the lemmas take one hypothesis instead of eleven -- and so the
          rule's guard has one thing to discharge. *)
-      Definition pred_binders_ok : Prop :=
+      Definition pred_binders_ok (qsv aqv rsv cnum pwrd pacc : string)
+        : Prop :=
         rsv <> cnum /\ qsv <> aqv /\
         qsv <> rsv /\ qsv <> cnum /\ qsv <> pwrd /\ qsv <> pacc /\
         aqv <> rsv /\ aqv <> cnum /\ aqv <> pwrd /\ aqv <> pacc /\
         pwrd <> pacc.
 
-      Definition sim_any_e (tn tdz : Z) (text p : expr) : expr :=
+      Definition sim_any_e (qsv aqv rsv cnum pwrd pacc : string)
+        (tn tdz : Z) (text p : expr) : expr :=
         ELet (tri_vset (padded_e p)) qsv
           (ELet (EUnop OSetSize (EVar qsv)) aqv
              (EFold (EBinop OWords (EAtom (AString seps)) text)
                 (EAtom (ABool false)) pwrd pacc
                 (EBinop OOr (EVar pacc)
-                   (sim_word tn tdz (EVar qsv) (EVar aqv)
+                   (sim_word rsv cnum tn tdz (EVar qsv) (EVar aqv)
                       (padded_e (EVar pwrd)))))).
 
       Lemma existsb_map_VString :
@@ -1824,18 +1822,21 @@ Section WithIndexUse.
       Qed.
 
       Lemma interp_sim_any_e :
-        forall (store env : locals) (tn tdz : Z) (text p : expr)
+        forall (qsv aqv rsv cnum pwrd pacc : string)
+               (store env : locals) (tn tdz : Z) (text p : expr)
                (sv pv : string),
-          pred_binders_ok ->
+          pred_binders_ok qsv aqv rsv cnum pwrd pacc ->
           interp_expr store env p = VString pv ->
           (forall qv av,
               interp_expr store (map.put (map.put env qsv qv) aqv av) text
               = VString sv) ->
-          interp_expr store env (sim_any_e tn tdz text p)
+          interp_expr store env
+            (sim_any_e qsv aqv rsv cnum pwrd pacc tn tdz text p)
           = VBool (existsb (fun w => sim_test tn tdz (pad pv) (pad w))
                      (words seps sv)).
       Proof.
-        intros store env tn tdz text p sv pv H_ok E_p E_text.
+        intros qsv aqv rsv cnum pwrd pacc store env tn tdz text p sv pv
+               H_ok E_p E_text.
         destruct H_ok as [ H_rc [ H_qa [ H_qr [ H_qc [ H_qw [ H_qp
                          [ H_ar [ H_ac [ H_aw [ H_ap H_wp ] ] ] ] ] ] ] ] ] ].
         (* what one word's test computes, in any env that binds the three *)
@@ -1848,11 +1849,11 @@ Section WithIndexUse.
                        = Some (VInt (Z.of_nat
                                        (List.length (qtris (pad pv)))))) ->
                    interp_expr store E
-                     (sim_word tn tdz (EVar qsv) (EVar aqv)
+                     (sim_word rsv cnum tn tdz (EVar qsv) (EVar aqv)
                         (padded_e (EVar pwrd)))
                    = VBool (sim_test tn tdz (pad pv) (pad w))).
         1:{ intros E w E_w E_q E_a.
-            apply (interp_sim_word store E tn tdz (EVar qsv) (EVar aqv)
+            apply (interp_sim_word rsv cnum store E tn tdz (EVar qsv) (EVar aqv)
                      (padded_e (EVar pwrd)) (pad pv) (pad w) H_rc).
             1:{ apply (interp_padded_e store E (EVar pwrd) w).
                 rewrite interp_EVar; unfold get_local, get_local.
@@ -1871,7 +1872,7 @@ Section WithIndexUse.
         rewrite (interp_fold_or store _
                    (EBinop OWords (EAtom (AString seps)) text)
                    (List.map VString (words seps sv)) pwrd pacc
-                   (sim_word tn tdz (EVar qsv) (EVar aqv)
+                   (sim_word rsv cnum tn tdz (EVar qsv) (EVar aqv)
                       (padded_e (EVar pwrd)))).
         (* the three side conditions, then the existsb *)
         4:{ intros wv H_in.
@@ -2018,10 +2019,12 @@ Section WithIndexUse.
         | _ => false
         end.
 
-      Definition thr_probe (tn tdz : Z) (cand p : expr) : expr :=
+      Definition thr_probe (qsv aqv rsv cnum pwrd pacc : string)
+        (tn tdz : Z) (cand p : expr) : expr :=
         EFlatmap LikeSet cand k
           (EOptMatch (EBinop OLookup pk_e (EVar k)) (EAtom (AEmptySet None))
-             y (EIf (sim_any_e tn tdz (EAccess (EVar y) attr) p)
+             y (EIf (sim_any_e qsv aqv rsv cnum pwrd pacc tn tdz
+                       (EAccess (EVar y) attr) p)
                   (EBinop OSetInsert (EAtom (AEmptySet None)) (EVar y))
                   (EAtom (AEmptySet None)))).
 
@@ -2029,13 +2032,16 @@ Section WithIndexUse.
          VALUE the text takes, so the caller destructs once and this covers
          every non-string case at a stroke. *)
       Lemma interp_sim_any_e_unit :
-        forall (store env : locals) (tn tdz : Z) (text p : expr) (tv : value),
+        forall (qsv aqv rsv cnum pwrd pacc : string)
+               (store env : locals) (tn tdz : Z) (text p : expr) (tv : value),
           (forall qv av,
               interp_expr store (map.put (map.put env qsv qv) aqv av) text = tv) ->
           (forall s, tv <> VString s) ->
-          interp_expr store env (sim_any_e tn tdz text p) = VUnit.
+          interp_expr store env
+            (sim_any_e qsv aqv rsv cnum pwrd pacc tn tdz text p) = VUnit.
       Proof.
-        intros store env tn tdz text p tv E_text H_ns.
+        intros qsv aqv rsv cnum pwrd pacc store env tn tdz text p tv
+               E_text H_ns.
         unfold sim_any_e.
         rewrite interp_ELet_step, interp_ELet_step, interp_EFold,
           interp_EBinop, interp_EAtom, (E_text _ _).
@@ -2046,15 +2052,17 @@ Section WithIndexUse.
       Qed.
 
       Lemma interp_thr_probe :
-        forall (store env : locals) (tn tdz : Z) (cand p : expr)
+        forall (qsv aqv rsv cnum pwrd pacc : string)
+               (store env : locals) (tn tdz : Z) (cand p : expr)
                (cl : list value) (pv : string) (pd : list (value * value)),
-          pred_binders_ok ->
+          pred_binders_ok qsv aqv rsv cnum pwrd pacc ->
           y <> qsv -> y <> aqv ->
           interp_expr store env cand = VSet cl ->
           (forall (v r : value),
               interp_expr store (map.put (map.put env k v) y r) p = VString pv) ->
           interp_expr store env pk_e = VDict pd ->
-          interp_expr store env (thr_probe tn tdz cand p)
+          interp_expr store env
+            (thr_probe qsv aqv rsv cnum pwrd pacc tn tdz cand p)
           = VSet (list_to_set
                     (flat_map
                        (fun kk =>
@@ -2065,7 +2073,8 @@ Section WithIndexUse.
                           end)
                        cl)).
       Proof.
-        intros store env tn tdz cand p cl pv pd H_ok H_yq H_ya E_cand E_p E_pk.
+        intros qsv aqv rsv cnum pwrd pacc store env tn tdz cand p cl pv pd
+               H_ok H_yq H_ya E_cand E_p E_pk.
         unfold thr_probe.
         rewrite interp_EFlatmap_set, E_cand; cbv beta iota.
         apply (f_equal (fun z : list value => VSet (list_to_set z))).
@@ -2092,7 +2101,7 @@ Section WithIndexUse.
             unfold row_key. reflexivity. }
         rewrite interp_EIf. unfold sim_row_test.
         destruct (row_key attr r) as [ | | s | | | | | | | ].
-        3:{ rewrite (interp_sim_any_e store _ tn tdz
+        3:{ rewrite (interp_sim_any_e qsv aqv rsv cnum pwrd pacc store _ tn tdz
                        (EAccess (EVar y) attr) p s pv H_ok (E_p v r) E_acc).
             destruct (existsb (fun w => sim_test tn tdz (pad pv) (pad w))
                         (words seps s)).
@@ -2100,8 +2109,8 @@ Section WithIndexUse.
                 unfold get_local; rewrite map.get_put_same.
                 cbn [interp_atom interp_binop set_insert]. reflexivity. }
             1:{ rewrite interp_EAtom; cbn [interp_atom]; reflexivity. } }
-        all: rewrite (interp_sim_any_e_unit store _ tn tdz
-                        (EAccess (EVar y) attr) p _ E_acc)
+        all: rewrite (interp_sim_any_e_unit qsv aqv rsv cnum pwrd pacc store _
+                        tn tdz (EAccess (EVar y) attr) p _ E_acc)
                by (intros s'; discriminate).
         all: reflexivity.
       Qed.
@@ -2112,24 +2121,128 @@ Section WithIndexUse.
          the candidate list, which is why generalising it over the test was
          worth doing rather than copying it. *)
       Lemma interp_thr_probe_as_probe_body :
-        forall (store env : locals) (tn tdz : Z) (cand p : expr)
+        forall (qsv aqv rsv cnum pwrd pacc : string)
+               (store env : locals) (tn tdz : Z) (cand p : expr)
                (cl rows : list value) (pv : string),
-          pred_binders_ok ->
+          pred_binders_ok qsv aqv rsv cnum pwrd pacc ->
           y <> qsv -> y <> aqv ->
           interp_expr store env cand = VSet cl ->
           (forall (v r : value),
               interp_expr store (map.put (map.put env k v) y r) p = VString pv) ->
           interp_expr store env pk_e
           = VDict (UniqueDictIndexImpl.idx_entries key rows) ->
-          interp_expr store env (thr_probe tn tdz cand p)
+          interp_expr store env
+            (thr_probe qsv aqv rsv cnum pwrd pacc tn tdz cand p)
           = VSet (list_to_set
                     (flat_map
                        (probe_body_t key (sim_row_test tn tdz pv) rows) cl)).
       Proof.
-        intros store env tn tdz cand p cl rows pv H_ok H_yq H_ya E_cand E_p E_pk.
-        rewrite (interp_thr_probe store env tn tdz cand p cl pv _
-                   H_ok H_yq H_ya E_cand E_p E_pk).
+        intros qsv aqv rsv cnum pwrd pacc store env tn tdz cand p cl rows pv
+               H_ok H_yq H_ya E_cand E_p E_pk.
+        rewrite (interp_thr_probe qsv aqv rsv cnum pwrd pacc store env tn tdz
+                   cand p cl pv _ H_ok H_yq H_ya E_cand E_p E_pk).
         reflexivity.
+      Qed.
+
+      (* ----------------------------------------------------------------
+         TYPING THE PREDICATE.
+
+         preserve_ty needs this because the rewrite RE-EMITS the source's own
+         predicate, under the recheck's binder rather than the scan's.  The
+         binder names come from the source term, not from this section, so
+         every lookup below is justified by pred_binders_ok rather than by a
+         section hypothesis -- which is what lets the rule fire whatever the
+         author called their own variables.
+         ---------------------------------------------------------------- *)
+      Lemma padded_e_ty : forall (Gstore Genv : tenv) s,
+          type_of Gstore Genv s TString ->
+          type_of Gstore Genv (padded_e s) TString.
+      Proof.
+        intros * H_s; unfold padded_e.
+        eapply TyEBinop; [ apply TyOConcatString | apply TyEAtom, TyAString | ].
+        eapply TyEBinop; [ apply TyOConcatString | exact H_s | ].
+        apply TyEAtom, TyAString.
+      Qed.
+
+      Lemma tri_vset_ty : forall (Gstore Genv : tenv) e,
+          type_of Gstore Genv e TString ->
+          type_of Gstore Genv (tri_vset e) (TSet TString).
+      Proof.
+        intros * H_e; unfold tri_vset.
+        eapply TyEUnop; [ apply TyOSetOfList | ].
+        eapply TyEUnop; [ apply TyOTrigrams | exact H_e ].
+      Qed.
+
+      Lemma sim_word_ty :
+        forall (rsv0 cnum0 : string) (Gstore Genv : tenv) (tn tdz : Z)
+               (qe ae we : expr),
+          rsv0 <> cnum0 ->
+          type_of Gstore Genv we TString ->
+          type_of Gstore (map.put Genv rsv0 (TSet TString)) qe (TSet TString) ->
+          type_of Gstore (map.put (map.put Genv rsv0 (TSet TString)) cnum0 TInt)
+            ae TInt ->
+          type_of Gstore Genv (sim_word rsv0 cnum0 tn tdz qe ae we) TBool.
+      Proof.
+        intros * H_ne H_we H_qe H_ae; unfold sim_word, sim_body.
+        eapply TyELet; [ apply tri_vset_ty; exact H_we | ].
+        eapply TyELet.
+        1:{ eapply TyEUnop; [ apply TyOSetSize | ].
+            eapply TyEBinop; [ apply TyOSetIntersect | exact H_qe | ].
+            apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        eapply TyEUnop; [ apply TyONot | ].
+        eapply TyEBinop; [ apply TyOLess | | ].
+        1:{ eapply TyEBinop; [ apply TyOTimes | | apply TyEAtom, TyAInt ].
+            apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        eapply TyEBinop; [ apply TyOTimes | apply TyEAtom, TyAInt | ].
+        eapply TyEBinop; [ apply TyOMinus | | ].
+        1:{ eapply TyEBinop; [ apply TyOPlus | exact H_ae | ].
+            eapply TyEUnop; [ apply TyOSetSize | ].
+            apply TyEVar.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_same; reflexivity. }
+        apply TyEVar; rewrite map.get_put_same; reflexivity.
+      Qed.
+
+      Lemma sim_any_e_ty :
+        forall (qsv0 aqv0 rsv0 cnum0 pwrd0 pacc0 : string)
+               (Gstore Genv : tenv) (tn tdz : Z) (text p : expr),
+          pred_binders_ok qsv0 aqv0 rsv0 cnum0 pwrd0 pacc0 ->
+          type_of Gstore Genv p TString ->
+          type_of Gstore (map.put (map.put Genv qsv0 (TSet TString)) aqv0 TInt)
+            text TString ->
+          type_of Gstore Genv
+            (sim_any_e qsv0 aqv0 rsv0 cnum0 pwrd0 pacc0 tn tdz text p) TBool.
+      Proof.
+        intros * H_ok H_p H_text.
+        destruct H_ok as [ H_rc [ H_qa [ H_qr [ H_qc [ H_qw [ H_qp
+                         [ H_ar [ H_ac [ H_aw [ H_ap H_wp ] ] ] ] ] ] ] ] ] ].
+        unfold sim_any_e.
+        eapply TyELet; [ apply tri_vset_ty, padded_e_ty; exact H_p | ].
+        eapply TyELet.
+        1:{ eapply TyEUnop; [ apply TyOSetSize | ].
+            apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        eapply TyEFold.
+        1:{ eapply TyEBinop;
+              [ apply TyOWords | apply TyEAtom, TyAString | exact H_text ]. }
+        1: apply TyEAtom, TyABool.
+        eapply TyEBinop; [ apply TyOOr | | ].
+        1: apply TyEVar; rewrite map.get_put_same; reflexivity.
+        eapply sim_word_ty; [ exact H_rc | | | ].
+        1:{ apply padded_e_ty, TyEVar.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_same; reflexivity. }
+        1:{ apply TyEVar.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_same; reflexivity. }
+        1:{ apply TyEVar.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_same; reflexivity. }
       Qed.
 
       (* ==================================================================
@@ -2471,6 +2584,104 @@ Section WithIndexUse.
                     apply TyEVar; rewrite map.get_put_same; reflexivity. } } }
         1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
         1: apply TyEVar; rewrite map.get_put_same; reflexivity.
+      Qed.
+
+      (* ----------------------------------------------------------------
+         TYPING THE EMITTED TERMS.
+
+         thr_cands is dyn_cands' with one constructor changed, so its typing
+         is that proof with TyAGUnion in place of TyAGIntersect.  The count
+         and the keep-term both read the candidate key out of k, so both ask
+         the environment for it -- which is also why k is the keep-term's own
+         binder rather than a fresh one.
+         ---------------------------------------------------------------- *)
+      Lemma thr_cands_ty : forall (Gstore Genv : tenv) tl ctl kt p,
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (TDict Unranged TString (TSet kt)) ->
+          type_wf kt ->
+          type_of Gstore Genv p TString ->
+          type_of Gstore Genv (thr_cands p) (TSet kt).
+      Proof.
+        intros * E_tbl E_aux E_tri H_ktwf H_p.
+        assert (H_skwf : type_wf (TSet kt)) by (constructor; exact H_ktwf).
+        unfold thr_cands.
+        eapply TyEOptMatch with (t1 := TSet kt).
+        1:{ eapply TyEACIFold; [ apply TyAGUnion | ].
+            unfold tri_buckets.
+            eapply TyEFlatmap_Set with (t1 := TString).
+            1:{ eapply TyEUnop; [ apply TyOSetOfList | ].
+                eapply TyEUnop; [ apply TyOTrigrams | exact H_p ]. }
+            1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+                1: apply TyEAtom; apply TyAEmptySet'; exact H_skwf.
+                1:{ eapply tri_bucket_e_ty;
+                      [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | ].
+                    apply TyEVar; rewrite map.get_put_same; reflexivity. } } }
+        1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
+        1: apply TyEVar; rewrite map.get_put_same; reflexivity.
+      Qed.
+
+      Lemma thr_count_ty : forall (Gstore Genv : tenv) tl ctl kt p,
+          cgram <> k ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (TDict Unranged TString (TSet kt)) ->
+          type_wf kt ->
+          map.get Genv k = Some kt ->
+          type_of Gstore Genv p TString ->
+          type_of Gstore Genv (thr_count p) TInt.
+      Proof.
+        intros * H_ne E_tbl E_aux E_tri H_ktwf E_k H_p.
+        unfold thr_count.
+        eapply TyEUnop; [ apply TyOSetSize | ].
+        eapply TyEFlatmap_Set with (t1 := TString).
+        1:{ eapply TyEUnop; [ apply TyOSetOfList | ].
+            eapply TyEUnop; [ apply TyOTrigrams | exact H_p ]. }
+        eapply TyEIf.
+        1:{ eapply TyEBinop; [ apply TyOSetMem | | ].
+            1:{ eapply tri_bucket_e_ty;
+                  [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | ].
+                apply TyEVar; rewrite map.get_put_same; reflexivity. }
+            1:{ apply TyEVar; rewrite map.get_put_diff by congruence; exact E_k. } }
+        (* the ELEMENT first: it fixes the set's type to TString, so the
+           empty set's type_wf goal is concrete.  Discharging the empty set
+           first would leave `type_wf ?t` open and a bare `constructor`
+           would guess TInt. *)
+        1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+            2: apply TyEVar; rewrite map.get_put_same; reflexivity.
+            1: apply TyEAtom; apply TyAEmptySet'; constructor. }
+        1: apply TyEAtom; apply TyAEmptySet'; constructor.
+      Qed.
+
+      Lemma thr_keep_ty : forall (Gstore Genv : tenv) tl ctl kt tn tdz p,
+          cgram <> k ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (TDict Unranged TString (TSet kt)) ->
+          type_wf kt ->
+          type_of Gstore Genv p TString ->
+          type_of Gstore (map.put Genv k kt) p TString ->
+          type_of Gstore Genv (thr_keep tn tdz p) (TSet kt).
+      Proof.
+        intros * H_ne E_tbl E_aux E_tri H_ktwf H_p H_pk.
+        unfold thr_keep.
+        eapply TyEFlatmap_Set with (t1 := kt).
+        1:{ eapply thr_cands_ty;
+              [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | exact H_p ]. }
+        eapply TyEIf.
+        1:{ eapply TyEUnop; [ apply TyONot | ].
+            eapply TyEBinop; [ apply TyOLess | | ].
+            1:{ eapply TyEBinop; [ apply TyOTimes | | apply TyEAtom, TyAInt ].
+                eapply thr_count_ty;
+                  [ exact H_ne | exact E_tbl | exact E_aux | exact E_tri
+                  | exact H_ktwf | apply map.get_put_same | exact H_pk ]. }
+            1:{ eapply TyEBinop; [ apply TyOTimes | apply TyEAtom, TyAInt | ].
+                eapply TyEUnop; [ apply TyOSetSize | ].
+                apply tri_vset_ty; exact H_pk. } }
+        1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
+            1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
+            1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
+        1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
       Qed.
 
       Lemma trigram_lookup_all_guarded_head_preserve_ty :
