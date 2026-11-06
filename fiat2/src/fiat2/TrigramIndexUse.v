@@ -1538,6 +1538,73 @@ Section WithIndexUse.
       Qed.
 
       (* ----------------------------------------------------------------
+         THE EMITTED KEEP-TERM: the pool, filtered by the count test.
+
+         This is gin_trgm_consistent's own test, and it is a STRICT
+         over-approximation of the predicate -- c/a rather than
+         c/(a+b-c) -- so what it returns is a candidate list and never an
+         answer.  That is why the obligation discharged against it is
+         completeness alone, and why the recheck is not optional.
+
+         The test is cross-multiplied, so the threshold is an exact
+         rational and no division or float appears.  The bound variable is
+         k, which is what thr_count reads its key from.
+         ---------------------------------------------------------------- *)
+      Definition thr_keep (tn tdz : Z) (p : expr) : expr :=
+        flatmap_filter_set (thr_cands p) k
+          (EUnop ONot
+             (EBinop OLess
+                (EBinop OTimes (thr_count p) (EAtom (AInt tdz)))
+                (EBinop OTimes (EAtom (AInt tn))
+                   (EUnop OSetSize (tri_vset p)))))
+          k None None.
+
+      (* The count test at the value level, on the counts the lemmas above
+         produce: c * td >= tn * a with c the index's count and a the
+         query's deduplicated trigram count. *)
+      Definition thr_test (tn tdz : Z) (pv : string) (d kv : value) : bool :=
+        negb (Z.of_nat (List.length (count_set pv d kv)) * tdz
+              <? tn * Z.of_nat (List.length (qtris pv)))%Z.
+
+      Lemma interp_thr_keep :
+        forall (store env : locals) (tn tdz : Z) (p : expr) (pv : string)
+               (tdict : list (value * value)),
+          cgram <> k ->
+          interp_expr store env tri_e = VDict tdict ->
+          Forall (fun e : value * value =>
+                    match snd e with VSet _ => True | _ => False end) tdict ->
+          (forall kv, interp_expr store (map.put env k kv) p = VString pv) ->
+          interp_expr store env p = VString pv ->
+          (3 <= String.length pv)%nat ->
+          exists cl,
+            interp_expr store env (thr_keep tn tdz p)
+            = VSet (list_to_set
+                      (filter (fun kv => thr_test tn tdz pv (VDict tdict) kv) cl))
+            /\ (forall v, In v cl <->
+                            (exists g, In g (trigrams pv) /\
+                                       In v (tri_bucket (VString g) (VDict tdict)))).
+      Proof.
+        intros store env tn tdz p pv tdict H_ne E_tri H_sets E_pk E_p H_len.
+        destruct (interp_thr_cands store env p pv tdict E_tri H_sets E_p H_len)
+          as [ cl [ E_cands H_cl ] ].
+        exists cl; split; [ | exact H_cl ].
+        unfold thr_keep.
+        rewrite interp_flatmap_filter_set, E_cands.
+        do 2 f_equal.
+        apply filter_ext; intros kv.
+        assert (H_tri' : interp_expr store (map.put env k kv) tri_e = VDict tdict).
+        1:{ rewrite (interp_tbl_access_env_irrel store _ env aux_tag tri_tag).
+            exact E_tri. }
+        rewrite interp_EUnop, interp_EBinop, interp_EBinop, interp_EBinop.
+        rewrite (interp_thr_count store (map.put env k kv) p pv kv tdict
+                   H_ne H_tri' H_sets (E_pk kv)
+                   ltac:(apply map.get_put_same)).
+        rewrite interp_EUnop, (interp_tri_vset store _ p pv (E_pk kv)).
+        cbn [interp_unop interp_binop apply_int_binop].
+        unfold thr_test. reflexivity.
+      Qed.
+
+      (* ----------------------------------------------------------------
          THE PREDICATE IS A DISJUNCTION OVER THE ROW'S WORDS.
 
          "Some word is similar enough" is written as a fold of OOr, and this
