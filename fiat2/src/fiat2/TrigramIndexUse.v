@@ -1433,6 +1433,102 @@ Section WithIndexUse.
         unfold TrigramIndexImpl.row_wrds; exact H_w.
       Qed.
 
+      Lemma filter_length_le' :
+        forall (A : Type) (f : A -> bool) (l : list A),
+          List.length (List.filter f l) <= List.length l.
+      Proof.
+        intros A f l; induction l as [ | x l IH ];
+          cbn [List.filter List.length]; [ lia | ].
+        destruct (f x); cbn [List.length]; lia.
+      Qed.
+
+      (* ----------------------------------------------------------------
+         THE EMITTED CANDIDATE SET IS COMPLETE FOR THE PER-WORD PREDICATE.
+
+         Given a word of the row that meets the threshold, with the counts
+         read off the same value-level sets the predicate computes on, the
+         row's key is in the pool AND survives the count test -- the two
+         things the emitted filter asks of it.  Neither half needs the index
+         to be precise, which is what makes a necessary-but-not-sufficient
+         structure sound to probe, and the arithmetic is cross-multiplied
+         throughout, so no division and no float appears anywhere.
+         ---------------------------------------------------------------- *)
+      Lemma thr_cands_complete_for_row :
+        forall (rows : list value) (pv : string) (r : value) (w : string)
+               (tn td aq bw cw : nat),
+          In r rows ->
+          In w (words seps (TrigramIndexImpl.row_str attr r)) ->
+          aq = List.length (qtris pv) ->
+          bw = List.length (qtris (pad w)) ->
+          cw = shared_count pv (pad w) ->
+          0 < tn ->
+          cw <= bw ->
+          0 < aq + bw - cw ->
+          cw * td >= tn * (aq + bw - cw) ->
+          (exists g, In g (trigrams pv) /\
+                     In (row_key key r)
+                       (tri_bucket (VString g)
+                          (TrigramIndexImpl.tri_entries attr key seps rows)))
+          /\ tn * aq
+             <= List.length
+                  (count_set pv
+                     (TrigramIndexImpl.tri_entries attr key seps rows)
+                     (row_key key r)) * td.
+      Proof.
+        intros rows pv r w tn td aq bw cw
+               H_in H_w E_a E_b E_c H_tn H_cb H_ab H_jac.
+        assert (H_ca : cw <= aq)
+          by (subst aq cw; unfold shared_count; apply filter_length_le').
+        (* the row shares at least one trigram, or the threshold is 0 *)
+        assert (H_pos : 0 < cw).
+        1:{ destruct cw as [ | cw' ]; [ | lia ].
+            rewrite Nat.mul_0_l in H_jac.
+            assert (H_p : 0 < tn * (aq + bw - 0))
+              by (apply Nat.mul_pos_pos; lia).
+            lia. }
+        split.
+        (* in the pool *)
+        1:{ subst cw; unfold shared_count in H_pos.
+            destruct (filter
+                        (fun gv => match gv with
+                                   | VString g =>
+                                       existsb (String.eqb g) (trigrams (pad w))
+                                   | _ => false
+                                   end) (qtris pv))
+              as [ | gv rest ] eqn:E_f; [ cbn in H_pos; lia | ].
+            assert (H_mem : In gv
+                      (filter
+                         (fun gv => match gv with
+                                    | VString g =>
+                                        existsb (String.eqb g) (trigrams (pad w))
+                                    | _ => false
+                                    end) (qtris pv)))
+              by (rewrite E_f; left; reflexivity).
+            apply filter_In in H_mem as [ H_q H_pred ].
+            destruct gv as [ | | g | | | | | | | ]; try discriminate.
+            apply existsb_exists in H_pred as [ g' [ H_g' E_eq ] ].
+            apply String.eqb_eq in E_eq; subst g'.
+            unfold qtris in H_q.
+            apply list_to_set_incl, in_map_iff in H_q as [ g0 [ E_gv H_g0 ] ].
+            injection E_gv as E_gv; subst g0.
+            exists g; split; [ exact H_g0 | ].
+            apply key_at__In_tri_bucket.
+            eapply TrigramIndexImpl.tri_lookup_complete_at_word;
+              [ exact H_in | | exact H_g' ].
+            unfold TrigramIndexImpl.row_wrds; exact H_w. }
+        (* and passes the count test *)
+        1:{ assert (H1 : tn * aq <= tn * (aq + bw - cw))
+              by (apply Nat.mul_le_mono_l; lia).
+            assert (H2 : cw * td
+                         <= List.length
+                              (count_set pv
+                                 (TrigramIndexImpl.tri_entries attr key seps rows)
+                                 (row_key key r)) * td).
+            1:{ apply Nat.mul_le_mono_r. subst cw.
+                apply shared_le_count_set; [ exact H_in | exact H_w ]. }
+            lia. }
+      Qed.
+
       (* ==================================================================
          The all-trigram rule.
 
