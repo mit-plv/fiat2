@@ -285,4 +285,63 @@ Section WithAttrs.
         eapply Nat.le_trans; [ exact H_c | ].
         apply index_sees_the_intersection; exact H_in. }
   Qed.
+
+  (* ------------------------------------------------------------------
+     THE SAME THEOREM AT ONE WORD, which is what multi-word text needs.
+
+     Whole-set Jaccard cannot accept a row because of one of its words: a
+     four-word row carries about forty trigrams against a ten-trigram
+     query, so even an exact word match scores 10/(10+40-10) = 0.25 and
+     fails a threshold of 0.3.  The predicate a source actually writes --
+     pg_trgm's word variant, and wagtail's modelsearch calls one -- asks
+     whether SOME word is similar enough.
+
+     Nothing about the candidate set changes, and that is the point: the
+     theorem above already takes the counts as given, and a word's trigrams
+     are a SUBSET of its row's, so the count the index reports is at least
+     the word's.  So the k-of-n test is complete for the per-word predicate
+     for the same reason and with the same proof.
+     ------------------------------------------------------------------ *)
+
+  (* A longer trigram list can only match more of the query. *)
+  Lemma inter_count_mono : forall gs ts1 ts2,
+      (forall g, In g ts1 -> In g ts2) ->
+      inter_count gs ts1 <= inter_count gs ts2.
+  Proof.
+    unfold inter_count; intros gs ts1 ts2 H_sub.
+    apply filter_length_mono.
+    intros g _ H_has.
+    apply existsb_exists in H_has as [ g' [ H_in' E_eq ] ].
+    apply String.eqb_eq in E_eq; subst g'.
+    apply existsb_exists. exists g; split;
+      [ apply H_sub; exact H_in' | apply String.eqb_refl ].
+  Qed.
+
+  (* A word's padded trigrams are among its row's. *)
+  Lemma In_word_tri_set : forall (s w : string) g,
+      In w (words seps s) -> In g (trigrams (pad w)) -> In g (tri_set s).
+  Proof.
+    unfold tri_set; intros s w g H_w H_g.
+    apply in_flat_map. exists w; split; [ exact H_w | exact H_g ].
+  Qed.
+
+  Theorem word_threshold_candidates_complete :
+    forall (l : list value) r w gs a b c tn td,
+      In r l ->
+      In w (words seps (row_str attr r)) ->
+      a = List.length gs ->
+      c <= a -> c <= b ->
+      0 < tn -> 0 < td -> 0 < a + b - c ->
+      c * td >= tn * (a + b - c) ->
+      c <= inter_count gs (trigrams (pad w)) ->
+      In (row_key key r) (tri_keep (tri_entries attr key seps l) gs tn td).
+  Proof.
+    intros l r w gs a b c tn td H_in H_w E_a H_ca H_cb H_tn H_td H_ab H_jac H_c.
+    eapply threshold_candidates_complete;
+      [ exact H_in | exact E_a | exact H_ca | exact H_cb
+      | exact H_tn | exact H_td | exact H_ab | exact H_jac | ].
+    eapply Nat.le_trans; [ exact H_c | ].
+    apply inter_count_mono.
+    intros g H_g. eapply In_word_tri_set; [ exact H_w | exact H_g ].
+  Qed.
 End WithAttrs.

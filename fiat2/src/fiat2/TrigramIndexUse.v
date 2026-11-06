@@ -147,6 +147,59 @@ Section WithWord.
         1: intros g' H_in; apply H_all; right; exact H_in. }
   Qed.
 
+  (* The row a key resolves to, rechecked by the SOURCE's own filter --
+     whatever that filter is.  The filter is a parameter because the lemma
+     below needs nothing about it: a second predicate therefore gets the
+     lemma rather than a copy of its proof. *)
+  Definition probe_body_t (test : value -> bool) (rows : list value) (k : value)
+    : list value :=
+    match dict_lookup k (UniqueDictIndexImpl.idx_entries key rows) with
+    | Some r => if test r then [r] else nil
+    | None => nil
+    end.
+
+  (* The scan and ANY sound candidate set agree, for ANY recheck.
+
+     The candidate list is arbitrary and the only obligation is
+     COMPLETENESS -- every row the scan would keep has its key in the list.
+     Soundness needs nothing, because the recheck is the source's own filter
+     and the key probe only ever returns rows of the table.  Nothing here
+     looks at what the filter tests, which is why the substring predicate
+     and the threshold predicate of TrigramThreshold share this proof. *)
+  Lemma probe_recheck_cands_eq_t :
+    forall (rows : list value) (test : value -> bool) (cl : list value),
+      NoDup (List.map (row_key key) rows) ->
+      (forall (r : value), In r rows -> test r = true ->
+                           In (row_key key r) cl) ->
+      list_to_set (filter test (list_to_set rows))
+      = list_to_set (flat_map (probe_body_t test rows) cl).
+  Proof.
+    intros rows test cl H_nd H_compl.
+    apply NoDup_SSorted_double_incl_eq;
+      auto using list_to_set_NoDup, list_to_set_SSorted.
+    1:{ (* completeness, which is the hypothesis *)
+        unfold incl; intros v H_in.
+        apply list_to_set_incl, filter_In in H_in as [ H_in H_p ].
+        apply list_to_set_incl in H_in.
+        apply list_to_set_incl_r, in_flat_map.
+        exists (row_key key v); split; [ apply H_compl; assumption | ].
+        unfold probe_body_t.
+        rewrite (UniqueDictIndexImpl.idx_lookup_Some key rows v H_nd H_in).
+        rewrite H_p. cbn [In]; auto. }
+    1:{ (* soundness, which is free *)
+        unfold incl; intros v H_in.
+        apply list_to_set_incl, in_flat_map in H_in as [ kk [ H_k H_v ] ].
+        unfold probe_body_t in H_v.
+        destruct (dict_lookup kk (UniqueDictIndexImpl.idx_entries key rows))
+          as [ r | ] eqn:E_lk; [ | contradiction ].
+        destruct (test r) eqn:E_p; [ | contradiction ].
+        destruct H_v as [ E_v | H_bad ]; [ subst r | contradiction ].
+        apply (UniqueDictIndexImpl.idx_lookup_Some_inv key)
+          in E_lk as [ H_rows _ ].
+        apply list_to_set_incl_r, filter_In; split; [ | exact E_p ].
+        apply list_to_set_incl_r; exact H_rows. }
+  Qed.
+
   (* The scan and ANY sound candidate set agree.
 
      This is the real content, and it is weaker than it looks: the candidate
@@ -169,29 +222,7 @@ Section WithWord.
       = list_to_set (flat_map (probe_body rows p) cl).
   Proof.
     intros rows p cl H_nd H_compl.
-    apply NoDup_SSorted_double_incl_eq;
-      auto using list_to_set_NoDup, list_to_set_SSorted.
-    1:{ (* completeness, which is the hypothesis *)
-        unfold incl; intros v H_in.
-        apply list_to_set_incl, filter_In in H_in as [ H_in H_p ].
-        apply list_to_set_incl in H_in.
-        apply list_to_set_incl_r, in_flat_map.
-        exists (row_key key v); split; [ apply H_compl; assumption | ].
-        unfold probe_body.
-        rewrite (UniqueDictIndexImpl.idx_lookup_Some key rows v H_nd H_in).
-        rewrite H_p. cbn [In]; auto. }
-    1:{ (* soundness, which is free *)
-        unfold incl; intros v H_in.
-        apply list_to_set_incl, in_flat_map in H_in as [ kk [ H_k H_v ] ].
-        unfold probe_body in H_v.
-        destruct (dict_lookup kk (UniqueDictIndexImpl.idx_entries key rows))
-          as [ r | ] eqn:E_lk; [ | contradiction ].
-        destruct (contains_test p r) eqn:E_p; [ | contradiction ].
-        destruct H_v as [ E_v | H_bad ]; [ subst r | contradiction ].
-        apply (UniqueDictIndexImpl.idx_lookup_Some_inv key)
-          in E_lk as [ H_rows _ ].
-        apply list_to_set_incl_r, filter_In; split; [ | exact E_p ].
-        apply list_to_set_incl_r; exact H_rows. }
+    exact (probe_recheck_cands_eq_t rows (contains_test p) cl H_nd H_compl).
   Qed.
 
   (* The scan and the all-trigram probe agree.  Completeness now rests on
