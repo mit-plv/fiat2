@@ -106,7 +106,12 @@ module Lookin = struct
     let say (s : string) = outputs := s :: !outputs in
     let has (k : string) = SSet.mem k names in
     List.iter
-      (fun (q : row70) ->
+      (* codegen's own alias, not the numbered name: row70 was this type
+         until a subject was added, after which the number names something
+         else.  Nor can the annotation be dropped -- OCaml would resolve
+         the fields by record disambiguation, which picks the LAST record
+         type declaring f_kind rather than the one `queries` holds. *)
+      (fun (q : In_lookin.t_queries_elem) ->
          match q.f_kind with
          (* media_player.py:87 -- the key varies with the loop *)
          | 0 -> say (if has q.f_k then "supported" else "unsupported")

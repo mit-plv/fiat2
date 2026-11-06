@@ -165,7 +165,7 @@ Section WithWord.
      Soundness needs nothing, because the recheck is the source's own filter
      and the key probe only ever returns rows of the table.  Nothing here
      looks at what the filter tests, which is why the substring predicate
-     and the threshold predicate of TrigramThreshold share this proof. *)
+     and the threshold predicate share this proof. *)
   Lemma probe_recheck_cands_eq_t :
     forall (rows : list value) (test : value -> bool) (cl : list value),
       NoDup (List.map (row_key key) rows) ->
@@ -1371,8 +1371,8 @@ Section WithIndexUse.
         list_to_set (List.map VString (trigrams pv)).
 
       (* Belongs in Utils with the other generic list facts, under the
-         convention DictIndexImpl.v notes; TrigramThreshold has the same
-         lemma and is downstream of this file, so it cannot supply it. *)
+         convention DictIndexImpl.v notes.  It used to be duplicated in
+         TrigramThreshold.v, which is gone. *)
       Lemma filter_length_mono' :
         forall (A : Type) (f g : A -> bool) (l : list A),
           (forall x, In x l -> f x = true -> g x = true) ->

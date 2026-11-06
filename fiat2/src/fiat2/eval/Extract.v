@@ -305,7 +305,6 @@ Definition subjects : list (string * command * command) :=
   ; ("area_registry", area_registry_src, area_registry_opt)
   ; ("lookin", lookin_src, lookin_opt)
   ; ("user_search", user_search_src, user_search_opt)
-  ; ("fuzzy_search", fuzzy_search_src, fuzzy_search_opt)
   ; ("cluster", cluster_src, cluster_opt)
   ; ("entity_registry", entity_registry_src, entity_registry_opt)
   ; ("window_store", window_store_src, window_store_opt)
@@ -324,7 +323,11 @@ Definition subjects : list (string * command * command) :=
       named_cache_lru_noevict_opt)
   ; ("item_deletion", item_deletion_src, item_deletion_opt)
   ; ("sat4j", sat4j_src, sat4j_opt)
-  ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt) ].
+  ; ("dependent_plugins", dependent_plugins_src, dependent_plugins_opt)
+  (* APPENDED, and new subjects must be: compiled/authors.ml names one
+     generated record type by its number (row70), so inserting a subject
+     renumbers the types and breaks that reference. *)
+  ; ("fuzzy_search", fuzzy_search_src, fuzzy_search_opt) ].
 
 Definition alternatives : list (string * command) :=
   [ ("keycloak/uncounted", keycloak_opt_uncounted)

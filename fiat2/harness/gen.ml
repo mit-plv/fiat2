@@ -402,6 +402,126 @@ let user_search =
                    shrink = (fun rows u ->
                      q 1 (Printf.sprintf "u%d" (rows + u))) } }
 
+(* ---------- fuzzy_search: a MULTI-WORD indexed column ----------
+
+   wagtail's title_text is " ".join(texts) (postgres.py:272), so the column
+   this subject indexes is multi-word by construction, and the number of
+   words is the axis that decides whether the index pays.  A k-of-n count
+   test tallies one posting per (query trigram, row) pair, so a longer text
+   puts more postings in the tally and admits more rows to the recheck.
+   [title_words] is that axis, and 4 is the default because that is the
+   width the modelling used.
+
+   AND THE ALPHABET IS THE OTHER AXIS -- a lesson this harness has already
+   paid for once.  user_search's `names` modes exist because the win on a
+   substring probe turned out to be governed by how much structure the
+   generated names share rather than by the table size.  Trigram SIMILARITY
+   is MORE sensitive to that, not less: a vocabulary of base-26 counter
+   words shares long prefixes, so one query's trigrams reach a large
+   fraction of the rows and the count test admits them; scattered words
+   share almost nothing and the funnel is tight.  Both modes are offered
+   and both are to be reported, rather than one being chosen quietly.
+
+     titles=prefixed   consecutive words differ in the LAST letter, so the
+                       vocabulary is a counter and prefixes are shared.
+                       The PESSIMAL case for the index.
+     titles=scattered  the same index mixed first, so words spread over the
+                       26^6 space and two words share a trigram by accident.
+                       The optimistic case.
+
+   Neither is natural-language text, and that is a limit of the generator
+   and not of the rule: real titles sit between the two, sharing some
+   structure.  Reporting both brackets the answer instead of claiming a
+   point inside it. *)
+
+type titles = Scattered | Prefixed
+
+let titles_mode = ref Scattered
+let title_words = ref 4
+
+let titles_of_string (a : string) : titles option =
+  match a with
+  | "titles=scattered" -> Some Scattered
+  | "titles=prefixed" -> Some Prefixed
+  | _ -> None
+
+let titles_name (m : titles) : string =
+  match m with Scattered -> "scattered" | Prefixed -> "prefixed"
+
+(* words=N, the width of the indexed column *)
+let words_of_string (a : string) : int option =
+  match String.index_opt a '=' with
+  | Some k when String.sub a 0 k = "words" ->
+      int_of_string_opt (String.sub a (k + 1) (String.length a - k - 1))
+  | _ -> None
+
+let word_len = 6
+
+let letters_of (k : int) : string =
+  let b = Bytes.create word_len in
+  let r = ref (abs k) in
+  for p = word_len - 1 downto 0 do
+    Bytes.set b p (Char.chr (Char.code 'a' + (!r mod 26)));
+    r := !r / 26
+  done;
+  Bytes.to_string b
+
+(* a fixed multiplicative mix, so the vocabulary is deterministic and the
+   run reproducible; the shift decorrelates the low letters, which are the
+   ones letters_of reads first *)
+let mix (k : int) : int =
+  let x = (k + 1) * 2654435761 in
+  x lxor (x lsr 13)
+
+let word_at (k : int) : string =
+  match !titles_mode with
+  | Prefixed -> letters_of k
+  | Scattered -> letters_of (mix k)
+
+let title (j : int) : string =
+  String.concat " " (List.init !title_words (fun p -> word_at ((j * !title_words) + p)))
+
+(* The query: ONE CHARACTER off a word the table holds, which is what a
+   fuzzy search is for.  The last letter becomes a digit, so the query is
+   not itself a word of the vocabulary -- a misspelling rather than a
+   different entry -- and it still shares the first letters' trigrams, so
+   the threshold is met.  With six-letter words and pg_trgm's padding the
+   query has 7 trigrams and shares 5 with the word it came from: 5/9, well
+   over 3/10, and a row sharing only 3 of them falls below. *)
+let misspell (w : string) : string =
+  let n = String.length w in
+  String.mapi (fun p c -> if p = n - 1 then '0' else c) w
+
+let fuzzy_query (rows : int) (j : int) : string =
+  misspell (word_at ((spread rows j) * !title_words))
+
+(* and one that is off EVERY word, to isolate the probe's fixed cost: the
+   buckets of its trigrams are empty, so nothing is resolved and nothing
+   rechecked *)
+let absent_query () : string = "zzzzz0"
+
+let fuzzy_search =
+  let row j =
+    rcd [ ("id", s (Printf.sprintf "e%d" j));
+          ("title_text", s (title j)) ] in
+  let q kind t = rcd [ ("kind", i kind); ("qtext", s t); ("new_entry", row 0) ] in
+  { queries_var = "queries";
+    store = [ ("results", VSet (Value.sempty ())) ];
+    table = no_table;
+    build = (fun rows ->
+      List.init rows (fun j ->
+        rcd [ ("kind", i 0); ("qtext", s ""); ("new_entry", row j) ]));
+    kinds =
+      [ ("search", fun rows j -> q 2 (fuzzy_query rows j));
+        ("searchMiss", fun _ _ -> q 2 (absent_query ()));
+        ("remove", fun rows j -> q 1 (Printf.sprintf "e%d" (victim rows j))) ];
+    mutating = [ "remove" ];
+    churn = Some { grow = (fun rows u ->
+                     rcd [ ("kind", i 0); ("qtext", s "");
+                           ("new_entry", row (rows + u)) ]);
+                   shrink = (fun rows u ->
+                     q 1 (Printf.sprintf "e%d" (rows + u))) } }
+
 (* ---------- cluster: conjunctive reads over a preloaded table ----------
 
    One partition in five has no leader, so that the availability read has
@@ -943,7 +1063,8 @@ let specs =
     ("named_cache_lru_ordered", named_cache_lru);
     ("named_cache_lru_noevict", named_cache_lru);
     ("area_registry", area_registry); ("lookin", lookin);
-    ("user_search", user_search); ("cluster", cluster);
+    ("user_search", user_search); ("fuzzy_search", fuzzy_search);
+    ("cluster", cluster);
     ("entity_registry", entity_registry);
     ("window_store", window_store); ("range_delete", range_delete);
     ("min_delete", min_delete); ("composite_key", composite_key);

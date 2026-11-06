@@ -58,7 +58,16 @@ let () =
                 WORKLOAD rather than of the storage, declared in gen.ml *)
              match Gen.names_of_string a with
              | Some m -> Gen.names_mode := m; false
-             | None -> true))
+             | None -> (
+                 (* and the fuzzy column's two axes, the same way: how much
+                    structure its vocabulary shares, and how many words the
+                    indexed text holds *)
+                 match Gen.titles_of_string a with
+                 | Some m -> Gen.titles_mode := m; false
+                 | None -> (
+                     match Gen.words_of_string a with
+                     | Some w -> Gen.title_words := w; false
+                     | None -> true))))
       argv in
   match argv with
   | _ :: "report" :: _ | [ _ ] -> Report.run ()

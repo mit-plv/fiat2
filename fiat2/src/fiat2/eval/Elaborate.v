@@ -188,9 +188,6 @@ Section WithConcreteMaps.
     ; mk_subj "user_search" ce_ju "users"
         JU.init_Gstore JU.init_Genv
         X.user_search_src X.user_search_src X.user_search_opt
-    ; mk_subj "fuzzy_search" ce_wfs "entries"
-        WFS.init_Gstore WFS.init_Genv
-        X.fuzzy_search_src X.fuzzy_search_src X.fuzzy_search_opt
     ; mk_subj "cluster" [] "partitions"
         KCl.init_Gstore KCl.init_Genv
         X.cluster_src X.cluster_src X.cluster_opt
@@ -241,7 +238,11 @@ Section WithConcreteMaps.
         X.sat4j_src X.sat4j_src X.sat4j_opt
     ; mk_subj "dependent_plugins" [] "deps"
         JDP.init_Gstore JDP.init_Genv
-        X.dependent_plugins_src X.dependent_plugins_src X.dependent_plugins_opt ].
+        X.dependent_plugins_src X.dependent_plugins_src X.dependent_plugins_opt
+    (* appended, for the reason eval/Extract.v's list gives *)
+    ; mk_subj "fuzzy_search" ce_wfs "entries"
+        WFS.init_Gstore WFS.init_Genv
+        X.fuzzy_search_src X.fuzzy_search_src X.fuzzy_search_opt ].
 
   Definition elaborate_subj (s : subj) : result command :=
     elaborate (s_ce s) (s_tbl s) (s_Gstore s) (s_Genv s) (s_sel s) (s_opt s).
