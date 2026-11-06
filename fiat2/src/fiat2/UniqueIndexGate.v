@@ -74,9 +74,7 @@ Section WithIndexVars.
 
     (* An annotated empty list has only the one type, which both the
        installation's precondition and the elaborated letmut's own typing
-       derivation speak about.  Stated separately because there are two such
-       derivations in scope at once below, and the inversion tactics pick
-       whichever they find first. *)
+       derivation speak about. *)
     Lemma type_of_ANil_Some : forall (Gstore Genv : tenv) rty t,
         type_of Gstore Genv (EAtom (ANil (Some rty))) t -> t = TList rty.
     Proof.

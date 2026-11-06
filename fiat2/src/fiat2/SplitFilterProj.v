@@ -117,7 +117,6 @@ Section WithWord.
       (forall v, f v = g v) -> flat_map f l = flat_map g l.
   Proof. intros; apply flat_map_eq, Forall_forall; auto. Qed.
 
-  (* a one-element bag, listed *)
   Lemma bag_to_list_singleton : forall (v : value),
       bag_to_list (bag_insert v nil) = [v].
   Proof. reflexivity. Qed.

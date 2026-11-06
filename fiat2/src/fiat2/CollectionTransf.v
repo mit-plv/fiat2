@@ -130,7 +130,6 @@ Section WithWord.
       H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H; subst
     end.
 
-  (* The other direction of set_insert_incl: nothing is lost. *)
   Lemma set_insert_In : forall (l : list value) v p,
       In p (set_insert v l) <-> p = v \/ In p l.
   Proof.
@@ -517,8 +516,6 @@ Section WithWord.
         preserve_sem Gstore store snoc_to_cons_under_coercion.
     Proof.
       unfold preserve_sem; intros. repeat destruct_subexpr.
-      (* the unop is destructed by hand: two of its cases match, and
-         destruct_subexpr insists on leaving exactly one goal *)
       destruct o; cbn [snoc_to_cons_under_coercion]; try reflexivity.
       all: repeat destruct_subexpr.
       all: cbn [snoc_to_cons_under_coercion].
@@ -537,7 +534,6 @@ Section WithWord.
     Proof.
       unfold expr_transf_sound; intros; intuition idtac.
       1: apply snoc_to_cons_under_coercion_preserve_ty; auto.
-      (* Gstore is pinned: left to eauto it unifies with Genv *)
       1: eapply snoc_to_cons_under_coercion_preserve_sem
            with (Gstore := Gstore) (Genv := Genv); eauto.
     Qed.
@@ -591,8 +587,6 @@ Section WithWord.
     Proof.
       induction e using expr_IH; cbn; intros.
       all: try now (econstructor; eauto).
-      (* the EIf case: its branches are the lists, so the source typing has to
-         be taken apart before the branches' IHs apply *)
       all: try now (invert_type_of; econstructor; eauto).
       all: try case_match; invert_type_of; try invert_type_of_op;
         repeat (econstructor; eauto).
@@ -684,7 +678,6 @@ Section WithWord.
             inversion H_in; auto;
             apply value_eqb_neq in E; congruence. } }
     Qed.
-    (* filtering a set leaves a set *)
     Lemma SSorted_filter : forall (R : value -> value -> Prop) (p : value -> bool) l,
         StronglySorted R l -> StronglySorted R (filter p l).
     Proof.
@@ -693,7 +686,6 @@ Section WithWord.
       constructor; auto using Forall_Forall_filter.
     Qed.
 
-    (* projecting a set commutes with adding one element to it *)
     Lemma list_to_set_map_set_insert : forall (f : value -> value) v s,
         list_to_set (List.map f (set_insert v s))
         = set_insert (f v) (list_to_set (List.map f s)).
@@ -716,7 +708,6 @@ Section WithWord.
         apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
     Qed.
 
-    (* a projection of a set of rows does not care that the rows were deduplicated *)
     Lemma list_to_set_map_list_to_set : forall (f : value -> value) l,
         list_to_set (List.map f (list_to_set l)) = list_to_set (List.map f l).
     Proof.
@@ -733,8 +724,6 @@ Section WithWord.
         apply list_to_set_incl_r, in_map, list_to_set_incl_r; auto.
     Qed.
 
-    (* and neither does a filter of one: the same statement for filter rather
-       than map, which is what a scan whose source was deduplicated needs *)
     Lemma list_to_set_filter_list_to_set : forall (p : value -> bool) l,
         list_to_set (filter p (list_to_set l)) = list_to_set (filter p l).
     Proof.

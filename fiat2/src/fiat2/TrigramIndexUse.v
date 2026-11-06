@@ -301,7 +301,7 @@ Section WithIndexUse.
   Context (H_sacc_bkt : sacc <> bkt) (H_gvar_bkt : gvar <> bkt).
   (* The separators the index tokenizes on, and the two binders of the
      fold over a row's WORDS: the word itself, and the index built from the
-     words before it.  Last again, for the same reason. *)
+     words before it.  Last again. *)
   Context (seps wrd wacc : string).
   Context (H_wrd_tup : wrd <> tup).
   Context (H_wrd_gvar : wrd <> gvar).
@@ -710,9 +710,6 @@ Section WithIndexUse.
             by (cbn [interp_expr interp_binop interp_atom];
                 rewrite E_rows; reflexivity)
       end.
-      (* Each side IS to_idx_at at its own collection, but only up to
-         conversion -- destruct_subexpr has spelled the fold out -- so this
-         goes through replace rather than rewrite. *)
       lazymatch goal with
       | |- interp_expr _ _ ?lhs = interp_expr _ _ ?rhs =>
           replace (interp_expr store env lhs)
@@ -738,7 +735,6 @@ Section WithIndexUse.
       unfold expr_transf_sound; intros H_ne *; intros.
       intuition idtac.
       1: eapply snoc_to_cons_in_tri_head_preserve_ty; eauto.
-      (* Gstore is pinned: left to eauto it unifies with Genv *)
       1: eapply (snoc_to_cons_in_tri_head_preserve_sem Gstore store H_ne); eauto.
     Qed.
 
@@ -831,14 +827,9 @@ Section WithIndexUse.
           UniqueDictIndexImpl.idx_wf, UniqueDictIndexImpl.keys_distinct,
           TrigramIndexImpl.idx_wf.
         intros tl rt v H_attr E_id.
-        (* v is destructed before the invariants are introduced, so that
-           their names survive; and each later destruct is pushed into them
-           by hand, since destruct rewrites the goal but not hypotheses *)
         destruct v as [ | | | | | rv | | | | ];
           intros H_vty H_tri H_pk;
           cbv beta iota in H_tri, H_pk; try contradiction.
-        (* destruct on a match's scrutinee substitutes it in the hypotheses
-           too, so each step only has to reduce the match it exposed *)
         destruct (access_record rv id_tag) as [ v_id | ] eqn:E_vid;
           cbv beta iota in H_tri, H_pk; try contradiction.
         destruct (access_record rv aux_tag) as [ v_aux | ] eqn:E_vaux;
@@ -929,7 +920,6 @@ Section WithIndexUse.
       Definition tri_cands_from (cnd : expr) (gs : list string) : expr :=
         fold_left tri_cands_step gs cnd.
 
-      (* The candidate set of a pattern whose trigrams are g0 :: gs. *)
       Definition trigram_probe_all (g0 : string) (gs : list string) (p : expr) : expr :=
         probe_from (tri_cands_from (tri_bucket_e (EAtom (AString g0))) gs) p.
 
@@ -1064,8 +1054,6 @@ Section WithIndexUse.
         assert (H_bl : exists bl, bkv = VSet bl).
         1:{ apply DictIndexImpl.dict_lookup_Some_In in E_lk.
             eapply List.Forall_In in H_sets; [ | exact E_lk ].
-            (* substituting a constructor for bkv does not reduce the match
-               inside the hypothesis, so reduce it again after the destruct *)
             destruct bkv as [ | | | | | | | | bl | ];
               cbn [snd] in H_sets; try contradiction.
             exists bl; reflexivity. }
@@ -1194,20 +1182,14 @@ Section WithIndexUse.
         unfold trigram_lookup_head. cbv beta iota.
         case_match; auto.
         destruct (literal_trigram _) as [ g | ] eqn:E_lit; auto.
-        (* the names the guard equated.  This comes FIRST: its subst would
-           otherwise also eliminate the trigram the next step names. *)
         cbn [all_eqb all_eqb' andb] in *.
         repeat rewrite Bool.andb_true_iff in *; intuition idtac.
         repeat (rewrite eqb_eq in *; subst).
-        (* destruct_subexpr introduces auto-named strings, so the pattern's
-           own string gets a name of its own here *)
         apply literal_trigram_Some in E_lit
           as [ pstr [ E_p [ H_len [ H_free E_g ] ] ] ].
         (* the pattern and its trigram are literals from here on: both are
            substituted away, since destruct_subexpr named the pattern itself *)
         subst.
-        (* everything the probe's semantics asks for, before rewriting with
-           it, so that no step depends on the order of side goals *)
         assert (H_g : interp_expr store env
                         (EAtom (AString (String.substring 0 3 pstr)))
                       = VString (String.substring 0 3 pstr)) by reflexivity.
@@ -1267,10 +1249,7 @@ Section WithIndexUse.
         assert (H_rtwf : type_wf (TRecord rt)) by (inversion H_twf; assumption).
         assert (H_ktwf : type_wf kt)
           by (rewrite <- E_kt; apply get_attr_type_ty_wf; exact H_rtwf).
-        (* E_kt orients as "term = kt", so a later subst would eliminate kt
-           along with it; it has done its work here *)
         clear E_kt.
-        (* now the rewrite's two sides *)
         intros e t' Genv H_Gs H_Ge H_t.
         repeat destruct_subexpr_keep_str.
         unfold trigram_lookup_head. cbv beta iota.
@@ -1300,8 +1279,6 @@ Section WithIndexUse.
             1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
             1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
         1:{ (* each key back to its row, then the recheck *)
-            (* the row type is left to unification: the inversions above
-               renamed it, and the primary-key dictionary's type pins it *)
             eapply TyEOptMatch.
             1:{ eapply TyEBinop; [ apply TyOLookup | | ].
                 1:{ eapply TyEAccess;
@@ -1447,9 +1424,7 @@ Section WithIndexUse.
       Qed.
 
       (* The emitted set of buckets computes the Gallina one.  The pattern is
-         read in the OUTER environment -- it sits under no binder here, which
-         is the second thing the positional fold cost: there, the pattern had
-         to read the same under both of the fold's binders. *)
+         read in the OUTER environment -- it sits under no binder here. *)
       Lemma interp_tri_buckets :
         forall (store env : locals) (p : expr) (pv : string)
                (td : list (value * value)),
@@ -2338,8 +2313,6 @@ Section WithIndexUse.
           in H_tri.
         apply access_record__record_proj in E_vid, E_vaux, E_vtri.
         exists rv, rv_aux, rows.
-        (* one conjunct at a time: "repeat split" would prove the reflexive
-           one by eq_refl and renumber everything after it *)
         split; [ reflexivity | ].
         split; [ exact E_vid | ].
         split; [ exact E_vaux | ].
@@ -2366,18 +2339,12 @@ Section WithIndexUse.
           as [ rv [ rv_aux [ rows [ E_vrec [ E_rows [ E_aux [ H_rows E_tri ] ] ] ] ] ] ].
         subst v.
         repeat destruct_subexpr.
-        (* destruct_subexpr stops where the rule's pattern is still stuck on
-           the fold's body, so the case analysis is finished by hand, as in
-           the insert rule above *)
         cbn [tri_use_idx_head]. repeat (case_match; auto; []).
         cbn in * |-.
         rewrite !Bool.andb_true_iff in *; intuition idtac.
         rewrite eqb_eq in *; subst.
         (* the read *)
         erewrite interp_tbl_field; [ | exact E_v | exact E_aux | reflexivity ].
-        (* and the recomputation.  apply, not rewrite: destruct_subexpr has
-           left the fold's body spelled out, so it is only CONVERTIBLE with
-           to_idx_at's body, which rewrite's syntactic match will not see *)
         rewrite E_tri. symmetry.
         eapply (interp_to_idx_at store env _ rt rows H_attr H_rows).
         rewrite interp_EAccess, interp_ELoc.
@@ -2431,10 +2398,6 @@ Section WithIndexUse.
             tryif constr_eq H E_tbl then fail
             else (rewrite E_tbl in H; injection H as H; subst TL)
         end.
-        (* matched by SHAPE, not by a generated name: padding the indexed
-           text adds typing premises to this goal, and every H<n> after the
-           insertion point moves when it does.  E_id has the same shape, so
-           it is skipped explicitly and match backtracks past it. *)
         match goal with
           H : access_record tl id_tag = Success (TList _) |- _ =>
             tryif constr_eq H E_id then fail
@@ -2452,9 +2415,7 @@ Section WithIndexUse.
             tryif constr_eq H E_key then fail
             else (rewrite E_key in H; injection H as H; subst T)
         end.
-        (* the key type of the dictionary the inner fold builds, which the
-           two nested folds leave as a unification variable until the
-           trigram operator's own typing pins it *)
+        (* the key type of the dictionary the inner fold builds *)
         repeat match goal with
                | H : Some TString = Some ?T |- _ =>
                    is_var T; injection H as H; subst T
@@ -2533,16 +2494,10 @@ Section WithIndexUse.
         rewrite !Bool.andb_true_iff, !Bool.negb_true_iff in *; intuition idtac.
         rewrite eqb_eq in *; subst.
         (* the source's typing, taken apart for the types it fixes: the
-           dictionary's, the row's, and the deleted key's.  Nothing of the
-           source's own derivation is reused -- the emitted form is built
-           from the index's typing lemmas -- so the inversion may consume
-           everything. *)
+           dictionary's, the row's, and the deleted key's. *)
         repeat invert_type_of_clear. repeat invert_type_of_op_clear.
         repeat rewrite_map_get_put_hyp.
-        (* The table read fixes the element type, which fixes the key's.
-           match, not lazymatch: the first hypothesis of each shape is the
-           one this lemma was given, and rewriting it with itself fails, so
-           the search has to be allowed to go on to the inverted copy. *)
+        (* The table read fixes the element type, which fixes the key's. *)
         match goal with
         | H : map.get Gstore tbl = Some (TRecord _) |- _ =>
             rewrite E_tbl in H; injection H as H; subst
@@ -2573,8 +2528,6 @@ Section WithIndexUse.
                 [ apply WFTString | apply WFTSet; exact H_ktwf ]. }
             1:{ (* the index's own body, which the lemma's own hypotheses
                    (distinct binders, the row type, the key type) cover *)
-                (* eassumption, not assumption: the row type is an evar
-                   until the record's own field equations fix it *)
                 eapply TrigramIndexImpl.tri_row_body_ty; try eassumption.
                 (* the two environment reads, whichever order they come in *)
                 all: repeat (rewrite map.get_put_diff by congruence).
@@ -2634,9 +2587,6 @@ Section WithIndexUse.
                        = VList rows).
         1:{ rewrite interp_EAccess, interp_ELoc.
             unfold get_local; rewrite E_v; cbv beta iota. exact E_rows. }
-        (* The source, settled first and separately: destruct_subexpr has
-           spelled its fold out, so only conversion relates it to to_idx_at
-           and rewrite's syntactic match would not see it. *)
         lazymatch goal with
         | |- _ = interp_expr store env ?src =>
             assert (E_src : interp_expr store env src
@@ -2676,9 +2626,7 @@ Section WithIndexUse.
                           H_attr H_rows) as H_txts.
             rewrite Forall_forall in H_txts.
             destruct (H_txts r H_in) as [ txt E_txt ].
-            (* what the delete body computes, the binders it reads through
-               and the invariant it needs discharged by shape rather than
-               by position *)
+            (* what the delete body computes *)
             erewrite TrigramIndexImpl.interp_tri_row_delete; try eassumption.
             all: try exact E_txt.
             all: try apply map.get_put_same.
@@ -2694,8 +2642,6 @@ Section WithIndexUse.
               by (unfold TrigramIndexImpl.row_str; rewrite E_txt; reflexivity).
             rewrite <- E_str, E_k.
             symmetry.
-            (* the lemma carries the index's own section hypotheses, so its
-               premises are discharged by shape here too *)
             apply TrigramIndexImpl.tri_dict_filter_neq; try eassumption. }
         1:{ (* no row carries the key, so the filter removes nothing *)
             rewrite interp_EVar; unfold get_local; rewrite map.get_put_same.
@@ -2761,11 +2707,7 @@ Section WithIndexUse.
       apply tri_is_tbl_ty_inv in H_is_tri as [ rt [ kt [ E_t [ E_attr E_key ] ] ] ].
       specialize (H_aty1 tbl_ty); specialize (H_aty2 tbl_ty).
       repeat destruct_match_hyp; intuition idtac.
-      (* destruct_match_hyp names the record's field equations itself, so
-         they are picked up by eassumption rather than by name *)
-      1:{ (* preserve_ty's own premises come as goals too, so everything
-             that is already in context goes by eassumption and only the
-             index's is_tbl_ty is left to the bridge *)
+      1:{
           eapply trigram_lookup_head_preserve_ty; try eassumption.
           apply H_is; exact H_is'. }
       1:{ subst tbl_ty.
@@ -2911,7 +2853,6 @@ Section WithIndexUse.
     Qed.
 
     (* The rules, applied everywhere below the installation. *)
-    (* and the lookups' bridges include them *)
     Lemma trigram_bridges__idx_bridges : forall is_tbl_ty' aux_ty aux_wf,
         trigram_bridges is_tbl_ty' aux_ty aux_wf ->
         trigram_idx_bridges is_tbl_ty' aux_ty aux_wf.

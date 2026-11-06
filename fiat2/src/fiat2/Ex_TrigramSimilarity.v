@@ -236,18 +236,11 @@ Section WithConcreteMaps.
          (card (EBinop OSetIntersect (tri_set ps) (tri_set pq)))
        = interp_expr map.empty smithsonian
            (card_via_sort (EBinop OSetIntersect (tri_set ps) (tri_set pq))).
-  (* `repeat apply conj`, NOT `repeat split`: = is a one-constructor inductive,
-     so split applies eq_refl to each equation and forces ordinary conversion
-     on two interp_expr calls instead of leaving them to vm_compute.  The pins
-     above get away with repeat split only because their right-hand sides are
-     literals. *)
   Proof. repeat apply conj; vm_compute; reflexivity. Qed.
 
-  (* the index's test, on those counts: 5 * 10 >= 3 * 6 *)
   Lemma smithsonian_passes_the_index_test : 5 * 10 >= 3 * 6.
   Proof. lia. Qed.
 
-  (* and the real predicate rejects it *)
   Lemma smithsonian_fails_the_threshold :
     interp_expr map.empty smithsonian (sim_ge 3 10 ps pq) = VBool false.
   Proof. vm_compute; reflexivity. Qed.

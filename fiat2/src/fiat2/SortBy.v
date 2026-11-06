@@ -56,7 +56,6 @@ Open Scope string_scope.
      `ESort LikeBag (EBagOf l)`, which discards the input order, so the
      limit is the existing design's and not this desugaring's. *)
 
-(* the field a sort key at position i on attribute a is projected into *)
 Definition key_name (i : nat) (a : string) : string :=
   "a" ++ String.of_nat i ++ "_" ++ a.
 
@@ -326,7 +325,6 @@ Section WithMap.
     1: apply names_ok__SSorted; assumption.
   Qed.
 
-  (* the row comes back out unchanged *)
   Lemma proj_gallina_key : forall attrs rc,
       names_ok attrs = true ->
       proj_payload (gallina_key attrs (VRecord rc)) = VRecord rc.
@@ -347,8 +345,6 @@ Section WithMap.
   Proof.
     unfold sort_by; intros attrs r p store env e rows H_ok H_e H_rec.
     cbn [interp_expr]. rewrite H_e.
-    (* the INNER flatmap; naming l keeps the rewrite off the outer one,
-       which rewrite would otherwise reach first *)
     erewrite In_flat_map_ext with (l := rows) (g := fun v => [gallina_key attrs v]).
     2:{ intros v H_in. rewrite Forall_forall in H_rec.
         destruct (H_rec v H_in) as [ rc -> ].
@@ -573,17 +569,12 @@ Section WithTenv.
   Proof.
     unfold key_expr, key_ty; intros Gstore Genv attrs r rt H_ok H_p H_get.
     pose proof (names_ok__record _ attrs _ H_ok (map_fst_key_types_app attrs rt)) as [ H_nd H_ss ].
-    (* tl must be given: TyERecord's conclusion mentions only tl', so an
-       eapply leaves tl existential and the first obligation becomes a
-       higher-order unification rather than a computation *)
     eapply TyERecord with (tl := (key_types_from 0 attrs rt ++ [(payload_name, TRecord rt)])%list).
     1:{ rewrite !map_app, map_fst_key_fields_expr, map_fst_key_types_from;
         reflexivity. }
     1:{ rewrite !map_app; cbn [List.map snd].
         apply Forall2_app.
         1: apply Forall2_key_fields_ty; assumption.
-        (* explicit: `repeat constructor` on a type_of goal searches every
-           constructor of the judgment and does not terminate *)
         constructor; [ apply TyEVar; exact H_get | constructor ]. }
     1: apply Permutation_refl.
     1: exact H_nd.

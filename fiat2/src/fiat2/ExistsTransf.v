@@ -44,8 +44,6 @@ Section WithWord.
   Notation value := (value).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-  (* one step of interp_expr, so that the derived-form lemmas below have a
-     subterm to match on *)
   Lemma interp_EUnop_step : forall (store env : locals) o e,
       interp_expr store env (EUnop o e) = interp_unop o (interp_expr store env e).
   Proof. reflexivity. Qed.
@@ -75,7 +73,6 @@ Section WithWord.
     1:{ intros H_in. exists v; split; [ assumption | apply value_eqb_refl ]. }
   Qed.
 
-  (* the filter is empty exactly when no row has the key *)
   Lemma filter_key_eq_nil_iff :
     forall (key : value -> value) (k : value) (l : list value),
       filter (fun v => value_eqb (key v) k) l = nil <-> ~ In k (List.map key l).
@@ -134,8 +131,6 @@ Section WithWord.
     econstructor; [ econstructor; [ constructor | eassumption ] | ].
     econstructor; [ constructor | | ].
     1:{ econstructor. econstructor.
-        (* the key expression's typing comes first: it is what pins the two
-           environments, which eassumption would otherwise guess wrong *)
         lazymatch goal with
           H_k : type_of _ _ _ ?kt |- type_wf ?kt =>
             eapply type_of__type_wf; [ | | exact H_k ]

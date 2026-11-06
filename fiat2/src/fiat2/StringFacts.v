@@ -24,10 +24,7 @@ Local Open Scope string_scope.
 
    The standard library relates String.index to String.substring
    (index_correct1), and that is the only bridge it offers; the substring
-   facts below are what carry a trigram of p back to a trigram of s.  Each
-   one is proved by induction with the LENGTH argument destructed before the
-   offset, because substring's match scrutinises the string first and so
-   reduces only once the string is in constructor form. *)
+   facts below are what carry a trigram of p back to a trigram of s. *)
 
 Definition trigrams (s : string) : list string :=
   List.map (fun i => substring i 3 s) (List.seq 0 (String.length s - 2)).
@@ -53,7 +50,6 @@ Proof.
   cbn [substring]. apply IH; exact H_le.
 Qed.
 
-(* A nonzero offset into a window that starts at the beginning. *)
 Lemma substring_substring_0 : forall s i k l,
     i + k <= l -> substring i k (substring 0 l s) = substring i k s.
 Proof.
@@ -71,9 +67,7 @@ Qed.
 (* The general composition, and the one fact the all-trigram lookup needs
    that the single-trigram lookup did not: reading k characters from offset i
    of the window that starts at m is reading them from offset m + i of the
-   string, as long as the window is long enough to hold them.  The induction
-   is on m, because that is the argument substring recurses on while the
-   string is being consumed. *)
+   string, as long as the window is long enough to hold them. *)
 Lemma substring_substring : forall m s l i k,
     i + k <= l -> substring i k (substring m l s) = substring (m + i) k s.
 Proof.
@@ -120,7 +114,6 @@ Proof.
   apply in_seq. lia.
 Qed.
 
-(* A pattern of three characters or more has a first trigram. *)
 Lemma In_trigrams_first : forall p,
     3 <= String.length p -> In (substring 0 3 p) (trigrams p).
 Proof.
@@ -184,7 +177,6 @@ Proof.
   intros s; unfold pad. rewrite !length_append. cbn [String.length]. lia.
 Qed.
 
-(* A window that ends before the join does not see the second string. *)
 Lemma substring_app_l : forall s t n k,
     n + k <= String.length s -> substring n k (s ++ t) = substring n k s.
 Proof.
@@ -199,12 +191,10 @@ Proof.
   cbn [append substring]. apply IH. cbn [String.length] in H_le. lia.
 Qed.
 
-(* Reading past the two-space prefix. *)
 Lemma substring_pad_shift : forall s i k,
     substring (2 + i) k (pad s) = substring i k (s ++ " ").
 Proof. intros; unfold pad; reflexivity. Qed.
 
-(* Padding only adds keys. *)
 Theorem trigrams_pad : forall s g, In g (trigrams s) -> In g (trigrams (pad s)).
 Proof.
   unfold trigrams; intros s g H_in.
@@ -490,9 +480,8 @@ Qed.
    a word boundary, so some one word contains it, and that word's padded
    trigrams are in the index.
 
-   Generalized over the accumulator, which is what makes the induction on
-   the prefix go through: a word character before the occurrence does not
-   restart the word, it extends it. *)
+   Stated over an arbitrary accumulator: a word character before the
+   occurrence does not restart the word, it extends it. *)
 Lemma sep_free_inside_word_acc : forall seps a w pre b,
     sep_free seps w = true ->
     w <> EmptyString ->

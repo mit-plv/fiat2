@@ -82,7 +82,6 @@ Section WithHole.
       rewrite IH; reflexivity.
     Qed.
 
-    (* a count does not depend on the order of the rows *)
     Lemma Zcount_Permutation : forall l1 l2,
         Permutation l1 l2 -> Zcount l1 = Zcount l2.
     Proof.
@@ -91,13 +90,9 @@ Section WithHole.
       1: apply Permutation_map; auto.
     Qed.
 
-    (* a count splits over a filter and its complement *)
     Lemma Zcount_filter_partition : forall (p : value -> bool) l,
         Zcount l = (Zcount (filter p l) + Zcount (filter (fun v => negb (p v)) l))%Z.
     Proof.
-      (* the reduction is restricted: a bare cbn would compute "1 + _" into Z's
-         binary representation, since here the summand is the literal 1 and not
-         an opaque projection as it is in SumAgg *)
       unfold Zcount; intros p l; induction l as [| v l IH]; auto.
       cbn [List.map fold_right filter].
       destruct (p v); cbn [List.map fold_right negb filter]; rewrite IH.
@@ -105,7 +100,6 @@ Section WithHole.
       1: apply Z.add_shuffle3.
     Qed.
 
-    (* the count of a bag of rows *)
     Lemma interp_count_bag : forall (store env : locals) eb lb,
         interp_expr store env eb = VBag lb ->
         interp_expr store env (EACFold AGCount eb) = VInt (Zcount (bag_to_list lb)).
@@ -114,7 +108,6 @@ Section WithHole.
       apply fold_count.
     Qed.
 
-    (* the count of a list of rows *)
     Lemma interp_count_list : forall (store env : locals) e l,
         interp_expr store env e = VList l ->
         interp_expr store env (EACFold AGCount (EUnop OBagOfList e)) = VInt (Zcount l).
@@ -337,8 +330,7 @@ Section WithHole.
               assert (H_tbl : interp_expr store env e1 = VList ll) by (symmetry; exact H)
           end.
           (* the count over the survivors, over the whole table, and over the rows
-             that carry the key.  Each rewrite names its own subject: both sides
-             of the goal contain a count of a bag of a list. *)
+             that carry the key *)
           erewrite interp_count_list with
             (e := flatmap_filter_list e1 x
                     (EUnop ONot (EBinop OEq (EAccess (EVar x) s) e2_1_2)) x t0 t1);

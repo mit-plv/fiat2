@@ -88,9 +88,7 @@ Definition cons_onto (tbl : string) (e : expr) : option expr :=
    code writes -- a Java ArrayList.add, a Python list.append -- and it gets the
    SAME guard as a cons, for a reason worth stating: a declared constraint is a
    property of WHICH ROWS the table holds, not of where a row sits in it, so
-   the test that suffices for a cons suffices here.  The soundness proof pays
-   for that claim once per declaration kind, through each kind's own
-   characterisation and the permutation between the two lists. *)
+   the test that suffices for a cons suffices here. *)
 Definition snoc_onto (tbl : string) (e : expr) : option expr :=
   match e with
   | EBinop OConcat (ELoc tbl') (EBinop OCons row (EAtom (ANil _))) =>
@@ -425,10 +423,7 @@ Section WithWord.
     end.
 
   (* Every initializer above the declared table synthesizes.  This is
-     below_letmut_pre_syn's requirement, stated on the SURFACE program, and
-     it is what the depth-1 corollary used to carry as a bare
-     `synthesize_expr Gstore Genv e = Success (t, a)` hypothesis -- one per
-     level, which is why there could not be a statement for every depth. *)
+     below_letmut_pre_syn's requirement, stated on the SURFACE program. *)
   Fixpoint spine_synthesizes (Gstore Genv : tenv) (sc : scommand) : Prop :=
     match sc with
     | SLetMut e x sc' =>
@@ -487,11 +482,9 @@ Section WithWord.
              eapply constr_guard_ty; eauto using decl_wf__constr_wf
          | _ => idtac
          end.
-    (* The cheap guards.  Each row-adding declaration has TWO goals now, the
-       cons and the append, and they are interleaved by declaration because
-       the shape is destructed inside the declaration.  Each append proof is
-       its cons proof at the other shape: the guard is the same expression, so
-       only the inversion recovering the written row's type differs. *)
+    (* The cheap guards.  Each row-adding declaration has TWO goals, the cons
+       and the append, interleaved by declaration.  Each append proof is its
+       cons proof at the other shape: the guard is the same expression. *)
     (* a primary key, written by a cons onto the table *)
     1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
@@ -884,8 +877,7 @@ Section WithWord.
           | apply H_inv; exact E_tbl ]. }
   Qed.
 
-  (* The same, for the conjunction a declaration's whole list elaborates to.
-     ds leads the quantifiers so that the induction's hypothesis is general. *)
+  (* The same, for the conjunction a declaration's whole list elaborates to. *)
   Lemma decls_guard_sound :
     forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
@@ -1397,9 +1389,6 @@ Section WithWord.
            (tbl :: nil)) A
         (elab ce free_vars sc).
   Proof.
-    (* the inversion of the elaborated command is done case by case, since at
-       an assignment the elaboration is a match on whether the variable carries
-       a constraint *)
     induction sc; cbn [elab]; intros * ? ? ? H_fv H_tbl H_ks H_ce H_wt.
     (* SSkip *)
     1: constructor.

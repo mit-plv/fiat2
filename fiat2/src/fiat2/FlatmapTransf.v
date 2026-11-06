@@ -136,8 +136,6 @@ Section WithMap.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
     repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
     repeat invert_type_of_clear. invert_type_of_op_clear.
-    (* the guard's own case_match means the outer condition is no longer
-       destructed for us, so both conditions are reduced to booleans here *)
     apply_type_sound e1_1; invert_type_of_value_clear.
     apply_type_sound e1_2; invert_type_of_value_clear.
     cbn; destruct b, b0; reflexivity.
@@ -296,7 +294,6 @@ Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-  (* Binding x around e does not change e's type when x is not free in e *)
   Lemma not_free_immut_put_put_ty : forall x y e (Gstore Genv : tenv) tx ty t,
       free_immut_in x e = false ->
       type_of Gstore (map.put Genv y ty) e t ->
@@ -310,7 +307,6 @@ Section WithMap.
       apply not_free_immut_put_ty2; assumption.
   Qed.
 
-  (* Binding x around e does not change e's value when x is not free in e *)
   Lemma not_free_immut_put_put_sem : forall x y e (store env : locals) vx vy,
       free_immut_in x e = false ->
       interp_expr store (map.put (map.put env x vx) y vy) e = interp_expr store (map.put env y vy) e.

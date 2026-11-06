@@ -158,7 +158,6 @@ Section WithMap.
         all: intros * ? ? ? [? ?]; split; auto. }
   Qed.
 
-  (* Every derivation built without a path condition is usable under any. *)
   Corollary parameterized_wf_no_cond : forall Gstore Genv P A c,
       parameterized_wf Gstore Genv P (fun _ _ => True) c ->
       parameterized_wf Gstore Genv P A c.
@@ -209,8 +208,6 @@ Section WithMap.
         apply_type_sound e. invert_type_of_value.
         lazymatch goal with H: type_of_value _ _ |- _ => clear H end.
         lazymatch goal with H: VList _ = interp_expr _ _ e |- _ => clear H end.
-        (* the body carries no assumption, so the induction over the rows need
-           not keep the one this command was reached under *)
         lazymatch goal with H: A _ _ |- _ => clear H end.
         generalize dependent store. induction l; simpl; auto; intros.
         invert_Forall; apply IHl; auto.

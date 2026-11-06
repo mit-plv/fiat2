@@ -177,7 +177,6 @@ Section WithConcreteMaps.
               (EAtom (ABool true))).
   Proof. vm_compute; reflexivity. Qed.
 
-  (* and the read at the same key is the same probe *)
   Lemma read_is_one_probe :
     query_at 0 optimized = Some (EACFold AGCount (probe_at ckey_of_q)).
   Proof. vm_compute; reflexivity. Qed.

@@ -123,7 +123,6 @@ Section WithField.
     match e with
     | EVar _ | EAtom _ => true
     | ELoc x => negb (String.eqb x tbl)
-    (* intercepted before the congruence case below *)
     | EAccess (ELoc x) s =>
         if String.eqb x tbl then negb (String.eqb s f) else true
     | EAccess r _ => expr_reads_no_field r
@@ -285,7 +284,6 @@ Definition erase_dead_field (f : string) {tenv : map.map string type}
   | _ => c
   end.
 
-(* The erasure, computed, on the one shape it acts on. *)
 Lemma erase_record_field_ERecord : forall f l,
     NoDup_comp String.eqb (List.map fst l) = true ->
     erase_record_field f (ERecord l) = ERecord (rm_field f l).
@@ -317,8 +315,6 @@ Proof.
     apply Permutation_sym, Permutation_map, Permuted_record_sort.
 Qed.
 
-(* map over a record's values leaves its field names alone, so removing a
-   field commutes with it *)
 Lemma map_rm_field : forall A B f (g : (string * A) -> (string * B)) l,
     (forall p, fst (g p) = fst p) ->
     List.map g (rm_field f l) = rm_field f (List.map g l).
@@ -462,8 +458,6 @@ Section WithMap.
                 apply H_off; assumption. } } }
   Qed.
 
-  (* expr_IH renames its binders, so the induction hypotheses cannot be
-     addressed by name.  Both tactics below pick whichever one applies. *)
   Local Ltac rewrite_IH :=
     match goal with
     | IH : expr_reads_no_field _ _ _ = true -> _ |- _ => rewrite IH by assumption
@@ -498,21 +492,10 @@ Section WithMap.
         eapply erased_at__get_local; eassumption. }
     (* EAtom *)
     1: reflexivity.
-    (* Split what the congruence cases carry.  Only genuine conjunctions:
-       destruct on H_rd itself would rewrite true backwards through every
-       hypothesis, the IHs included. *)
     all: repeat rewrite Bool.andb_true_iff in H_rd.
     all: repeat lazymatch goal with H : _ /\ _ |- _ => destruct H end.
-    (* Every congruence case is then its subterms' IHs.  Matched on shape
-       rather than by name, since the scheme names them after its binders. *)
     all: repeat rewrite_IH.
     all: try reflexivity.
-    (* What is left are the cases whose body runs under a binder, where the
-       IH cannot be used as a rewrite: the extended environment mentions the
-       bound element, so there is no closed instance to rewrite at.  Each one
-       instead goes pointwise, exactly as transf_to_idx's does -- but with no
-       typing hypothesis, because here the two sides run the SAME expression
-       and the scrutinee is already equal once e1's IH has been used. *)
     (* EFlatmap *)
     1:{ (* e1's IH was already used above: the scrutinee is equal on both
            sides, so only the body is left *)
@@ -524,8 +507,6 @@ Section WithMap.
                | |- list_to_bag _ = list_to_bag _ => f_equal
                | |- list_to_set _ = list_to_set _ => f_equal
                end.
-        (* the two sides are beta-redexes of LIST type here, so the IH is
-           rewritten inside rather than applied to the goal *)
         all: apply In_flat_map_ext; intros a H_in;
           cbn beta; rewrite_IH; reflexivity. }
     (* EFold *)
@@ -543,10 +524,7 @@ Section WithMap.
             specialize (IH (s, e) H_in); cbn in IH;
             apply IH, (H_rd (s, e) H_in)
         end. }
-    (* EAccess, the case the relation exists for.  The check's own match on
-       the accessed expression is what has to be taken apart; the goal is
-       left unreduced, since the IHs speak about interp_expr applied to the
-       whole subexpression. *)
+    (* EAccess, the case the relation exists for. *)
     1:{ lazymatch goal with x : expr |- _ => destruct x end;
           cbn [expr_reads_no_field] in H_rd;
           try (rewrite_IH; reflexivity).
@@ -558,7 +536,7 @@ Section WithMap.
         end;
           cbn [interp_expr].
         (* the table itself, at a field that is not the erased one *)
-        1:{ (* destruct ... eqn: already replaced the test in H_rd *)
+        1:{
             cbn in H_rd.
             apply Bool.negb_true_iff, String.eqb_neq in H_rd.
             eapply erased_at__access; eassumption. }
@@ -612,9 +590,6 @@ Section WithMap.
     rewrite E_fst; exact E_nd.
   Qed.
 
-  (* Rewriting with the expression lemma has to be given its instance: the
-     pattern interp_expr ?store ?env ?e matches the unprimed occurrence too,
-     and rewriting that one first leaves an unsatisfiable side condition. *)
   Local Ltac rw_expr :=
     match goal with
     | H_er : erased_at ?tbl ?f ?st ?st',
@@ -759,8 +734,7 @@ Section WithMap.
   Qed.
 
   (* A field read through a mutable variable, which is the only place the
-     table's own type is consulted.  Stated as a lemma so the induction below
-     does not have to take two store-type lookups apart inline. *)
+     table's own type is consulted. *)
   Lemma erase_ty_access : forall tbl f tl (Gstore : tenv) Genv y tl0 s T,
       map.get (map.put Gstore tbl (TRecord tl)) y = Some (TRecord tl0) ->
       access_record tl0 s = Success T ->
@@ -818,8 +792,6 @@ Section WithMap.
                lazymatch goal with x : expr |- _ => destruct x end;
                cbn [expr_reads_no_field] in H_rd
            end.
-    (* the field read, settled before the uniform step can commit it to an
-       induction hypothesis it cannot discharge *)
     all: try lazymatch goal with
            | |- type_of _ _ (EAccess (ELoc _) _) _ =>
                eapply erase_ty_access;
@@ -835,8 +807,7 @@ Section WithMap.
     all: try (econstructor; eauto; try apply_erase_ty_IH; eauto).
     (* and the record literal's components: the literal is unchanged, so the
        same field types serve and each component is retyped by its own IH *)
-    1:{ (* the relation is read off the goal: unifying it with the lemma's
-           implication shape would ask Coq to split an arrow it cannot *)
+    1:{
         match goal with
         | H : Forall2 _ ?la ?lb |- Forall2 ?P ?la ?lb =>
             apply (Forall2_impl_In _ _ P
@@ -916,14 +887,12 @@ Section WithMap.
         1: apply erase_preserve_ty_expr; eassumption.
         1: apply IHc; eassumption. }
     (* CLetMut: the check refuses a binder shadowing the table, so the two
-       puts commute and the body's induction hypothesis applies *)
+       puts commute *)
     1:{ repeat rewrite Bool.andb_true_iff in H_rd.
         destruct H_rd as [ [ H_ne R1 ] R2 ].
         apply Bool.negb_true_iff, String.eqb_neq in H_ne.
         rewrite (proj2 (String.eqb_neq _ _) H_ne) in R2, H_we |- *.
         econstructor; [ apply erase_preserve_ty_expr; eassumption | ].
-        (* the two puts commute, so the body's hypothesis can be read with
-           the binder folded into the store and the IH applies *)
         rewrite (Properties.map.put_comm tbl x
                    (TRecord (rm_field f tl)) t Gstore (not_eq_sym H_ne)).
         apply IHc; [ | exact R2 | exact H_we ].

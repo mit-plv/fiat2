@@ -432,7 +432,6 @@ Section WithWord.
         H: synthesize_expr _ _ ?e = Success (TList ?t, _) |- context[?t] => eapply IH in H
     end.
 
-(*  Set Ltac Profiling. *)
     Lemma typechecker_sound : forall e Gstore Genv t e',
         tenv_wf Gstore -> tenv_wf Genv ->
         (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
@@ -848,8 +847,6 @@ Section WithWord.
         + constructor; auto. intro contra. invert_SSorted.
           inversion contra.
           * symmetry in H4. apply eq_value_compare_Eq in H4. congruence.
-          (* the sortedness of the tail, found by shape: inverting a
-             type_of_value renumbers the context whenever TDict's indices change *)
           * lazymatch goal with
               H: Forall _ l |- _ =>
                 rewrite Forall_forall in H;
@@ -1168,7 +1165,6 @@ Section WithWord.
         right; auto. }
   Qed.
 
-  (* Turning a list into a bag preserves the element type *)
   Lemma list_to_bag_sound : forall (l : list value) t,
       Forall (fun v => type_of_value v t) l ->
       type_of_value (VBag (list_to_bag l)) (TBag t).
@@ -1203,7 +1199,6 @@ Section WithWord.
       cbn in H. destruct n' as [ | [ | n'' ] ].
       1,2: exists p; split; [ right; exact H | reflexivity ].
       cbn in H; destruct H as [ H | H ].
-      (* subst kept v', so the head is spelled with it *)
       1:{ exists (v', S (S n'')); split.
           1: left; reflexivity.
           1: rewrite <- H; reflexivity. }
@@ -1284,7 +1279,6 @@ Section WithWord.
       1: apply IHl; assumption.
   Qed.
 
-  (* The element type travels with the keys, by the same lemma. *)
   Lemma bag_remove_preserve_ty : forall (l : list (value * nat)) v t,
       Forall (fun p => type_of_value (fst p) t) l ->
       Forall (fun p => type_of_value (fst p) t) (bag_remove v l).
@@ -1509,7 +1503,6 @@ Section WithWord.
         inversion H; subst; clear H
     end.
 
-  (* Inserting well-typed elements into a well-typed set gives a well-typed set *)
   Lemma set_union_sound : forall (l1 l2 : list value) t,
       Forall (fun v => type_of_value v t) l1 ->
       type_of_value (VSet l2) (TSet t) ->
@@ -1523,7 +1516,6 @@ Section WithWord.
     apply_Forall_In.
   Qed.
 
-  (* Any subset of a well-typed set, taken in order, is a well-typed set *)
   Lemma set_filter_sound : forall (l : list value) t f,
       type_of_value (VSet l) (TSet t) ->
       type_of_value (VSet (filter f l)) (TSet t).
@@ -1549,8 +1541,7 @@ Section WithWord.
       end.
   Proof.
     intros; invert_type_of_agg; cbn in *.
-    (* AGMin, AGMax: both operands are integers, so inverting the two typing
-       hypotheses decides every case of the step function *)
+    (* AGMin, AGMax: both operands are integers. *)
     1,2: split; [ constructor | ]; intros;
          repeat lazymatch goal with
                H: type_of_value _ _ |- _ =>
@@ -1570,7 +1561,6 @@ Section WithWord.
     - apply set_filter_sound; auto.
   Qed.
 
-  (* Restricting a well-typed dictionary to a range of keys keeps it well-typed *)
   Lemma dict_range_sound : forall (d : list (value * value)) dk kt vt lo hi,
       type_of_value (VDict d) (TDict dk kt vt) ->
       type_of_value (VDict (dict_range lo hi d)) (TDict dk kt vt).
@@ -1583,9 +1573,6 @@ Section WithWord.
     - apply filter_preserve_SSorted; assumption.
   Qed.
 
-  (* Removing a range of keys from a well-typed dictionary keeps it well-typed.
-     The same proof: both operators are filters, and a filter of a key-sorted
-     duplicate-free list is one. *)
   Lemma dict_range_delete_sound : forall (d : list (value * value)) dk kt vt lo hi,
       type_of_value (VDict d) (TDict dk kt vt) ->
       type_of_value (VDict (dict_range_delete lo hi d)) (TDict dk kt vt).
@@ -1601,8 +1588,7 @@ Section WithWord.
   (* The least key of a well-typed dictionary has the key type.  Stated on
      TyVDict's Forall premise rather than on type_of_value (VDict d) _, because
      that premise is the only thing the proof uses -- the kind, NoDup and
-     StronglySorted play no part -- and because it is the form the context is
-     already in where this is applied. *)
+     StronglySorted play no part. *)
   Lemma dict_min_key_sound : forall (d : list (value * value)) kt vt,
       Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) d ->
       type_of_value (VOption (dict_min_key d)) (TOption kt).
@@ -1681,18 +1667,11 @@ Section WithWord.
              cbn. constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
              eapply incl_Forall; [ apply list_to_set_incl | ]; auto. }
          (* ODictMinKey: the least key of a well-typed dictionary has the key
-            type.  TyVDict has already been inverted here, so its three
-            premises are loose in the context; [constructor] repacks them for
-            dict_min_key_sound, which is the lemma that does the work.  The
-            kind is Ranged because the typing rule pins it there. *)
+            type.  The kind is Ranged because the typing rule pins it there. *)
          (* ODictMinKey: the least key of a well-typed dictionary has the key
-            type.  TyVDict has already been inverted here, so its Forall
-            premise -- the only one dict_min_key_sound needs -- is in context. *)
+            type. *)
          (* ODictMinKey: the least key of a well-typed dictionary has the key
-            type.  TyVDict has already been inverted here, so its Forall
-            premise -- the only one dict_min_key_sound needs -- is in context,
-            but the dictionary type equation is not, and it is what identifies
-            that premise's key type with kt. *)
+            type, identified with kt by the dictionary type equation. *)
          1:{ lazymatch goal with
                H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst
              end.
@@ -1701,10 +1680,8 @@ Section WithWord.
         inversion H; subst.
         16:{ (* OLookup.  The kind occurs only in the premise, never in the
                conclusion -- a lookup is answerable either way -- so it has to
-               be named here or it is left as an unresolved evar.  Unranged is
-               an arbitrary instance of a universally quantified variable:
-               TyVDict's premises say nothing about the kind, so the premise
-               is provable at whichever one we pick. *)
+               be named here.  TyVDict's premises say nothing about the kind,
+               so the premise is provable at whichever one we pick. *)
           cbn. revert IHtype_of2. apply_type_sound_IH. intros.
           eapply dict_lookup_sound with (dk := Unranged);[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.

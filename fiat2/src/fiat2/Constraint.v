@@ -62,8 +62,6 @@ Section WithWord.
   Definition constr_holds (k : constr) (v : value) : Prop :=
     interp_expr (map.empty : locals) (map.put map.empty c_tbl v) (constr_expr k) = VBool true.
 
-  (* The base case of the invariant, for free: the quantifier ranges over no
-     rows, so the body is never consulted. *)
   Lemma constr_holds_nil : forall k, constr_holds k (VList nil).
   Proof.
     unfold constr_holds, constr_expr; intros.
@@ -342,7 +340,6 @@ Section WithWord.
   Definition row_constr_wf (row_ty : type) (k : constr) : Prop :=
     type_of (map.empty : tenv) (row_env row_ty k) (c_body k) TBool.
 
-  (* What a row constraint says about one row. *)
   Definition row_sat (k : constr) (v : value) : Prop :=
     interp_expr (map.empty : locals) (map.put map.empty (c_row k) v) (c_body k) = VBool true.
 
@@ -356,7 +353,6 @@ Section WithWord.
     1: rewrite_map_get_put_goal; apply map.get_empty.
   Qed.
 
-  (* A row constraint is a constraint: its body only reads less. *)
   Lemma row_constr_wf__constr_wf : forall row_ty k,
       c_row k <> c_all ->
       row_constr_wf row_ty k ->
@@ -393,10 +389,9 @@ Section WithWord.
     1: rewrite_map_get_put_goal; apply map.get_empty.
   Qed.
 
-  (* The step the quantifier folds with.  Naming it lets the induction below
-     keep the body's view of the table fixed while the list it ranges over
-     shrinks, which is the whole difficulty: a row constraint does not look at
-     the table, but constr_holds binds the hole to the very list being folded. *)
+  (* The step the quantifier folds with.  The difficulty it isolates: a row
+     constraint does not look at the table, but constr_holds binds the hole to
+     the very list being folded. *)
   Definition constr_step (k : constr) (tv : value) (r acc : value) : value :=
     interp_expr (map.empty : locals)
       (map.put (map.put (map.put map.empty c_tbl tv) (c_row k) r) c_all acc)
@@ -439,9 +434,7 @@ Section WithWord.
     1: reflexivity.
   Qed.
 
-  (* So the quantifier is exactly a Forall over the rows.  The induction is on
-     the typing of the rows, which is what licenses the step lemma, and the
-     table the body would see stays fixed throughout. *)
+  (* So the quantifier is exactly a Forall over the rows. *)
   Lemma row_fold_right_iff : forall row_ty k tv l,
       type_wf row_ty -> c_row k <> c_all ->
       row_constr_wf row_ty k ->
@@ -515,7 +508,6 @@ Section WithWord.
     exact (proj1 (row_constr_holds_iff row_ty k l H_wf H_ne H_k H_l) H_holds).
   Qed.
 
-  (* A boolean value is one of the two booleans. *)
   Lemma type_of_value_TBool : forall (v : value),
       type_of_value v TBool -> v = VBool true \/ v = VBool false.
   Proof.
@@ -547,7 +539,6 @@ Section WithWord.
     apply type_of_value_TBool; exact H_bool.
   Qed.
 
-  (* A row constraint's body types in any store, since it reads none. *)
   Lemma row_body_ty : forall row_ty k (Gstore : tenv),
       row_constr_wf row_ty k ->
       type_of Gstore (map.put map.empty (c_row k) row_ty) (c_body k) TBool.
@@ -635,7 +626,6 @@ Section WithWord.
                           (map.put map.empty c_tbl (VList l)) (constr_expr k)) TBool).
     { eapply type_sound with
         (Gstore := map.empty : tenv) (Genv := map.put map.empty c_tbl (TList row_ty)).
-      (* goal-directed, so the premises may come in any order *)
       all: repeat lazymatch goal with
              | |- type_of _ _ (constr_expr _) _ =>
                  eapply constr_expr_ty with (row_ty := row_ty)
@@ -651,7 +641,6 @@ Section WithWord.
     apply type_of_value_TBool; exact H_bool.
   Qed.
 
-  (* Reading a list-typed variable out of a well-typed store. *)
   Lemma locals_wf_list : forall (G : tenv) (E : locals) x row_ty,
       locals_wf G E -> map.get G x = Some (TList row_ty) ->
       exists l, map.get E x = Some (VList l)
@@ -801,7 +790,6 @@ Section WithWord.
   Definition tbl_constr_wf (row_ty : type) (k : constr) : Prop :=
     type_of (map.empty : tenv) (c_env_no_acc row_ty k) (c_body k) TBool.
 
-  (* What the body says about one row, given the table it reads. *)
   Definition tbl_sat (k : constr) (tv r : value) : Prop :=
     interp_expr (map.empty : locals)
       (map.put (map.put map.empty c_tbl tv) (c_row k) r) (c_body k) = VBool true.
@@ -829,8 +817,6 @@ Section WithWord.
     eapply type_of_strengthen; eauto using map_incl_refl, c_env_no_acc_incl.
   Qed.
 
-  (* A row constraint is a table constraint that happens not to read the
-     table. *)
   Lemma row_constr_wf__tbl_constr_wf : forall row_ty k,
       row_constr_wf row_ty k ->
       tbl_constr_wf row_ty k.
@@ -967,7 +953,6 @@ Section WithWord.
         apply value_eqb_true_iff in H_eq. congruence. }
   Qed.
 
-  (* A flat_map that emits each element at most once is a filter. *)
   Lemma length_flat_map_sing : forall (A : Type) (b : A -> bool) (l : list A),
       List.length (flat_map (fun v => if b v then v :: nil else nil) l)
       = List.length (List.filter b l).
@@ -1067,9 +1052,7 @@ Section WithWord.
       end.
   Qed.
 
-  (* One-layer reduction equations.  cbn on interp_expr descends under the
-     binder a flatmap introduces, which destroys the shape the lemmas below
-     match on; rewriting with these peels one constructor at a time instead. *)
+  (* One-layer reduction equations. *)
   Lemma interp_EVar : forall (store env : locals) x,
       interp_expr store env (EVar x) = get_local env x.
   Proof. reflexivity. Qed.

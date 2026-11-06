@@ -300,11 +300,9 @@ Section WithWord.
     destruct e; cbn [promote_guard_head]; auto.
     destruct e3; auto. destruct a; auto.
     repeat (case_match; auto).
-    (* the chain's type is a list, because its nil branch is.  Derived from a
-       COPY of the hypothesis, so the chain survives for guard_chain_ty, and
-       by bounded inversions rather than a search, which does not terminate
-       here.  The atom inversion splits on whether the nil carries an
-       annotation; both cases give a list. *)
+    (* the chain's type is a list, because its nil branch is.  The atom
+       inversion splits on whether the nil carries an annotation; both cases
+       give a list. *)
     assert (Hl : exists u, t = TList u).
     { inversion H_ty; subst.
       lazymatch goal with
@@ -351,9 +349,7 @@ Section WithWord.
     destruct e3; auto. destruct a; auto.
     repeat (case_match; auto).
     (* The semantics needs only that the guards are booleans, so it never has
-       to learn that the chain's type is a list.  The chain itself is taken
-       from the goal rather than written out, so this does not depend on how
-       the earlier destructs happened to name things. *)
+       to learn that the chain's type is a list. *)
     pose proof (guard_chain_bool _ _ _ _ H_ty) as Hg.
     lazymatch goal with
     | |- _ = interp_expr _ _ ?ch =>

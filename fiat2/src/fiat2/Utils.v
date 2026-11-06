@@ -981,7 +981,6 @@ Section WithWord.
      inside one.
      ------------------------------------------------------------------ *)
 
-  (* a key below every key present is inserted at the front *)
   Lemma dict_insert_lt_all : forall (k v : value) d,
       Forall (fun p => value_ltb k (fst p) = true) d ->
       dict_insert k v d = (k, v) :: d.
@@ -1005,7 +1004,6 @@ Section WithWord.
     - destruct (g k0); cbn; [ rewrite E | ]; apply IH; auto.
   Qed.
 
-  (* an insertion at a key the test drops is invisible to the restriction *)
   Lemma filter_dict_insert_false : forall (g : value -> bool) (k v : value) d,
       g k = false ->
       filter (fun p => g (fst p)) (dict_insert k v d)
@@ -1036,8 +1034,7 @@ Section WithWord.
       destruct (value_ltb k k0) eqn:E_lt.
       + (* k is below the head, so it lands at the front of the RESTRICTED tail
            too -- and that is where the sortedness is needed: every key the
-           tail keeps is at least the head's.  The Forall is established before
-           anything is reduced, so that the filter is still a filter. *)
+           tail keeps is at least the head's. *)
         assert (H_all : Forall (fun p => value_ltb k (fst p) = true)
                           (filter (fun p => g (fst p)) ((k0, v0) :: d))).
         1:{ rewrite Forall_forall; intros [k1 v1] H_in.

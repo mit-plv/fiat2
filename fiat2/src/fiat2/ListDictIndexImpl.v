@@ -197,11 +197,6 @@ Section WithHole.
                         erewrite NoDup_In_get_attr_type in H
                     end; eauto. } }
             intuition idtac.
-            (* Both halves below case on the OLD bucket at this key.  The
-               lookup is not syntactically None or Some, so it has to be
-               destructed by hand -- which also rewrites the option-typing
-               hypothesis, and that is where the bucket's element typing
-               comes from. *)
             1:{ do 2 f_equal.
                 lazymatch goal with
                   H: type_of_value (VOption (dict_lookup ?k ?d)) _ |- _ =>
@@ -247,9 +242,8 @@ Section WithHole.
                         repeat constructor; auto. }
                     1: repeat constructor; auto. } } }
         (* fold_right g has a value accumulator; gallina_to_idx's has a
-           list-of-pairs one.  The bridge is an induction, and unlike the
-           bag-valued index's it needs no case analysis afterwards: the
-           bucket is a plain VList, so the two steps are convertible. *)
+           list-of-pairs one.  The bucket is a plain VList, so the two steps
+           are convertible. *)
         1:{ induction l0; cbn; auto. invert_Forall. erewrite IHl0; auto.
             invert_type_of_value_clear. reflexivity. }
       Qed.
@@ -300,9 +294,7 @@ Section WithHole.
           type_of_value v (TRecord tl) -> exists rc, v = VRecord rc.
       Proof. intros v tl H; inversion H; subst; eauto. Qed.
 
-      (* Per-node reduction.  cbn reduces under the EOptMatch branches and
-         destroys the shapes these proofs match on, so each node is peeled
-         by its own definitional equation instead. *)
+      (* Per-node reduction. *)
       Lemma interp_ETernop' : forall (store env : locals) o e1 e2 e3,
           interp_expr store env (ETernop o e1 e2 e3)
           = interp_ternop o (interp_expr store env e1) (interp_expr store env e2)
@@ -617,12 +609,9 @@ Section WithHole.
               H: type_of _ _ e2_1_2 _ |- _ =>
                 apply not_free_immut_put_ty in H; auto
             end.
-            (* From here the list index's proof diverges from the bag
-               index's, and gets shorter.  There is no bag canonicity to
-               re-establish and no Permutation to transport: the filter in
-               the source IS the bucket, so the whole argument is (i) the
-               filter's predicate agrees with the bucket's on well-typed
-               rows, and (ii) the lookup's result is a VList. *)
+            (* The list index's argument is shorter than the bag index's: there
+               is no bag canonicity to re-establish and no Permutation to
+               transport, since the filter in the source IS the bucket. *)
             assert (H_rows : Forall (fun v => type_of_value v (TRecord l1)) l3)
               by (lazymatch goal with
                     H: type_of_value (VList l3) _ |- _ =>
@@ -786,9 +775,6 @@ Section WithHole.
             f_equal. apply_type_sound e1_1; invert_type_of_value_clear.
             erewrite <- not_free_immut_put_sem; auto.
             rewrite_expr_value.
-            (* The bucket must be destructed BEFORE the env lookup is
-               simplified: until then the Some branch binds its own
-               variable, and rewrite cannot reach under that binder. *)
             fold idx_step.
             rewrite !fold_idx_step_lookup
               by (eapply Forall_is_record_of_ty; eassumption).
@@ -903,8 +889,6 @@ Section WithHole.
             rewrite !gallina_to_idx_fold.
             rewrite fold_idx_step_app_singleton by assumption.
             rewrite (fold_idx_step_lookup rows) by assumption.
-            (* the bucket must be destructed before the Some branch's
-               binder can be eliminated *)
             destruct (bucket_of (record_proj attr rc) rows) eqn:E_bk; cbn.
             1: reflexivity.
             rewrite get_local_put_same.
@@ -1073,9 +1057,8 @@ Section WithHole.
   End WithVars.
 End WithHole.
 
-(* Fully-applied forms, so that eauto with transf_hints can find them --
-   the section-closed lemmas take their parameters in an order eauto will
-   not guess.  Mirrors DictIndexImpl's *_sound2 wrappers. *)
+(* Fully-applied forms, so that eauto with transf_hints can find them.
+   Mirrors DictIndexImpl's *_sound2 wrappers. *)
 Lemma use_list_idx_head_sound2 : forall (hole attr : string),
     forall tup acc x : string,
     forall tenv : map.map string type,

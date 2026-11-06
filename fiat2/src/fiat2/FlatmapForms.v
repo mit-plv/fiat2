@@ -37,7 +37,6 @@ Proof.
   induction l; cbn; congruence.
 Qed.
 
-(* rewrite does not infer the function in flat_map_singleton, so match it explicitly *)
 Ltac rewrite_flat_map_singleton :=
   repeat lazymatch goal with
     |- context[flat_map (fun v => [@?g v]) ?l] =>
@@ -234,8 +233,6 @@ Section WithWord.
     Proof.
       intros. cbn [interp_expr]. case_match; auto.
       do 2 f_equal.
-      (* the equation naming the set must go before the induction, or it is
-         generalized along with the list and the IH becomes conditional *)
       lazymatch goal with H : interp_expr _ _ _ = VSet _ |- _ => clear H end.
       induction l as [| v l' IH]; auto.
       cbn [flat_map filter]. rewrite IH.

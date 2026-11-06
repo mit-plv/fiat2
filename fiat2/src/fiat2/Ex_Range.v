@@ -115,7 +115,6 @@ Section WithConcreteMaps.
     | _ => None
     end.
 
-  (* RangedDictIdx: the range rewrite fires. *)
   Lemma ranged_probes :
     query_of (nth 0 prog_transformed CSkip) = Some range_probe.
   Proof. vm_compute; reflexivity. Qed.
@@ -133,7 +132,6 @@ Section WithConcreteMaps.
     query_of (nth 1 prog_transformed CSkip) = Some range_scan.
   Proof. vm_compute; reflexivity. Qed.
 
-  (* And because that scan still reads the list, the list stays. *)
   Lemma unranged_keeps_the_list :
     installed_fields (nth 1 prog_transformed CSkip) = ["id_tag"; "aux_tag"].
   Proof. vm_compute; reflexivity. Qed.

@@ -56,7 +56,6 @@ Section WithConcreteMaps.
       (map.put map.empty uhole (VList demo_rows))
       (to_idx uhole "id" utup uacc).
 
-  (* It is the dictionary sending each id to its row. *)
   Lemma demo_idx_value :
     demo_idx = VDict [ (VInt 1, row 1 "a"); (VInt 2, row 2 "b") ].
   Proof. reflexivity. Qed.
@@ -226,7 +225,6 @@ Section WithConcreteMaps.
     1: apply demo_idx_wf_unique.
   Qed.
 
-  (* The cheap guard is an ordinary boolean expression of the store. *)
   Lemma demo_unique_guard_ty :
     type_of demo_Gstore demo_Genv index_guard TBool.
   Proof.

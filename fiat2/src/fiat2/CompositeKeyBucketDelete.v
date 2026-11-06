@@ -58,7 +58,6 @@ Section WithAttrs.
   (* the spelling every dictionary lemma in Utils is stated at *)
   Local Coercion is_true : bool >-> Sortclass.
 
-  (* The step the emitted fold takes: one leaving row's key out of the map. *)
   Definition pk_del (d : list (value * value)) (r : value) : list (value * value) :=
     dict_delete (row_key key r) d.
 
@@ -94,8 +93,6 @@ Section WithAttrs.
     - cbn [dict_delete]; rewrite E_k, E_k'; f_equal; apply IH.
   Qed.
 
-  (* The fold's step, as an equation: the proofs below rewrite with it
-     rather than counting occurrences of pk_del under a cbn. *)
   Lemma fold_pk_del_cons : forall (r : value) (rs : list value) d,
       fold_left pk_del (r :: rs) d
       = fold_left pk_del rs (dict_delete (row_key key r) d).

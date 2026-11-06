@@ -56,7 +56,6 @@ Section WithAttrs.
     | _ => VUnit
     end.
 
-  (* the rows the index files under av *)
   Definition crows_at (av : value) (l : list value) : list value :=
     filter (fun r => value_eqb (crow_key r) av) l.
 
@@ -148,7 +147,6 @@ Section WithAttrs.
     | _ => d
     end.
 
-  (* Filtering the table commutes with picking out one bucket's rows. *)
   Lemma crows_at_filter : forall av kv l,
       crows_at av (filter (keeps key kv) l) = filter (keeps key kv) (crows_at av l).
   Proof.
@@ -675,10 +673,6 @@ Section WithRule.
                 [ eapply TyEAccess; [ apply TyELoc; exact E_tbl | exact E_aux ]
                 | exact E_pk ]. }
             1:{ apply not_free_immut_put_ty2; [ assumption | ].
-                (* the typing premise first: it is what says WHICH binder the
-                   deleted key's expression is being lifted out of, and
-                   guessing from the two freeness hypotheses would pick the
-                   other one *)
                 eapply not_free_immut_put_ty; [ | eassumption ]; assumption. } }
         1:{ apply TyEVar; rewrite map.get_put_same; reflexivity. }
         1:{ eapply cdict_row_delete_body_ty.
@@ -738,16 +732,12 @@ Section WithRule.
         lazymatch goal with
           H : keys_match _ _ ?kl = true |- _ => apply keys_match_eq in H; subst kl
         end.
-        (* the deleted key's expression, which case_match named for us *)
         lazymatch goal with pe : expr |- _ => rename pe into kexp end.
         (* the table read, which both sides start from *)
         assert (E_tr : interp_expr store env (EAccess (ELoc tbl) id_tag)
                        = VList rows).
         1:{ rewrite interp_EAccess, interp_ELoc.
             unfold get_local; rewrite E_v; cbv beta iota. exact E_rows. }
-        (* The source, settled first and separately: the matched term is
-           to_idx_from only up to unfolding, and rewrite's syntactic match
-           would not see it. *)
         lazymatch goal with
         | |- _ = interp_expr store env ?src =>
             assert (E_src : interp_expr store env src
@@ -880,11 +870,9 @@ Section WithRule.
       1:{ subst tbl_ty.
           eapply filter_neq_to_composite_keyed_delete_head_preserve_sem;
             try eassumption.
-          (* the member's is_tbl_ty is already in the spelling preserve_sem
-             wants -- the composite index's is_tbl_ty IS its own, with no
-             kind to collapse -- so eassumption has taken it, and what is
-             left is the store's side: the table's value is well typed and
-             both members' relations hold of it *)
+          (* the composite index's is_tbl_ty IS its own, with no kind to
+             collapse, so what is left is the store's side: the table's value
+             is well typed and both members' relations hold of it *)
           lazymatch goal with
             H : locals_wf Gstore _ |- _ => specialize (H _ _ E_tbl)
           end.

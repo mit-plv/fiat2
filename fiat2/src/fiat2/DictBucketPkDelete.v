@@ -320,9 +320,7 @@ Section WithRule.
                        = VList rows).
         1:{ rewrite interp_EAccess, interp_ELoc.
             unfold get_local; rewrite E_v; cbv beta iota. exact E_rows. }
-        (* the filtered table: what `not (row.attr == k)` keeps.  The
-           filter's own row binder is matched, not named, so it is bound off
-           the goal rather than written out. *)
+        (* the filtered table: what `not (row.attr == k)` keeps. *)
         lazymatch goal with
         | |- _ = interp_expr store env (EFold ?d _ _ _ _) =>
             assert (E_flt :
@@ -417,8 +415,6 @@ Section WithRule.
         H : map.get Gstore tbl = Some _ |- _ => rename H into E_tbl
       end.
       pose proof (H_isd _ H_is') as H_is_d.
-      (* kept, because the dictionary's inversion returns the ATTRIBUTE's
-         type rather than its own is_tbl_ty, which preserve_sem asks for *)
       pose proof (H_isd _ H_is') as H_is_dict.
       pose proof (H_isu _ H_is') as H_is_u.
       apply DKD.dict_is_tbl_ty_inv in H_is_d as [ rt [ kt' [ E_t H_isa ] ] ].

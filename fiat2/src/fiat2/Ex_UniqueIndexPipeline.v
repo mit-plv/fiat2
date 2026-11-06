@@ -686,7 +686,6 @@ Section WithConcreteMaps.
   Compute (soptimized (EAtom (AString "abc")) [DUnique "id"]).
   Compute (soptimized (EVar "p") [DUnique "id"]).
 
-  (* the bucket a trigram names *)
   Definition sbucket (g : expr) : expr :=
     EOptMatch (EBinop OLookup (EAccess (EAccess (ELoc "users") "aux_tag") "0") g)
       (EAtom (AEmptySet None)) "b" (EVar "b").

@@ -673,7 +673,6 @@ Section WithMap.
         eapply Permutation_in; [ apply Permuted_record_sort | ]; cbn; auto.
       Qed.
 
-      (* The table's own type, read off the augmented record's id_tag field. *)
       Lemma type_of_value_at_id_tag : forall tbl_ty (rv : list (string * value)) (v_id : value),
           type_of_value (VRecord rv) (aux_ty tbl_ty) ->
           access_record rv id_tag = Success v_id ->
@@ -801,7 +800,6 @@ Section WithMap.
     Qed.
 
 
-      (* The two fields of the record transf_to_idx' writes, by name. *)
       Lemma record_sort_access_id : forall (v1 v2 : value),
           access_record (record_sort [(id_tag, v1); (aux_tag, v2)]) id_tag = Success v1.
       Proof.
@@ -818,7 +816,6 @@ Section WithMap.
         eapply Permutation_in; [ apply Permuted_record_sort | ]; cbn; auto.
       Qed.
 
-      (* Shadowing the table makes both invariants vacuous, whatever they are. *)
       Lemma rm_from_globals__nil : forall (Pv Qv : value -> Prop) (x : string) (v : value),
           rm_from_pred (value_wf_with_globals Pv (tbl :: nil)) tbl x v
           <-> value_wf_with_globals Qv nil x v.
@@ -829,7 +826,6 @@ Section WithMap.
               subst; intuition auto. }
       Qed.
 
-      (* Shadowing a variable other than the table changes nothing. *)
       Lemma iff2_rm_other : forall (Pv : value -> Prop) (x : string),
           x <> tbl ->
           iff2 (rm_from_pred (value_wf_with_globals Pv (tbl :: nil)) x)

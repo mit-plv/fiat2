@@ -9,21 +9,19 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
    DictIndexImpl's. *)
 Require fiat2.CompositeDictIndexImpl.
 Module CDI := fiat2.CompositeDictIndexImpl.
-(* and the list-valued dictionary, for the same reason: its to_idx, idx_ty,
-   is_tbl_ty and idx_wf would shadow DictIndexImpl's. *)
+(* Required, not imported: its to_idx, idx_ty, is_tbl_ty and idx_wf would
+   shadow DictIndexImpl's. *)
 Require fiat2.ListDictIndexImpl.
 Module LDI := fiat2.ListDictIndexImpl.
-(* and the composite index's keyed delete, for the same reason: it imports
-   CompositeDictIndexImpl itself, so importing it here would shadow
-   DictIndexImpl's names just as importing that one would. *)
+(* Required, not imported: it imports CompositeDictIndexImpl, whose to_idx,
+   idx_ty, is_tbl_ty and idx_wf would shadow DictIndexImpl's. *)
 Require fiat2.CompositeDictKeyedDelete.
 Module CKD := fiat2.CompositeDictKeyedDelete.
-(* and the rule in the other direction -- the primary-key member maintained
-   across a delete at the composite key -- required and not imported for the
-   same reason again. *)
+(* The primary-key member maintained across a delete at the composite key.
+   Required, not imported, for the same reason. *)
 Require fiat2.CompositeKeyBucketDelete.
 Module CKBD := fiat2.CompositeKeyBucketDelete.
-(* and the arity-one case of that rule, at a single-attribute dictionary *)
+(* The arity-one case of that rule, at a single-attribute dictionary. *)
 Require fiat2.DictBucketPkDelete.
 Module DBPD := fiat2.DictBucketPkDelete.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
@@ -55,14 +53,13 @@ Variant basic_transf :=
   | FlagFilterToEq
   (* a flatmap that filters AND projects at once is matched by no index rule,
      because the rules read a filter whose body is the bound row.  This splits
-     it into the filter and the projection the rules already match, which is
-     also what makes a JOIN's inner loop indexable; see SplitFilterProj *)
+     it into the filter and the projection they do match, which is also what
+     makes a JOIN's inner loop indexable; see SplitFilterProj *)
   | SplitFilterProj
   (* the indexable guard of a loop body is not always the one the rules are
      offered, because if_nil_into_flatmap_head splits on the OUTERMOST guard.
-     This moves the equality on `attr` to the front of its chain.  The only
-     parameterized basic rewrite: it has to be aimed, because the
-     unconditional swap it replaces cannot be; see PromoteGuard *)
+     This moves the equality on `attr` to the front of its chain; see
+     PromoteGuard *)
   | PromoteGuard (attr : string).
 
 Variant index_choice :=
@@ -111,17 +108,12 @@ Variant index_choice :=
      it serves the coercion the collection push-down leaves on a read of the
      table, and once it does, nothing reads the list.
 
-     Ask for it FIRST in a choice list.  Its pattern is the bare coercion of
-     the table's read, which every other index's read rule contains as a
-     subterm, so it must run last -- and the transfs of the choices are
-     concatenated in list order while the last to be listed is the first to
-     run.  Listed after a trigram index it takes the read that index's lookup
-     was going to match, and the query scans where it could have probed. *)
+     Ask for it FIRST in a choice list.  Listed after a trigram index it takes
+     the read that index's lookup was going to match, and the query scans
+     where it could have probed. *)
   | TableRep (ctag : collection_tag)
-  (* A maintained ROW COUNT.  No attribute: a count reads none.  Listed LAST
-     because mk_idx_sound_strengthen takes its goals apart in constructor
-     order, so a choice added in the middle would misalign every block after
-     it. *)
+  (* A maintained ROW COUNT.  No attribute: a count reads none.  Listed LAST,
+     so that no existing choice's position moves. *)
   | CountAgg
   (* A dictionary keyed on a SEQUENCE of attributes at once, so that a
      conjunctive equality on all of them is one probe rather than a probe and
@@ -241,13 +233,9 @@ Section WithConcreteMaps.
        anything else -- so position is already gone and the rewrite is sound
        outright.  The dictionaries fold the list itself and need their own.
 
-       It runs ONCE, composed OUTSIDE each index's repeat_transf loop rather
-       than inside it.  repeat_transf applies its argument exactly n times
-       with no fixpoint test (TransfSound.v:419) and reps is 10000, so a
-       transf placed inside is paid ten thousand times in COMPILE time.  Once
-       is enough here: no rule anywhere in the development constructs an
-       OConcat, so after one pass over the command no append is left for the
-       maintenance rules to miss. *)
+       Composed OUTSIDE each index's repeat_transf loop: inside, it would be
+       paid once per repetition in COMPILE time.  One pass is enough, since no
+       rule in the development constructs an OConcat. *)
     Definition snoc_normalize_transf :=
       fun tbl => fold_command_with_globals [tbl] snoc_to_cons_under_coercion.
 
@@ -305,8 +293,7 @@ Section WithConcreteMaps.
     Definition dict_range_transf := fun tbl => fold_command_with_globals [tbl] (range_filter_to_dict_range_head dict_idx_attr dict_idx_dk "id_tag" "aux_tag" tag "b" tbl).
     Definition cons_to_insert_transf := fun tbl => fold_command_with_globals [tbl] (cons_to_insert_head dict_idx_attr dict_idx_dk "tup" "acc" "x" "y").
     (* an insert at the END of the list, normalised into the cons the rule
-       above maintains.  One pass, outside the loop, for the reason given at
-       snoc_normalize_transf. *)
+       above maintains.  One pass, outside the loop. *)
     Definition snoc_in_idx_transf :=
       fun tbl => fold_command_with_globals [tbl]
                    (snoc_to_cons_in_idx_head dict_idx_attr dict_idx_dk).
@@ -326,8 +313,7 @@ Section WithConcreteMaps.
        Gated on the declaration, like the trigram pair's delete and for the
        same reason: without it another row could share the key, and its
        contribution would be left behind in a bucket this rule never
-       visits.  The key is an explicit argument rather than a section
-       variable so that adding it does not renumber the definitions below. *)
+       visits. *)
     Definition dict_keyed_delete_gated_transf (key pk_tag : string) (ds : list decl) :=
       keyed_delete_gated dict_idx_attr dict_idx_dk "tup" "acc" "x" key
         "id_tag" "aux_tag" pk_tag "bkt" "rvar" ds.
@@ -338,8 +324,7 @@ Section WithConcreteMaps.
        rule probes the bucket the attribute names and deletes the leaving
        rows' keys from the primary-key member one by one.  The composite
        counterpart is composite_bucket_delete_gated_transf, and the two
-       share their emitted body.  This dictionary's own tag is the explicit
-       argument, because this rule is the one that READS it. *)
+       share their emitted body. *)
     Definition dict_bucket_pk_delete_gated_transf (key d_tag : string)
       (ds : list decl) :=
       DBPD.bucket_pk_delete_gated dict_idx_attr key "tup" "acc"
@@ -414,8 +399,7 @@ Section WithConcreteMaps.
                    (CDI.cons_to_composite_insert_head cdi_attrs).
 
     (* an insert at the END of the list, normalised into the cons the rule
-       above maintains.  One pass, outside the loop, for the reason recorded
-       at snoc_normalize_transf. *)
+       above maintains.  One pass, outside the loop. *)
     Definition snoc_to_cons_in_cidx_transf :=
       fun tbl => fold_command_with_globals [tbl]
                    (CDI.snoc_to_cons_in_cidx_head cdi_attrs).
@@ -427,8 +411,7 @@ Section WithConcreteMaps.
 
     (* A filter-shaped delete naming a key this dictionary is NOT keyed on.
        The composite counterpart of dict_keyed_delete_gated_transf, gated the
-       same way and for the same reason; the key and the primary-key member's
-       tag are explicit arguments so that adding them renumbers nothing. *)
+       same way and for the same reason. *)
     Definition composite_keyed_delete_gated_transf (key pk_tag : string)
       (ds : list decl) :=
       CKD.composite_keyed_delete_gated cdi_attrs "tup" "acc" "x" key
@@ -440,8 +423,7 @@ Section WithConcreteMaps.
        rebuilt.  This rule probes the bucket the composite key names -- which
        holds exactly the rows that are leaving -- and deletes their keys from
        the primary-key member one by one.  Gated on the same declaration and
-       owed the same bridges; the composite member's tag is the explicit
-       argument here, because this rule is the one that READS it. *)
+       owed the same bridges. *)
     Definition composite_bucket_delete_gated_transf (key d_tag : string)
       (ds : list decl) :=
       CKBD.cbucket_delete_gated cdi_attrs key "tup" "acc"
@@ -494,8 +476,7 @@ Section WithConcreteMaps.
        rule above with another pattern: its step overwrites the entry, so an
        appended row loses to any row already carrying its key and the
        maintenance is insert-if-absent.  Listed beside the cons rule at every
-       choice that hands that one out, because three subsumption theorems say
-       those lists contain everything UniqueDictIdx hands out. *)
+       choice that hands that one out. *)
     Definition snoc_to_unique_insert_transf' : string -> command -> command :=
       snoc_to_unique_insert_transf unique_idx_attr "tup" "acc" "z".
 
@@ -544,7 +525,7 @@ Section WithConcreteMaps.
                       trigram_seps "wrd" "wacc").
 
     (* an insert at the END of the list, normalised into the cons the rule
-       above maintains.  One pass, outside the loop, as everywhere else. *)
+       above maintains.  One pass, outside the loop. *)
     Definition snoc_to_cons_in_tri_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl]
                    (snoc_to_cons_in_tri_head trigram_text_attr trigram_key_attr
@@ -601,9 +582,7 @@ Section WithConcreteMaps.
   (* What both dictionary hints build.  They hand out the SAME rules and
      differ only in the kind the member is built at: every rule but the range
      one is kind-generic, and the range rule is in both lists because it
-     tests the kind itself and cannot fire on an Unranged member.  Factored
-     out so that one soundness lemma, mk_dict_idx_transfs_sound, serves both
-     hints. *)
+     tests the kind itself and cannot fire on an Unranged member. *)
   Definition mk_dict_idx (dk : dict_kind) (attr : string) (cur_tag : nat) (reps : nat) :
     list (string * IndexInterface.index * (value -> value -> Prop)) * list (string -> command -> command) * nat :=
     ([(String.of_nat cur_tag, cdict_idx attr dk, dict_idx_wf attr dk)],
@@ -612,11 +591,9 @@ Section WithConcreteMaps.
        use_dict_idx_transf (String.of_nat cur_tag) attr dk;
        (* inserts and deletes are maintained in the same loop, so that an
           insert into a filtered table and a filter of an extended table are
-          both handled.  Basics.compose applies its RIGHT argument first, so
-          the order of application is insert, keyed delete, range
-          restriction, range delete -- the restriction before the delete,
-          because on a negated ONE-SIDED bound both fire and the restriction
-          is the direct spelling. *)
+          both handled.  The order of application is insert, keyed delete,
+          range restriction, range delete: on a negated ONE-SIDED bound both
+          range rules fire, and the restriction is the direct spelling. *)
        fun tbl => Basics.compose
                     (repeat_transf
                        (Basics.compose (filter_range_delete_transf attr dk tbl)
@@ -626,9 +603,6 @@ Section WithConcreteMaps.
                     (snoc_in_idx_transf attr dk tbl)],
       S cur_tag).
 
-  (* so that the bare cbn in mk_idx_ok and mk_idx_sound_strengthen reduces a
-     dictionary hint's branch to its pair, as it did when the branches were
-     written out *)
   Arguments mk_dict_idx _ _ _ _ /.
 
   (* ds is the installed table's declarations.  Only the use rules look at
@@ -674,9 +648,8 @@ Section WithConcreteMaps.
     (* A read rule and both maintenance rules.  First in the list is LAST to
        run, so the order below applies the maintenance, then the use rule that
        collapses the rebuild each maintenance rule leaves behind, then the
-       read rule.  Insert and delete share one loop, for the same reason the
-       single-attribute dictionary's do: an insert into a filtered table and a
-       filter of an extended table both have to be reached. *)
+       read rule.  Insert and delete share one loop, so that an insert into a
+       filtered table and a filter of an extended table are both reached. *)
     | CompositeDictIdx attrs =>
         ([(String.of_nat cur_tag,
             ccomposite_dict_idx attrs,
@@ -967,15 +940,10 @@ end.
         NoDup (map fst (map fst idxs)) /\
         Forall (fun '(_, idx, _) => hole = "hole") idxs.
   Proof.
-    (* unfold, not cbn, so the Arguments marker on mk_dict_idx does not apply *)
     destruct ic; unfold mk_idx, mk_dict_idx; intros; invert_pair; intuition idtac.
     all: try lia.
     (* one member per choice, except the trigram choice, which installs the
-       primary-key member it leans on too -- so the lists are taken apart by
-       shape rather than by a fixed count, and in particular not by
-       constructor, which would also take the ok goals apart *)
-    (* the tag lists are maps over the member lists, so reduce them before
-       taking them apart *)
+       primary-key member it leans on too *)
     all: cbn [List.map fst].
     all: repeat lazymatch goal with
          | |- Forall _ (_ :: _) => constructor
@@ -988,8 +956,6 @@ end.
       clist_dict_idx_ok.
     all: try (eexists; intuition eauto; lia).
     (* and that choice's two tags are distinct, by of_nat's injectivity *)
-    (* no cbn here: it would unfold of_nat into its decimal definition and
-       of_nat_inj would no longer apply *)
     all: intros [ E | [] ]; apply String.of_nat_inj in E; lia.
   Qed.
 
@@ -1120,14 +1086,10 @@ end.
     destruct a; eauto with transf_hints.
   Qed.
 
-  (* The basic phase keeps whatever the program established.
-
-     Each basic rewrite is fold_command id applied to an expression rule, so
-     none of them touches the command skeleton, and a semantics-preserving
-     expression rewrite preserves any parameterized_wf.  That matters because
-     this phase runs before any index is installed: an invariant a declared
-     constraint puts on a table has to survive it to be usable at the
-     installation. *)
+  (* The basic phase keeps whatever the program established.  That matters
+     because this phase runs before any index is installed: an invariant a
+     declared constraint puts on a table has to survive it to be usable at
+     the installation. *)
   Lemma mk_basic_transf_preserve_parameterized_wf :
     forall a c P A (Gstore Genv : ctenv),
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1281,12 +1243,9 @@ end.
 
   (* The third bridge for the declared member of a record: what the record's
      own well-formedness cannot give, read off the declarations the
-     installation propagates.  The other two bridges are the same tactics
-     every ordinary member uses. *)
-  (* Projecting ONE member's own well-formedness out of a record.  The
-     prove_idx_wf tactic does this for a record with a single member; with
-     two it cannot tell which member is wanted, so the projection is named
-     here and the In fact picks the member. *)
+     installation propagates. *)
+  (* Projecting ONE member's own well-formedness out of a record.  The In
+     fact picks the member. *)
   Lemma compo_member_wf : forall tg idx' idx_wf' l (v : value),
       In (tg, idx', idx_wf') l ->
       @aux_wf (@compo_idx_wf l) "id_tag" "aux_tag" v ->
@@ -1332,13 +1291,6 @@ end.
 
   (* The soundness of one index's own rewrites, against any invariant at least
      as strong as the index's own.
-
-     This cannot be a corollary of the instance below: aug_transf_sound is
-     monotone in the invariant in NEITHER direction, since it both assumes and
-     re-establishes the same parameterized_wf.  So the generalization has to be
-     what is proved.  It costs one tactic per rewrite, because every rewrite
-     here is really an expression rule, and an expression rule only ever
-     assumes the invariant -- see expr_aug_transf_sound_strengthen_wf.
 
      What this buys: an index record that also carries an index whose
      correctness rests on a declared constraint is installed under the stronger
@@ -1712,9 +1664,6 @@ end.
  (locals_ok := clocals_ok)).
             discriminate. }
         1:{ unfold snoc_to_cons_in_tri_transf.
-            (* this rule's proof leans on more of the index's binder
-               distinctness than the cons rule's does, so its statement
-               interleaves those hypotheses with the binders themselves *)
             eapply (snoc_to_cons_in_tri_sound a ak "tup" "acc" "gvar" "sacc" "bkt"
                       ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
                       ltac:(discriminate) ltac:(discriminate)
@@ -1845,8 +1794,7 @@ end.
                 1: split; [ apply H_Q; exact H_Qv
                           | apply H_decl with (a := ak); assumption ]. } }
         (* and the mirror rule: the primary-key member maintained across a
-           delete at the dictionary's own attribute.  The bridges are the
-           keyed delete's, so the six goals below are its six in order. *)
+           delete at the dictionary's own attribute. *)
         1:{ unfold dict_bucket_pk_delete_gated_transf.
             eapply (DBPD.bucket_pk_delete_gated_sound "hole" a Unranged
                       "tup" "acc" "x" ltac:(auto with transf_hints)
@@ -2079,8 +2027,7 @@ end.
                 1: split; [ apply H_Q; exact H_Qv
                           | apply H_decl with (a := ak); assumption ]. } }
         (* and the mirror rule: the primary-key member maintained across a
-           delete at the composite key.  The bridges are the keyed delete's,
-           so the six goals below are its six, in the same order. *)
+           delete at the composite key. *)
         1:{ unfold composite_bucket_delete_gated_transf.
             eapply (CKBD.cbucket_delete_gated_sound "hole" al "tup" "acc" "x"
                       ltac:(auto with transf_hints)
@@ -2284,9 +2231,7 @@ end.
 
   (* The basic phase leaves a declared variable's initial value alone: it is an
      annotated empty list, and every basic rule matches a compound expression.
-     This is what lets the gate's premise cross the phase -- see
-     fold_command_id_preserve_cenv_respected for why a semantic argument would
-     not be enough. *)
+     This is what lets the gate's premise cross the phase. *)
   Lemma mk_basic_transf_letmut_atom : forall bt (ai : atom) tbl body,
       mk_basic_transf bt (CLetMut (EAtom ai) tbl body)
       = CLetMut (EAtom ai) tbl (mk_basic_transf bt body).
@@ -2362,13 +2307,10 @@ end.
      A declared table that is not the outermost one.
 
      The declared-table layer is pushed below n letmuts, so its premise has to
-     be pushed below them too.  below_letmut_pre does that one level at a
-     time, extending the store with the SYNTHESIZED type of each enclosing
-     initializer -- which is what makes the premise survive the basic phase.
-     A type_of premise could not: type_of is not deterministic (an
-     unannotated empty list has every list type), so there is no way back from
-     a rewritten initializer's typing to the original's.  synthesize_expr is a
-     function, and synthesizable_ty_unique pins its result, so the two agree.
+     be pushed below them too, extending the store with the SYNTHESIZED type
+     of each enclosing initializer.  A type_of premise would not do: type_of
+     is not deterministic, while synthesize_expr is a function and
+     synthesizable_ty_unique pins its result.
      ------------------------------------------------------------------ *)
   Fixpoint below_n_letmuts_pre (n : nat) (P : ctenv -> ctenv -> command -> Prop) :
     ctenv -> ctenv -> command -> Prop :=
@@ -2531,11 +2473,9 @@ end.
     apply compose_basic_transfs_preserve_cenv_respected; assumption.
   Qed.
 
-  (* below_n_letmuts_pre_syn builds its nest from the INSIDE --
-     `S n` wraps the predicate and recurses at n -- which is the right shape
-     for pre_transported_below_n, whose induction is on the predicate.  An
-     induction on a PROGRAM needs it peeled from the outside instead: one
-     letmut, then the rest.  The two agree, and this says so. *)
+  (* The two ways of nesting the premise agree: built from the inside, as
+     below_n_letmuts_pre_syn does, and peeled from the outside, as an
+     induction on a program needs it. *)
   Lemma below_n_letmuts_pre_syn_peel : forall n P (Gstore Genv : ctenv) c,
       below_n_letmuts_pre_syn n (below_letmut_pre_syn P) Gstore Genv c
       <-> below_letmut_pre_syn (below_n_letmuts_pre_syn n P) Gstore Genv c.
@@ -2738,15 +2678,8 @@ end.
 
   (* ------------------------------------------------------------------
      The premise, read off the surface program instead of written into the
-     theorem statement.
-
-     The two results below used to be stated at a hard-coded depth, with
-     the cenv CONSTRUCTED beside the program from the same tbl/row_ty/ds.
-     That is what made them one-per-shape: write the shape out and you have
-     fixed the depth.  This lemma inducts on the program instead.  The
-     SLetMut case peels one level and uses that level's own synthesis fact;
-     the SLetConstrained case is elab_cenv_respected, which is where the
-     declarations stop being a hint about the program and become part of it.
+     theorem statement.  elab_cenv_respected is where the declarations stop
+     being a hint about the program and become part of it.
      ------------------------------------------------------------------ *)
   Lemma elab_spine_pre :
     forall sc ce free_vars (Gstore Genv : ctenv),
@@ -2912,10 +2845,8 @@ end.
           = interp_command store env
               (elab ce free_vars (SLetMut e x (SLetConstrained tbl row_ty ds sc))).
   Proof.
-    (* and the same theorem one level down.  What used to be this proof --
-       transporting the premise through the enclosing letmut by hand, with
-       synthesizable_ty_unique to reconcile the two derivations -- is now
-       elab_spine_pre's SLetMut case, done once for every depth. *)
+    (* and the same theorem one level down, through elab_spine_pre's SLetMut
+       case. *)
     intros * H_Gs H_Ge H_rt H_fv H_ds E_syn H_wt.
     apply (elab_apply_optimize_anno_constrained_sound'
              (SLetMut e x (SLetConstrained tbl row_ty ds sc)) ce free_vars

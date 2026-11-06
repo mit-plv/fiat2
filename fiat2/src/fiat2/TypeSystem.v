@@ -28,7 +28,6 @@ Proof.
     + rewrite String.eqb_neq in E; intuition idtac.
 Qed.
 
-(* Whether l is included in m *)
 Definition inclb {A : Type} (A_eqb : A -> A -> bool) (l m : list A) : bool :=
   forallb (fun a => inb A_eqb a m) l.
 

@@ -37,9 +37,6 @@ Open Scope string_scope.
    index installs on any table, and only the rules that read a row back out of
    it owe the declaration. *)
 
-(* A hit is not a miss.  Stated separately because the case analysis has to
-   happen away from the hypotheses that mention the lookup, which a destruct
-   in place would rewrite. *)
 Lemma option_is_some_bool : forall (A : Type) (o : option A),
     o <> None -> (match o with None => true | Some _ => false end) = false.
 Proof.
@@ -140,9 +137,6 @@ Section WithHole.
         | _ => VUnit
         end.
 
-      (* The entries to_idx accumulates.  Stated as a fold over the rows, so
-         the induction the lookup lemmas need is the one the list of rows
-         already offers. *)
       Definition idx_entries (l : list value) : list (value * value) :=
         fold_right (fun r d => dict_insert (row_key attr r) r d) nil l.
 
@@ -216,9 +210,7 @@ Section WithHole.
 
 
       (* and canonical in the stronger sense dict_wf means -- strictly
-         increasing keys, so no key appears twice.  Needed because the two
-         dict_insert facts below are proved by lookup extensionality, which
-         is a statement about canonical dictionaries. *)
+         increasing keys, so no key appears twice. *)
       Lemma idx_entries_dict_wf : forall (l : list value), dict_wf (idx_entries l).
       Proof.
         induction l as [| r l IH]; cbn [idx_entries fold_right];
@@ -291,8 +283,6 @@ Section WithHole.
          one entry behind and a row is simply lost.
          ------------------------------------------------------------------ *)
 
-      (* The fold's own step, as an equation, so the induction below can use it
-         without unfolding idx_entries in the induction hypothesis too. *)
       Lemma idx_entries_cons : forall (r : value) (l : list value),
           idx_entries (r :: l) = dict_insert (row_key attr r) r (idx_entries l).
       Proof.
@@ -325,9 +315,6 @@ Section WithHole.
       Proof.
         induction l as [| a l IH]; intros r; cbn [app];
           [ cbn [idx_entries fold_right]; reflexivity | ].
-        (* fold rather than unfold: a cbn here leaves idx_entries unfolded on
-           one side and folded on the other, and then the destruct below
-           cannot abstract both occurrences of the lookup *)
         rewrite !idx_entries_cons, IH.
         destruct (value_eqb (row_key attr a) (row_key attr r)) eqn:E.
         - (* the row already in the list carries the appended row's key, so
@@ -347,9 +334,8 @@ Section WithHole.
             [ congruence | apply idx_entries_dict_wf ].
       Qed.
 
-      (* Deleting a key no row carries leaves the entries alone.  Proved by
-         running idx_entries_filter_neq backwards: the delete is the index of a
-         filtered table, and the filter discards nothing. *)
+      (* Deleting a key no row carries leaves the entries alone: the delete is
+         the index of a filtered table, and the filter discards nothing. *)
       Lemma dict_delete_idx_entries_absent : forall (l : list value) (k : value),
           ~ In k (List.map (row_key attr) l) ->
           dict_delete k (idx_entries l) = idx_entries l.

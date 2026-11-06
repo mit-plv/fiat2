@@ -107,7 +107,6 @@ Section WithWord.
     eexists; split; [ reflexivity | assumption ].
   Qed.
 
-  (* The row shape the index's equations are stated with, from the row type. *)
   Lemma typed_rows_are_records : forall (l : list value) rt,
       Forall (fun r => type_of_value r (TRecord rt)) l ->
       Forall (fun r => exists rc, r = VRecord rc) l.
@@ -124,7 +123,6 @@ Section WithAttrs.
      filter_neq_to_delete_head already applies and is better. *)
   Context (attr key : string).
 
-  (* the rows the index files under av *)
   Definition rows_at (av : value) (l : list value) : list value :=
     filter (fun r => value_eqb (row_key attr r) av) l.
 
@@ -139,8 +137,7 @@ Section WithAttrs.
   Proof. intro l; unfold idx_of; cbn [gallina_to_idx]; reflexivity. Qed.
 
   (* One step of the index's own fold: a row joins the bucket its attribute
-     names.  Named so that the expression side can be matched against it
-     without unfolding gallina_to_idx twice over. *)
+     names. *)
   Lemma idx_of_cons : forall rc l,
       idx_of (VRecord rc :: l)
       = dict_insert (record_proj attr rc)
@@ -205,7 +202,6 @@ Section WithAttrs.
     apply filter_In in H_in as [ H_in _ ]; auto.
   Qed.
 
-  (* the rows that survive a delete of the row at kv *)
   Definition keeps (kv r : value) : bool :=
     negb (value_eqb (row_key key r) kv).
 
@@ -244,7 +240,6 @@ Section WithAttrs.
     f_equal; apply IH; intros y H_in; apply H; right; exact H_in.
   Qed.
 
-  (* Filtering the table commutes with picking out one bucket's rows. *)
   Lemma rows_at_filter : forall av kv l,
       rows_at av (filter (keeps kv) l) = filter (keeps kv) (rows_at av l).
   Proof.
@@ -387,7 +382,6 @@ Section WithRule.
   Lemma tup_neq_acc : tup <> acc.
   Proof. use_is_NoDup. Qed.
 
-  (* The table shape the dictionary index demands, as an inversion. *)
   Lemma dict_is_tbl_ty_inv : forall t,
       @IndexInterface.is_tbl_ty didx t = true ->
       exists rt at_ty, t = TList (TRecord rt)
@@ -421,8 +415,7 @@ Section WithRule.
   Qed.
 
   (* The rules' kind test, as an equation oriented so that the PATTERN's
-     kind disappears: rewriting the other way would eliminate the section
-     variable dk and with it every definition mentioning it. *)
+     kind disappears. *)
   Ltac use_dk_beq :=
     repeat lazymatch goal with
         H: dict_kind_beq dk ?d = true |- _ =>
@@ -484,7 +477,6 @@ Section WithRule.
       apply list_to_bag_filter_bag_to_list; assumption.
     Qed.
 
-    (* Reading a binder whose value is known. *)
     Lemma interp_EVar_get : forall (store env : locals) y (v : value),
         map.get env y = Some v -> interp_expr store env (EVar y) = v.
     Proof.
@@ -553,8 +545,7 @@ Section WithRule.
       destruct (dict_lookup (row_key attr rv) d) as [ bv | ] eqn:E_lk.
       (* the none branch is the accumulator itself, already read above *)
       2: reflexivity.
-      (* the bucket is a bag, by the premise -- which the destruct above
-         has already specialised to this lookup *)
+      (* the bucket is a bag, by the premise *)
       assert (H_bv : type_of_value bv (TBag t)) by (apply H_bags; reflexivity).
       assert (H_bag : exists b, bv = VBag b) by (inversion H_bv; eauto).
       destruct H_bag as [ b E_bv ]; subst bv.
@@ -691,9 +682,6 @@ Section WithRule.
         UniqueDictIndexImpl.idx_wf, UniqueDictIndexImpl.keys_distinct,
         DictIndexImpl.idx_wf.
       intros tl rt v H_twf H_is E_id.
-      (* v is destructed before the invariants are introduced, so that their
-         names survive; each later destruct is pushed into them by hand,
-         since destruct rewrites the goal but not hypotheses *)
       destruct v as [ | | | | | rv | | | | ];
         intros H_vty H_idx H_pk;
         cbv beta iota in H_idx, H_pk; try contradiction.
@@ -943,15 +931,10 @@ Section WithRule.
            source's own derivation is reused -- the emitted form is built
            from the typing lemmas above -- so this may consume everything. *)
         repeat invert_type_of_clear. repeat invert_type_of_op_clear.
-        (* rewrite_map_get_put_hyp discharges map.get_put_diff's side
-           condition with (simpl in *; intuition auto), which reads the
-           CONTEXT only.  This section's variables are kept apart by
-           is_NoDup_opaque, which is opaque by construction, so the side
-           condition would survive as a goal whose context still holds
-           rewritable hypotheses -- and the repeat would then spawn side
-           goals without end.  Putting the disequalities in the context
-           first is what makes the tactic terminate.  map.get_put_diff
-           wants put-key <> looked-up-key, so both orientations go in. *)
+        (* The section's binder disequalities go in the context first, in both
+           orientations: rewrite_map_get_put_hyp otherwise spawns side goals
+           without end, because is_NoDup_opaque hides them from the context
+           search that discharges map.get_put_diff. *)
         assert (H_tup_acc : tup <> acc) by use_is_NoDup.
         assert (H_acc_tup : acc <> tup) by (apply not_eq_sym; use_is_NoDup).
         assert (H_tup_x : tup <> x) by use_is_NoDup.
@@ -961,9 +944,7 @@ Section WithRule.
         repeat rewrite_map_get_put_hyp.
         repeat (try clear_refl; repeat do_injection).
         (* the table read fixes the row type, which fixes the attribute's
-           and the key's.  match, not lazymatch: the first hypothesis of
-           each shape is the one this lemma was given, and rewriting it with
-           itself fails, so the search has to go on to the inverted copy. *)
+           and the key's *)
         match goal with
         | H : map.get Gstore tbl = Some (TRecord _) |- _ =>
             rewrite E_tbl in H; injection H as H; subst
@@ -1056,9 +1037,6 @@ Section WithRule.
                        = VList rows).
         1:{ rewrite interp_EAccess, interp_ELoc.
             unfold get_local; rewrite E_v; cbv beta iota. exact E_rows. }
-        (* The source, settled first and separately: destruct_subexpr has
-           spelled its fold out, so only conversion relates it to to_idx_at
-           and rewrite's syntactic match would not see it. *)
         lazymatch goal with
         | |- _ = interp_expr store env ?src =>
             assert (E_src : interp_expr store env src

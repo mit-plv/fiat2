@@ -282,9 +282,7 @@ Section WithMap.
   Qed.
 
   (* The equation in which an expression-only rewrite's semantic transparency
-     is used below.  type_of comes first on purpose: it is what pins Gstore,
-     Genv and t at once, and leaving them to be guessed from the tenv_wf
-     premises makes the wrong environment get chosen. *)
+     is used below. *)
   Lemma fold_expr_sem_eq : forall f (Gstore Genv : tenv) e t (store env : locals),
       type_of Gstore Genv e t ->
       (forall (Gstore : tenv), preserve_ty Gstore f) ->

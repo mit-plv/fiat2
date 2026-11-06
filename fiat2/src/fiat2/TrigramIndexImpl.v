@@ -55,11 +55,10 @@ Section WithHole.
     Context (H_tup_bkt : tup <> bkt).
     Context (H_sacc_bkt : sacc <> bkt).
     Context (H_pos_sacc : gvar <> sacc).
-    (* last in the list on purpose: a section hypothesis is abstracted into
-       the lemmas that use it in declaration order, so adding one at the end
-       leaves every existing lemma's arguments where they were.  Only the
-       delete body below needs this one, since it is the only body that
-       mentions a trigram under the bucket's binder. *)
+    (* Last in the list, so that adding it leaves every existing lemma's
+       arguments where they were.  Only the delete body below needs it, since
+       it is the only body that mentions a trigram under the bucket's
+       binder. *)
     Context (H_pos_bkt : gvar <> bkt).
 
     (* pg_trgm trigrams each WORD separately -- find_word walks the maximal
@@ -68,7 +67,7 @@ Section WithHole.
        trigrams.  These are the outer fold's binders, and the alphabet of
        separator characters it splits on.
 
-       Last in the list, for the reason the comment above gives. *)
+       Last in the list, like the hypothesis above. *)
     Context (seps : string).
     Context (wrd wacc : string).
     Context (H_wrd_tup : wrd <> tup).
@@ -126,11 +125,9 @@ Section WithHole.
            bkt
            (EBinop OSetInsert (EVar bkt) (row_pk (EVar tup)))).
 
-    (* one word: every trigram of its padded form *)
     Definition tri_word_body : expr :=
       EFold (word_trigrams (EVar wrd)) (EVar wacc) gvar sacc tri_insert_body.
 
-    (* one row: every word of its text *)
     Definition tri_row_body : expr :=
       EFold (row_words (EVar tup)) (EVar acc) wrd wacc tri_word_body.
 
@@ -433,7 +430,6 @@ Section WithHole.
          contains says row_str. *)
       Definition row_wrds (r : value) : list string := words seps (row_str r).
 
-      (* One row: every word of its text. *)
       Definition tri_row_step (ws : list string) (k a : value) : value :=
         fold_right (fun w a' => tri_word_step w k a') a ws.
 
@@ -591,7 +587,6 @@ Section WithHole.
         rewrite map.get_put_diff by congruence. apply map.get_put_same.
       Qed.
 
-      (* What to_idx computes, in Gallina. *)
       Theorem fiat2_gallina_to_idx : forall (l : list value),
           Forall (fun r => exists txt, row_key attr r = VString txt) l ->
           interp_expr map.empty (map.put map.empty hole (VList l)) to_idx
@@ -604,7 +599,6 @@ Section WithHole.
         apply interp_to_idx_fold; exact H_all.
       Qed.
 
-      (* And the hypothesis is what the table's type gives. *)
       Lemma typed_rows_have_text : forall (l : list value) rt,
           access_record rt attr = Success TString ->
           Forall (fun r => type_of_value r (TRecord rt)) l ->
@@ -803,8 +797,6 @@ Section WithHole.
         1:{ (* one bucket, taken in both orders *)
             apply value_eqb_eq in E_g; subst g2.
             rewrite !DictIndexImpl.dict_lookup_insert_same.
-            (* the inner buckets first: unfolding bucket_insert here would
-               consume the pattern this lemma matches *)
             rewrite !(bucket_insert_as_set d g1 _ H_b).
             cbn [bucket_insert].
             rewrite !DictIndexImpl.dict_insert_insert_same by exact H_wf.
@@ -1093,7 +1085,6 @@ Section WithHole.
             exists r'; split; [ right; exact H_in | exact E ]. }
       Qed.
 
-      (* Every trigram of a padded word is one of that word's keys. *)
       Lemma In_word_keys : forall w g,
           In g (trigrams (pad w)) -> In (VString g) (word_keys w).
       Proof.
@@ -1233,9 +1224,6 @@ Section WithHole.
         (d : list (value * value)) : list (value * value) :=
         dict_insert g (bucket_insert k (dict_lookup g d)) d.
 
-      (* unfolding only the outer, fully applied step: "unfold tri_step_d"
-         would also unfold the one inside the fold, and the induction
-         hypothesis is stated in terms of that one *)
       Lemma tri_step_d_eq : forall k g (d : list (value * value)),
           tri_step_d k g d
           = dict_insert g (bucket_insert k (dict_lookup g d)) d.
@@ -1252,8 +1240,7 @@ Section WithHole.
       Definition tri_dict (l : list value) : list (value * value) :=
         fold_right (fun r d => tri_row_step_d (row_wrds r) (row_key key r) d) nil l.
 
-      (* folded equations for the two nested folds, so that no proof below
-         has to unfold a definition the induction hypothesis mentions *)
+      (* folded equations for the two nested folds *)
       Lemma tri_word_step_d_eq : forall w k d,
           tri_word_step_d w k d = fold_right (tri_step_d k) d (word_keys w).
       Proof. reflexivity. Qed.
@@ -1294,7 +1281,6 @@ Section WithHole.
         | _ => nil
         end.
 
-      (* every key one row contributes: the union over its words *)
       Definition tri_keys (ws : list string) : list value :=
         flat_map word_keys ws.
 
@@ -1305,7 +1291,6 @@ Section WithHole.
                                then set_insert (row_key key r) b
                                else b) nil l.
 
-      (* membership in a union of words is membership in one of them *)
       Lemma set_mem_app : forall (g : value) l1 l2,
           set_mem g (l1 ++ l2)%list = (set_mem g l1 || set_mem g l2)%bool.
       Proof. intros; apply existsb_app. Qed.
@@ -1399,8 +1384,7 @@ Section WithHole.
 
       (* One word's step, bucket by bucket: it touches the buckets of its
          own trigrams and nothing else.  Both lemmas are about a fold over
-         an ARBITRARY list of trigrams, since the induction peels one off
-         and the rest is no longer a word's trigram list. *)
+         an ARBITRARY list of trigrams. *)
       Lemma tri_fold_d_lookup_other : forall k gs d g,
           set_mem g gs = false ->
           dict_lookup g (fold_right (tri_step_d k) d gs) = dict_lookup g d.
@@ -1839,7 +1823,6 @@ Section WithHole.
         (* the bucket is a set, by the invariant *)
         apply (Forall_dict_lookup _ _ _ _ H_ne) in E_lk as E_set.
         destruct E_set as [ b [ E_b _ ] ]; cbn [snd] in E_b; subst bk.
-        (* the bucket binder is in the way of every read the branches make *)
         repeat rewrite_map_get_put_goal.
         rewrite ?E_tup, ?E_g, ?E_sacc.
         cbn [interp_binop interp_atom].
@@ -2097,7 +2080,6 @@ Section WithHole.
         f_equal; apply IH; intros y H_in; apply H; right; exact H_in.
       Qed.
 
-      (* And if no row has the key, the filter removes nothing. *)
       Lemma tri_dict_filter_neq_absent : forall l (k : value),
           (forall r, In r l -> row_key key r <> k) ->
           tri_dict (filter (fun r' => negb (value_eqb (row_key key r') k)) l)

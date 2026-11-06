@@ -31,7 +31,6 @@ Section WithWord.
      The scan and the lookup agree, as lists.
      ------------------------------------------------------------------ *)
 
-  (* No row carries a key the table does not have. *)
   Lemma filter_key_eq_nil : forall (l : list value) (k : value),
       ~ In k (List.map (row_key attr) l) ->
       List.filter (fun r => value_eqb (row_key attr r) k) l = nil.
@@ -373,9 +372,6 @@ Section WithIndexUse.
                         store env H_sw H_ew) as H_v
       end.
       apply type_of_value_TList_inv in H_v as [ rows [ E_rows _ ] ].
-      (* the source: the index of the rows the filter keeps.  Bound by a
-         match on the goal because destruct_subexpr has spelled the fold
-         out, so only CONVERSION relates it to uto_idx_at *)
       lazymatch goal with
       | |- _ = interp_expr _ _ ?src =>
           assert (E_src :
@@ -460,8 +456,6 @@ Section WithIndexUse.
       assert (E_tup : map.get (map.put (map.put env tup r) acc (VDict d)) tup
                       = Some r)
         by (rewrite map.get_put_diff by congruence; apply map.get_put_same).
-      (* peeled one node at a time: a cbn would reduce the none branch too,
-         and interp_idx_body would no longer match it *)
       rewrite interp_EOptMatch_peel, interp_EBinop, interp_EAccess, !interp_EVar.
       unfold get_local. rewrite E_acc, E_tup. cbn [interp_binop].
       change (match r with
@@ -562,9 +556,6 @@ Section WithIndexUse.
                       = VList (rows ++ [interp_expr store env e1_2_1])).
       1:{ rewrite interp_EBinop, E_rows, interp_EBinop, interp_EAtom.
           cbn [interp_atom interp_binop]. reflexivity. }
-      (* the source: the index of the appended list.  Bound by a match on the
-         goal because destruct_subexpr has spelled the fold out, so only
-         CONVERSION relates it to uto_idx_at *)
       lazymatch goal with
       | |- _ = interp_expr _ _ ?src =>
           assert (E_src :
@@ -669,8 +660,6 @@ Section WithIndexUse.
         1:{ unfold get_attr_type.
             lazymatch goal with H: ?x = _ |- context[?x] => rewrite H end.
             eapply not_free_immut_put_ty; eauto. }
-        (* selected with all:, not by position: the extra record access the
-           rewrite now goes through reorders what econstructor leaves *)
         all: repeat invert_type_wf; auto.
         all: rewrite map.get_put_same; trivial.
       Qed.
@@ -715,8 +704,6 @@ Section WithIndexUse.
         2:{ intros v H_in. rewrite map.get_put_same. f_equal.
             symmetry; apply not_free_immut_put_sem; assumption. }
         rewrite filter_key_eq_lookup by assumption.
-        (* matched rather than named: the extra record access adds a value
-           list to the context and shifts the generated names *)
         lazymatch goal with
         | |- context[dict_lookup ?k (idx_entries _ ?rows)] =>
             destruct (dict_lookup k (idx_entries attr rows))
@@ -742,9 +729,7 @@ Section WithIndexUse.
 
       (* The annotation that types an empty set types the matching empty bag.
          A rule that rewrites a set-level flatmap into a bag-level one owes
-         this for the two empty collections the body is built from; the atom
-         rules are parallel (TypeSystem.v TyAEmptyBag'/TyAEmptySet'), so it is
-         a case split and nothing more. *)
+         this for the two empty collections the body is built from. *)
       Lemma type_of_atom_AEmptySet__AEmptyBag : forall (ot : option type) (t : type),
           type_of_atom (AEmptySet ot) (TSet t) ->
           type_of_atom (AEmptyBag ot) (TBag t).
@@ -958,9 +943,6 @@ Section WithIndexUse.
         (* the read *)
         erewrite interp_aux_member; [ | exact E_v | exact E_aux | reflexivity ].
         rewrite E_idx.
-        (* and the recomputation: apply, not rewrite, since destruct_subexpr
-           has left the fold spelled out and only conversion relates it to
-           uto_idx_at *)
         symmetry. eapply (interp_uto_idx_at store env _ rows).
         rewrite interp_EAccess, interp_ELoc.
         unfold get_local; rewrite E_v; cbv beta iota.
@@ -1078,9 +1060,6 @@ Section WithIndexUse.
       repeat destruct_match_hyp; try contradiction.
       eapply List.Forall_In in H_aux as H_mem; [ | exact H_in ]; cbn in H_mem.
       repeat destruct_match_hyp; try contradiction.
-      (* the map instances are named: none of them occurs in the
-         lemma's conclusion, so from outside its section eapply turns each one
-         it cannot determine into a goal of its own *)
       eapply (idx_wf__idx_wf_unique hole attr tup acc
                 (tenv := tenv) (tenv_ok := tenv_ok)
  (locals_ok := locals_ok));
@@ -1153,7 +1132,6 @@ Section WithIndexUse.
              type_wf t -> is_tbl_ty' t = true ->
              type_of_value v (aux_ty t) -> aux_wf v -> unique_aux_wf_at v).
 
-    (* The rule, applied everywhere below the installation. *)
     Definition unique_lookup_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl] (unique_lookup_head tbl).
 
@@ -1285,7 +1263,6 @@ Section WithIndexUse.
              type_wf t -> is_tbl_ty' t = true ->
              type_of_value v (aux_ty t) -> aux_wf v -> unique_weak_aux_wf_at v).
 
-    (* Whoever owes the lookup rule's bridges owes these too. *)
     Lemma unique_bridges__idx_bridges : forall is_tbl_ty' aux_ty aux_wf,
         unique_bridges is_tbl_ty' aux_ty aux_wf ->
         unique_idx_bridges is_tbl_ty' aux_ty aux_wf.

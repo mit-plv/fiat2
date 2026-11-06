@@ -30,10 +30,7 @@ Section WithHole.
        incidental: it came from being written beside min_agg and sum_agg,
        which really do need numbers.  Keeping it would have held the
        membership rewrite off every string-keyed table, which is where
-       membership tests mostly live.
-
-       The match is left three deep, on access_record rather than on inb, so
-       that the shape the proofs below destruct is unchanged. *)
+       membership tests mostly live. *)
     Definition is_tbl_ty (t : type) : bool :=
       match t with
       | TList (TRecord rt) => match access_record rt attr with
@@ -101,8 +98,7 @@ Section WithHole.
       Instance set_agg_ok : IndexInterface.ok set_agg idx_wf :=
         IndexInterface.Build_ok set_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
 
-      (* Unfold interp_expr one layer at a time, so that the rewrites below can
-         work from the outside in without touching the subexpressions. *)
+      (* Unfold interp_expr one layer at a time. *)
 
 
 

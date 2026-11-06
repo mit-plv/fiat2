@@ -56,7 +56,6 @@ Section WithIndexVars.
 
     Notation uidx_wf := (UniqueDictIndexImpl.idx_wf hole attr tup acc (locals:=locals)).
 
-    (* The table invariant a primary key on attr declares. *)
     Definition key_holds (rt : list (string * type)) : value -> Prop :=
       constrs_hold (locals:=locals) [unique_constr attr (TRecord rt)].
 

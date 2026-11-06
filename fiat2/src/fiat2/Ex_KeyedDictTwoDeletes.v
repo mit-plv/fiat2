@@ -321,7 +321,6 @@ Section WithConcreteMaps.
     installed_fields optimized_keyed = ["aux_tag"].
   Proof. vm_compute; reflexivity. Qed.
 
-  (* and no write anywhere carries a row list *)
   Lemma no_write_keeps_a_row_list :
     list_at 3 optimized = None.
   Proof. vm_compute; reflexivity. Qed.

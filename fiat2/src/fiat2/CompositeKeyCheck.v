@@ -503,12 +503,10 @@ Section WithWord.
     (* the table and the binder the filter scans with *)
     Context (tbl x : string).
 
-    (* the rows of tbl agreeing with u on every attribute, as a bag *)
     Definition ckey_filter (attrs : list string) (u : expr) : expr :=
       flatmap_filter_bag (EUnop OBagOfList (ELoc tbl)) x
         (eq_on_attrs attrs (EVar x) u) x None None.
 
-    (* ... and the test that there are none *)
     Definition cfresh_guard (attrs : list string) (u : expr) : expr :=
       EBinop OEq (ckey_filter attrs u) (EAtom (AEmptyBag None)).
 
@@ -627,8 +625,6 @@ Section WithWord.
                 [ apply list_to_bag_to_list_Permutation | exact H_r ]. }
           rewrite E_nil; apply value_eqb_refl. }
     Qed.
-    (* A convenience the proofs below use twice: the rows of a well-typed
-       table are records. *)
     Lemma typed_rows_are_records' : forall rt (l : list value),
         Forall (fun r => type_of_value r (TRecord rt)) l ->
         Forall (fun v => exists rc, v = VRecord rc) l.

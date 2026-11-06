@@ -279,7 +279,6 @@ Section WithWord.
     | _ => true
     end.
 
-  (* k is in range when it satisfies every bound that is present *)
   Definition in_key_range (lo hi k : value) : bool := andb (above_lo lo k) (below_hi hi k).
 
   (* the entries of d whose keys are in range: lo <= k < hi, half-open, and

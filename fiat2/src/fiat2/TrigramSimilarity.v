@@ -56,8 +56,6 @@ Proof.
   (* the union is at least as big as either side, which is where c <= b is
      spent -- and the only place it is *)
   assert (H_ge : a <= a + b - c) by lia.
-  (* scaling by the numerator is the one nonlinear step, so it is done by
-     hand rather than left to lia *)
   assert (H_mul : tn * a <= tn * (a + b - c))
     by (apply Nat.mul_le_mono_l; exact H_ge).
   lia.

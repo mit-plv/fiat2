@@ -40,12 +40,10 @@ Section WithWord.
     (* the table, its key attribute, and the binder the filter scans with *)
     Context (tbl attr x : string).
 
-    (* the rows of tbl carrying u's key, as a bag *)
     Definition key_filter (u : expr) : expr :=
       flatmap_filter_bag (EUnop OBagOfList (ELoc tbl)) x
         (EBinop OEq (EAccess (EVar x) attr) (EAccess u attr)) x None None.
 
-    (* ... and the test that there are none *)
     Definition fresh_guard (u : expr) : expr :=
       EBinop OEq (key_filter u) (EAtom (AEmptyBag None)).
 

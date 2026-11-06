@@ -77,7 +77,6 @@ Section WithHole.
         (fun v => match v with VRecord r => record_proj attr r | _ => VUnit end).
       Notation int_of := (fun v : value => match v with VInt z => z | _ => 0%Z end).
 
-      (* a fold of integer addition over integers *)
       Lemma fold_add_int : forall (l : list value),
           Forall (fun v => type_of_value v TInt) l ->
           fold_right (apply_int_binop Z.add) (VInt 0) l
@@ -89,7 +88,6 @@ Section WithHole.
         rewrite IH; auto.
       Qed.
 
-      (* a sum splits over a filter and its complement *)
       Lemma Zsum_filter_partition : forall (h : value -> Z) (p : value -> bool) l,
           fold_right Z.add 0%Z (List.map h l)
           = (fold_right Z.add 0%Z (List.map h (filter p l))
@@ -101,7 +99,6 @@ Section WithHole.
         1: apply Z.add_shuffle3.
       Qed.
 
-      (* a sum does not depend on the order of the rows *)
       Lemma Zsum_Permutation : forall (h : value -> Z) l1 l2,
           Permutation l1 l2 ->
           fold_right Z.add 0%Z (List.map h l1) = fold_right Z.add 0%Z (List.map h l2).

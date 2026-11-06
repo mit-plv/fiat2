@@ -155,8 +155,7 @@ Section WithHole.
                         apply In_fst in H; destruct H end.
                     intuition idtac; destruct x0. eauto.
                     cbn in *; subst.
-                    (* the kind shows up only in the premise, so name it:
-                       the dictionary here is this index's own *)
+                    (* the dictionary here is this index's own *)
                     eapply dict_lookup_sound with (dk := dk).
                     4:{ eapply record_proj_sound; eauto.
                         1: lazymatch goal with
@@ -463,7 +462,6 @@ Section WithHole.
           intros. unfold range_rows. apply Permutation_flat_map; auto.
         Qed.
 
-        (* the buckets of a dictionary are the values of its entries *)
         Lemma range_rows_map_snd : forall d,
             range_rows d
             = flat_map (fun v => match v with VBag b => bag_to_list b | _ => nil end)
@@ -769,9 +767,8 @@ Section WithHole.
                     (EAtom (AEmptyBag None)) x0 (EVar x1))
                  (EVar tup3)))).
 
-      (* Turn the rules' kind test into an equation, and orient it so the
-         PATTERN's kind disappears.  Rewriting the other way would eliminate
-         the section variable dk and with it every definition mentioning it. *)
+      (* The rules' kind test as an equation, oriented so the PATTERN's kind
+         disappears. *)
       Ltac use_dict_kind_beq :=
         repeat lazymatch goal with
             H: dict_kind_beq dk ?d = true |- _ =>
@@ -1095,7 +1092,6 @@ Section WithHole.
             | _ => e
             end.
 
-          (* Flattening the values of a dictionary collects the rows of its buckets *)
           Lemma interp_flatmap_dict_values : forall (store env : locals) d l,
               interp_expr store env d = VDict l ->
               interp_expr store env (EFlatmap LikeBag (EUnop ODictValues d) rv (EVar rv))
@@ -1139,7 +1135,6 @@ Section WithHole.
             all: repeat split; try eassumption; repeat econstructor; eauto.
           Qed.
 
-          (* The row's indexed attribute is the integer the bounds bound *)
           Lemma attr_is_int : forall rt rc,
               type_of_value (VRecord rc) (TRecord rt) ->
               access_record rt attr = Success TInt ->
@@ -1161,10 +1156,7 @@ Section WithHole.
             inversion H_v; eauto.
           Qed.
 
-          (* A well-typed integer expression evaluates to an integer.  Stated
-             separately so that range_bounds_sem can APPLY it, rather than let a
-             proof search loose on its own goal: type_sound's side conditions
-             are hypotheses here, so this costs one application and no search. *)
+          (* A well-typed integer expression evaluates to an integer. *)
           Lemma bound_is_int : forall (Gstore Genv : tenv) (store env : locals) b,
               type_of Gstore Genv b TInt ->
               tenv_wf Gstore -> tenv_wf Genv ->
@@ -1195,9 +1187,7 @@ Section WithHole.
           Proof.
             intros * H_Gs H_Ge H_b H_flo H_fhi H_ty H_st H_en H_rc.
             (* The bounds do not read the row, so they may be read in the
-               environment the caller has.  Aligning the two environments here
-               rather than at the use site keeps the rewrite's side conditions
-               next to the hypotheses that discharge them. *)
+               environment the caller has. *)
             rewrite (not_free_immut_put_sem lo rx store env (VRecord rc) H_flo).
             rewrite (not_free_immut_put_sem hi rx store env (VRecord rc) H_fhi).
             pose proof (range_bounds_ty _ _ _ _ _ _ _ H_b H_ty) as [ H_attr _ ].
@@ -1212,11 +1202,8 @@ Section WithHole.
               rewrite ?eqb_eq in *; subst.
             all: repeat invert_type_of_clear; repeat invert_type_of_op_clear;
               repeat rewrite_map_get_put_hyp; repeat (clear_refl; repeat do_injection2).
-            (* Expose the row's attribute and each bound as the integers they are.
-               The inversions above rename the typing context, so this step names
-               no hypothesis: it reads the bound off the goal and discharges
-               bound_is_int's premises by eassumption alone -- never by a search
-               that could wander onto the goal itself. *)
+            (* Expose the row's attribute and each bound as the integers
+               they are. *)
             all: cbn -[record_proj value_ltb];
               unfold get_local; rewrite map.get_put_same;
               cbn -[record_proj value_ltb]; rewrite H_k.
@@ -1228,11 +1215,9 @@ Section WithHole.
                        by (eapply bound_is_int; eassumption);
                      destruct Hn as [ n Hn ]; rewrite Hn; clear H
                  end.
-            (* and then both sides are the same test on the same integers.
-               in_key_range must be unfolded by hand: cbn refolds it, because an
-               absent bound leaves an "andb _ true" with no constructor to match
-               on.  That identity, and its mirror, are exactly what a one-sided
-               range costs here. *)
+            (* and then both sides are the same test on the same integers.  That
+               identity, and its mirror, are exactly what a one-sided range
+               costs here. *)
             all: unfold in_key_range, above_lo, below_hi; cbv beta iota;
               rewrite ?Bool.andb_true_r, ?Bool.andb_true_l;
               reflexivity.
@@ -1335,9 +1320,6 @@ Section WithHole.
             rewrite list_to_bag_filter_list_to_bag.
             f_equal. apply Permutation_list_to_bag_eq, Permutation_sym.
             erewrite In_filter_ext; [ apply gallina_to_idx_range | ].
-            (* These three select hypotheses by SHAPE rather than by the names the
-               inversions happened to give them: this proof generates them in a
-               different order than the one-shape rule did. *)
             - rewrite Forall_forall in *; intros r H_in.
               match goal with
               | H: forall _, In _ _ -> _ |- _ => apply H in H_in
@@ -1350,11 +1332,6 @@ Section WithHole.
               | H: Forall _ _ |- _ => rewrite Forall_forall in H; apply H in H_in
               end.
               inversion H_in; subst.
-              (* The bracket keeps eauto on range_bounds_sem's side conditions.
-                 Letting it see the main goal is what made this proof diverge. *)
-              (* Gstore is pinned: left to eauto, "tenv_wf ?Gstore" is discharged
-                 with the ENV's well-formedness, which instantiates the store
-                 context wrongly and leaves the rest unprovable. *)
               erewrite range_bounds_sem with (Gstore := Gstore) (Genv := Genv);
                 [ reflexivity | eauto using locals_wf_step with fiat2_hints .. ].
           Qed.
@@ -1573,9 +1550,6 @@ Section WithHole.
            and kind to THIS index's, which is what lets the proof speak about
            gallina_to_idx at all, and it checks the fold's binders are used
            consistently and distinctly, which is what fold_to_idx needs. *)
-        (* Peel one node WITHOUT reducing what is under it.  A cbn here
-           unfolds the fold's step into interp_ternop, and then the bridge to
-           idx_step no longer matches the term. *)
         Lemma interp_EFold_peel : forall (store env : locals) c i tup0 acc0 body,
             interp_expr store env (EFold c i tup0 acc0 body)
             = match interp_expr store env c with
@@ -1625,8 +1599,6 @@ Section WithHole.
             cbn [interp_expr interp_ternop interp_binop interp_atom].
             unfold get_local. repeat rewrite_map_get_put_goal.
             cbn [idx_step bidx_step].
-            (* the lookup must be resolved before the bucket read can be: it
-               binds the found value, and nothing rewrites under that binder *)
             destruct (dict_lookup (record_proj attr r) d) as [ w | ] eqn:E;
               [ | reflexivity ].
             rewrite map.get_put_same.
@@ -1826,10 +1798,6 @@ Section WithHole.
             match e with
             | eto_idx dk0 tup0 tup1 tup2 tup3 acc0 acc1 acc2 x0 x1 attr0 attr1
                 (flatmap_filter_list e' y p y1 _ _) =>
-                (* the bounds are taken as a PAIR and projected, not matched
-                   apart: a nested "Some (lo, hi)" pattern makes case_match
-                   produce an equation about the pair rather than about
-                   range_bounds, which is the one the bound lemmas need *)
                 match range_bounds y p with
                 | Some lohi =>
                     if (is_ranged dk && dict_kind_beq dk dk0 &&
@@ -1847,10 +1815,6 @@ Section WithHole.
             | _ => e
             end.
 
-          (* kept folded through cbn: unfolded it becomes a stuck match on the
-             predicate and splits every proof below three ways, once per range
-             shape, where range_bounds_ty and range_bounds_sem handle all three
-             uniformly *)
           Local Opaque range_bounds.
 
           Lemma filter_range_to_dict_range_head_preserve_ty : forall (Gstore : tenv),
@@ -1858,8 +1822,6 @@ Section WithHole.
           Proof.
             unfold preserve_ty; intros. repeat destruct_subexpr.
             cbn. repeat (case_match; auto).
-            (* the equation case_match left is about the pair; the bound lemmas
-               want it about the two projections *)
             lazymatch goal with
               H: range_bounds _ _ = Some ?lh |- _ =>
                 rewrite (surjective_pairing lh) in H; rename H into E_b
@@ -1898,8 +1860,6 @@ Section WithHole.
                    | H: ?x = ?x |- _ => clear H
                    end.
             subst.
-            (* the kind is named by shape: the subst above can rename the
-               section variable out from under a literal "dk" *)
             lazymatch goal with
               H: is_ranged _ = true |- _ =>
                 apply is_ranged_true in H; rewrite H in *
@@ -1987,17 +1947,12 @@ Section WithHole.
                              | _ => false
                              end).
             2:{ intros r H_in. apply_Forall_In.
-                (* the row named by THIS hypothesis, not whichever typing
-                   hypothesis an untargeted inversion would reach first *)
                 lazymatch goal with
                   H: type_of_value r (TRecord _) |- _ => inversion H; subst
                 end.
                 erewrite range_bounds_sem with (Gstore := Gstore) (Genv := Genv);
                   [ reflexivity | eauto using locals_wf_step with fiat2_hints .. ]. }
-            (* ODictRange's dict_range IS that filter on the keys, so the main
-               goal closes by conversion.  The bracket is deliberate: the side
-               condition is the lemma's typing premise and nothing but a
-               hypothesis should be looking at the main goal. *)
+            (* ODictRange's dict_range IS that filter on the keys. *)
             rewrite gallina_to_idx_filter_key_eq with (rt:=tl);
               [ reflexivity | eassumption ].
           Qed.
