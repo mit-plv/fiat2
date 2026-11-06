@@ -518,6 +518,14 @@ Section WithConcreteMaps.
       trigram_lookup_gated trigram_text_attr trigram_key_attr "id_tag" "aux_tag"
         tag pk_tag "b" "k" "y" trigram_seps "cgram" ds.
 
+    (* The threshold read, gated the same way and for the same reason: it
+       probes the primary-key member to turn a candidate key back into a
+       row.  A separate entry rather than a third disjunct of the bundle
+       above, so that nothing already proved changes. *)
+    Definition thr_lookup_gated_transf (pk_tag : string) (ds : list decl) :=
+      thr_lookup_gated trigram_text_attr trigram_key_attr "id_tag" "aux_tag"
+        tag pk_tag "b" "k" "y" trigram_seps "cgram" ds.
+
     Definition cons_to_tri_insert_transf : string -> command -> command :=
       fun tbl => fold_command_with_globals [tbl]
                    (cons_to_tri_insert_head trigram_text_attr trigram_key_attr
@@ -731,6 +739,12 @@ Section WithConcreteMaps.
               scan this retargets onto the primary-key member *)
            unique_scan_gated_transf u_tag key ds;
            trigram_lookup_gated_transf t_tag attr key u_tag ds;
+           (* the threshold read.  Its pattern is disjoint from the
+              substring rules' -- theirs is OStrContains, its is the
+              per-word similarity predicate -- so its position here is not
+              load-bearing; it sits beside them because it is gated with
+              them. *)
+           thr_lookup_gated_transf t_tag attr key u_tag ds;
            (* the primary-key member's own lookup, pointed at this record's
               second member; with it the choice installs every rule
               UniqueDictIdx would (trigram_subsumes_unique_dict) *)
@@ -1536,6 +1550,44 @@ end.
                       "cgram"
                       (tenv := ctenv) (tenv_ok := ctenv_ok)
  (locals_ok := clocals_ok)).
+            intros H_uq. unfold trigram_bridges.
+            split; [ | split; [ | split; [ | split ] ] ].
+            (* the two members' places in the record *)
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_aux_ty_for_idx;
+            [ prove_access_record_idx_ty
+            | prove_NoDup_map_fst_sort_map
+            | prove_In_map_fst_sort_map ].
+            1: prove_is_tbl_ty.
+            (* the trigram member's own relation, which typing establishes;
+               the In fact is what says which member is meant *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_member_wf; [ eassumption | apply H_Q; exact H_Qv ]. }
+            (* and the primary-key member's strong one, which the
+               declaration pays for *)
+            1:{ intros t v H_twf H_is H_ty H_Qv.
+                eapply compo_unique_bridge_wf;
+                  [ | exact H_uq | exact H_twf | exact H_is | exact H_ty | ].
+                1: eassumption.
+                1: split; [ apply H_Q; exact H_Qv
+                          | apply H_decl with (a := ak); assumption ]. } }
+        1:{ unfold thr_lookup_gated_transf.
+            eapply (thr_lookup_gated_sound "hole" a ak "tup" "acc" "gvar" "sacc" "bkt"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      ltac:(discriminate) ltac:(discriminate)
+                      "tup" "acc" ltac:(discriminate)
+                      "id_tag" "aux_tag" (String.of_nat init_tag)
+                      (String.of_nat (S init_tag)) "b" "k" "y"
+                      trigram_seps "wrd" "wacc"
+                      ltac:(discriminate) ltac:(discriminate) ltac:(discriminate)
+                      "cgram"
+                      (tenv := ctenv) (tenv_ok := ctenv_ok)
+ (locals_ok := clocals_ok)).
+            (* cgram <> k *)
+            1: discriminate.
             intros H_uq. unfold trigram_bridges.
             split; [ | split; [ | split; [ | split ] ] ].
             (* the two members' places in the record *)

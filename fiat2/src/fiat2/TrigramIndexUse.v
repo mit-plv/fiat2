@@ -4257,5 +4257,33 @@ Section WithIndexUse.
           1: apply trigram_lookup_all_transf_sound, H_br; reflexivity. }
       1: unfold aug_transf_sound, id; intros; repeat split; auto.
     Qed.
+    (* The threshold rule is gated exactly as the substring lookups are, and
+       for the same reason: it probes the primary-key member to turn a
+       candidate key back into a row, so it needs that member's strong
+       invariant, and only the declaration pays for it.
+
+       A SEPARATE gate rather than a third disjunct of
+       trigram_lookup_gated, so that nothing already proved changes: the
+       threshold rule carries the side condition `cgram <> k`, and folding
+       it into the existing bundle would add that hypothesis to
+       trigram_lookup_gated_sound. *)
+    Definition thr_lookup_gated (ds : list decl) : string -> command -> command :=
+      if declares_unique key ds
+      then thr_lookup_transf
+      else fun _ => id.
+
+    Lemma thr_lookup_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
+        cgram <> k ->
+        (declares_unique key ds = true ->
+         trigram_bridges is_tbl_ty' aux_ty aux_wf) ->
+        aug_transf_sound is_tbl_ty' aux_ty aux_wf (thr_lookup_gated ds).
+    Proof.
+      intros * H_ck H_br. unfold thr_lookup_gated.
+      destruct (declares_unique key ds) eqn:E_uq.
+      1: apply thr_lookup_transf_sound;
+         [ exact H_ck | apply H_br; reflexivity ].
+      1: unfold aug_transf_sound, id; intros; repeat split; auto.
+    Qed.
+
   End WithMap.
 End WithIndexUse.
