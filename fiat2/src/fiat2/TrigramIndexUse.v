@@ -1358,6 +1358,81 @@ Section WithIndexUse.
         rewrite E_k. cbn [interp_binop]. reflexivity.
       Qed.
 
+      (* ----------------------------------------------------------------
+         THE INDEX REPORTS AT LEAST WHAT A WORD SHARES.
+
+         The completeness argument compares two counts, and both are lengths
+         of filters over the SAME list -- the query's deduplicated trigrams
+         -- so nothing has to be marshalled between strings and values, and
+         the pointwise implication between the two filters is the index's
+         own completeness at a word.
+         ---------------------------------------------------------------- *)
+      Definition qtris (pv : string) : list value :=
+        list_to_set (List.map VString (trigrams pv)).
+
+      (* Belongs in Utils with the other generic list facts, under the
+         convention DictIndexImpl.v notes; TrigramThreshold has the same
+         lemma and is downstream of this file, so it cannot supply it. *)
+      Lemma filter_length_mono' :
+        forall (A : Type) (f g : A -> bool) (l : list A),
+          (forall x, In x l -> f x = true -> g x = true) ->
+          List.length (List.filter f l) <= List.length (List.filter g l).
+      Proof.
+        intros A f g l; induction l as [ | x l IH ]; cbn [List.filter];
+          intros H_imp.
+        1: cbn; lia.
+        assert (H_tail : forall z, In z l -> f z = true -> g z = true)
+          by (intros z H_in; apply H_imp; right; exact H_in).
+        destruct (f x) eqn:E_f.
+        1:{ rewrite (H_imp x (or_introl eq_refl) E_f).
+            cbn [List.length]. apply le_n_S. apply IH; exact H_tail. }
+        1:{ destruct (g x); cbn [List.length];
+              [ apply Nat.le_le_succ_r | ]; apply IH; exact H_tail. }
+      Qed.
+
+      (* The emitted count filters a canonical set, so the coercion the
+         set-level flatmap leaves on the result is the identity. *)
+      Lemma count_set_canonical : forall pv d kv,
+          count_set pv d kv
+          = filter (fun gv => set_mem kv (tri_bucket gv d)) (qtris pv).
+      Proof.
+        intros pv d kv; unfold count_set, qtris.
+        apply list_to_set_canonical.
+        1: apply NoDup_filter, list_to_set_NoDup.
+        1: apply SSorted_filter, list_to_set_SSorted.
+      Qed.
+
+      (* How many of the query's trigrams one string really shares. *)
+      Definition shared_count (pv ws : string) : nat :=
+        List.length
+          (filter (fun gv => match gv with
+                             | VString g => existsb (String.eqb g) (trigrams ws)
+                             | _ => false
+                             end) (qtris pv)).
+
+      Lemma shared_le_count_set :
+        forall (rows : list value) (pv : string) (r : value) (w : string),
+          In r rows ->
+          In w (words seps (TrigramIndexImpl.row_str attr r)) ->
+          shared_count pv (pad w)
+          <= List.length
+               (count_set pv
+                  (TrigramIndexImpl.tri_entries attr key seps rows)
+                  (row_key key r)).
+      Proof.
+        intros rows pv r w H_in H_w.
+        rewrite count_set_canonical; unfold shared_count.
+        apply filter_length_mono'.
+        intros gv _ H_has.
+        destruct gv as [ | | g | | | | | | | ]; try discriminate.
+        apply existsb_exists in H_has as [ g' [ H_in' E_eq ] ].
+        apply String.eqb_eq in E_eq; subst g'.
+        apply set_mem_true_iff, key_at__In_tri_bucket.
+        eapply TrigramIndexImpl.tri_lookup_complete_at_word;
+          [ exact H_in | | exact H_in' ].
+        unfold TrigramIndexImpl.row_wrds; exact H_w.
+      Qed.
+
       (* ==================================================================
          The all-trigram rule.
 
