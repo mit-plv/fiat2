@@ -2922,6 +2922,101 @@ Section WithIndexUse.
         | _ => e
         end.
 
+      Lemma thr_lookup_head_preserve_ty : forall tl ctl t (Gstore : tenv),
+          cgram <> k ->
+          type_wf t -> @IndexInterface.is_tbl_ty tridx t = true ->
+          map.get Gstore tbl = Some (TRecord tl) ->
+          access_record tl id_tag = Success t ->
+          access_record tl aux_tag = Success (TRecord ctl) ->
+          access_record ctl tri_tag = Success (@IndexInterface.idx_ty tridx t) ->
+          access_record ctl pk_tag = Success (@IndexInterface.idx_ty uidx t) ->
+          preserve_ty Gstore thr_lookup_head.
+      Proof.
+        unfold preserve_ty.
+        intros tl ctl t Gstore H_ck H_twf H_is E_tbl E_id E_aux E_tri E_pk.
+        cbn [IndexInterface.is_tbl_ty IndexInterface.idx_ty trigram_idx
+               unique_dict_idx] in H_is, E_tri, E_pk.
+        unfold TrigramIndexImpl.is_tbl_ty, TrigramIndexImpl.idx_ty,
+          UniqueDictIndexImpl.idx_ty in H_is, E_tri, E_pk.
+        destruct t as [ | | | | | t1 | | | | ]; try discriminate.
+        destruct t1 as [ | | | | | | rt | | | ]; try discriminate.
+        destruct (access_record rt attr) as [ at_ty | ] eqn:E_attr;
+          try discriminate.
+        destruct (access_record rt key) as [ kt | ] eqn:E_key; try discriminate.
+        apply type_eqb_eq in H_is; subst at_ty.
+        assert (E_kt : get_attr_type rt key = kt)
+          by (unfold get_attr_type; rewrite E_key; reflexivity).
+        rewrite E_kt in E_tri, E_pk.
+        assert (H_rtwf : type_wf (TRecord rt)) by (inversion H_twf; assumption).
+        assert (H_ktwf : type_wf kt)
+          by (rewrite <- E_kt; apply get_attr_type_ty_wf; exact H_rtwf).
+        clear E_kt.
+        intros e t' Genv H_Gs H_Ge H_t.
+        repeat destruct_subexpr_keep_str.
+        unfold thr_lookup_head. cbv beta iota.
+        (* the predicate's shape, decided by the parser *)
+        lazymatch goal with
+        | |- type_of _ _ (match parse_sim_any ?pr with _ => _ end) _ =>
+            destruct (parse_sim_any pr) as [ res | ] eqn:E_parse
+        end; [ | auto ].
+        destruct res as
+          [[[[[[[[[[qb ab] rb] nb] wb] cb] tnum] tden] xrow] attrn] pat0].
+        apply parse_sim_any_Some in E_parse as [ E_pred H_ok ].
+        (* the rule's own guard *)
+        lazymatch goal with
+        | |- type_of _ _ (if ?g then _ else _) _ => destruct g eqn:E_g
+        end; [ | auto ].
+        cbn [all_eqb all_eqb' andb] in E_g.
+        repeat rewrite Bool.andb_true_iff in E_g.
+        repeat match goal with Hc : _ /\ _ |- _ => destruct Hc end.
+        repeat rewrite Bool.negb_true_iff in *.
+        repeat (rewrite eqb_eq in *; subst).
+        rewrite E_pred in H_t.
+        repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+        (* Only the get_put_same branch of rewrite_map_get_put_hyp is wanted.
+           Its second branch rewrites get_put_diff and discharges the side
+           condition with `simpl in *` under a multimatch; with the
+           predicate's own lookups in context that does not finish. *)
+        repeat match goal with
+               | Hg : context[map.get (map.put _ ?z _) ?z] |- _ =>
+                   rewrite map.get_put_same in Hg
+               end.
+        repeat (clear_refl; repeat do_injection2).
+        (* the row type, by congruence over the equalities the inversions
+           left: two readings of the same store entry and two of the same
+           id_tag access *)
+        lazymatch goal with
+        | |- type_of _ _ _ (TSet ?tz) =>
+            replace tz with (TRecord rt) by congruence
+        end.
+        (* the inversions already bottomed out on the pattern's own typing *)
+        assert (H_pty : type_of Gstore Genv pat0 TString).
+        1:{ lazymatch goal with
+            | Hp : type_of Gstore (map.put Genv _ _) pat0 TString |- _ =>
+                eapply not_free_immut_put_ty; [ | exact Hp ]; assumption
+            end. }
+        assert (H_pty_k : type_of Gstore (map.put Genv k kt) pat0 TString)
+          by (apply not_free_immut_put_ty2; [ assumption | exact H_pty ]).
+        assert (H_pty_ky : type_of Gstore
+                             (map.put (map.put Genv k kt) y (TRecord rt))
+                             pat0 TString)
+          by (apply not_free_immut_put_ty2; [ assumption | exact H_pty_k ]).
+        eapply thr_probe_ty with (tl := tl) (ctl := ctl) (kt := kt).
+        1: exact H_ok.
+        1: apply String.eqb_neq; assumption.
+        1: apply String.eqb_neq; assumption.
+        1: exact E_tbl.
+        1: exact E_aux.
+        1: exact E_pk.
+        1: exact E_attr.
+        1: exact H_rtwf.
+        2: exact H_pty_ky.
+        eapply thr_keep_ty with (tl := tl) (ctl := ctl);
+          [ exact H_ck | exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf
+          | apply padded_e_ty; exact H_pty
+          | apply padded_e_ty; exact H_pty_k ].
+      Qed.
+
       Lemma trigram_lookup_all_guarded_head_preserve_ty :
         forall tl ctl t (Gstore : tenv),
           type_wf t -> @IndexInterface.is_tbl_ty tridx t = true ->
