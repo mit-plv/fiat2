@@ -5,6 +5,7 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
+  fiat2.eval.Wagtail_FuzzySearch
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
   fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
   fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
@@ -86,6 +87,7 @@ Module AR := HA_AreaRegistry.
 Module ER := HA_EntityRegistry.
 Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
+Module WFS := Wagtail_FuzzySearch.
 Module KCl := Kafka_Cluster.
 Module KWS := Kafka_WindowStore.
 Module JID := Jenkins_ItemDeletion.
@@ -106,6 +108,7 @@ Definition named_cache_src : command := Eval vm_compute in NC.elaborated NC.decl
 Definition area_registry_src : command := Eval vm_compute in AR.elaborated AR.decls.
 Definition lookin_src : command := Eval vm_compute in LF.elaborated.
 Definition user_search_src : command := Eval vm_compute in JU.elaborated JU.decls.
+Definition fuzzy_search_src : command := Eval vm_compute in WFS.elaborated WFS.decls.
 Definition cluster_src : command := Eval vm_compute in KCl.prog.
 Definition entity_registry_src : command := Eval vm_compute in ER.prog.
 Definition window_store_src : command := Eval vm_compute in KWS.prog.
@@ -160,6 +163,7 @@ Definition named_cache_opt : command := Eval vm_compute in NC.optimized.
 Definition area_registry_opt : command := Eval vm_compute in AR.optimized.
 Definition lookin_opt : command := Eval vm_compute in LF.optimized.
 Definition user_search_opt : command := Eval vm_compute in JU.optimized.
+Definition fuzzy_search_opt : command := Eval vm_compute in WFS.optimized.
 Definition cluster_opt : command :=
   Eval vm_compute in nth 0 KCl.prog_transformed CSkip.
 (* entity_registry's chosen column is configuration 4 -- the COMPOSITE index
@@ -301,6 +305,15 @@ Definition subjects : list (string * command * command) :=
   ; ("area_registry", area_registry_src, area_registry_opt)
   ; ("lookin", lookin_src, lookin_opt)
   ; ("user_search", user_search_src, user_search_opt)
+  (* Its choice list is HAND-WRITTEN, unlike every other entry here, and
+     that is a fact about the selector rather than about the rule: the
+     demand language has no threshold demand, so select_choices asks for
+     [UniqueDictIdx "id"] on this program where it asks for
+     [TrigramIdx "fullName" "id"] on user_search.  So this subject
+     measures a rewrite the framework VERIFIES, not one it FINDS, and it
+     is deliberately absent from eval/Elaborate.v's selector-checked list
+     for the same reason the 18 alternative configurations are. *)
+  ; ("fuzzy_search", fuzzy_search_src, fuzzy_search_opt)
   ; ("cluster", cluster_src, cluster_opt)
   ; ("entity_registry", entity_registry_src, entity_registry_opt)
   ; ("window_store", window_store_src, window_store_opt)
