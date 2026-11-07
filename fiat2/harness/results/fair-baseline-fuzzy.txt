@@ -1,0 +1,23 @@
+$ compiled.exe indexed only=fuzzy_search share=2 6400
+
+subject              kind           rows  opt s/op scan s/op  gin s/op opt/gin  opt work shapd work  gin work  work x
+----------------------------------------------------------------------------------------------------------------------
+fuzzy_search         search         6400   0.000946     0.0209   0.000243     3.89  188056.0  139759.7   14357.8    13.10
+fuzzy_search         searchMiss     6400    0.00113     0.0191   0.000294     3.84  163813.0  149454.0   27686.0     5.92
+fuzzy_search         remove         6400   0.000251  below res   0.000373     0.67    1976.0    1789.6    1789.6     1.10  (write)
+
+$ compiled.exe indexed only=fuzzy_search share=128 6400
+
+subject              kind           rows  opt s/op scan s/op  gin s/op opt/gin  opt work shapd work  gin work  work x
+----------------------------------------------------------------------------------------------------------------------
+fuzzy_search         search         6400    0.00253     0.0209   0.000539     4.69  360123.5  216359.7   76451.6     4.71
+fuzzy_search         searchMiss     6400    0.00066     0.0191   0.000799     0.83  128500.0  165199.0   14641.0     8.78
+fuzzy_search         remove         6400   0.000793  below res   0.000373     2.13    2242.7    1780.9    1780.9     1.26  (write)
+
+$ compiled.exe indexed only=fuzzy_search share=2048 6400
+
+subject              kind           rows  opt s/op scan s/op  gin s/op opt/gin  opt work shapd work  gin work  work x
+----------------------------------------------------------------------------------------------------------------------
+fuzzy_search         search         6400     0.0169     0.0202     0.0101     1.67 2942501.0 1575831.2 1101811.4     2.67
+fuzzy_search         searchMiss     6400   0.000458     0.0186   0.000574     0.80    1246.0     919.0     161.0     7.74
+fuzzy_search         remove         6400  below res  below res  below res        -    2725.5    1773.5    1773.5     1.54  (write)

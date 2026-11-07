@@ -1,0 +1,23 @@
+$ compiled.exe threeway only=fuzzy_search share=2 6400
+
+subject              kind              rows   opt s/op  auth s/op   opt/au  opt work auth work   work x
+----------------------------------------------------------------------------------------------------
+fuzzy_search         search            6400    0.00186     0.0207     0.09  188056.0 2774186.6     0.07
+fuzzy_search         searchMiss        6400    0.00117     0.0188     0.06  163813.0 2555701.0     0.06
+fuzzy_search         remove            6400    0.00039  below res        -    1976.0      12.0   164.67  (write)
+
+$ compiled.exe threeway only=fuzzy_search share=128 6400
+
+subject              kind              rows   opt s/op  auth s/op   opt/au  opt work auth work   work x
+----------------------------------------------------------------------------------------------------
+fuzzy_search         search            6400    0.00181     0.0209     0.09  360123.5 2773177.6     0.13
+fuzzy_search         searchMiss        6400   0.000583     0.0192     0.03  128500.0 2558031.0     0.05
+fuzzy_search         remove            6400     0.0004  below res        -    2242.7      12.0   186.89  (write)
+
+$ compiled.exe threeway only=fuzzy_search share=2048 6400
+
+subject              kind              rows   opt s/op  auth s/op   opt/au  opt work auth work   work x
+----------------------------------------------------------------------------------------------------
+fuzzy_search         search            6400     0.0165     0.0202     0.82 2942501.0 2777284.0     1.06
+fuzzy_search         searchMiss        6400   1.16e-05      0.019     0.00    1246.0 2561935.0     0.00
+fuzzy_search         remove            6400   0.000293  below res        -    2725.5      12.0   227.12  (write)

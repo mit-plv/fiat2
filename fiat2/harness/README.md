@@ -67,6 +67,33 @@ meant to be: it consumes terms the Rocq development produced, runs them, and cou
     ./_build/default/main.exe alternatives  # a side note: what the selector's
                                             # own choice is worth
 
+## Reproducing the paper's numbers
+
+`./reproduce.sh` runs the measurements the paper quotes and writes them to
+`results/`, recording in each file the exact command that produced it.
+`results/README.md` maps each claim to its file and its number, and carries the
+caveats that belong with them.
+
+    ./reproduce.sh checks    the differential test and the compiled checks, under
+                             all three settings.  Run this first: a number from a
+                             tree that does not pass it means nothing.   (~6 min)
+    ./reproduce.sh counted   the PURELY counted tables.  Deterministic, so these
+                             four files are regression tests -- re-run on an
+                             unchanged tree and `git diff` is EMPTY.     (~9 min)
+    ./reproduce.sh compare   the author comparisons, whose rows carry a counted
+                             AND a seconds column.                     (~12 min)
+    ./reproduce.sh timed     the tables that are about seconds.  Never reproduces
+                             itself; evidence, not a quantity to diff. (~25 min)
+    ./reproduce.sh slow      the write-fraction sweep, the scale ladder to 25,600
+                             rows, stationarity, matched storage.         (hours)
+
+A claim is not finished until its subject has been measured under **all three
+settings**. The checks always ran under all three; for a while the tables did
+not, and that is how a 110-184x pathology on `fuzzy_search` under `hashes`
+went unnoticed -- a correctness check cannot see it, because correctness is
+unaffected. `results/settings-all-subjects.txt` is the table that would have
+caught it, and it is now part of `counted`.
+
 Any command of either executable takes a **structure setting** -- `typed`, `trees` or
 `hashes` -- which says what every point-access collection is charged as, **on both sides
 at once**, in the interpreted columns and the compiled ones alike:

@@ -1,0 +1,17 @@
+$ compiled.exe work only=fuzzy_search share=2 6400
+
+subject                    rows    src build    opt build  build x      src ops      opt ops    ops x
+--------------------------------------------------------------------------------------------------
+fuzzy_search               6400     65024505      6849279     9.49    135236683      7059028    19.16
+
+$ compiled.exe work only=fuzzy_search share=128 6400
+
+subject                    rows    src build    opt build  build x      src ops      opt ops    ops x
+--------------------------------------------------------------------------------------------------
+fuzzy_search               6400     65024505      7592665     8.56    135323196      9797344    13.81
+
+$ compiled.exe work only=fuzzy_search share=2048 6400
+
+subject                    rows    src build    opt build  build x      src ops      opt ops    ops x
+--------------------------------------------------------------------------------------------------
+fuzzy_search               6400     65024505      9534792     6.82    135990854     58825059     2.31

@@ -1,0 +1,5 @@
+$ compiled.exe 
+
+typed : 46 reader runs; equality agreed on 82 equal and 32 unequal pairs; src = opt on 46 runs; compiled = interpreter on 46 runs; author = compiled on 51 runs (11 of 11 transcriptions); mixed: src = opt on 71, = interpreter on 71; 0 failures
+trees : 46 reader runs; equality agreed on 82 equal and 32 unequal pairs; src = opt on 46 runs; compiled = interpreter on 46 runs; author = compiled on 51 runs (11 of 11 transcriptions); mixed: src = opt on 71, = interpreter on 71; 0 failures
+hashes: 46 reader runs; equality agreed on 82 equal and 32 unequal pairs; src = opt on 46 runs; compiled = interpreter on 46 runs; author = compiled on 51 runs (11 of 11 transcriptions); mixed: src = opt on 71, = interpreter on 71; 0 failures

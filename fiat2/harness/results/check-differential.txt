@@ -1,0 +1,52 @@
+$ main.exe check share=8
+
+store check (typed): ok
+Each subject, source and optimized, against the Gallina interpreter.
+Tables of 0/1/2/7/23 rows, op phases of 0/1/5 queries per kind.
+
+  keycloak         ok
+  named_cache      ok
+  area_registry    ok
+  lookin           ok
+  user_search      ok
+  cluster          ok
+  entity_registry  ok
+  window_store     ok
+  range_delete     ok
+  min_delete       ok
+  composite_key    ok
+  composite_keyed_delete ok
+  composite_two_deletes ok
+  composite_key_decl ok
+  keyed_dict_delete ok
+  keyed_two_deletes ok
+  named_cache_lru  ok
+  named_cache_lru_ordered ok
+  named_cache_lru_noevict ok
+  item_deletion    ok
+  sat4j            ok
+  dependent_plugins ok
+  fuzzy_search     ok
+
+and each alternative, against the oracle on the same term
+and against the oracle on its subject's source:
+  keycloak/uncounted         ok
+  named_cache/swapped        ok
+  user_search/table-rep      ok
+  cluster/unsplit            ok
+  cluster/composite          ok
+  cluster/composite-split    ok
+  entity_registry/split-dicts ok
+  entity_registry/unsplit    ok
+  entity_registry/composite  ok
+  entity_registry/composite-split ok
+  window_store/unsplit       ok
+  sat4j/unsplit              ok
+  dependent_plugins/unpromoted ok
+  dependent_plugins/transposed ok
+  min_delete/noset           ok
+  min_delete/rangeddict      ok
+  min_delete/dictmin         ok
+  min_delete/dictmin-erased  ok
+
+1230 configurations checked, 0 mismatches

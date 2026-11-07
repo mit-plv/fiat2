@@ -1,0 +1,10 @@
+$ compiled.exe indexed only=user_search share=8 6400
+
+subject              kind           rows  opt s/op scan s/op  gin s/op opt/gin  opt work shapd work  gin work  work x
+----------------------------------------------------------------------------------------------------------------------
+user_search          byId           6400   1.72e-07   3.98e-07   1.39e-06     0.12      15.4         -      12.4     1.24
+user_search          suggest        6400    2.9e-06   0.000304   1.28e-05     0.23     623.2         -     873.2     0.71
+user_search          suggestMiss    6400   0.000457   0.000344   0.000477     0.96   44804.0         -   44800.0     1.00
+user_search          suggestShort   6400   0.000607   0.000431   0.000406     1.49   57266.6         -   69758.4     0.82
+user_search          suggestLong    6400   6.86e-06   0.000249   3.36e-06     2.04     457.8         -     366.6     1.25
+user_search          remove         6400  below res  below res  below res        -    1002.9         -     592.0     1.69  (write)

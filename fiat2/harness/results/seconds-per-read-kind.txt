@@ -1,0 +1,23 @@
+$ compiled.exe kinds only=fuzzy_search share=2 6400
+
+subject                kind               rows     src s/op     opt s/op   speedup
+----------------------------------------------------------------------------------
+fuzzy_search           search             6400       0.0222     0.000647     34.31
+fuzzy_search           searchMiss         6400       0.0148      0.00121     12.20
+fuzzy_search           remove             6400   below res       0.00136         -  (write)
+
+$ compiled.exe kinds only=fuzzy_search share=128 6400
+
+subject                kind               rows     src s/op     opt s/op   speedup
+----------------------------------------------------------------------------------
+fuzzy_search           search             6400       0.0199      0.00266      7.50
+fuzzy_search           searchMiss         6400        0.025     0.000394     63.46
+fuzzy_search           remove             6400   below res      0.000837         -  (write)
+
+$ compiled.exe kinds only=fuzzy_search share=2048 6400
+
+subject                kind               rows     src s/op     opt s/op   speedup
+----------------------------------------------------------------------------------
+fuzzy_search           search             6400       0.0194       0.0175      1.11
+fuzzy_search           searchMiss         6400       0.0153     0.000183     83.22
+fuzzy_search           remove             6400   below res    below res          -  (write)
