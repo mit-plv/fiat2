@@ -28,9 +28,6 @@ Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Dataty
 From Stdlib Require Import List String ZArith Permutation Lia.
 Import ListNotations.
 
-Require Import fiat2.Notations.
-Open Scope fiat2_scope.
-
 Variant basic_transf :=
   | SwapIfNil
   | MergeIf
