@@ -275,18 +275,31 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (bucket (EVar "cgram")))))
       (EAtom (AEmptySet None)) "b" (EVar "b").
 
-  (* How many of the query's trigrams name this key -- READ FROM THE
-     HOISTED BINDING, not re-derived.
+  (* THE HOISTED BINDING: each of the query's distinct trigrams paired with
+     the bucket it names, built once per query.
 
-     The query's deduplicated trigrams are loop-invariant across
-     candidates, and the rule now binds them once, outside the filter, so
-     both the count's source and the `a` of the test below are EVar
-     "cgram".  The earlier shape rebuilt them inside the filter body and
-     did it TWICE -- once per use -- so a pool of n candidates extracted
-     the pattern's trigrams 2n times and built 2n sets of them.  That cost
-     was measured before this was written, against a hand-built GIN index:
-     see harness/compiled/authors.ml's WagtailShapes and
-     `compiled.exe shapes`.
+     Everything the count needs is loop-invariant across candidates -- the
+     trigrams, and the index lookups that find their buckets -- so none of
+     it belongs inside the filter.  The earlier shape had all of it there:
+     it rebuilt the trigram set TWICE per candidate (once for the count,
+     once for the `a` of the test) and looked up every bucket again for
+     each one.  Both costs were measured against a hand-built GIN index
+     before this was written; see harness/compiled/authors.ml's
+     WagtailShapes and `compiled.exe shapes`.
+
+     The PAIRING is what makes it correct, not just faster.  Hoisting the
+     buckets alone would collapse two query trigrams that happen to name
+     the same keys into one set element, undercounting c -- and c is on the
+     admitting side of the test, so undercounting would drop rows and break
+     completeness.  Field "0" carries the trigram, which keeps the elements
+     distinct. *)
+  Definition tri_pairs : expr :=
+    EFlatmap LikeSet (tri_set_of (padded qtext)) "cgram"
+      (EBinop OSetInsert (EAtom (AEmptySet None))
+         (ERecord [("0", EVar "cgram"); ("1", bucket (EVar "cgram"))])).
+
+  (* How many of the query's trigrams name this key: a membership test per
+     pair, and no lookup at all.
 
      A consequence worth recording: the count is now a set-level filter
      directly.  It used to appear as OSetSize (OSetOfList
@@ -297,7 +310,7 @@ Section WithConcreteMaps.
   Definition shared_with (k : expr) : expr :=
     EUnop OSetSize
       (flatmap_filter_set (EVar "cgram") "cgram"
-         (EBinop OSetMem (bucket (EVar "cgram")) k) "cgram" None None).
+         (EBinop OSetMem (EAccess (EVar "cgram") "1") k) "cgram" None None).
 
   (* c * 10 >= 3 * a, where a is the query's trigram count: the k-of-n count
      test, which is gin_trgm_consistent's own test and a STRICT
@@ -310,9 +323,12 @@ Section WithConcreteMaps.
      it to each element while the source and the `a` are evaluated outside,
      so the two uses never collide.  What it costs is one more guard
      conjunct -- the pattern may not mention cgram -- which is the same
-     price the rule already pays for k and y. *)
+     price the rule already pays for k and y.
+
+     `a` is the SIZE of the pair set, which is the number of distinct
+     trigrams because the pairing is injective. *)
   Definition candidates : expr :=
-    ELet (tri_set_of (padded qtext)) "cgram"
+    ELet tri_pairs "cgram"
       (flatmap_filter_set pool "k"
          (EUnop ONot
             (EBinop OLess
