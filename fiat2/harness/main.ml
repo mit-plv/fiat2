@@ -67,7 +67,15 @@ let () =
                  | None -> (
                      match Gen.words_of_string a with
                      | Some w -> Gen.title_words := w; false
-                     | None -> true))))
+                     | None -> (
+                         (* share=K selects the funnel vocabulary AND its
+                            group size, since neither is useful alone *)
+                         match Gen.share_of_string a with
+                         | Some k ->
+                             Gen.share := k;
+                             Gen.titles_mode := Gen.Funnel;
+                             false
+                         | None -> true)))))
       argv in
   match argv with
   | _ :: "report" :: _ | [ _ ] -> Report.run ()

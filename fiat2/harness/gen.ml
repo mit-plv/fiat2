@@ -434,10 +434,46 @@ let user_search =
    structure.  Reporting both brackets the answer instead of claiming a
    point inside it. *)
 
-type titles = Scattered | Prefixed
+type titles = Scattered | Prefixed | Funnel
 
 let titles_mode = ref Scattered
 let title_words = ref 4
+
+(* ---------- share=K: the funnel itself as the axis ----------
+
+   The two vocabularies above bracket the answer and neither interprets it,
+   because "is prefixed realistic?" has no answer available here: wagtail's
+   title_text is real page titles, and a draw from a word list would be a
+   differently arbitrary synthetic vocabulary rather than a realistic one.
+   So the reported axis is the quantity that actually DECIDES the result,
+   which this file's own header already says it should be -- "SELECTIVITY IS
+   A CHOICE, AND IT IS THE ONE THAT MATTERS".
+
+   The mechanism is exact.  gin_trgm_consistent's count test admits a key
+   when c * 10 >= 3 * a, and a padded six-letter query has a = 7 trigrams,
+   so admission is c >= 3: a row is a candidate exactly when it shares THREE
+   of the query's trigrams.  The query is one character off a word that
+   exists, so the three it shares with that word are the ones the padding
+   and the first letters give -- "  a", " ab", "abc".  Hence
+
+     a row is admitted <=> one of its words begins with the same THREE
+     letters as the word the query was made from
+
+   and [share=K] builds the vocabulary in groups of K words per three-letter
+   prefix, the remaining letters scattered so nothing is admitted by an
+   interior coincidence, and the group members STRIDED across rows so that K
+   words means K rows rather than K words of one row.  A query then admits
+   exactly K rows whatever the table size, and the win can be reported as a
+   function of K: a property of the rule rather than of my taste in
+   vocabularies, and one a reader can locate their own corpus on.
+
+   K IS CLAMPED FROM BELOW, and the bound is inherent rather than an
+   implementation limit: sharing three letters partitions any vocabulary into
+   at most 26^3 = 17,576 classes, so n words cannot have fewer than
+   n / 17576 in a class.  At 6,400 rows and four words that floor is 1.5, at
+   25,600 rows it is 5.8.  Read the achieved value off rows_touched rather
+   than trusting the request. *)
+let share = ref 0
 
 let titles_of_string (a : string) : titles option =
   match a with
@@ -445,8 +481,16 @@ let titles_of_string (a : string) : titles option =
   | "titles=prefixed" -> Some Prefixed
   | _ -> None
 
+let share_of_string (a : string) : int option =
+  match String.index_opt a '=' with
+  | Some k when String.sub a 0 k = "share" ->
+      int_of_string_opt (String.sub a (k + 1) (String.length a - k - 1))
+  | _ -> None
+
 let titles_name (m : titles) : string =
-  match m with Scattered -> "scattered" | Prefixed -> "prefixed"
+  match m with
+  | Scattered -> "scattered" | Prefixed -> "prefixed"
+  | Funnel -> "share=" ^ string_of_int !share
 
 (* words=N, the width of the indexed column *)
 let words_of_string (a : string) : int option =
@@ -473,13 +517,36 @@ let mix (k : int) : int =
   let x = (k + 1) * 2654435761 in
   x lxor (x lsr 13)
 
-let word_at (k : int) : string =
+(* three letters, the window the count test keys on *)
+let letters3 (k : int) : string =
+  let b = Bytes.create 3 in
+  let r = ref (abs k) in
+  for p = 2 downto 0 do
+    Bytes.set b p (Char.chr (Char.code 'a' + (!r mod 26)));
+    r := !r / 26
+  done;
+  Bytes.to_string b
+
+let prefix_classes = 17576                              (* 26^3 *)
+
+(* how many words share a three-letter prefix: the request, pigeonholed *)
+let n_groups (rows : int) : int =
+  let total = max 1 (rows * !title_words) in
+  max 1 (min prefix_classes (total / max 1 !share))
+
+let word_at (rows : int) (k : int) : string =
   match !titles_mode with
   | Prefixed -> letters_of k
   | Scattered -> letters_of (mix k)
+  | Funnel ->
+      (* the group STRIDES over the index space, so a group's K words land
+         in K different rows rather than inside one row's title *)
+      let g = k mod n_groups rows in
+      letters3 (mix (g + 7919)) ^ letters3 (mix (k + 104729))
 
-let title (j : int) : string =
-  String.concat " " (List.init !title_words (fun p -> word_at ((j * !title_words) + p)))
+let title (rows : int) (j : int) : string =
+  String.concat " "
+    (List.init !title_words (fun p -> word_at rows ((j * !title_words) + p)))
 
 (* The query: ONE CHARACTER off a word the table holds, which is what a
    fuzzy search is for.  The last letter becomes a digit, so the query is
@@ -493,7 +560,7 @@ let misspell (w : string) : string =
   String.mapi (fun p c -> if p = n - 1 then '0' else c) w
 
 let fuzzy_query (rows : int) (j : int) : string =
-  misspell (word_at ((spread rows j) * !title_words))
+  misspell (word_at rows ((spread rows j) * !title_words))
 
 (* and one that is off EVERY word, to isolate the probe's fixed cost: the
    buckets of its trigrams are empty, so nothing is resolved and nothing
@@ -501,26 +568,28 @@ let fuzzy_query (rows : int) (j : int) : string =
 let absent_query () : string = "zzzzz0"
 
 let fuzzy_search =
-  let row j =
+  let row rows j =
     rcd [ ("id", s (Printf.sprintf "e%d" j));
-          ("title_text", s (title j)) ] in
-  let q kind t = rcd [ ("kind", i kind); ("qtext", s t); ("new_entry", row 0) ] in
+          ("title_text", s (title rows j)) ] in
+  let q rows kind t =
+    rcd [ ("kind", i kind); ("qtext", s t); ("new_entry", row rows 0) ] in
   { queries_var = "queries";
     store = [ ("results", VSet (Value.sempty ())) ];
     table = no_table;
     build = (fun rows ->
       List.init rows (fun j ->
-        rcd [ ("kind", i 0); ("qtext", s ""); ("new_entry", row j) ]));
+        rcd [ ("kind", i 0); ("qtext", s ""); ("new_entry", row rows j) ]));
     kinds =
-      [ ("search", fun rows j -> q 2 (fuzzy_query rows j));
-        ("searchMiss", fun _ _ -> q 2 (absent_query ()));
-        ("remove", fun rows j -> q 1 (Printf.sprintf "e%d" (victim rows j))) ];
+      [ ("search", fun rows j -> q rows 2 (fuzzy_query rows j));
+        ("searchMiss", fun rows _ -> q rows 2 (absent_query ()));
+        ("remove",
+          fun rows j -> q rows 1 (Printf.sprintf "e%d" (victim rows j))) ];
     mutating = [ "remove" ];
     churn = Some { grow = (fun rows u ->
                      rcd [ ("kind", i 0); ("qtext", s "");
-                           ("new_entry", row (rows + u)) ]);
+                           ("new_entry", row rows (rows + u)) ]);
                    shrink = (fun rows u ->
-                     q 1 (Printf.sprintf "e%d" (rows + u))) } }
+                     q rows 1 (Printf.sprintf "e%d" (rows + u))) } }
 
 (* ---------- cluster: conjunctive reads over a preloaded table ----------
 
