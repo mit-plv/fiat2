@@ -443,6 +443,55 @@ let indexed (sizes : int list) : unit =
        | _ -> ())
     (subjects ())
 
+(* ---------- pricing one rule change at a time ----------
+
+   COUNTED ONLY, and deliberately: the variants differ by tens of
+   microseconds, which the clock cannot resolve (the `indexed` table's gin
+   column gave opt/gin of 4.78, 21.2 and 31.2 on three runs at one setting).
+   The counters are exact and deterministic, so each row here is a number
+   that does not move between runs.
+
+   Read it as a sequence.  `emitted` is the shape the pipeline produces
+   today; each column after it applies ONE more change; `gin` is the
+   hand-built index that computes no per-candidate count at all.  The gap
+   between two adjacent columns is what that one rule change is worth, and
+   nothing is worth proving that does not move its own column. *)
+let shapes (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 6400 ] else sizes in
+  match List.assoc_opt "fuzzy_search" Gen.specs,
+        List.assoc_opt "fuzzy_search" Monotypes.programs,
+        List.assoc_opt "fuzzy_search" Authors.indexed_runners with
+  | Some sp, Some (_, popt), Some pgin ->
+      let cols =
+        ("opt", popt) :: Authors.shape_runners @ [ ("gin", pgin) ] in
+      Printf.printf "%5s %-12s" "rows" "kind";
+      List.iter (fun (n, _) -> Printf.printf " %12s" n) cols;
+      Printf.printf " %9s %9s\n" "opt/gin" "emit/gin";
+      Printf.printf "%s\n" (String.make (28 + (13 * List.length cols)) '-');
+      List.iter
+        (fun rows ->
+           List.iter
+             (fun (kind, _) ->
+                if not (List.mem kind sp.Gen.mutating) then begin
+                  let w = List.map (fun (_, p) -> per_op_work p sp ~rows ~kind) cols in
+                  Printf.printf "%5d %-12s" rows kind;
+                  List.iter
+                    (fun c ->
+                       Printf.printf " %12s"
+                         (match c with
+                          | Some x -> Printf.sprintf "%.0f" x
+                          | None -> "-"))
+                    w;
+                  let g = List.nth w (List.length w - 1) in
+                  let r x = match x, g with
+                    | Some a, Some b when b > 0. -> Printf.sprintf "%9.2f" (a /. b)
+                    | _ -> "        -" in
+                  Printf.printf "%s%s\n" (r (List.hd w)) (r (List.nth w 1))
+                end)
+             sp.Gen.kinds)
+        sizes
+  | _ -> ()
+
 (* ---------- the structure choice, taken out of the comparison ----------
 
    This is bench.ml's `matched` table on compiled code, and it closes the one

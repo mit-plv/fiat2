@@ -1196,6 +1196,140 @@ module WagtailGinShaped = struct
     !results
 end
 
+(* ---------- pricing the two candidate rule changes ----------
+
+   `WagtailGinShaped` above showed the emitted count shape is worth a factor,
+   but it bundles three differences at once.  This module separates them, so
+   each candidate rule change can be priced BEFORE its proof is paid for --
+   the procedure the min rule was declined by.
+
+   All four variants hold the index, the pool and the ANSWER fixed.  What
+   varies:
+
+   - `hoist`: the query's padded trigram list is loop-INVARIANT across
+     candidates, and across rechecked rows.  The emitted term recomputes it
+     inside both loops (`shared_with` re-pads and re-extracts it per
+     candidate; `fuzzy_pred_on` rebuilds `qset`/`qnum` per row).  With this
+     set, it is computed once per query -- which is what a hoisting rule
+     would buy and nothing more.
+
+   - `fold_count`: how the per-candidate count is accumulated.  The emitted
+     term builds a SET of the surviving trigrams and takes its size
+     (`SetSize (SetOfList (filter ...))`).  An integer fold over the same
+     trigrams needs no set at all.  This is a change to what the rule emits,
+     not a hoist, and it is priced separately because its proof is separate.
+
+   - `naive_recheck`: the recheck as `fuzzy_pred_on` actually computes it --
+     `qset` rebuilt per ROW, and per word an INTERSECTION SET built and sized
+     beside a second sizing of the word's own set -- against `similar_enough`,
+     which folds and counts.  This is the candidate explanation for the part
+     of the measured gap that `WagtailGinShaped` did NOT account for.
+
+   The scatter tally in `WagtailGin` is the fourth point: it never computes a
+   per-candidate count at all.  So
+
+     shaped -> hoisted -> folded -> gin
+
+   is the whole gap, one change at a time, and every step is a rule we could
+   choose to write. *)
+
+module WagtailShapes = struct
+  type shape = { hoist : bool; fold_count : bool; naive_recheck : bool }
+
+  let emitted = { hoist = false; fold_count = false; naive_recheck = true }
+  let hoisted = { hoist = true; fold_count = false; naive_recheck = true }
+  let folded = { hoist = true; fold_count = true; naive_recheck = true }
+  let rechecked = { hoist = true; fold_count = true; naive_recheck = false }
+
+  (* the recheck as the emitted term computes it: the query's set rebuilt per
+     ROW, and per word an intersection SET built, then sized, beside a second
+     sizing of the word's own set *)
+  let recheck_as_emitted (qtext : string) (text : string) : bool =
+    let qset = WagtailFuzzy.tri_set qtext in
+    let qnum = SSet.cardinal qset in
+    List.exists
+      (fun w ->
+         let wset = WagtailFuzzy.tri_set w in
+         let inter =
+           SSet.fold
+             (fun g acc -> if SSet.mem g wset then SSet.add g acc else acc)
+             qset (SSet.make Count.Licensed) in
+         let shared = SSet.cardinal inter in
+         shared * WagtailFuzzy.td
+         >= WagtailFuzzy.tn * (qnum + SSet.cardinal wset - shared))
+      (Rt.words " " text)
+
+  let run (sh : shape) (results0 : In_fuzzy_search.t_results)
+      (queries : In_fuzzy_search.t_queries) : In_fuzzy_search.t_results =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let post = ref (Postings.empty ()) in
+    let results = ref results0 in
+    List.iter
+      (fun (q : In_fuzzy_search.t_queries_elem) ->
+         match q.f_kind with
+         | 0 ->
+             let e = q.f_new_entry in
+             by_id := SSel.add e.f_id e !by_id;
+             post := Postings.add_row e.f_id e.f_title_text !post
+         | 1 ->
+             (match SSel.get q.f_qtext !by_id with
+              | None -> ()
+              | Some (e : In_fuzzy_search.t_row) ->
+                  post := Postings.del_row e.f_id e.f_title_text !post);
+             by_id := SSel.remove q.f_qtext !by_id
+         | _ ->
+             let qs = WagtailFuzzy.tri_set q.f_qtext in
+             let a = SSet.cardinal qs in
+             (* the pool, as the rule's AGUnion fold emits it *)
+             let pool =
+               SSet.fold
+                 (fun g acc ->
+                    SSet.fold SSet.add (Postings.bucket g !post) acc)
+                 qs (SSet.make Count.Licensed) in
+             (* the query's trigrams, computed ONCE when hoisted *)
+             let qgs =
+               if sh.hoist then Rt.trigrams (WagtailFuzzy.pad q.f_qtext)
+               else [] in
+             let shared_with (k : string) : int =
+               let gs =
+                 if sh.hoist then qgs
+                 else Rt.trigrams (WagtailFuzzy.pad q.f_qtext) in
+               if sh.fold_count then
+                 (* an integer fold: no set is built *)
+                 List.fold_left
+                   (fun n g ->
+                      if SSet.mem k (Postings.bucket g !post) then n + 1 else n)
+                   0 gs
+               else
+                 (* SetSize (SetOfList (filter ...)): a fresh set per
+                    candidate, which is what the pinned shape builds *)
+                 SSet.cardinal
+                   (List.fold_left (fun s g -> SSet.add g s)
+                      (SSet.make Count.Licensed)
+                      (List.filter
+                         (fun g -> SSet.mem k (Postings.bucket g !post)) gs)) in
+             let hits = ref [] in
+             SSet.iter
+               (fun k ->
+                  if shared_with k * WagtailFuzzy.td >= WagtailFuzzy.tn * a then
+                    match probe (SSel.get k !by_id) with
+                    | None -> ()
+                    | Some (e : In_fuzzy_search.t_row) ->
+                        let ok =
+                          if sh.naive_recheck then
+                            recheck_as_emitted q.f_qtext e.f_title_text
+                          else WagtailFuzzy.similar_enough qs a e.f_title_text in
+                        if ok then hits := e :: !hits)
+               pool;
+             results :=
+               List.fold_left
+                 (fun s e -> In_fuzzy_search.M_results.add e s)
+                 (In_fuzzy_search.M_results.make Count.Unlicensed)
+                 (List.sort In_fuzzy_search.cmp_row !hits))
+      queries;
+    !results
+end
+
 (* ---------- the substring read, GitLab's way ---------- *)
 
 module GitlabGin = struct
@@ -1374,6 +1508,21 @@ let shaped_runners :
             (Monotypes.In_fuzzy_search.f_results (get "results"))
             (Monotypes.In_fuzzy_search.f_queries (get "queries"))) ) ]
 
+(* the four variants, each one rule change apart from the next.  Named so the
+   table reads as a sequence: what we emit, then hoisted, then counted by a
+   fold, then with the recheck hoisted too -- and `gin` beyond that. *)
+let shape_runners :
+    (string * ((string -> Value.t option) -> unit -> unit)) list =
+  let v sh =
+    prepared (fun get ->
+        WagtailShapes.run sh
+          (Monotypes.In_fuzzy_search.f_results (get "results"))
+          (Monotypes.In_fuzzy_search.f_queries (get "queries"))) in
+  [ ("emitted", v WagtailShapes.emitted);
+    ("hoisted", v WagtailShapes.hoisted);
+    ("folded", v WagtailShapes.folded);
+    ("rechecked", v WagtailShapes.rechecked) ]
+
 (* ---------- what has been monomorphized so far ----------
 
    One module, as a pilot: the pattern is proved end to end -- including the
@@ -1483,6 +1632,14 @@ let check_fuzzy_search (w : Gen.workload) : bool =
   Monotypes.In_fuzzy_search.M_results.equal mine theirs
   && Monotypes.In_fuzzy_search.M_results.equal mine gin
   && Monotypes.In_fuzzy_search.M_results.equal mine shaped
+  && List.for_all
+       (fun sh ->
+          Monotypes.In_fuzzy_search.M_results.equal mine
+            (WagtailShapes.run sh
+               (Monotypes.In_fuzzy_search.f_results (get "results"))
+               (Monotypes.In_fuzzy_search.f_queries (get "queries"))))
+       [ WagtailShapes.emitted; WagtailShapes.hoisted; WagtailShapes.folded;
+         WagtailShapes.rechecked ]
 
 let check_area_registry (w : Gen.workload) : bool =
   let get n =

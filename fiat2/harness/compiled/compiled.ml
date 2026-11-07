@@ -235,6 +235,9 @@ let () =
   | _ :: "indexed" :: rest ->
       Timing.indexed (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "shapes" :: rest ->
+      Timing.shapes (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ :: "writes" :: rest ->
       Timing.writes (List.filter_map int_of_string_opt rest);
       exit 0
