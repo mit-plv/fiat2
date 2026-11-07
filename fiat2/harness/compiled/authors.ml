@@ -1234,12 +1234,26 @@ end
    choose to write. *)
 
 module WagtailShapes = struct
-  type shape = { hoist : bool; fold_count : bool; naive_recheck : bool }
+  type shape = {
+    hoist : bool;          (* the query's padded trigram LIST, once *)
+    buckets : bool;        (* and the BUCKET each trigram names, once *)
+    fold_count : bool;     (* count by an integer fold, building no set *)
+    naive_recheck : bool;  (* the recheck as fuzzy_pred_on computes it *)
+  }
 
-  let emitted = { hoist = false; fold_count = false; naive_recheck = true }
-  let hoisted = { hoist = true; fold_count = false; naive_recheck = true }
-  let folded = { hoist = true; fold_count = true; naive_recheck = true }
-  let rechecked = { hoist = true; fold_count = true; naive_recheck = false }
+  let emitted =
+    { hoist = false; buckets = false; fold_count = false; naive_recheck = true }
+  let hoisted = { emitted with hoist = true }
+  (* THE ONE THAT MATTERS, and the one the first pricing missed: the list of
+     buckets is loop-invariant across candidates just as the trigram list is,
+     and it is the DICT LOOKUPS that cost, not the string work.  A list of
+     sets is an ordinary value (TList (TSet kt)) and the per-candidate count
+     is then a fold over it, so this is expressible with what the language
+     already has -- unlike the scatter tally, which needs a fold over a SET
+     with an arbitrary accumulator. *)
+  let bucketed = { hoisted with buckets = true }
+  let folded = { bucketed with fold_count = true }
+  let rechecked = { folded with naive_recheck = false }
 
   (* the recheck as the emitted term computes it: the query's set rebuilt per
      ROW, and per word an intersection SET built, then sized, beside a second
@@ -1290,24 +1304,34 @@ module WagtailShapes = struct
              let qgs =
                if sh.hoist then Rt.trigrams (WagtailFuzzy.pad q.f_qtext)
                else [] in
+             let bkts =
+               if sh.buckets
+               then List.map (fun g -> Postings.bucket g !post) qgs else [] in
+             (* the a buckets, as a list of sets paired with nothing: when
+                hoisted the candidate loop only tests MEMBERSHIP, and the
+                dict lookup that found the bucket is paid once per query *)
              let shared_with (k : string) : int =
+               (* the trigram list: ONCE per candidate when not hoisted,
+                  once per query when it is -- and never twice, which an
+                  earlier version of this did and which inflated the
+                  baseline every ratio here is taken against *)
                let gs =
                  if sh.hoist then qgs
                  else Rt.trigrams (WagtailFuzzy.pad q.f_qtext) in
+               let holds =
+                 if sh.buckets then List.map (fun b -> SSet.mem k b) bkts
+                 else
+                   List.map (fun g -> SSet.mem k (Postings.bucket g !post)) gs in
                if sh.fold_count then
                  (* an integer fold: no set is built *)
-                 List.fold_left
-                   (fun n g ->
-                      if SSet.mem k (Postings.bucket g !post) then n + 1 else n)
-                   0 gs
+                 List.fold_left (fun n h -> if h then n + 1 else n) 0 holds
                else
                  (* SetSize (SetOfList (filter ...)): a fresh set per
                     candidate, which is what the pinned shape builds *)
                  SSet.cardinal
                    (List.fold_left (fun s g -> SSet.add g s)
                       (SSet.make Count.Licensed)
-                      (List.filter
-                         (fun g -> SSet.mem k (Postings.bucket g !post)) gs)) in
+                      (List.map fst (List.filter snd (List.combine gs holds)))) in
              let hits = ref [] in
              SSet.iter
                (fun k ->
@@ -1520,6 +1544,7 @@ let shape_runners :
           (Monotypes.In_fuzzy_search.f_queries (get "queries"))) in
   [ ("emitted", v WagtailShapes.emitted);
     ("hoisted", v WagtailShapes.hoisted);
+    ("bucketed", v WagtailShapes.bucketed);
     ("folded", v WagtailShapes.folded);
     ("rechecked", v WagtailShapes.rechecked) ]
 
@@ -1638,8 +1663,8 @@ let check_fuzzy_search (w : Gen.workload) : bool =
             (WagtailShapes.run sh
                (Monotypes.In_fuzzy_search.f_results (get "results"))
                (Monotypes.In_fuzzy_search.f_queries (get "queries"))))
-       [ WagtailShapes.emitted; WagtailShapes.hoisted; WagtailShapes.folded;
-         WagtailShapes.rechecked ]
+       [ WagtailShapes.emitted; WagtailShapes.hoisted; WagtailShapes.bucketed;
+         WagtailShapes.folded; WagtailShapes.rechecked ]
 
 let check_area_registry (w : Gen.workload) : bool =
   let get n =
