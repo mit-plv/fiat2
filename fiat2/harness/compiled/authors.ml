@@ -1120,6 +1120,157 @@ module WagtailGin = struct
     !results
 end
 
+(* ---------- pricing the SET -> LIST COERCION, which is what the tally needs
+
+   The scatter tally is a fold over a set with a dict accumulator, and
+   `TyEFold` is typed at `TList t1` only.  The coercion that would unblock it
+   is the honest one: iterating a set means committing to an ORDER, and
+   nothing in the language can establish that a given fold does not read it,
+   so the coercion must hand back the set's CANONICAL order.  `SelSet.elements`
+   already is exactly that operator -- an in-order walk on a tree, a sort on a
+   hash trie -- so the price can be measured before anything is proved.
+
+   TWO MODULES, because two different things cost money.
+
+   `WagtailGinOrdered` is `WagtailGin` with each set walk replaced by a walk
+   over its `elements`.  Nothing else differs, so the gap between them is the
+   COERCION ITSELF, and it is a gap that exists only under `hashes`: on a tree
+   `elements` compares nothing.
+
+   `WagtailGinScatter` is the stronger question -- what the rule could ACTUALLY
+   emit if the coercion existed and nothing else did.  It may not walk the
+   tally, because a dict eliminator that yields KEYS is a second thing the
+   language does not have (`ODictValues` drops them, and there is no dict
+   fold).  So it scatters into the tally, then filters the CANDIDATE POOL --
+   which `thr_cands` already builds and `interp_thr_cands` already proves --
+   reading each candidate's count with ONE lookup.  That is `a` bucket probes
+   per candidate replaced by one, which is the whole point, and it needs no
+   new eliminator.
+
+   The pool is built here rather than taken from the tally's domain for the
+   same reason: the two are equal as sets, but one is reachable in the
+   language and the other is not. *)
+module WagtailGinOrdered = struct
+  let name = "fuzzy_search"
+
+  let run (results0 : In_fuzzy_search.t_results)
+      (queries : In_fuzzy_search.t_queries) : In_fuzzy_search.t_results =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let post = ref (Postings.empty ()) in
+    let results = ref results0 in
+    List.iter
+      (fun (q : In_fuzzy_search.t_queries_elem) ->
+         match q.f_kind with
+         | 0 ->
+             let e = q.f_new_entry in
+             by_id := SSel.add e.f_id e !by_id;
+             post := Postings.add_row e.f_id e.f_title_text !post
+         | 1 ->
+             (match SSel.get q.f_qtext !by_id with
+              | None -> ()
+              | Some (e : In_fuzzy_search.t_row) ->
+                  post := Postings.del_row e.f_id e.f_title_text !post);
+             by_id := SSel.remove q.f_qtext !by_id
+         | _ ->
+             let qs = WagtailFuzzy.tri_set q.f_qtext in
+             let a = SSet.cardinal qs in
+             (* the same tally, reached through the coercion at both walks *)
+             let tally =
+               List.fold_left
+                 (fun acc g ->
+                    List.fold_left
+                      (fun acc k ->
+                         let n = match SSel.get k acc with
+                           | Some n -> n | None -> 0 in
+                         SSel.add k (n + 1) acc)
+                      acc
+                      (SSet.elements (Postings.bucket g !post)))
+                 (SSel.make Count.Licensed)
+                 (SSet.elements qs) in
+             let hits = ref [] in
+             SSel.iter
+               (fun k (c : int) ->
+                  if c * WagtailFuzzy.td >= WagtailFuzzy.tn * a then
+                    match probe (SSel.get k !by_id) with
+                    | None -> ()
+                    | Some (e : In_fuzzy_search.t_row) ->
+                        if WagtailFuzzy.similar_enough qs a e.f_title_text
+                        then hits := e :: !hits)
+               tally;
+             results :=
+               List.fold_left
+                 (fun s e -> In_fuzzy_search.M_results.add e s)
+                 (In_fuzzy_search.M_results.make Count.Unlicensed)
+                 (List.sort In_fuzzy_search.cmp_row !hits))
+      queries;
+    !results
+end
+
+module WagtailGinScatter = struct
+  let name = "fuzzy_search"
+
+  let run (results0 : In_fuzzy_search.t_results)
+      (queries : In_fuzzy_search.t_queries) : In_fuzzy_search.t_results =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let post = ref (Postings.empty ()) in
+    let results = ref results0 in
+    List.iter
+      (fun (q : In_fuzzy_search.t_queries_elem) ->
+         match q.f_kind with
+         | 0 ->
+             let e = q.f_new_entry in
+             by_id := SSel.add e.f_id e !by_id;
+             post := Postings.add_row e.f_id e.f_title_text !post
+         | 1 ->
+             (match SSel.get q.f_qtext !by_id with
+              | None -> ()
+              | Some (e : In_fuzzy_search.t_row) ->
+                  post := Postings.del_row e.f_id e.f_title_text !post);
+             by_id := SSel.remove q.f_qtext !by_id
+         | _ ->
+             let qs = WagtailFuzzy.tri_set q.f_qtext in
+             let a = SSet.cardinal qs in
+             let gs = SSet.elements qs in
+             (* the pool, as `thr_cands` builds it: the union of the buckets *)
+             let pool =
+               List.fold_left
+                 (fun acc g ->
+                    SSet.fold SSet.add (Postings.bucket g !post) acc)
+                 (SSet.make Count.Licensed) gs in
+             (* the scatter, through the coercion *)
+             let tally =
+               List.fold_left
+                 (fun acc g ->
+                    List.fold_left
+                      (fun acc k ->
+                         let n = match SSel.get k acc with
+                           | Some n -> n | None -> 0 in
+                         SSel.add k (n + 1) acc)
+                      acc
+                      (SSet.elements (Postings.bucket g !post)))
+                 (SSel.make Count.Licensed) gs in
+             (* and the pool filtered by ONE lookup each, which is the only
+                part of the emitted term that changes *)
+             let hits = ref [] in
+             SSet.iter
+               (fun k ->
+                  let c = match SSel.get k tally with Some n -> n | None -> 0 in
+                  if c * WagtailFuzzy.td >= WagtailFuzzy.tn * a then
+                    match probe (SSel.get k !by_id) with
+                    | None -> ()
+                    | Some (e : In_fuzzy_search.t_row) ->
+                        if WagtailFuzzy.similar_enough qs a e.f_title_text
+                        then hits := e :: !hits)
+               pool;
+             results :=
+               List.fold_left
+                 (fun s e -> In_fuzzy_search.M_results.add e s)
+                 (In_fuzzy_search.M_results.make Count.Unlicensed)
+                 (List.sort In_fuzzy_search.cmp_row !hits))
+      queries;
+    !results
+end
+
 (* ---------- the SAME index, counted the way we emit it ----------
 
    An attribution control, not a baseline: identical postings, identical
@@ -1546,7 +1697,19 @@ let shape_runners :
     ("hoisted", v WagtailShapes.hoisted);
     ("bucketed", v WagtailShapes.bucketed);
     ("folded", v WagtailShapes.folded);
-    ("rechecked", v WagtailShapes.rechecked) ]
+    ("rechecked", v WagtailShapes.rechecked);
+    (* and beyond the pipeline's reach: what the set -> list coercion costs,
+       and what it would buy *)
+    ( "ordered",
+      prepared (fun get ->
+          WagtailGinOrdered.run
+            (Monotypes.In_fuzzy_search.f_results (get "results"))
+            (Monotypes.In_fuzzy_search.f_queries (get "queries"))) );
+    ( "scatter",
+      prepared (fun get ->
+          WagtailGinScatter.run
+            (Monotypes.In_fuzzy_search.f_results (get "results"))
+            (Monotypes.In_fuzzy_search.f_queries (get "queries"))) ) ]
 
 (* ---------- what has been monomorphized so far ----------
 
@@ -1657,6 +1820,12 @@ let check_fuzzy_search (w : Gen.workload) : bool =
   Monotypes.In_fuzzy_search.M_results.equal mine theirs
   && Monotypes.In_fuzzy_search.M_results.equal mine gin
   && Monotypes.In_fuzzy_search.M_results.equal mine shaped
+  && List.for_all
+       (fun r ->
+          Monotypes.In_fuzzy_search.M_results.equal mine
+            (r (Monotypes.In_fuzzy_search.f_results (get "results"))
+               (Monotypes.In_fuzzy_search.f_queries (get "queries"))))
+       [ WagtailGinOrdered.run; WagtailGinScatter.run ]
   && List.for_all
        (fun sh ->
           Monotypes.In_fuzzy_search.M_results.equal mine

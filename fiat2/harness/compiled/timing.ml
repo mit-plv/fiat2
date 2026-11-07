@@ -765,6 +765,109 @@ let mixed_per_op_work (p : (string -> Value.t option) -> unit -> unit)
       if f - b <= 0 then None
       else Some (float_of_int (f - b) /. float_of_int ops)
 
+(* ---------- the same sequence, IN SECONDS ----------
+
+   `shapes` above is counted only, and for the stated reason: adjacent
+   variants differ by tens of microseconds and the clock cannot resolve them.
+   This table does not try to resolve adjacent variants.  It asks the ONE
+   question the counters are structurally unable to answer -- whether the
+   residual between `opt` and `rechecked` is in the wallclock too, or is an
+   artifact of what the counters charge.
+
+   Those two columns run the SAME ALGORITHM: the same index, the same
+   candidate pool, the same per-candidate count, the same naive recheck.  One
+   is the generated program, the other is hand-written OCaml.  So this is the
+   one cell in the whole development where a seconds ratio cannot be excused
+   as "two different algorithms" or "two different structures", and where the
+   counters' stage charging (see harness/README on `rows`) is the obvious
+   suspect precisely because it CANNOT be the explanation if the clock agrees.
+
+   It uses `mixed_cell`'s discipline, not `per_op`'s, which is why it lives
+   down here beside it: ONE op count per cell, satisfying every column, with
+   the ops phase required to dominate the build phase.  Scaling each column
+   to its own count is what biased the sweep by 29-88%, and this comparison
+   is far too close to survive that.  The count and the build phase are
+   printed so the reader can see the three figures came from one workload. *)
+let kind_cell (ps : ((string -> Value.t option) -> unit -> unit) list)
+    (sp : Gen.spec) ~(rows : int) ~(kind : string) :
+    (int * float * float option list) option =
+  let base = Gen.workload sp ~rows ~ops:0 ~only:None in
+  let probe (p : (string -> Value.t option) -> unit -> unit) =
+    let build = timed (p (lookup_of base)) in
+    let rec go (ops : int) =
+      let d = timed (p (lookup_of (Gen.workload sp ~rows ~ops ~only:(Some kind))))
+              -. build in
+      if d >= floor_secs && d >= dominance *. build then Some (build, ops, d)
+      else if ops * 4 > max_mixed_ops then None
+      else go (ops * 4) in
+    go 20 in
+  let probes = List.map probe ps in
+  let n =
+    List.fold_left
+      (fun acc pr -> match pr with None -> acc | Some (_, ops, _) -> max acc ops)
+      0 probes in
+  if n = 0 then None
+  else
+    let w = Gen.workload sp ~rows ~ops:n ~only:(Some kind) in
+    let builds = ref 0. in
+    let at p pr =
+      match pr with
+      | None -> None
+      | Some (build, ops, d) ->
+          builds := Float.max !builds build;
+          let d = if ops = n then d else timed (p (lookup_of w)) -. build in
+          if d >= floor_secs && d >= dominance *. build then
+            Some (d /. float_of_int n)
+          else None in
+    let out = List.map2 at ps probes in
+    Some (n, !builds, out)
+
+let shapesec (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 6400 ] else sizes in
+  match List.assoc_opt "fuzzy_search" Gen.specs,
+        List.assoc_opt "fuzzy_search" Monotypes.programs,
+        List.assoc_opt "fuzzy_search" Authors.indexed_runners with
+  | Some sp, Some (_, popt), Some pgin ->
+      let cols = ("opt", popt) :: Authors.shape_runners @ [ ("gin", pgin) ] in
+      Printf.printf "%5s %-12s %7s %9s" "rows" "kind" "ops" "build s";
+      List.iter (fun (n, _) -> Printf.printf " %11s" n) cols;
+      Printf.printf " %9s %9s\n" "opt/rech" "opt/gin";
+      Printf.printf "%s\n" (String.make (46 + (12 * List.length cols)) '-');
+      List.iter
+        (fun rows ->
+           List.iter
+             (fun (kind, _) ->
+                if not (List.mem kind sp.Gen.mutating) then
+                  match kind_cell (List.map snd cols) sp ~rows ~kind with
+                  | None -> Printf.printf "%5d %-12s   no count clears\n" rows kind
+                  | Some (n, build, ts) ->
+                      Printf.printf "%5d %-12s %7d %9.3g" rows kind n build;
+                      List.iter
+                        (fun c ->
+                           Printf.printf " %11s"
+                             (match c with
+                              | Some x -> Printf.sprintf "%.3g" x
+                              | None -> "-"))
+                        ts;
+                      (* BY NAME, not by position: the sequence grew a
+                         column and a positional index would have silently
+                         re-labelled this ratio *)
+                      let col n =
+                        let rec go cs vs = match cs, vs with
+                          | (m, _) :: _, v :: _ when m = n -> v
+                          | _ :: cs, _ :: vs -> go cs vs
+                          | _ -> None in
+                        go cols ts in
+                      let r x y = match x, y with
+                        | Some a, Some b when b > 0. -> Printf.sprintf "%9.2f" (a /. b)
+                        | _ -> "        -" in
+                      Printf.printf "%s%s\n"
+                        (r (col "opt") (col "rechecked"))
+                        (r (col "opt") (col "gin")))
+             sp.Gen.kinds)
+        sizes
+  | _ -> ()
+
 let fractions = [ 0; 1; 10; 50 ]
 
 (* The same sweep, COUNTED, printed beside the seconds for the reason
