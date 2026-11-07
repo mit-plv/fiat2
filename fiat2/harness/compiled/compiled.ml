@@ -241,6 +241,9 @@ let () =
   | _ :: "shapesec" :: rest ->
       Timing.shapesec (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "breakdown" :: rest ->
+      Timing.breakdown (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ :: "writes" :: rest ->
       Timing.writes (List.filter_map int_of_string_opt rest);
       exit 0

@@ -868,6 +868,69 @@ let shapesec (sizes : int list) : unit =
         sizes
   | _ -> ()
 
+(* ---------- WHICH KIND OF WORK the residual factor is ----------
+
+   `shapes` prices each rule change against the next; `shapesec` says the
+   residual between `opt` and `rechecked` is in the clock too.  Neither says
+   WHAT the residual is made of, because both report `data work`, which is a
+   SUM of four counters.  This splits the sum.
+
+   The four are not interchangeable and that is the point (see count.ml):
+   comparisons and hashing are what a STRUCTURE costs on keys, strings is
+   what a string PRIMITIVE examines, and fields is what a record projection
+   walks past -- and fields is bounded by a constant of the TERM, so a factor
+   that lives there is a property of the emitted shape rather than of the
+   algorithm.  So the column that carries the residual names its cause.
+
+   Counted, so deterministic and repeatable. *)
+type tally = { cmp : int; hsh : int; str : int; fld : int; rws : int }
+
+let tally_of (f : unit -> unit) : tally =
+  Count.reset ();
+  f ();
+  { cmp = !Count.comparisons; hsh = !Count.hashing; str = !Count.strings;
+    fld = !Count.fields; rws = !Count.rows }
+
+let tally_sub (a : tally) (b : tally) (ops : int) : float * float array =
+  let d x y = float_of_int (x - y) /. float_of_int ops in
+  let v = [| d a.cmp b.cmp; d a.hsh b.hsh; d a.str b.str; d a.fld b.fld;
+             d a.rws b.rws |] in
+  (v.(0) +. v.(1) +. v.(2) +. v.(3), v)
+
+let breakdown (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 6400 ] else sizes in
+  let ops = 20 in
+  match List.assoc_opt "fuzzy_search" Gen.specs,
+        List.assoc_opt "fuzzy_search" Monotypes.programs,
+        List.assoc_opt "fuzzy_search" Authors.indexed_runners with
+  | Some sp, Some (_, popt), Some pgin ->
+      let cols = ("opt", popt) :: Authors.shape_runners @ [ ("gin", pgin) ] in
+      List.iter
+        (fun rows ->
+           List.iter
+             (fun (kind, _) ->
+                if not (List.mem kind sp.Gen.mutating) then begin
+                  Printf.printf "\n%d rows, %s\n" rows kind;
+                  Printf.printf "%-12s %11s %11s %11s %11s %11s %9s\n" "column"
+                    "comparisons" "hashing" "strings" "fields" "data work"
+                    "rows";
+                  Printf.printf "%s\n" (String.make 82 '-');
+                  let base = Gen.workload sp ~rows ~ops:0 ~only:None in
+                  let full = Gen.workload sp ~rows ~ops ~only:(Some kind) in
+                  List.iter
+                    (fun (n, p) ->
+                       let b = tally_of (p (lookup_of base))
+                       and f = tally_of (p (lookup_of full)) in
+                       let total, v = tally_sub f b ops in
+                       Printf.printf
+                         "%-12s %11.1f %11.1f %11.1f %11.1f %11.1f %9.1f\n" n
+                         v.(0) v.(1) v.(2) v.(3) total v.(4))
+                    cols
+                end)
+             sp.Gen.kinds)
+        sizes
+  | _ -> ()
+
 let fractions = [ 0; 1; 10; 50 ]
 
 (* The same sweep, COUNTED, printed beside the seconds for the reason
