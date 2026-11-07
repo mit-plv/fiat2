@@ -458,6 +458,105 @@ Section WithConcreteMaps.
   Lemma delete_maintains_both : delete_of optimized = Some delete_expected.
   Proof. vm_compute; reflexivity. Qed.
 
+
+  (* ========== THE READ ACTUALLY RETRIEVES, AND THE RECHECK EARNS ITS KEEP
+
+     `optimized_sound` below says the two columns AGREE.  It does not say
+     they agree on anything NON-EMPTY, and a program that always returned the
+     empty set would satisfy it.  So the subject needs a computational
+     witness that the whole derived pipeline -- the installed index, the
+     candidate pool, the k-of-n count test and the recheck -- retrieves a
+     fuzzy match.
+
+     The pair is Smith against Smyth, which Ex_TrigramSimilarity pins at the
+     PREDICATE level: unpadded, their trigram sets are DISJOINT; padded, they
+     share exactly the three padding-derived trigrams "  S", " Sm" and "th ",
+     so 3 / (6 + 6 - 3) = 1/3 clears pg_trgm's default 0.3.  Padding is what
+     makes the match exist at all.  Here it is through the index.
+
+     Four rows, each a different half of the architecture:
+
+       Smyth                  the misspelling.  FOUND: 3 shared, 1/3.
+       Jones                  shares nothing with the query, so it is not
+                              even a candidate.  Not found.
+       Smithsonian Institute  FOUND, and only because the predicate is PER
+                              WORD -- "Smithsonian" shares 5 of the query's
+                              6 trigrams for 5/13 = 0.385, while the
+                              WHOLE-STRING form has 22 trigrams of its own
+                              and gives 5/23 = 0.217, which fails.  That is
+                              Ex_TrigramSimilarity's `smithsonian` seen from
+                              the other side, and it is why this subject's
+                              predicate is sim_any and not sim_ge.
+       Smoulder               THE RECHECK'S WITNESS.  It shares "  S" and
+                              " Sm", so c = 2 and the index's own count test
+                              2 * 10 >= 3 * 6 ADMITS it: it IS in the
+                              candidate set.  Its similarity is
+                              2 / (6 + 9 - 2) = 2/13 = 0.154, so the recheck
+                              throws it out.  Without the recheck this read
+                              would return a row the predicate rejects,
+                              which is why gin_trgm_consistent sets
+                              *recheck unconditionally.
+     ========================================================== *)
+
+  Definition row_v (i t : string) : value :=
+    VRecord [("id", VString i); ("title_text", VString t)].
+
+  Definition ins_v (i t : string) : value :=
+    VRecord [("kind", VInt 0); ("new_entry", row_v i t); ("qtext", VString "")].
+
+  Definition ask_v (t : string) : value :=
+    VRecord [("kind", VInt 2); ("new_entry", row_v "" ""); ("qtext", VString t)].
+
+  Definition demo_store : clocals := map.put map.empty "results" (VSet nil).
+
+  Definition demo_env (qs : list value) : clocals :=
+    map.put map.empty "queries" (VList qs).
+
+  Definition demo_rows : list value :=
+    [ ins_v "e1" "Smyth"; ins_v "e2" "Jones";
+      ins_v "e3" "Smithsonian Institute"; ins_v "e4" "Smoulder" ].
+
+  (* the whole pipeline, end to end: four rows in, the fuzzy query "Smith",
+     and the two rows the predicate accepts come back out *)
+  Lemma search_finds_the_misspelling :
+    map.get
+      (interp_command demo_store (demo_env (demo_rows ++ [ask_v "Smith"]))
+         optimized) "results"
+    = Some (VSet [ row_v "e1" "Smyth";
+                   row_v "e3" "Smithsonian Institute" ]).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* and the row the INDEX admits is nevertheless rejected, alone in a table
+     so that nothing else can be the reason the answer is empty *)
+  Lemma the_recheck_excludes_smoulder :
+    map.get
+      (interp_command demo_store
+         (demo_env [ins_v "e4" "Smoulder"; ask_v "Smith"]) optimized) "results"
+    = Some (VSet nil).
+  Proof. vm_compute; reflexivity. Qed.
+
+  (* ... and it is admitted by the count test, so the line above is the
+     RECHECK's doing and not the pool's *)
+  Definition shared_count (row q : string) : expr :=
+    EUnop OSetSize
+      (EBinop OSetIntersect
+         (tri_set_of (padded (EAtom (AString row))))
+         (tri_set_of (padded (EAtom (AString q))))).
+
+  Lemma smoulder_is_admitted_by_the_count_test :
+    interp_expr map.empty map.empty (shared_count "Smoulder" "Smith") = VInt 2
+    /\ interp_expr map.empty map.empty
+         (EUnop OSetSize (tri_set_of (padded (EAtom (AString "Smith")))))
+       = VInt 6
+    /\ (3 * 6 <=? 2 * 10)%Z = true.
+  Proof. repeat apply conj; vm_compute; reflexivity. Qed.
+
+  (* the two the predicate accepts, and the one it does not, at the same
+     query -- so the threshold is doing work rather than always saying yes *)
+  Lemma the_three_similarities :
+    interp_expr map.empty map.empty (shared_count "Smyth" "Smith") = VInt 3
+    /\ interp_expr map.empty map.empty (shared_count "Jones" "Smith") = VInt 0.
+  Proof. repeat apply conj; vm_compute; reflexivity. Qed.
   (* ==================== soundness ==================== *)
 
   Lemma row_ty_wf : type_wf row_ty.
