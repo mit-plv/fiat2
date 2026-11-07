@@ -1315,33 +1315,45 @@ Section WithIndexUse.
          pattern repeating one would inflate the count and admit rows the
          predicate rejects.  OSetOfList is what deduplicates.
          ---------------------------------------------------------------- *)
-      Definition thr_count (p : expr) : expr :=
+      (* Generalised over the SOURCE of the count, so that the emitted term
+         can bind the query's deduplicated trigrams ONCE, outside the
+         candidate filter, and the count can read them from a variable.
+
+         The old form rebuilt them inside the filter body -- and twice over,
+         once here and once for the `a` of the test in thr_keep -- so a pool
+         of n candidates extracted the pattern's trigrams 2n times and built
+         2n sets of them.  harness/compiled/authors.ml's WagtailShapes
+         priced that before this was written. *)
+      Definition thr_count_of (qs : expr) : expr :=
         EUnop OSetSize
-          (flatmap_filter_set (EUnop OSetOfList (EUnop OTrigrams p)) cgram
+          (flatmap_filter_set qs cgram
              (EBinop OSetMem (tri_bucket_e (EVar cgram)) (EVar k))
              cgram None None).
+
 
       Definition count_set (pv : string) (d kv : value) : list value :=
         list_to_set
           (filter (fun gv => set_mem kv (tri_bucket gv d))
              (list_to_set (List.map VString (trigrams pv)))).
 
-      Lemma interp_thr_count :
-        forall (store env : locals) (p : expr) (pv : string) (kv : value)
+      (* The hypothesis is spelled out rather than written with `qtris`,
+         which is defined below this point. *)
+      Lemma interp_thr_count_of :
+        forall (store env : locals) (qs : expr) (pv : string) (kv : value)
                (td : list (value * value)),
           cgram <> k ->
           interp_expr store env tri_e = VDict td ->
           Forall (fun e : value * value =>
                     match snd e with VSet _ => True | _ => False end) td ->
-          interp_expr store env p = VString pv ->
+          interp_expr store env qs
+          = VSet (list_to_set (List.map VString (trigrams pv))) ->
           map.get env k = Some kv ->
-          interp_expr store env (thr_count p)
+          interp_expr store env (thr_count_of qs)
           = VInt (Z.of_nat (List.length (count_set pv (VDict td) kv))).
       Proof.
-        intros store env p pv kv td H_ne E_tri H_sets E_p E_k.
-        unfold thr_count, count_set.
-        rewrite interp_EUnop, interp_flatmap_filter_set,
-          interp_EUnop, interp_EUnop, E_p.
+        intros store env qs pv kv td H_ne E_tri H_sets E_qs E_k.
+        unfold thr_count_of, count_set.
+        rewrite interp_EUnop, interp_flatmap_filter_set, E_qs.
         cbn [interp_unop].
         do 4 f_equal.
         apply filter_ext; intros gv.
@@ -1357,6 +1369,7 @@ Section WithIndexUse.
         rewrite map.get_put_diff by congruence.
         rewrite E_k. cbn [interp_binop]. reflexivity.
       Qed.
+
 
       (* ----------------------------------------------------------------
          THE INDEX REPORTS AT LEAST WHAT A WORD SHARES.
@@ -1551,13 +1564,14 @@ Section WithIndexUse.
          k, which is what thr_count reads its key from.
          ---------------------------------------------------------------- *)
       Definition thr_keep (tn tdz : Z) (p : expr) : expr :=
-        flatmap_filter_set (thr_cands p) k
-          (EUnop ONot
-             (EBinop OLess
-                (EBinop OTimes (thr_count p) (EAtom (AInt tdz)))
-                (EBinop OTimes (EAtom (AInt tn))
-                   (EUnop OSetSize (tri_vset p)))))
-          k None None.
+        ELet (tri_vset p) cgram
+          (flatmap_filter_set (thr_cands p) k
+             (EUnop ONot
+                (EBinop OLess
+                   (EBinop OTimes (thr_count_of (EVar cgram)) (EAtom (AInt tdz)))
+                   (EBinop OTimes (EAtom (AInt tn))
+                      (EUnop OSetSize (EVar cgram)))))
+             k None None).
 
       (* The count test at the value level, on the counts the lemmas above
          produce: c * td >= tn * a with c the index's count and a the
@@ -1574,6 +1588,11 @@ Section WithIndexUse.
           Forall (fun e : value * value =>
                     match snd e with VSet _ => True | _ => False end) tdict ->
           (forall kv, interp_expr store (map.put env k kv) p = VString pv) ->
+          (* and under the HOISTED binder, which the emitted term now binds
+             the query's deduplicated trigrams to.  The rule's guard supplies
+             this the same way it supplies the one above, from
+             `negb (free_immut_in cgram p0)`. *)
+          (forall gv, interp_expr store (map.put env cgram gv) p = VString pv) ->
           interp_expr store env p = VString pv ->
           (3 <= String.length pv)%nat ->
           exists cl,
@@ -1584,24 +1603,44 @@ Section WithIndexUse.
                             (exists g, In g (trigrams pv) /\
                                        In v (tri_bucket (VString g) (VDict tdict)))).
       Proof.
-        intros store env tn tdz p pv tdict H_ne E_tri H_sets E_pk E_p H_len.
-        destruct (interp_thr_cands store env p pv tdict E_tri H_sets E_p H_len)
+        intros store env tn tdz p pv tdict H_ne E_tri H_sets E_pk E_pc E_p H_len.
+        (* the hoisted binding, evaluated ONCE in the outer environment *)
+        assert (E_qs : interp_expr store env (tri_vset p) = VSet (qtris pv))
+          by (apply interp_tri_vset; exact E_p).
+        assert (E_tri1 : interp_expr store (map.put env cgram (VSet (qtris pv)))
+                           tri_e = VDict tdict).
+        1:{ rewrite (interp_tbl_access_env_irrel store _ env aux_tag tri_tag).
+            exact E_tri. }
+        destruct (interp_thr_cands store (map.put env cgram (VSet (qtris pv)))
+                    p pv tdict E_tri1 H_sets (E_pc (VSet (qtris pv))) H_len)
           as [ cl [ E_cands H_cl ] ].
         exists cl; split; [ | exact H_cl ].
         unfold thr_keep.
-        rewrite interp_flatmap_filter_set, E_cands.
+        rewrite interp_ELet_step, E_qs, interp_flatmap_filter_set, E_cands.
         do 2 f_equal.
         apply filter_ext; intros kv.
-        assert (H_tri' : interp_expr store (map.put env k kv) tri_e = VDict tdict).
+        assert (H_tri' : interp_expr store
+                           (map.put (map.put env cgram (VSet (qtris pv))) k kv)
+                           tri_e = VDict tdict).
         1:{ rewrite (interp_tbl_access_env_irrel store _ env aux_tag tri_tag).
             exact E_tri. }
+        (* the count and the test's `a` BOTH read the one binding, where the
+           old shape rebuilt the trigram set twice per candidate *)
+        assert (E_cg : interp_expr store
+                         (map.put (map.put env cgram (VSet (qtris pv))) k kv)
+                         (EVar cgram)
+                       = VSet (list_to_set (List.map VString (trigrams pv)))).
+        1:{ rewrite interp_EVar; unfold get_local.
+            rewrite map.get_put_diff by congruence.
+            rewrite map.get_put_same. reflexivity. }
         rewrite interp_EUnop, interp_EBinop, interp_EBinop, interp_EBinop.
-        rewrite (interp_thr_count store (map.put env k kv) p pv kv tdict
-                   H_ne H_tri' H_sets (E_pk kv)
+        rewrite (interp_thr_count_of store
+                   (map.put (map.put env cgram (VSet (qtris pv))) k kv)
+                   (EVar cgram) pv kv tdict H_ne H_tri' H_sets E_cg
                    ltac:(apply map.get_put_same)).
-        rewrite interp_EUnop, (interp_tri_vset store _ p pv (E_pk kv)).
+        rewrite interp_EUnop, E_cg.
         cbn [interp_unop interp_binop apply_int_binop].
-        unfold thr_test. reflexivity.
+        unfold thr_test, qtris. reflexivity.
       Qed.
 
       (* ----------------------------------------------------------------
@@ -2767,22 +2806,21 @@ Section WithIndexUse.
         1: apply TyEVar; rewrite map.get_put_same; reflexivity.
       Qed.
 
-      Lemma thr_count_ty : forall (Gstore Genv : tenv) tl ctl kt p,
+      Lemma thr_count_of_ty : forall (Gstore Genv : tenv) tl ctl kt qs,
           cgram <> k ->
           map.get Gstore tbl = Some (TRecord tl) ->
           access_record tl aux_tag = Success (TRecord ctl) ->
           access_record ctl tri_tag = Success (TDict Unranged TString (TSet kt)) ->
           type_wf kt ->
           map.get Genv k = Some kt ->
-          type_of Gstore Genv p TString ->
-          type_of Gstore Genv (thr_count p) TInt.
+          type_of Gstore Genv qs (TSet TString) ->
+          type_of Gstore Genv (thr_count_of qs) TInt.
       Proof.
-        intros * H_ne E_tbl E_aux E_tri H_ktwf E_k H_p.
-        unfold thr_count.
+        intros * H_ne E_tbl E_aux E_tri H_ktwf E_k H_qs.
+        unfold thr_count_of.
         eapply TyEUnop; [ apply TyOSetSize | ].
         eapply TyEFlatmap_Set with (t1 := TString).
-        1:{ eapply TyEUnop; [ apply TyOSetOfList | ].
-            eapply TyEUnop; [ apply TyOTrigrams | exact H_p ]. }
+        1: exact H_qs.
         eapply TyEIf.
         1:{ eapply TyEBinop; [ apply TyOSetMem | | ].
             1:{ eapply tri_bucket_e_ty;
@@ -2806,24 +2844,28 @@ Section WithIndexUse.
           access_record ctl tri_tag = Success (TDict Unranged TString (TSet kt)) ->
           type_wf kt ->
           type_of Gstore Genv p TString ->
-          type_of Gstore (map.put Genv k kt) p TString ->
+          type_of Gstore (map.put Genv cgram (TSet TString)) p TString ->
           type_of Gstore Genv (thr_keep tn tdz p) (TSet kt).
       Proof.
-        intros * H_ne E_tbl E_aux E_tri H_ktwf H_p H_pk.
+        intros * H_ne E_tbl E_aux E_tri H_ktwf H_p H_pc.
         unfold thr_keep.
+        eapply TyELet; [ apply tri_vset_ty; exact H_p | ].
         eapply TyEFlatmap_Set with (t1 := kt).
         1:{ eapply thr_cands_ty;
-              [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | exact H_p ]. }
+              [ exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf | exact H_pc ]. }
         eapply TyEIf.
         1:{ eapply TyEUnop; [ apply TyONot | ].
             eapply TyEBinop; [ apply TyOLess | | ].
             1:{ eapply TyEBinop; [ apply TyOTimes | | apply TyEAtom, TyAInt ].
-                eapply thr_count_ty;
+                eapply thr_count_of_ty;
                   [ exact H_ne | exact E_tbl | exact E_aux | exact E_tri
-                  | exact H_ktwf | apply map.get_put_same | exact H_pk ]. }
+                  | exact H_ktwf | apply map.get_put_same | ].
+                apply TyEVar; rewrite map.get_put_diff by congruence.
+                apply map.get_put_same. }
             1:{ eapply TyEBinop; [ apply TyOTimes | apply TyEAtom, TyAInt | ].
                 eapply TyEUnop; [ apply TyOSetSize | ].
-                apply tri_vset_ty; exact H_pk. } }
+                apply TyEVar; rewrite map.get_put_diff by congruence.
+                apply map.get_put_same. } }
         1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
             1: apply TyEAtom; apply TyAEmptySet'; exact H_ktwf.
             1: apply TyEVar; rewrite map.get_put_same; reflexivity. }
@@ -2912,6 +2954,10 @@ Section WithIndexUse.
                     && negb (free_immut_in x0 p0)
                     && negb (free_immut_in k p0)
                     && negb (free_immut_in y p0)
+                    (* and of the HOISTED binder: the emitted term binds the
+                       query's deduplicated trigrams to cgram outside the
+                       candidate filter, so the pattern is read under it. *)
+                    && negb (free_immut_in cgram p0)
                     && negb (String.eqb y q0) && negb (String.eqb y a0)
                     && negb (String.eqb x0 q0) && negb (String.eqb x0 a0)
                     && (0 <? tn0)%Z && (0 <? tdz0)%Z)%bool
@@ -3015,7 +3061,8 @@ Section WithIndexUse.
         eapply thr_keep_ty with (tl := tl) (ctl := ctl);
           [ exact H_ck | exact E_tbl | exact E_aux | exact E_tri | exact H_ktwf
           | apply padded_e_ty; exact H_pty
-          | apply padded_e_ty; exact H_pty_k ].
+          | apply padded_e_ty;
+            apply not_free_immut_put_ty2; [ assumption | exact H_pty ] ].
       Qed.
 
       Lemma trigram_lookup_all_guarded_head_preserve_ty :
@@ -3284,6 +3331,11 @@ Section WithIndexUse.
                    = VString (pad pv)).
         1:{ intros kv. apply interp_padded_e.
             erewrite <- not_free_immut_put_sem by eassumption. exact E_pv. }
+        assert (E_pad_cg : forall gv,
+                   interp_expr store (map.put env cgram gv) (padded_e pat0)
+                   = VString (pad pv)).
+        1:{ intros gv. apply interp_padded_e.
+            erewrite <- not_free_immut_put_sem by eassumption. exact E_pv. }
         assert (H_pv' : forall (v0 r0 : value),
                    interp_expr store (map.put (map.put env k v0) y r0) pat0
                    = VString pv).
@@ -3303,7 +3355,7 @@ Section WithIndexUse.
         (* the candidate list: every bucket of every trigram of the PADDED
            pattern, kept only where the count test passes *)
         destruct (interp_thr_keep store env tnum tden (padded_e pat0)
-                    (pad pv) td H_ck H_tri_e H_sets E_pad_k E_ppv
+                    (pad pv) td H_ck H_tri_e H_sets E_pad_k E_pad_cg E_ppv
                     (pad_length pv))
           as [ cl [ E_cands H_cl ] ].
         (* completeness, which is all the recheck leaves to prove *)

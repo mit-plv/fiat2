@@ -275,33 +275,51 @@ Section WithConcreteMaps.
             (EBinop OSetInsert (EAtom (AEmptySet None)) (bucket (EVar "cgram")))))
       (EAtom (AEmptySet None)) "b" (EVar "b").
 
-  (* How many of the query's trigrams name this key.
+  (* How many of the query's trigrams name this key -- READ FROM THE
+     HOISTED BINDING, not re-derived.
 
-     The set coercion sits OUTSIDE the filter, not on its input, and that
-     is a later collection pass's doing rather than the rule's: the rule
-     emits the filter over the deduplicated trigrams, and the pass pulls
-     the coercion out, because filtering a list and then deduplicating
-     gives the same set as deduplicating and then filtering.  Pinning the
-     shape the pipeline actually produces, not the one the rule emits. *)
+     The query's deduplicated trigrams are loop-invariant across
+     candidates, and the rule now binds them once, outside the filter, so
+     both the count's source and the `a` of the test below are EVar
+     "cgram".  The earlier shape rebuilt them inside the filter body and
+     did it TWICE -- once per use -- so a pool of n candidates extracted
+     the pattern's trigrams 2n times and built 2n sets of them.  That cost
+     was measured before this was written, against a hand-built GIN index:
+     see harness/compiled/authors.ml's WagtailShapes and
+     `compiled.exe shapes`.
+
+     A consequence worth recording: the count is now a set-level filter
+     directly.  It used to appear as OSetSize (OSetOfList
+     (flatmap_filter_list ...)), because the rule emitted a filter over a
+     COERCION and a later collection pass pulled the coercion out past it.
+     With the source a variable there is no coercion to pull, so the
+     per-candidate list-then-set construction is gone as well. *)
   Definition shared_with (k : expr) : expr :=
     EUnop OSetSize
-      (EUnop OSetOfList
-         (flatmap_filter_list (EUnop OTrigrams (padded qtext)) "cgram"
-            (EBinop OSetMem (bucket (EVar "cgram")) k) "cgram" None None)).
+      (flatmap_filter_set (EVar "cgram") "cgram"
+         (EBinop OSetMem (bucket (EVar "cgram")) k) "cgram" None None).
 
   (* c * 10 >= 3 * a, where a is the query's trigram count: the k-of-n count
      test, which is gin_trgm_consistent's own test and a STRICT
      over-approximation of the Jaccard one, since it ignores the row's
      trigram count entirely.  That is why the recheck below is not a
-     leftover. *)
+     leftover.
+
+     The ELet is the hoist.  It reuses `cgram`, the trigram binder the rule
+     already owns, rather than introducing a name: the inner filter rebinds
+     it to each element while the source and the `a` are evaluated outside,
+     so the two uses never collide.  What it costs is one more guard
+     conjunct -- the pattern may not mention cgram -- which is the same
+     price the rule already pays for k and y. *)
   Definition candidates : expr :=
-    flatmap_filter_set pool "k"
-      (EUnop ONot
-         (EBinop OLess
-            (EBinop OTimes (shared_with (EVar "k")) (EAtom (AInt 10)))
-            (EBinop OTimes (EAtom (AInt 3))
-               (EUnop OSetSize (tri_set_of (padded qtext))))))
-      "k" None None.
+    ELet (tri_set_of (padded qtext)) "cgram"
+      (flatmap_filter_set pool "k"
+         (EUnop ONot
+            (EBinop OLess
+               (EBinop OTimes (shared_with (EVar "k")) (EAtom (AInt 10)))
+               (EBinop OTimes (EAtom (AInt 3))
+                  (EUnop OSetSize (EVar "cgram")))))
+         "k" None None).
 
   (* ==================== what the choice produces ==================== *)
 
