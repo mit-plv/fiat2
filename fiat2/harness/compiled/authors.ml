@@ -949,6 +949,345 @@ module WagtailFuzzy = struct
       queries;
     !results
 end
+(* ================================================================== *)
+(*  THE FAIR BASELINE: the same authors, GIVEN THE INDEX               *)
+(* ================================================================== *)
+
+(* Every trigram subject so far compares us to an author who SCANS, and in
+   each case the transcription says why the original could not do better --
+   wagtail writes the one predicate form its own four GIN indexes cannot
+   serve, Jenkins never built an index at all.  Those are faithful readings
+   of real code, but they make the comparison answer a weaker question than
+   it looks like it answers: "is a derived index faster than no index", to
+   which the answer was never in doubt.
+
+   The question actually worth asking is whether the compiler arrives back at
+   what an EXPERT WOULD HAVE BUILT.  So the two modules below are the same
+   two reads, served the way the database serves them when the author does
+   write the indexable form:
+
+     - `WagtailGin`  -- the %> OPERATOR, which gin_trgm_ops does index, in
+       place of the WORD_SIMILARITY() function the ORM offered them.
+     - `GitlabGin`   -- GitLab's documented architecture for exactly this
+       predicate: `USING GIN(column gin_trgm_ops)` with `%q%` and the
+       three-character guard (lib/gitlab/sql/pattern.rb,
+       MIN_CHARS_FOR_PARTIAL_MATCHING = 3, and docs/development/sql).  The
+       guard, the fallback and the index are a project-wide guideline there,
+       and they are the same three pieces this subject's read already has.
+
+   PARITY IS THE EXPECTED RESULT ON THESE TWO, and unlike the scanning
+   columns a win here would be suspicious rather than welcome: both sides are
+   running the same algorithm over the same keys, so the ratio measures
+   constants.  Where it is NOT one, the number is the honest price of
+   deriving the structure instead of declaring it, and it is to be reported
+   as that.
+
+   Both reproduce GIN over `gin_trgm_ops` and not something better:
+
+     - the index keys are `generate_trgm`'s -- the text split into WORDS,
+       each word padded LPADDING 2 / RPADDING 1 -- which is the same key set
+       TrigramIndexImpl builds, so this compares two structures and not two
+       key schemes;
+     - the PATTERN side is unpadded, as generate_wildcard_trgm has it;
+     - `gin_trgm_consistent` always sets *recheck, so both rechex the real
+       predicate on the heap row, and the recheck called here is the SAME
+       function the scanning transcription calls;
+     - the LIKE branch requires every query key (an intersection) and the
+       similarity branch tests a COUNT of them, which is the one place the
+       two reads differ.
+
+   What they are still not charged, for the same reason the scanning columns
+   were not: Postgres maintains the other three GIN indexes wagtail creates,
+   and GitLab's `CREATE INDEX CONCURRENTLY` has a cost of its own.  Leaving
+   those out makes the author column cheaper, which is the conservative
+   direction. *)
+
+(* a posting list: one trigram to the set of keys whose text holds it.  A
+   `Licensed` map and `Licensed` sets, because nothing reads the key order --
+   a GIN posting list is a tree over tids, but all either read does with a
+   bucket is iterate it. *)
+module Postings = struct
+  (* The posting lists, AND their lengths.  The lengths are not an
+     optimisation smuggled in: GIN's entry tree stores each key's posting
+     list beside the key and knows its size without walking it, so a merge
+     that starts from the shortest list is what the real index does.  Taking
+     the size from SSet.cardinal instead would charge the author an O(n) walk
+     per key -- which would make this column slower and the comparison
+     flattering, so it is maintained here rather than recomputed. *)
+  type t = { bkt : SSet.t SSel.t; len : int SSel.t }
+
+  let empty () : t =
+    { bkt = SSel.make Count.Licensed; len = SSel.make Count.Licensed }
+
+  let bucket (g : string) (p : t) : SSet.t =
+    match SSel.get g p.bkt with Some s -> s | None -> SSet.make Count.Licensed
+
+  let size (g : string) (p : t) : int =
+    match SSel.get g p.len with Some n -> n | None -> 0
+
+  (* guarded by membership, because one word can yield the same trigram
+     twice ("aaaa") and the length would then drift from the bucket *)
+  let post (g : string) (k : string) (p : t) : t =
+    let b = bucket g p in
+    if SSet.mem k b then p
+    else { bkt = SSel.add g (SSet.add k b) p.bkt;
+           len = SSel.add g (size g p + 1) p.len }
+
+  let unpost (g : string) (k : string) (p : t) : t =
+    let b = bucket g p in
+    if not (SSet.mem k b) then p
+    else
+      let b = SSet.remove k b in
+      if SSet.is_empty b then { bkt = SSel.remove g p.bkt;
+                                len = SSel.remove g p.len }
+      else { bkt = SSel.add g b p.bkt; len = SSel.add g (size g p - 1) p.len }
+
+  (* generate_trgm: words, each padded on its own *)
+  let keys_of (text : string) : string list =
+    List.concat_map
+      (fun w -> Rt.trigrams (WagtailFuzzy.pad w))
+      (Rt.words " " text)
+
+  let add_row (k : string) (text : string) (p : t) : t =
+    List.fold_left (fun p g -> post g k p) p (keys_of text)
+
+  let del_row (k : string) (text : string) (p : t) : t =
+    List.fold_left (fun p g -> unpost g k p) p (keys_of text)
+end
+
+(* ---------- wagtail, had they written %> ---------- *)
+
+module WagtailGin = struct
+  let name = "fuzzy_search"
+
+  let run (results0 : In_fuzzy_search.t_results)
+      (queries : In_fuzzy_search.t_queries) : In_fuzzy_search.t_results =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let post = ref (Postings.empty ()) in
+    let results = ref results0 in
+    List.iter
+      (fun (q : In_fuzzy_search.t_queries_elem) ->
+         match q.f_kind with
+         | 0 ->
+             let e = q.f_new_entry in
+             by_id := SSel.add e.f_id e !by_id;
+             post := Postings.add_row e.f_id e.f_title_text !post
+         | 1 ->
+             (* the row is read to learn which postings name it, which is
+                what the GIN update inside Postgres does as well *)
+             (match SSel.get q.f_qtext !by_id with
+              | None -> ()
+              | Some (e : In_fuzzy_search.t_row) ->
+                  post := Postings.del_row e.f_id e.f_title_text !post);
+             by_id := SSel.remove q.f_qtext !by_id
+         | _ ->
+             let qs = WagtailFuzzy.tri_set q.f_qtext in
+             let a = SSet.cardinal qs in
+             (* the GIN scan: walk the posting list of every query key and
+                tally, per candidate row, how many of them named it.  That
+                tally is the bitmap gin_trgm_consistent is handed. *)
+             let tally =
+               SSet.fold
+                 (fun g acc ->
+                    SSet.fold
+                      (fun k acc ->
+                         let n = match SSel.get k acc with
+                           | Some n -> n | None -> 0 in
+                         SSel.add k (n + 1) acc)
+                      (Postings.bucket g !post) acc)
+                 qs
+                 (SSel.make Count.Licensed) in
+             (* gin_trgm_consistent's similarity branch, then the recheck.
+                The test is the SAME cross-multiplied comparison the derived
+                read makes, and the recheck is the scanning column's own
+                predicate. *)
+             let hits = ref [] in
+             SSel.iter
+               (fun k (c : int) ->
+                  if c * WagtailFuzzy.td >= WagtailFuzzy.tn * a then
+                    match probe (SSel.get k !by_id) with
+                    | None -> ()
+                    | Some (e : In_fuzzy_search.t_row) ->
+                        if WagtailFuzzy.similar_enough qs a e.f_title_text
+                        then hits := e :: !hits)
+               tally;
+             results :=
+               List.fold_left
+                 (fun s e -> In_fuzzy_search.M_results.add e s)
+                 (In_fuzzy_search.M_results.make Count.Unlicensed)
+                 (List.sort In_fuzzy_search.cmp_row !hits))
+      queries;
+    !results
+end
+
+(* ---------- the SAME index, counted the way we emit it ----------
+
+   An attribution control, not a baseline: identical postings, identical
+   pool, identical recheck, and the only difference is HOW the k-of-n count
+   is computed.  `WagtailGin` above tallies once while it merges the posting
+   lists, which is what GIN does.  This module instead recomputes, FOR EVERY
+   CANDIDATE, the shape `Wagtail_FuzzySearch.shared_with` pins:
+
+     SetSize (SetOfList (filter (Trigrams (padded qtext)) (fun g => k in bucket g)))
+
+   -- re-pad the query, re-extract its trigrams, probe the index bucket of
+   each one, build a fresh set from what survives, take its size.
+
+   So `gin work` against `shaped work` is the cost of the one-pass tally, and
+   `shaped work` against `opt work` says how much of the measured gap that
+   shape accounts for and how much is something else. *)
+
+module WagtailGinShaped = struct
+  let name = "fuzzy_search"
+
+  let run (results0 : In_fuzzy_search.t_results)
+      (queries : In_fuzzy_search.t_queries) : In_fuzzy_search.t_results =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let post = ref (Postings.empty ()) in
+    let results = ref results0 in
+    List.iter
+      (fun (q : In_fuzzy_search.t_queries_elem) ->
+         match q.f_kind with
+         | 0 ->
+             let e = q.f_new_entry in
+             by_id := SSel.add e.f_id e !by_id;
+             post := Postings.add_row e.f_id e.f_title_text !post
+         | 1 ->
+             (match SSel.get q.f_qtext !by_id with
+              | None -> ()
+              | Some (e : In_fuzzy_search.t_row) ->
+                  post := Postings.del_row e.f_id e.f_title_text !post);
+             by_id := SSel.remove q.f_qtext !by_id
+         | _ ->
+             let qs = WagtailFuzzy.tri_set q.f_qtext in
+             let a = SSet.cardinal qs in
+             (* the pool: the union of the buckets, built as a SET, which is
+                what the rule's AGUnion fold emits *)
+             let pool =
+               SSet.fold
+                 (fun g acc ->
+                    SSet.fold SSet.add (Postings.bucket g !post) acc)
+                 qs (SSet.make Count.Licensed) in
+             (* and then, per candidate, the count recomputed from scratch *)
+             let shared_with (k : string) : int =
+               let gs =
+                 List.filter
+                   (fun g -> SSet.mem k (Postings.bucket g !post))
+                   (Rt.trigrams (WagtailFuzzy.pad q.f_qtext)) in
+               SSet.cardinal
+                 (List.fold_left (fun s g -> SSet.add g s)
+                    (SSet.make Count.Licensed) gs) in
+             let hits = ref [] in
+             SSet.iter
+               (fun k ->
+                  if shared_with k * WagtailFuzzy.td >= WagtailFuzzy.tn * a then
+                    match probe (SSel.get k !by_id) with
+                    | None -> ()
+                    | Some (e : In_fuzzy_search.t_row) ->
+                        if WagtailFuzzy.similar_enough qs a e.f_title_text
+                        then hits := e :: !hits)
+               pool;
+             results :=
+               List.fold_left
+                 (fun s e -> In_fuzzy_search.M_results.add e s)
+                 (In_fuzzy_search.M_results.make Count.Unlicensed)
+                 (List.sort In_fuzzy_search.cmp_row !hits))
+      queries;
+    !results
+end
+
+(* ---------- the substring read, GitLab's way ---------- *)
+
+module GitlabGin = struct
+  let name = "user_search"
+
+  (* lib/gitlab/sql/pattern.rb: MIN_CHARS_FOR_PARTIAL_MATCHING = 3, and
+     to_pattern emits `%q%` only at or above it.  Below it GitLab writes an
+     exact match, which no trigram index serves -- and below it this
+     subject's own read takes its fallback branch too, so the two columns do
+     the SAME thing there and the kind measures nothing about the index.
+     Reproduced rather than skipped, because `suggestShort` is a kind. *)
+  let min_chars = 3
+
+  let scan (by_id : In_user_search.t_row SSel.t) (tok : string) :
+      In_user_search.t_row list =
+    let hits = ref [] in
+    SSel.iter
+      (fun _ (u : In_user_search.t_row) ->
+         Count.visit 1;
+         if Rt.str_contains u.f_fullName tok then hits := u :: !hits)
+      by_id;
+    !hits
+
+  (* gin_trgm_consistent's LIKE branch: EVERY trigram of the pattern must
+     have named the row, so the buckets are INTERSECTED.  Smallest bucket
+     first is not an optimisation added here -- it is what GIN's own
+     posting-list merge does, and it is the asymmetry `suggestLong` exists
+     to expose. *)
+  let candidates (post : Postings.t) (gs : string list) : SSet.t =
+    let by_size =
+      List.sort (fun a b -> compare (Postings.size a post) (Postings.size b post))
+        gs in
+    match by_size with
+    | [] -> SSet.make Count.Licensed
+    | g0 :: gs ->
+        List.fold_left
+          (fun acc g ->
+             let b = Postings.bucket g post in
+             (* iterate the surviving set, drop what this bucket misses *)
+             SSet.fold (fun k out -> if SSet.mem k b then out else SSet.remove k out)
+               acc acc)
+          (Postings.bucket g0 post) gs
+
+  let run (suggested0 : In_user_search.t_suggested)
+      (queries : In_user_search.t_queries) :
+      In_user_search.t_outputs * In_user_search.t_suggested =
+    let by_id = ref (SSel.make Count.Licensed) in
+    let post = ref (Postings.empty ()) in
+    let outputs = ref [] in
+    let suggested = ref suggested0 in
+    let say (n : int) = outputs := Rt.string_of_int_c n :: !outputs in
+    List.iter
+      (fun (q : In_user_search.t_queries_elem) ->
+         match q.f_kind with
+         | 0 ->
+             let u = q.f_new_user in
+             by_id := SSel.add u.f_id u !by_id;
+             post := Postings.add_row u.f_id u.f_fullName !post
+         | 1 ->
+             (match SSel.get q.f_k !by_id with
+              | None -> ()
+              | Some (u : In_user_search.t_row) ->
+                  post := Postings.del_row u.f_id u.f_fullName !post);
+             by_id := SSel.remove q.f_k !by_id
+         | 2 ->
+             say (match probe (SSel.get q.f_k !by_id) with
+                  | Some _ -> 1 | None -> 0)
+         | _ ->
+             let tok = q.f_k in
+             let hits =
+               if String.length tok < min_chars then scan !by_id tok
+               else
+                 (* the pattern's trigrams, UNPADDED *)
+                 let gs = Rt.trigrams tok in
+                 if gs = [] then scan !by_id tok
+                 else
+                   SSet.fold
+                     (fun k acc ->
+                        match probe (SSel.get k !by_id) with
+                        | None -> acc
+                        | Some (u : In_user_search.t_row) ->
+                            if Rt.str_contains u.f_fullName tok
+                            then u :: acc else acc)
+                     (candidates !post gs) [] in
+             suggested :=
+               List.fold_left
+                 (fun s u -> In_user_search.M_suggested.add u s)
+                 (In_user_search.M_suggested.make Count.Unlicensed)
+                 (List.sort In_user_search.cmp_row hits))
+      queries;
+    (!outputs, !suggested)
+end
 
 (* Shaped exactly like Monotypes.programs' entries, so the same measurement
    code drives all three columns -- including the per-kind scaling, which the
@@ -1008,6 +1347,32 @@ let runners : (string * ((string -> Value.t option) -> unit -> unit)) list =
             (Monotypes.In_dependent_plugins.f_deps_tbl (get "deps_tbl"))
             (Monotypes.In_dependent_plugins.f_plugins_tbl (get "plugins_tbl"))
             (Monotypes.In_dependent_plugins.f_queries (get "queries"))) ) ]
+
+(* The fair-baseline column, keyed by the SAME subject name.  Kept apart from
+   `runners` so that nothing already measured changes: `threeway` goes on
+   comparing against the code the author really wrote, and `indexed` adds the
+   code they could have written. *)
+let indexed_runners :
+    (string * ((string -> Value.t option) -> unit -> unit)) list =
+  [ ( "fuzzy_search",
+      prepared (fun get ->
+          WagtailGin.run
+            (Monotypes.In_fuzzy_search.f_results (get "results"))
+            (Monotypes.In_fuzzy_search.f_queries (get "queries"))) );
+    ( "user_search",
+      prepared (fun get ->
+          GitlabGin.run
+            (Monotypes.In_user_search.f_suggested (get "suggested"))
+            (Monotypes.In_user_search.f_queries (get "queries"))) ) ]
+
+(* the attribution control, same key *)
+let shaped_runners :
+    (string * ((string -> Value.t option) -> unit -> unit)) list =
+  [ ( "fuzzy_search",
+      prepared (fun get ->
+          WagtailGinShaped.run
+            (Monotypes.In_fuzzy_search.f_results (get "results"))
+            (Monotypes.In_fuzzy_search.f_queries (get "queries"))) ) ]
 
 (* ---------- what has been monomorphized so far ----------
 
@@ -1083,8 +1448,17 @@ let check_user_search (w : Gen.workload) : bool =
     UserSearch.run
       (Monotypes.In_user_search.f_suggested (get "suggested"))
       (Monotypes.In_user_search.f_queries (get "queries")) in
+  (* and the fair baseline, which has to answer the same question as both of
+     the other two -- an intersection that drops a row would show up here as
+     a missing suggestion and nowhere else *)
+  let gin_out, gin_sug =
+    GitlabGin.run
+      (Monotypes.In_user_search.f_suggested (get "suggested"))
+      (Monotypes.In_user_search.f_queries (get "queries")) in
   Rt.eq_list Rt.eq_string mine_out theirs_out
   && Monotypes.In_user_search.M_suggested.equal mine_sug theirs_sug
+  && Rt.eq_list Rt.eq_string mine_out gin_out
+  && Monotypes.In_user_search.M_suggested.equal mine_sug gin_sug
 
 let check_fuzzy_search (w : Gen.workload) : bool =
   let get n =
@@ -1096,7 +1470,19 @@ let check_fuzzy_search (w : Gen.workload) : bool =
     WagtailFuzzy.run
       (Monotypes.In_fuzzy_search.f_results (get "results"))
       (Monotypes.In_fuzzy_search.f_queries (get "queries")) in
+  (* the fair baseline answers the same question too: a count test that
+     admitted too few rows would show up here as a missing result *)
+  let gin =
+    WagtailGin.run
+      (Monotypes.In_fuzzy_search.f_results (get "results"))
+      (Monotypes.In_fuzzy_search.f_queries (get "queries")) in
+  let shaped =
+    WagtailGinShaped.run
+      (Monotypes.In_fuzzy_search.f_results (get "results"))
+      (Monotypes.In_fuzzy_search.f_queries (get "queries")) in
   Monotypes.In_fuzzy_search.M_results.equal mine theirs
+  && Monotypes.In_fuzzy_search.M_results.equal mine gin
+  && Monotypes.In_fuzzy_search.M_results.equal mine shaped
 
 let check_area_registry (w : Gen.workload) : bool =
   let get n =

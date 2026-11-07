@@ -232,6 +232,9 @@ let () =
   | _ :: "threeway" :: rest ->
       Timing.threeway (List.filter_map int_of_string_opt rest);
       exit 0
+  | _ :: "indexed" :: rest ->
+      Timing.indexed (List.filter_map int_of_string_opt rest);
+      exit 0
   | _ :: "writes" :: rest ->
       Timing.writes (List.filter_map int_of_string_opt rest);
       exit 0

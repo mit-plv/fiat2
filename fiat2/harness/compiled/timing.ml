@@ -370,6 +370,79 @@ let threeway (sizes : int list) : unit =
              sizes)
     (subjects ())
 
+(* ---------- the fair baseline: the author WITH the index ----------
+
+   `threeway` above compares against the code the author actually wrote, and
+   on the two trigram subjects that code SCANS -- wagtail because the ORM
+   handed them the one predicate form their own GIN indexes cannot serve,
+   Jenkins because no index was ever built.  Both readings are faithful, and
+   both make the comparison answer a weaker question than it looks like it
+   answers.
+
+   This table answers the stronger one.  The author column here is the same
+   read served by `gin_trgm_ops` the way the database serves it when the
+   indexable form IS written: wagtail's %> operator, and GitLab's documented
+   `%q%` over `GIN(column gin_trgm_ops)` with its three-character guard.
+   Same key scheme as the derived index, same recheck function, so the ratio
+   measures what it costs to DERIVE a structure rather than declare one.
+
+   PARITY IS THE EXPECTED RESULT, and here a win would be suspicious rather
+   than welcome -- both columns run the same algorithm over the same keys.
+   Whatever the number is, it is the honest price of derivation and is to be
+   reported as that and not as a speedup.
+
+   `scan s/op` is kept in the table on purpose: the three columns side by
+   side are what make the claim checkable, because the gap between the two
+   author columns is the part of any headline number that came from the
+   author's hands being tied rather than from the compiler. *)
+let indexed (sizes : int list) : unit =
+  let sizes = if sizes = [] then [ 1600 ] else sizes in
+  Printf.printf "%-20s %-13s %5s %9s %9s %9s %7s %9s %9s %9s %7s\n" "subject"
+    "kind" "rows" "opt s/op" "scan s/op" "gin s/op" "opt/gin" "opt work"
+    "shapd work" "gin work" "work x";
+  Printf.printf "%s\n" (String.make 118 '-');
+  List.iter
+    (fun (name, sp) ->
+       match List.assoc_opt name Monotypes.programs, 
+             List.assoc_opt name Authors.indexed_runners with
+       | Some (_, popt), Some pgin ->
+           let pscan = List.assoc_opt name Authors.runners in
+           List.iter
+             (fun rows ->
+                List.iter
+                  (fun (kind, _) ->
+                     let scalable = not (List.mem kind sp.Gen.mutating) in
+                     let m p = per_op p sp ~rows ~kind ~scalable in
+                     let wk p = per_op_work p sp ~rows ~kind in
+                     let o = m popt and g = m pgin in
+                     let sc = match pscan with None -> None | Some p -> m p in
+                     let ow = wk popt and gw = wk pgin in
+                     (* the attribution control: the same index, the count
+                        computed the way the derived term computes it *)
+                     let shw =
+                       match List.assoc_opt name Authors.shaped_runners with
+                       | None -> None
+                       | Some p -> wk p in
+                     let cell = function
+                       | Some x -> Printf.sprintf "%10.3g" x
+                       | None -> " below res" in
+                     let wcell = function
+                       | Some x -> Printf.sprintf "%9.1f" x
+                       | None -> "        -" in
+                     let r x y =
+                       match x, y with
+                       | Some a, Some b when b > 0. -> Printf.sprintf "%8.2f" (a /. b)
+                       | _ -> "       -" in
+                     Printf.printf
+                       "%-20s %-13s %5d %s %s %s %s %s %s %s %s%s\n" name kind
+                       rows (cell o) (cell sc) (cell g) (r o g) (wcell ow)
+                       (wcell shw) (wcell gw) (r ow gw)
+                       (if scalable then "" else "  (write)"))
+                  sp.Gen.kinds)
+             sizes
+       | _ -> ())
+    (subjects ())
+
 (* ---------- the structure choice, taken out of the comparison ----------
 
    This is bench.ml's `matched` table on compiled code, and it closes the one
