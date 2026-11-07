@@ -1392,6 +1392,45 @@ Section WithIndexUse.
         cbn [flat_map List.map app]; f_equal; exact IH.
       Qed.
 
+      (* list_to_set only reorders and deduplicates, so a projection of a
+         filter's survivors is the same SET whether it is taken over the
+         canonicalised list or over the list itself.  The sibling is
+         CollectionTransf.v's list_to_set_filter_list_to_set; this is the
+         form with a projection on the survivors, which is what the
+         PROJECTED count needs. *)
+      Lemma list_to_set_map_filter_list_to_set :
+        forall (f : value -> value) (P : value -> bool) (l : list value),
+          list_to_set (List.map f (List.filter P (list_to_set l)))
+          = list_to_set (List.map f (List.filter P l)).
+      Proof.
+        intros f P l. apply NoDup_SSorted_double_incl_eq;
+          auto using list_to_set_NoDup, list_to_set_SSorted.
+        - unfold incl; intros w H_in.
+          apply list_to_set_incl, in_map_iff in H_in as [ u [ E_u H_u ] ].
+          apply filter_In in H_u as [ H_u H_p ].
+          apply list_to_set_incl in H_u.
+          apply list_to_set_incl_r, in_map_iff; exists u; split;
+            [ exact E_u | apply filter_In; split; assumption ].
+        - unfold incl; intros w H_in.
+          apply list_to_set_incl, in_map_iff in H_in as [ u [ E_u H_u ] ].
+          apply filter_In in H_u as [ H_u H_p ].
+          apply list_to_set_incl_r, in_map_iff; exists u; split;
+            [ exact E_u | apply filter_In; split;
+              [ apply list_to_set_incl_r | ]; assumption ].
+      Qed.
+
+      (* a map that acts as the identity on its elements disappears, and the
+         filter's condition may be replaced pointwise at the same time *)
+      Lemma map_proj_filter_pointwise :
+        forall (f : value -> value) (P Q : value -> bool) (l : list value),
+          (forall x, f x = x) -> (forall x, P x = Q x) ->
+          List.map f (List.filter P l) = List.filter Q l.
+      Proof.
+        intros f P Q l H_f H_PQ; induction l as [ | x l IH ]; [ reflexivity | ].
+        cbn [List.filter]; rewrite H_PQ; destruct (Q x);
+          cbn [List.map]; [ rewrite H_f, IH | rewrite IH ]; reflexivity.
+      Qed.
+
       Definition pair_set (pv : string) (d : value) : list value :=
         list_to_set
           (flat_map (fun gv => [tri_pair d gv])
@@ -1457,6 +1496,60 @@ Section WithIndexUse.
         cbn [interp_atom interp_binop set_insert]. reflexivity.
       Qed.
 
+      (* ---------------------------------------------------------------
+         FILTER-THEN-PROJECT ON SETS, the missing third flatmap form.
+
+         `flatmap_filter_set` yields `EVar y`, so it cannot express a filter
+         whose survivors are projected, and `flatmap_proj_set` carries no
+         condition.  This is the form between them, and it BELONGS BESIDE
+         THEM in FlatmapForms.v -- it is here because `thr_count_of` is its
+         only user so far and moving it up rebuilds the development, the
+         same reason `filter_length_mono'` is duplicated in this file.
+
+         It matches NEITHER sibling's pattern: the yield is not a variable,
+         so `flatmap_filter_set` does not see it, and the EIf means
+         `flatmap_proj_set` does not either.  So no existing recognizer
+         fires on it, which is the property to want here -- see the
+         rule-ordering hazard about a rule that emits another's pattern. *)
+      Notation flatmap_filter_proj_set e x p r t1 t2 :=
+        (EFlatmap LikeSet e x
+           (EIf p (EBinop OSetInsert (EAtom (AEmptySet t1)) r)
+              (EAtom (AEmptySet t2)))).
+
+      Lemma interp_flatmap_filter_proj_set :
+        forall (store env : locals) e x p r t1 t2,
+          interp_expr store env (flatmap_filter_proj_set e x p r t1 t2)
+          = match interp_expr store env e with
+            | VSet l =>
+                VSet (list_to_set
+                        (List.map
+                           (fun v => interp_expr store (map.put env x v) r)
+                           (filter
+                              (fun v =>
+                                 match interp_expr store (map.put env x v) p with
+                                 | VBool b => b
+                                 | _ => false
+                                 end) l)))
+            | _ => VUnit
+            end.
+      Proof.
+        intros. cbn [interp_expr]. case_match; auto.
+        do 2 f_equal.
+        lazymatch goal with H : interp_expr _ _ _ = VSet _ |- _ => clear H end.
+        induction l as [| v l' IH]; auto.
+        cbn [flat_map filter List.map]. rewrite IH.
+        (* the bool is NOT named `b` here: `b` is a section variable of this
+           file, so `destruct b` picks the wrong thing.  A second case_match
+           splits the `if` without naming it. *)
+        case_match; auto.
+        (* the bool is NOT named `b`: `b` is a section variable of this file,
+           so `destruct b` as the sibling lemma writes it picks the wrong
+           thing. *)
+        destruct b0; cbn [interp_binop interp_atom set_insert List.map app];
+          auto.
+      Qed.
+
+
       (* Generalised over the SOURCE of the count, so that the emitted term
          can bind the query's deduplicated trigrams ONCE, outside the
          candidate filter, and the count can read them from a variable.
@@ -1468,9 +1561,9 @@ Section WithIndexUse.
          priced that before this was written. *)
       Definition thr_count_of (qbk : expr) : expr :=
         EUnop OSetSize
-          (flatmap_filter_set qbk cgram
+          (flatmap_filter_proj_set qbk cgram
              (EBinop OSetMem (EAccess (EVar cgram) "1") (EVar k))
-             cgram None None).
+             (EAccess (EVar cgram) "0") None None).
 
 
       Definition count_set (pv : string) (d kv : value) : list value :=
@@ -1480,7 +1573,20 @@ Section WithIndexUse.
 
       (* The buckets are already IN the value, so this no longer needs the
          index or its well-formedness -- the whole dependence on the store
-         moved into interp_tri_pairs, which runs once per query. *)
+         moved into interp_tri_pairs, which runs once per query.
+
+         AND THE FILTER PROJECTS ITS SURVIVORS BACK TO THEIR TRIGRAM, which
+         is what makes the emitted set the specification's set rather than
+         an injective image of it.  The yield of a filter under OSetSize is
+         unobservable -- only the cardinality is read -- so the rule is free
+         to choose it, and yielding the whole pair put a COLLECTION inside a
+         set element, once per candidate.  A backend that hashes sets then
+         has to canonicalise the inner set to use the element as a key:
+         measured at 110-184x on the generated column under `hashes`, while
+         harness/compiled/authors.ml's `bucketed` pricing control -- which
+         builds a set of STRINGS, i.e. this projected form -- showed none of
+         it.  The projection also makes `c` literally what
+         gin_trgm_consistent counts: the number of QUERY KEYS that matched. *)
       Lemma interp_thr_count_of :
         forall (store env : locals) (qbk : expr) (pv : string) (kv : value)
                (td : list (value * value)),
@@ -1492,12 +1598,10 @@ Section WithIndexUse.
       Proof.
         intros store env qbk pv kv td H_ne E_qbk E_k.
         unfold thr_count_of, count_set.
-        rewrite interp_EUnop, interp_flatmap_filter_set, E_qbk.
+        rewrite interp_EUnop, interp_flatmap_filter_proj_set, E_qbk.
         cbn [interp_unop].
         do 2 f_equal.
-        (* the emitted filter runs over the PAIRS and the specification over
-           the trigrams; the two lengths agree because the pairing is
-           injective, so nothing is lost to the deduplication *)
+        (* the condition reads the pair's BUCKET ... *)
         assert (E_pt : forall gv,
                    match interp_expr store (map.put env cgram (tri_pair (VDict td) gv))
                            (EBinop OSetMem (EAccess (EVar cgram) "1") (EVar k)) with
@@ -1509,16 +1613,22 @@ Section WithIndexUse.
             rewrite map.get_put_same.
             rewrite map.get_put_diff by congruence.
             rewrite E_k. cbn [tri_pair record_proj]. reflexivity. }
-        rewrite pair_set_map.
-        rewrite list_to_set_filter_list_to_set, filter_map_comm.
-        rewrite length_list_to_set_NoDup
-          by (apply NoDup_map_inj;
-              [ apply tri_pair_inj
-              | apply NoDup_filter; apply list_to_set_NoDup ]).
-        rewrite length_map.
-        rewrite length_list_to_set_NoDup
-          by (apply NoDup_filter; apply list_to_set_NoDup).
-        f_equal. apply filter_ext; intros gv. apply E_pt.
+        (* ... and the yield projects it back to its TRIGRAM.  So the emitted
+           set IS the specification's set, element for element, and the
+           injective-image LENGTH argument the un-projected form needed --
+           NoDup_map_inj on tri_pair_inj, then length_map -- is gone. *)
+        assert (E_proj : forall gv,
+                   interp_expr store (map.put env cgram (tri_pair (VDict td) gv))
+                     (EAccess (EVar cgram) "0") = gv).
+        1:{ intros gv.
+            rewrite interp_EAccess, interp_EVar. unfold get_local.
+            rewrite map.get_put_same. cbn [tri_pair record_proj]. reflexivity. }
+        f_equal.
+        rewrite pair_set_map, list_to_set_map_filter_list_to_set.
+        rewrite filter_map_comm, map_map.
+        f_equal.
+        apply map_proj_filter_pointwise; intros gv;
+          [ apply E_proj | apply E_pt ].
       Qed.
 
 
@@ -3014,6 +3124,9 @@ Section WithIndexUse.
         intros * H_ne H_ktwf E_k H_qbk.
         unfold thr_count_of.
         eapply TyEUnop; [ apply TyOSetSize | ].
+        (* the SOURCE is still a set of pairs; only the RESULT is now a set
+           of the trigrams themselves, so the empty sets below are at
+           TString and no longer need pair_ty_wf *)
         eapply TyEFlatmap_Set with (t1 := pair_ty kt).
         1: exact H_qbk.
         eapply TyEIf.
@@ -3025,9 +3138,10 @@ Section WithIndexUse.
            fixes the set's type, so the empty set's type_wf goal is
            concrete rather than an open metavariable. *)
         1:{ eapply TyEBinop; [ apply TyOSetInsert | | ].
-            2: apply TyEVar; apply map.get_put_same.
-            1: apply TyEAtom; apply TyAEmptySet'; apply pair_ty_wf; exact H_ktwf. }
-        1: apply TyEAtom; apply TyAEmptySet'; apply pair_ty_wf; exact H_ktwf.
+            2:{ eapply TyEAccess;
+                  [ apply TyEVar; apply map.get_put_same | reflexivity ]. }
+            1: apply TyEAtom; apply TyAEmptySet'; apply WFTString. }
+        1: apply TyEAtom; apply TyAEmptySet'; apply WFTString.
       Qed.
 
       Lemma thr_keep_ty : forall (Gstore Genv : tenv) tl ctl kt tn tdz p,

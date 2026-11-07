@@ -306,11 +306,22 @@ Section WithConcreteMaps.
      (flatmap_filter_list ...)), because the rule emitted a filter over a
      COERCION and a later collection pass pulled the coercion out past it.
      With the source a variable there is no coercion to pull, so the
-     per-candidate list-then-set construction is gone as well. *)
+     per-candidate list-then-set construction is gone as well.
+
+     AND THE SURVIVORS ARE PROJECTED back to their trigram, so what is
+     counted is a set of STRINGS.  Only the cardinality is read, so the rule
+     may choose the yield; yielding the whole pair would put a COLLECTION
+     inside a set element, once per candidate, which a backend that hashes
+     sets has to canonicalise to use as a key -- 110-184x on this very
+     subject under `hashes`.  And the projected count is literally
+     gin_trgm_consistent's `c`: the number of query KEYS that matched. *)
   Definition shared_with (k : expr) : expr :=
     EUnop OSetSize
-      (flatmap_filter_set (EVar "cgram") "cgram"
-         (EBinop OSetMem (EAccess (EVar "cgram") "1") k) "cgram" None None).
+      (EFlatmap LikeSet (EVar "cgram") "cgram"
+         (EIf (EBinop OSetMem (EAccess (EVar "cgram") "1") k)
+            (EBinop OSetInsert (EAtom (AEmptySet None))
+               (EAccess (EVar "cgram") "0"))
+            (EAtom (AEmptySet None)))).
 
   (* c * 10 >= 3 * a, where a is the query's trigram count: the k-of-n count
      test, which is gin_trgm_consistent's own test and a STRICT
