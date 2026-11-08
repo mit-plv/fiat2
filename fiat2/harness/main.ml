@@ -33,6 +33,10 @@
                     selector's own choice is worth, by running each
                     configuration a file pins against the one the selector
                     picks.  Both are sound; only the index list differs
+     enumerate [only=<name>,<name>] [n ...]
+                    the same question asked exhaustively: every
+                    configuration eval/Enumerate.v admits, measured, and
+                    the selector's pick ranked among them
 
    With no argument it runs the report, which is what the README's one-line
    recipe does.
@@ -105,11 +109,22 @@ let () =
       Bench.matched (List.filter_map int_of_string_opt rest)
   | _ :: "alternatives" :: rest ->
       Bench.alternatives_cost (List.filter_map int_of_string_opt rest)
+  | _ :: "enumerate" :: rest ->
+      let only =
+        List.concat_map
+          (fun a ->
+             match String.index_opt a '=' with
+             | Some i when String.sub a 0 i = "only" ->
+                 String.split_on_char ','
+                   (String.sub a (i + 1) (String.length a - i - 1))
+             | _ -> [])
+          rest in
+      Bench.enumerate_cost ~only (List.filter_map int_of_string_opt rest)
   | _ :: other :: _ ->
       Printf.eprintf
         "unknown command %s; expected report, stores, types, check, bench, csv, \
-         timing, baseline, threeway, matched or alternatives, optionally with \
-         typed, trees or hashes\n"
+         timing, baseline, threeway, matched, alternatives or enumerate, \
+         optionally with typed, trees or hashes\n"
         other;
       exit 2
   | [] -> ()

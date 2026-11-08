@@ -1,0 +1,156 @@
+$ main.exe alternatives
+
+What the SELECTOR's choice is worth -- a side note, not the claim.
+Every program here is sound and every one is this pipeline's own output;
+the only difference within a pair is which indexes were listed, and in
+what order.  So this says nothing about whether the rewriting works.  It
+says what a program would have paid had the selector picked the other
+configuration its file also pins -- the rule-ordering hazards of
+Selector.v, with a number instead of a term equality.
+'chosen' is what eval/SelectorTests.v pins as the selector's pick, so the
+alternative winning a row would be a selector bug, not a caveat.
+'a' is the fitted exponent over 6 sizes; counts are at 1600 rows.
+
+=== keycloak/uncounted ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              285631      290429    1.0x   1.01   1.01       95212       96812    1.0x    yes
+    byId                 1268        1268    1.0x   0.01   0.01         408         408    1.0x    yes
+    byAlias              1468        1468    1.0x   0.01   0.01         488         488    1.0x    yes
+    wholeList            1040       33020   31.8x   0.01   0.82         340         300    0.9x    yes
+
+=== named_cache/swapped ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              304128    67518066  222.0x   1.01   1.97      104112    21252448  204.1x    yes
+    get                  1448        1468    1.0x   0.01   0.01         468         488    1.0x    yes
+    sizeInBytes          1000         980    1.0x   0.01   0.01         340         320    0.9x    yes
+    delete               2000     1433540  716.8x   0.02   1.05         760      350900  461.7x    yes
+
+=== user_search/table-rep ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build             1638942     1821407    1.1x   1.07   1.07      900703     1065565    1.2x    yes
+    byId                 1508        1528    1.0x   0.01   0.01         488         508    1.0x    yes
+    suggest              6573        6653    1.0x   0.23   0.23        3213        3293    1.0x    yes
+    suggestMiss        705460      705480    1.0x   0.98   0.98      288460      288480    1.0x    yes
+    suggestShort       763223      763243    1.0x   0.97   0.97      342095      342115    1.0x    yes
+    suggestLong          8870        8958    1.0x   0.04   0.04        5548        5636    1.0x    yes
+    remove              31166     3797739  121.9x   0.10   1.11       19626     3245369  165.4x    yes
+
+=== cluster/unsplit ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              151289      151293    1.0x   1.02   1.02       50675       50675    1.0x    yes
+    forTopic             1260        1260    1.0x   0.00   0.00         320         320    1.0x    yes
+    forNode              1322        1322    1.0x  -0.01  -0.01         274         274    1.0x    yes
+    onePartition         5000     1388320  277.7x  -0.00   1.00        1400      523380  373.8x    yes
+    available            4488     1162568  259.0x  -0.01   0.99         720      392980  545.8x    yes
+
+=== cluster/composite ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              151289      250927    1.7x   1.02   1.01       50675       87903    1.7x    yes
+    forTopic             1260        1280    1.0x   0.00   0.00         320         340    1.1x    yes
+    forNode              1322        1342    1.0x  -0.01  -0.01         274         294    1.1x    yes
+    onePartition         5000        1800    0.4x  -0.00   0.01        1400         580    0.4x    yes
+    available            4488     1162568  259.0x  -0.01   0.99         720      392980  545.8x    yes
+
+=== cluster/composite-split ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              151289      250923    1.7x   1.02   1.01       50675       87903    1.7x    yes
+    forTopic             1260        1280    1.0x   0.00   0.00         320         340    1.1x    yes
+    forNode              1322        1342    1.0x  -0.01  -0.01         274         294    1.1x    yes
+    onePartition         5000        5020    1.0x  -0.00  -0.00        1400        1420    1.0x    yes
+    available            4488        4508    1.0x  -0.01  -0.01         720         740    1.0x    yes
+
+=== entity_registry/split-dicts ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              323334      239297    0.7x   1.01   1.02      151314       94557    0.6x    yes
+    getEntry             1268        1248    1.0x   0.01   0.01         448         428    1.0x    yes
+    forDevice            1586        1566    1.0x  -0.01  -0.01         518         498    1.0x    yes
+    getEntityId          2540      116555   45.9x   0.01   0.89        1180       61335   52.0x    yes
+    register             6386        5434    0.9x   0.01   0.00        3086        2554    0.8x    yes
+
+=== entity_registry/unsplit ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              323334      239301    0.7x   1.01   1.02      151314       94557    0.6x    yes
+    getEntry             1268        1248    1.0x   0.01   0.01         448         428    1.0x    yes
+    forDevice            1586        1566    1.0x  -0.01  -0.01         518         498    1.0x    yes
+    getEntityId          2540     2450692  964.8x   0.01   1.00        1180     1201732 1018.4x    yes
+    register             6386        5794    0.9x   0.01   0.00        3086        2694    0.9x    yes
+
+=== entity_registry/composite ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              323334      402364    1.2x   1.01   1.02      151314      179217    1.2x    yes
+    getEntry             1268        1268    1.0x   0.01   0.01         448         448    1.0x    yes
+    forDevice            1586        1586    1.0x  -0.01  -0.01         518         518    1.0x    yes
+    getEntityId          2540        2540    1.0x   0.01   0.01        1180        1180    1.0x    yes
+    register             6386        7970    1.2x   0.01   0.00        3086        3830    1.2x    yes
+
+=== entity_registry/composite-split ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              323334      402364    1.2x   1.01   1.02      151314      179217    1.2x    yes
+    getEntry             1268        1268    1.0x   0.01   0.01         448         448    1.0x    yes
+    forDevice            1586        1586    1.0x  -0.01  -0.01         518         518    1.0x    yes
+    getEntityId          2540      116575   45.9x   0.01   0.89        1180       61355   52.0x    yes
+    register             6386        7970    1.2x   0.01   0.00        3086        3830    1.2x    yes
+
+=== window_store/unsplit ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build               85495       85499    1.0x   1.06   1.06       40682       40682    1.0x    yes
+    fetchAll             2748        2748    1.0x   0.03   0.03         728         728    1.0x    yes
+    fetch                6309     1676160  265.7x   0.02   1.00        1949      491420  252.1x    yes
+    put                  2334        2674    1.1x   0.03   0.02        1174        1314    1.1x    yes
+    expire               1460      829079  567.9x   0.05   1.03         760      191774  252.3x    yes
+
+=== sat4j/unsplit ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              155516      177918    1.1x   1.00   1.00       45101       51501    1.1x    yes
+    findRecord           1420        1420    1.0x  -0.00  -0.00         320         320    1.0x    yes
+    belongsToPool        1480        1480    1.0x   0.00   0.00         360         360    1.0x    yes
+    size                 1440        1440    1.0x   0.01   0.01         380         380    1.0x    yes
+    getLevel             2093      705713  337.2x   0.00   0.98         473      320373  677.3x    yes
+    getReason            2353      705973  300.0x   0.00   0.98         613      320513  522.9x    yes
+    getUndos             2482      706102  284.5x   0.00   0.98         622      320522  515.3x    yes
+    getPosWatches        2655      706275  266.0x   0.00   0.97         675      320575  474.9x    yes
+    getNegWatches        2637      706257  267.8x   0.00   0.97         657      320557  487.9x    yes
+    remove               1540      860490  558.8x  -0.00   1.04         420      318560  758.5x    yes
+    updateLevel          3460      867820  250.8x   0.00   0.97         980      321100  327.7x    yes
+
+=== dependent_plugins/unpromoted ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build               76802       76806    1.0x   1.00   1.00       25594       25594    1.0x    yes
+    resolveAll        5235240  5864347760 1120.2x   1.01   2.00     1427580  1460988020 1023.4x    yes
+
+=== dependent_plugins/transposed ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build               76802       76806    1.0x   1.00   1.00       25594       25594    1.0x    yes
+    resolveAll        5235240  2057864700  393.1x   1.01   1.99     1427580   570712880  399.8x    yes
+
+=== min_delete/noset ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              133266       67441    0.5x   1.13   1.13      109246       54623    0.5x    yes
+    readMin              1540        1520    1.0x  -0.00   0.00         660         640    1.0x    yes
+    insert               1980        1640    0.8x   0.01   0.00         620         320    0.5x    yes
+    deleteMin           33748     3025710   89.7x   0.75   1.11         758     1402840 1850.7x    yes
+    deleteOther          1501      828040  551.7x   0.02   1.04         481      159270  331.1x    yes
+
+=== min_delete/rangeddict ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              133266       83899    0.6x   1.13   1.06      109246       40682    0.4x    yes
+    readMin              1540     1414020  918.2x  -0.00   1.11         660     1093100 1656.2x    yes
+    insert               1980        2234    1.1x   0.01   0.03         620         914    1.5x    yes
+    deleteMin           33748      827948   24.5x   0.75   1.04         758      159438  210.3x    yes
+    deleteOther          1501      827944  551.6x   0.02   1.04         481      159434  331.5x    yes
+
+=== min_delete/dictmin ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              133266       83899    0.6x   1.13   1.06      109246       40682    0.4x    yes
+    readMin              1540        1540    1.0x  -0.00  -0.00         660         640    1.0x    yes
+    insert               1980        2234    1.1x   0.01   0.03         620         914    1.5x    yes
+    deleteMin           33748      827948   24.5x   0.75   1.04         758      159438  210.3x    yes
+    deleteOther          1501      827944  551.6x   0.02   1.04         481      159434  331.5x    yes
+
+=== min_delete/dictmin-erased ===
+    phase/kind    chosen work    alt work       x   a ch  a alt chosen data    alt data       x  agree
+    build              133266       83895    0.6x   1.13   1.06      109246       40682    0.4x    yes
+    readMin              1540        1540    1.0x  -0.00  -0.00         660         640    1.0x    yes
+    insert               1980        1954    1.0x   0.01   0.03         620         854    1.4x    yes
+    deleteMin           33748         828    0.0x   0.75   0.04         758         348    0.5x    yes
+    deleteOther          1501         824    0.5x   0.02   0.04         481         344    0.7x    yes

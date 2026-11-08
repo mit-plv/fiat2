@@ -1,15 +1,17 @@
-Require Import fiat2.Selector fiat2.OptimizeAnno fiat2.Surface fiat2.Language.
-Require fiat2.Ex_Triangle.
+Require Import fiat2.Selector fiat2.Pipeline fiat2.constraint.Decl fiat2.constraint.Surface fiat2.Language.
+Require fiat2.examples.Ex_Triangle.
 Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Kafka_Cluster fiat2.eval.Kafka_WindowStore
   fiat2.eval.HA_AreaRegistry fiat2.eval.HA_LookinFunctions
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Wagtail_FuzzySearch
-  fiat2.Ex_RangeDelete fiat2.Ex_Inventory fiat2.Ex_Sum fiat2.Ex_SumDelete
-  fiat2.Ex_CompositeKey fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
-  fiat2.Ex_MinDelete fiat2.Ex_Range fiat2.Ex_FlagFilter fiat2.Ex_Orders
-  fiat2.Ex_Employee.
+  fiat2.examples.Ex_RangeDelete fiat2.examples.Ex_Inventory fiat2.examples.Ex_Sum fiat2.examples.Ex_SumDelete
+  fiat2.examples.Ex_CompositeKey fiat2.examples.Ex_CompositeKeyedDelete fiat2.examples.Ex_CompositeKeyDecl
+  fiat2.examples.Ex_MinDelete fiat2.examples.Ex_Range fiat2.examples.Ex_FlagFilter fiat2.examples.Ex_Orders
+  fiat2.examples.Ex_Employee
+  fiat2.eval.Netbox_ChangelogRetention fiat2.eval.Netbox_TemplateExtensions
+  fiat2.eval.Kafka_ConsumerProtocol.
 From Stdlib Require Import String List ZArith.
 Import ListNotations.
 Local Open Scope string.
@@ -43,6 +45,9 @@ Module LF := HA_LookinFunctions.
 Module JU := Jenkins_UserSearch.
 Module WFS := Wagtail_FuzzySearch.
 Module JID := Jenkins_ItemDeletion.
+Module NCR := Netbox_ChangelogRetention.
+Module NTE := Netbox_TemplateExtensions.
+Module KCP := Kafka_ConsumerProtocol.
 
 (* ---------- the constrained subjects: the annotation itself ---------- *)
 
@@ -408,15 +413,82 @@ Lemma ex_employee :
   select_choices [] "employees" Ex_Employee.prog = [DictIdx "dept_id"].
 Proof. vm_compute; reflexivity. Qed.
 
+(* ---------- the three subjects with no harness generator ----------
+
+   These three are measured in Rocq only -- `Gen.specs` has no workload for
+   them, so they are not in the 23 the harness runs and not in the 864
+   configurations eval/Enumerate.v generates.  They had no statement about
+   the selector at all until now, which left the coverage claim with three
+   silent gaps.  Each gets one here, including the one that is a LIMIT: a
+   subject the selector cannot reach should be a compiled statement, not an
+   omission.
+   ---------------------------------------------------------- *)
+
+(* REACHED.  The composite index on the two attributes the retention query
+   names, and the same basic list the file measures with -- so this subject
+   was always the selector's own pick and simply went unpinned. *)
+Lemma netbox_changelog_retention_choices :
+  select_choices [] "changes" NCR.prog
+  = [CompositeDictIdx ["type_id"; "object_id"]].
+Proof. vm_compute; reflexivity. Qed.
+
+Lemma netbox_changelog_retention_basics :
+  select_basics [] "changes" NCR.prog = NCR.basics.
+Proof. vm_compute; reflexivity. Qed.
+
+(* REACHED UP TO ONE REWRITE, and the difference is pinned to be nothing.
+   This subject needs no index, and the selector's basic list is the file's
+   two plus IfNilIntoFlatmap, which the selector always emits.  Equality of
+   the LISTS would therefore be false; equality of the PROGRAMS is what
+   matters and is what holds -- the extra rewrite is the identity here,
+   because nothing in this program is an if-nil under a flatmap.  Stated as
+   programs rather than weakened to a list that happens to match. *)
+Lemma kafka_consumer_protocol_same_program :
+  apply_optimize_anno (AC (select_basics [] "owned" KCP.prog) [] KCP.prog)
+    KCP.init_Gstore KCP.init_Genv
+  = apply_optimize_anno (AC KCP.basics [] KCP.prog) KCP.init_Gstore KCP.init_Genv.
+Proof. vm_compute; reflexivity. Qed.
+
+(* NOT REACHED, and this is the pin that says so.
+
+   This subject's payoff is ListDictIdx -- buckets held as LISTS, because
+   what consumes a bucket observes insertion order.  The selector asks for
+   NOTHING here, and not because a policy declines it: no demand is raised
+   at all.  `node_demands`' `EFlatmap LikeList` arm emits only DHoist and
+   DPromote, so a key-equality filter at LIST level is invisible to the
+   index phase, and there is no demand constructor for an order-observing
+   keyed read.  So the index this subject measures is hand-given, and the
+   enumeration of eval/Enumerate.v cannot reach it either, since its pool is
+   derived from the demands.
+
+   Pinned in both halves -- the empty choice list AND the empty demand list
+   -- because the distinction is the whole content: a policy that declines
+   is a decision to argue with, and a demand never raised is a gap in the
+   demand language. *)
+Lemma netbox_template_extensions_asks_for_nothing :
+  select_choices [] "exts" NTE.prog = [].
+Proof. vm_compute; reflexivity. Qed.
+
+Lemma netbox_template_extensions_raises_no_demand :
+  Selector.demands_of "exts" NTE.prog = [].
+Proof. vm_compute; reflexivity. Qed.
+
 (* ---------- out of scope, and why ----------
 
-   Ex_Triangle, Ex_BFS and Ex_Family are joins: a flatmap over one read
-   nested inside a flatmap over another.  Their basic lists are not the
-   selector's three plus a decision but a sequence of flatmap shuffles --
-   SwapFlatmapIf, SwapIfNil, repeated IfNilIntoFlatmap -- chosen to bring
-   the inner read into the shape an index rule matches, and the sequence
-   differs per example.  Choosing those is a different problem from
-   choosing an index, and the selector does not attempt it.  Every
-   evaluation subject is join-free, so nothing in the performance claim
-   depends on it.
+   Ex_BFS and Ex_Family are joins: a flatmap over one read nested inside a
+   flatmap over another.  Their basic lists are not the selector's three
+   plus a decision but a sequence of flatmap shuffles -- SwapFlatmapIf,
+   SwapIfNil, repeated IfNilIntoFlatmap -- chosen to bring the inner read
+   into the shape an index rule matches, and the sequence differs per
+   example.  Choosing those is a different problem from choosing an index,
+   and the selector does not attempt it.  Every evaluation subject is
+   join-free, so nothing in the performance claim depends on it.
+
+   EX_TRIANGLE IS NO LONGER AMONG THEM, and this paragraph used to say it
+   was.  The DHoist and DPromote demands -- each detected by the rule's own
+   guard -- reach its whole chain from the program alone, which
+   ex_triangle_basics above pins and Ex_Triangle itself counts
+   (selector_matches_the_best_single_index_chain).  So a join is not
+   out of reach in principle; what is out of reach is a chain whose
+   shuffles no demand detects, and BFS and Family are the two left.
    ---------------------------------------------------------- *)

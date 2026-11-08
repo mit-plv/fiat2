@@ -6,9 +6,9 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.HA_EntityRegistry
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
-  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
-  fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
-  fiat2.Ex_KeyedDictTwoDeletes.
+  fiat2.examples.Ex_RangeDelete fiat2.examples.Ex_MinDelete fiat2.examples.Ex_CompositeKey
+  fiat2.examples.Ex_CompositeKeyedDelete fiat2.examples.Ex_CompositeKeyDecl
+  fiat2.examples.Ex_KeyedDictTwoDeletes.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require Import coqutil.Datatypes.Result.
 From Stdlib Require Import List String.
@@ -87,7 +87,7 @@ Local Open Scope string.
    computable and which the optimizer itself builds and discards:
    IndexTransf.aux_ty is
    `TRecord (record_sort [(id_tag, t); (aux_tag, idx_ty t)])`, and
-   OptimizeAnno.apply_all_transfs has the composed index
+   Pipeline.apply_all_transfs has the composed index
    (`mk_compo_idx idxs`) in hand when it rewrites the table.  Supply that
    type at the CLetMut and the existing analyze path does the rest; no
    second typechecker is needed, and none should be written.

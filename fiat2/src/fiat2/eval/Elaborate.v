@@ -1,5 +1,5 @@
-Require Import fiat2.Language fiat2.TypeSystem fiat2.Utils fiat2.Surface
-  fiat2.OptimizeAnno fiat2.IndexInterface fiat2.IndexTransf fiat2.Selector.
+Require Import fiat2.Language fiat2.TypeSystem fiat2.Utils fiat2.constraint.Decl fiat2.constraint.Surface
+  fiat2.Pipeline fiat2.IndexInterface fiat2.index.IndexTransf fiat2.Selector.
 Require fiat2.Value.
 Require fiat2.eval.Annotations.
 Require fiat2.eval.Extract.
@@ -10,9 +10,9 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Wagtail_FuzzySearch
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
-  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
-  fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
-  fiat2.Ex_KeyedDictTwoDeletes.
+  fiat2.examples.Ex_RangeDelete fiat2.examples.Ex_MinDelete fiat2.examples.Ex_CompositeKey
+  fiat2.examples.Ex_CompositeKeyedDelete fiat2.examples.Ex_CompositeKeyDecl
+  fiat2.examples.Ex_KeyedDictTwoDeletes.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require Import coqutil.Datatypes.Result.
 Import ResultMonadNotations.

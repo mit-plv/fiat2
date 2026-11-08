@@ -1,8 +1,8 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.TransfSound fiat2.IndexInterface fiat2.CollectionTransf fiat2.DictIndexImpl
-  fiat2.MinAgg fiat2.TransfUtils fiat2.FlatmapForms fiat2.FlatmapTransf fiat2.IndexTransf
-  fiat2.EraseField
-  fiat2.Utils fiat2.Substitute fiat2.OptimizeAnno fiat2.Ex_MinDelete.
+  fiat2.TransfSound fiat2.IndexInterface fiat2.rules.CollectionTransf fiat2.index.DictIndexImpl
+  fiat2.index.MinAgg fiat2.TransfUtils fiat2.rules.FlatmapForms fiat2.rules.FlatmapTransf fiat2.index.IndexTransf
+  fiat2.rules.EraseField
+  fiat2.Utils fiat2.Substitute fiat2.Pipeline fiat2.examples.Ex_MinDelete.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith.
 

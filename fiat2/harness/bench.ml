@@ -1005,3 +1005,123 @@ let alternatives_cost (sizes : int list) =
                    op_phase alt sp ~rows:r ~ops:ops_per_kind ~only)))
              sp.kinds)
     alternatives
+
+(* ============================================================
+   ENUMERATE AND MEASURE.
+
+   eval/Enumerate.v generates every configuration the demands admit, with
+   each policy decision of the selector turned into an alternative, and
+   proves two things about the generation: the runner reproduces every
+   subject's own optimized term, and the selector's own configuration is
+   among those enumerated.  This measures all of them and reports whether
+   the selector's pick is the cheapest one.
+
+   THE OBJECTIVE is the total counted work of the whole workload -- the
+   build phase and every op kind together -- at the largest size measured.
+   Build is included because a configuration can pay for a faster read with
+   a dearer write, and a ranking that looked only at reads would prefer
+   every index ever offered.
+
+   Ties are reported as ties.  A tie is the common case and is not a
+   failure of the enumeration: two configurations that differ only in a
+   choice no rule can use produce the same program, and the identity of
+   their cost is the evidence for that rather than a coincidence.
+
+   A row where the best configuration is NOT the selector's is the
+   interesting outcome, and it is reported with the margin and the winning
+   configuration, because it is either a hazard the selector's policy gets
+   wrong or a workload the policy cannot see. *)
+
+let enumerate_cost ?(only : string list = []) (sizes : int list) =
+  let sizes = if sizes = [] then [ 100; 200; 400; 800 ] else sizes in
+  let hi = List.nth sizes (List.length sizes - 1) in
+  let groups =
+    if only = [] then esubjects
+    else List.filter (fun e -> List.mem e.es_name only) esubjects in
+  Printf.printf
+    "ENUMERATE AND MEASURE.  Every configuration eval/Enumerate.v admits,\n\
+     generated and optimized HERE by the extracted pipeline, ranked by total\n\
+     counted work (build + all op kinds) at %d rows, %d ops per kind.  'a'\n\
+     is the fitted exponent of that total over %d sizes.\n\
+     THE RANKING DEPENDS ON THAT MIX and the table reports the two phases\n\
+     separately for that reason: at these sizes the build is the larger\n\
+     term, so a configuration that declines an index can win the total\n\
+     while losing every read.  Read 'ops x' before believing a verdict.\n\
+     'same out' counts configurations whose final store equals the\n\
+     selector's, which the soundness theorem says must be all of them --\n\
+     it is that theorem witnessed on each enumerated program.\n\n"
+    hi ops_per_kind (List.length sizes);
+  Printf.printf
+    "%-24s %5s %11s %11s %8s %6s %6s %9s %9s %8s  %s\n"
+    "subject" "cfgs" "sel work" "best work" "best/sel" "a sel" "a best"
+    "build x" "ops x" "same out" "verdict";
+  let optimal = ref 0 and total_subj = ref 0 and beaten = ref [] in
+  List.iter
+    (fun e ->
+       match List.assoc_opt e.es_name Gen.specs with
+       | None -> Printf.eprintf "  (no generator spec for %s)\n" e.es_name
+       | Some sp ->
+           incr total_subj;
+           let cfgs = configs_al e in
+           let measure fc =
+             let term = run_al e fc in
+             let series =
+               List.map
+                 (fun r ->
+                    (r, run_one term (Gen.workload sp ~rows:r ~ops:ops_per_kind ~only:None)))
+                 sizes in
+             let at_hi = List.assoc hi series in
+             let bld = total (build_only term sp ~rows:hi) in
+             (fc, total at_hi, at_hi.out,
+              fit (List.map (fun (r, x) -> (r, total x)) series), bld) in
+           let scored = List.map measure cfgs in
+           let sel =
+             match List.find_opt (fun (fc, _, _, _, _) -> is_sel_al e fc) scored with
+             | Some x -> x
+             | None -> List.hd scored in
+           let sel_fc, sel_work, sel_out, sel_a, sel_bld = sel in
+           let best =
+             List.fold_left
+               (fun acc x ->
+                  let _, w, _, _, _ = x and _, bw, _, _, _ = acc in
+                  if w < bw then x else acc)
+               sel scored in
+           let best_fc, best_work, _, best_a, best_bld = best in
+           let same =
+             List.length (List.filter (fun (_, _, o, _, _) -> o = sel_out) scored) in
+           let won = best_work >= sel_work in
+           if won then incr optimal
+           else
+             beaten :=
+               (e.es_name, sel_work, best_work, describe sel_fc, describe best_fc,
+                sel_bld, best_bld, sel_work - sel_bld, best_work - best_bld)
+               :: !beaten;
+           Printf.printf
+             "%-24s %5d %11d %11d %8s %6s %6s %9s %9s %4d/%-4d %s\n"
+             e.es_name (List.length cfgs) sel_work best_work
+             (factor best_work sel_work) (exp_str sel_a) (exp_str best_a)
+             (factor best_bld sel_bld)
+             (factor (best_work - best_bld) (sel_work - sel_bld))
+             same (List.length scored)
+             (if won then "= selector" else "BEATEN by " ^ describe best_fc))
+    groups;
+  Printf.printf
+    "\nthe selector's configuration is cheapest on %d of %d subjects measured\n"
+    !optimal !total_subj;
+  (match !beaten with
+   | [] ->
+       print_string
+         "no enumerated configuration beats it on any subject, at these sizes\n"
+   | l ->
+       print_string
+         "\nwhere it is beaten -- and WHICH PHASE pays for it, because a loss\n\
+          that is all build is a statement about this workload's write\n\
+          fraction and a loss in the ops phase is a statement about the\n\
+          reads:\n";
+       List.iter
+         (fun (s, sw, bw, sd, bd, sbld, bbld, sops, bops) ->
+            Printf.printf
+              "  %-22s %s cheaper overall (build %s, ops %s)\n\
+               %-24s selector: %s\n%-24s cheapest:  %s\n"
+              s (factor bw sw) (factor bbld sbld) (factor bops sops) "" sd "" bd)
+         (List.rev l))

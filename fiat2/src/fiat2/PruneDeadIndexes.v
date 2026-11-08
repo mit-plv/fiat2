@@ -46,7 +46,7 @@
    members of different tables share the numbering "0", "1", ... .
    ==================================================================== *)
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.TransfSound fiat2.Surface fiat2.OptimizeAnno.
+  fiat2.TransfSound fiat2.constraint.Decl fiat2.constraint.Surface fiat2.Pipeline.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.

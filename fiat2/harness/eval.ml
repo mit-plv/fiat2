@@ -86,10 +86,10 @@ let str_contains (s : string) (p : string) : bool =
 
 (* String.substring n m s: skip n, take m, stop at the end *)
 let substring (s : string) (i : int) (n : int) : string =
-  let start = max 0 i and len = max 0 n in
+  let start = Stdlib.max 0 i and len = Stdlib.max 0 n in
   if start >= String.length s then ""
   else
-    let taken = min len (String.length s - start) in
+    let taken = Stdlib.min len (String.length s - start) in
     Count.chars taken;
     String.sub s start taken
 
@@ -176,7 +176,7 @@ let interp_unop (o : unop) (v : value) : value =
       (match v with
        | VString s ->
            let n = String.length s in
-           let k = max 0 (n - 2) in
+           let k = Stdlib.max 0 (n - 2) in
            Count.chars (3 * k);
            VList (List.init k (fun i -> VString (String.sub s i 3)))
        | _ -> VUnit)
@@ -274,7 +274,7 @@ let interp_binop (o : binop) (a : value) (b : value) : value =
   | ORange ->
       (match a, b with
        | VInt s, VInt e ->
-           let n = max 0 (e - s) in
+           let n = Stdlib.max 0 (e - s) in
            Count.walk n;
            VList (List.init n (fun i -> VInt (s + i)))
        | _ -> VUnit)
@@ -444,7 +444,7 @@ let interp_aci_fold (ag : aci_aggr) (s : Value.sstore) : value =
   let elems = Value.selements_unordered s in
   match ag with
   | AGMin | AGMax ->
-      let pick = match ag with AGMin -> min | _ -> max in
+      let pick = match ag with AGMin -> Stdlib.min | _ -> Stdlib.max in
       List.fold_right
         (fun v acc ->
            match acc with

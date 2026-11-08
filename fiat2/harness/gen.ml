@@ -1065,7 +1065,7 @@ let composite_key_decl =
 (* ---------- keyed_dict_delete / keyed_two_deletes ----------
 
    Ex_KeyedDictTwoDeletes: the same two deletes at a SINGLE-ATTRIBUTE
-   dictionary (OptimizeAnno's KeyedDictIdx), which is what prices the
+   dictionary (Pipeline's KeyedDictIdx), which is what prices the
    arity-one instance of the gap CompositeKeyBucketDelete closed at a
    composite key.
 

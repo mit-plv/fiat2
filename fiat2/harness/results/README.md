@@ -11,9 +11,9 @@ terms extracted by the Rocq build.
 
 The tiers are drawn by **what is in the file**, not by what the table is for.
 
-`./reproduce.sh counted` writes the four files that contain nothing but
+`./reproduce.sh counted` writes the six files that contain nothing but
 counters. The counters are exact and deterministic, so on an unchanged tree
-those four reproduce **byte for byte** — a non-empty `git diff` means the
+those six reproduce **byte for byte** — a non-empty `git diff` means the
 development changed, and that is the intended use. Verified by running the
 tier twice and diffing.
 
@@ -30,7 +30,7 @@ a clock, not quantities to diff.
 
 | tier | files | byte-stable |
 |---|---|---|
-| `counted` | `settings-all-subjects`, `src-vs-opt-fuzzy`, `rule-by-rule`, `residual-breakdown` | yes |
+| `counted` | `settings-all-subjects`, `src-vs-opt-fuzzy`, `rule-by-rule`, `residual-breakdown`, `alternatives`, `enumerate` | yes |
 | `compare` | `author-scan-fuzzy`, `fair-baseline-fuzzy`, `fair-baseline-user-search` | counted columns only |
 | `timed` | `residual-seconds`, `seconds-per-read-kind` | no |
 | `checks` | `check-differential`, `check-compiled` | yes |
@@ -41,6 +41,9 @@ a clock, not quantities to diff.
 |---|---|---|
 | the optimizer is sound on real inputs | `check-differential.txt` | 1230 configurations, 0 mismatches |
 | and so is the compiled backend, at every storage | `check-compiled.txt` | 4 checks x 3 settings, 0 failures |
+| every configuration the demand analysis admits is sound, witnessed per program rather than argued | `enumerate.txt` | 864 configurations x 3 settings = 2592 runs, every one producing the selector's final store |
+| the configuration is not hand-picked: it wins a measurement against all of them | `enumerate.txt` | cheapest on 20 of 23 at `typed`, 21 at `trees`, 22 at `hashes` |
+| what the pick is worth against the alternative each subject file pins by hand | `alternatives.txt` | 18 pairs over 9 subjects; an alternative wins some row in 7, and loses nothing in exactly one |
 | no performance claim hides a pathology at an unmeasured storage | `settings-all-subjects.txt` | 23 subjects x 3 settings; only `min_delete` (12x) and `fuzzy_search` (2.05x) are sensitive |
 | faster than the query AS WRITTEN, with no index | `src-vs-opt-fuzzy.txt` | reads 19.2x / 13.8x / 2.31x at share=2 / 128 / 2048; **and the build phase 8.6-9.5x**, which is the declared primary key compiling to a probe instead of a scan |
 | faster than the author's OWN code | `author-scan-fuzzy.txt` | 14.7x / 7.7x less work, parity (1.06x) at share=2048 |
@@ -70,6 +73,36 @@ membership test (baseline.ml's kprobe convention). The 15442.6 against 4.2 in
 charged nothing for the four GIN indexes Postgres maintains, so that column is
 not a result. In `fair-baseline-fuzzy.txt` the author maintains the same
 postings we do, so it is.
+
+**The ranking in `enumerate.txt` is a function of the op mix, not a property of
+the configurations.** The objective is total counted work at the top size with
+`ops_per_kind = 20`, so it prices a build against twenty operations of each
+kind. `user_search` is where that bites: declining the trigram index builds
+8-11x cheaper and makes every read 2x worse, which the objective scores as a
+1.1-1.2x win at `typed` and `trees` and a tie at `hashes`. Read the build and
+ops columns before believing any verdict line -- the file prints them
+separately for exactly this reason.
+
+**Winning a row is not winning.** In 7 of the 18 pairs an alternative beats
+the selector's pick on some row, and in 6 of those it pays for it elsewhere by
+more than it gained: `cluster/composite` serves `onePartition` 2.8x cheaper and
+`available` **259x** dearer; `entity_registry/split-dicts` builds 1.4x cheaper
+and answers `getEntityId` **45.9x** dearer. Those are the rule-ordering hazards
+with numbers on them, and they are why both instruments still score those
+subjects as the selector's. Read a pair's whole block, never one row.
+
+**`alternatives.txt` and `enumerate.txt` are independent, and they agree on one
+subject.** The first measures 18 counterfactuals written by hand in the subject
+files; the second enumerates every configuration the demand analysis admits.
+`min_delete/dictmin-erased` is the only pair in which the alternative loses
+nothing -- 1.6x cheaper build, 40x cheaper `deleteMin` (33748 against 828), 1.8x
+cheaper `deleteOther`, and `readMin` a tie -- and the enumeration reaches the
+same subject at all three storages (1.5-1.7x), the only loss that survives
+every setting. `MinAgg` there is maintained by every write and never pays a read
+back. By `alternatives.txt`'s own header -- "the alternative winning a row would
+be a selector bug, not a caveat" -- that is a policy mistake rather than a
+measurement artifact, and it is the one thing two different methodologies both
+found.
 
 **All figures are at 6,400 rows** unless the command says otherwise, and
 `share=K` sets how many rows share a title prefix -- the parameter the sign of

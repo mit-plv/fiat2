@@ -7,9 +7,9 @@ Require fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache
   fiat2.eval.Jenkins_UserSearch fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Wagtail_FuzzySearch
   fiat2.eval.Sat4j_LiteralStorage fiat2.eval.Jenkins_DependentPlugins
-  fiat2.Ex_RangeDelete fiat2.Ex_MinDelete fiat2.Ex_CompositeKey
-  fiat2.Ex_CompositeKeyedDelete fiat2.Ex_CompositeKeyDecl
-  fiat2.Ex_KeyedDictTwoDeletes
+  fiat2.examples.Ex_RangeDelete fiat2.examples.Ex_MinDelete fiat2.examples.Ex_CompositeKey
+  fiat2.examples.Ex_CompositeKeyedDelete fiat2.examples.Ex_CompositeKeyDecl
+  fiat2.examples.Ex_KeyedDictTwoDeletes
   fiat2.eval.MinIndexProbe.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt

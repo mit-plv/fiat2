@@ -9,7 +9,7 @@
 #                           first; a number from a tree that does not pass it
 #                           means nothing.            (~6 min)
 #   ./reproduce.sh counted  the tables that are PURELY counted.  The counters are
-#                           exact and deterministic, so these four files are
+#                           exact and deterministic, so these six files are
 #                           regression tests: re-run on an unchanged tree and
 #                           `git diff` is EMPTY.                     (~9 min)
 #   ./reproduce.sh compare  the three-column and fair-baseline tables.  These
@@ -90,6 +90,19 @@ do_counted() {
   # --- WHICH COUNTER the residual lives in, at `typed` and at a common storage
   run residual-breakdown.txt      $C breakdown typed share=2 6400
   add residual-breakdown.txt      $C breakdown trees share=2 6400
+
+  # --- the selector's choice against every configuration a subject file pins
+  run alternatives.txt            $M alternatives
+
+  # --- and against EVERY configuration the demands admit, generated and
+  #     optimized by the extracted pipeline rather than written by hand.
+  #     All three settings, because two of the three subjects where the
+  #     selector is beaten at `typed` are TIES at a common storage -- the
+  #     verdict is a function of the charging, and one file that said only
+  #     `typed` would have reported a selector bug that is not one.
+  run enumerate.txt               $M enumerate typed 200 400 800 1600
+  add enumerate.txt               $M enumerate trees 200 400 800 1600
+  add enumerate.txt               $M enumerate hashes 200 400 800 1600
 }
 
 # The author comparisons.  Each row carries counted AND seconds columns, so

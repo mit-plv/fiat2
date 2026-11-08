@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.Surface fiat2.Constraint fiat2.Substitute fiat2.PrimaryKeyCheck
-  fiat2.TransfUtils fiat2.Utils fiat2.FlatmapForms fiat2.TrigramIndexUse
-  fiat2.OptimizeAnno.
+  fiat2.constraint.Decl fiat2.constraint.Surface fiat2.constraint.Constraint fiat2.Substitute fiat2.constraint.PrimaryKeyCheck
+  fiat2.TransfUtils fiat2.Utils fiat2.rules.FlatmapForms fiat2.index.TrigramIndexUse
+  fiat2.Pipeline.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 From Stdlib Require Import String ZArith List.
 

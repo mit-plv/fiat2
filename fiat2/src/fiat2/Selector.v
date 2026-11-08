@@ -1,11 +1,11 @@
-Require Import fiat2.Language fiat2.Utils fiat2.Surface fiat2.FlatmapForms
-  fiat2.OptimizeAnno fiat2.SplitFilterProj fiat2.PromoteGuard.
+Require Import fiat2.Language fiat2.Utils fiat2.constraint.Decl fiat2.constraint.Surface fiat2.rules.FlatmapForms
+  fiat2.Pipeline fiat2.rules.SplitFilterProj fiat2.rules.PromoteGuard.
 (* Required, NOT imported, for conj_eq_pairs alone.  The composite demand
    below is phrased with the READ RULE'S OWN MATCHER rather than a copy of
    it, which is the strongest form of the discipline range_attr's comment
    asks for: being in sync is not something to keep checking, it is the same
    function. *)
-Require fiat2.CompositeDictIndexImpl.
+Require fiat2.index.CompositeDictIndexImpl.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
@@ -59,6 +59,22 @@ Import ListNotations.
    shuffles that differs per program, and choosing that sequence is a
    different problem from choosing an index.  Every evaluation subject is
    join-free.
+
+   READING ORDER.  The file is in DEPENDENCY order, which is not phase
+   order: both consumers take a list of demands, so the demand language and
+   its matchers have to come first.  Top to bottom the file is phase 2,
+   then phase 1, then phase 3.
+
+   TWO LAYERS, which no longer carry the same weight.  Phases 2a-2c -- the
+   demand language, the fourteen independent shape matchers, the node
+   dispatcher and the traversal -- are the CANDIDATE GENERATOR, and
+   eval/Enumerate.v builds its whole pool out of demands_of and nothing
+   else, so they are load-bearing for the enumerate-and-measure result.
+   basics_of and choices_of are POLICY: one configuration chosen out of
+   that pool.  The enumeration lifts every veto they apply and measures the
+   alternatives, so they are a BASELINE that measurement checks rather than
+   the thing a performance claim rests on.  A reviewer who wants only the
+   method can stop at demands_of.
    ============================================================ *)
 
 (* ---------- what a program can ask an index for ---------- *)
@@ -437,9 +453,6 @@ Definition rep_demands (tbl : string) (o : binop) (e1 e2 : expr) : list demand :
   else [].
 
 (* ---------- phase 2b: one node of the program ---------- *)
-
-Definition is_read (tbl : string) (e : expr) : bool :=
-  match e with ELoc t => String.eqb tbl t | _ => false end.
 
 (* What the node e asks for, if anything.  Each branch names the rule whose
    pattern it reproduces, with the table read written as the program writes

@@ -1,0 +1,155 @@
+$ main.exe enumerate typed 200 400 800 1600
+
+ENUMERATE AND MEASURE.  Every configuration eval/Enumerate.v admits,
+generated and optimized HERE by the extracted pipeline, ranked by total
+counted work (build + all op kinds) at 1600 rows, 20 ops per kind.  'a'
+is the fitted exponent of that total over 4 sizes.
+THE RANKING DEPENDS ON THAT MIX and the table reports the two phases
+separately for that reason: at these sizes the build is the larger
+term, so a configuration that declines an index can win the total
+while losing every read.  Read 'ops x' before believing a verdict.
+'same out' counts configurations whose final store equals the
+selector's, which the soundness theorem says must be all of them --
+it is that theorem witnessed on each enumerated program.
+
+subject                   cfgs    sel work   best work best/sel  a sel a best   build x     ops x same out  verdict
+keycloak                   102      289407      289407     1.0x   0.97   0.97      1.0x      1.0x  102/102  = selector
+named_cache                 32      308576      308576     1.0x   0.96   0.96      1.0x      1.0x   32/32   = selector
+area_registry               82      285852      285852     1.0x   0.86   0.86      1.0x      1.0x   82/82   = selector
+lookin                       4      188048       66484     2.8x   1.14   0.92      2.9x      1.3x    4/4    BEATEN by DictIdx name 
+user_search                 32     3147091     2938714     1.1x   0.99   1.01     11.4x      0.5x   32/32   BEATEN by UniqueDictIdx id 
+cluster                     21      163359      163359     1.0x   0.81   0.81      1.0x      1.0x   21/21   = selector
+entity_registry             16      335114      335114     1.0x   0.91   0.91      1.0x      1.0x   16/16   = selector
+window_store                 4       98378       98378     1.0x   0.73   0.73      1.0x      1.0x    4/4    = selector
+range_delete                 2       90508       90508     1.0x   0.85   0.85      1.0x      1.0x    2/2    = selector
+min_delete                  16      172062      102093     1.7x   0.96   0.94      2.0x      1.1x   16/16   BEATEN by SetAgg price 
+composite_key                2      137917      137917     1.0x   0.79   0.79      1.0x      1.0x    2/2    = selector
+composite_keyed_delete      82      318051      318051     1.0x   0.92   0.92      1.0x      1.0x   82/82   = selector
+composite_two_deletes       82      319231      319231     1.0x   0.91   0.91      1.0x      1.0x   82/82   = selector
+composite_key_decl           2      236019      236019     1.0x   0.95   0.95      1.0x      1.0x    2/2    = selector
+keyed_dict_delete           82      297204      297204     1.0x   0.85   0.85      1.0x      1.0x   82/82   = selector
+keyed_two_deletes          172      296224      296224     1.0x   0.86   0.86      1.0x      1.0x  172/172  = selector
+named_cache_lru             10    41744407    41744407     1.0x   1.75   1.75      1.0x      1.0x   10/10   = selector
+named_cache_lru_ordered     10    42356299    42356299     1.0x   1.72   1.72      1.0x      1.0x   10/10   = selector
+named_cache_lru_noevict     10      212513      212513     1.0x   0.87   0.87      1.0x      1.0x   10/10   = selector
+item_deletion                2      106920      106920     1.0x   0.97   0.97      1.0x      1.0x    2/2    = selector
+sat4j                       64      177076      177076     1.0x   0.71   0.71      1.0x      1.0x   64/64   = selector
+dependent_plugins            3     5312042     5312042     1.0x   1.00   1.00      1.0x      1.0x    3/3    = selector
+fuzzy_search                32     5233813     5233813     1.0x   1.02   1.02      1.0x      1.0x   32/32   = selector
+
+the selector's configuration is cheapest on 20 of 23 subjects measured
+
+where it is beaten -- and WHICH PHASE pays for it, because a loss
+that is all build is a statement about this workload's write
+fraction and a loss in the ops phase is a statement about the
+reads:
+  lookin                   2.8x cheaper overall (build   2.9x, ops   1.3x)
+                         selector: SetAgg name +FilterEmptyToSetMem
+                         cheapest:  DictIdx name 
+  user_search              1.1x cheaper overall (build  11.4x, ops   0.5x)
+                         selector: TrigramIdx fullName/id 
+                         cheapest:  UniqueDictIdx id 
+  min_delete               1.7x cheaper overall (build   2.0x, ops   1.1x)
+                         selector: SetAgg price + MinAgg price 
+                         cheapest:  SetAgg price 
+
+$ main.exe enumerate trees 200 400 800 1600
+
+ENUMERATE AND MEASURE.  Every configuration eval/Enumerate.v admits,
+generated and optimized HERE by the extracted pipeline, ranked by total
+counted work (build + all op kinds) at 1600 rows, 20 ops per kind.  'a'
+is the fitted exponent of that total over 4 sizes.
+THE RANKING DEPENDS ON THAT MIX and the table reports the two phases
+separately for that reason: at these sizes the build is the larger
+term, so a configuration that declines an index can win the total
+while losing every read.  Read 'ops x' before believing a verdict.
+'same out' counts configurations whose final store equals the
+selector's, which the soundness theorem says must be all of them --
+it is that theorem witnessed on each enumerated program.
+
+subject                   cfgs    sel work   best work best/sel  a sel a best   build x     ops x same out  verdict
+keycloak                   102      572355      572355     1.0x   1.08   1.08      1.0x      1.0x  102/102  = selector
+named_cache                 32      591566      591566     1.0x   1.07   1.07      1.0x      1.0x   32/32   = selector
+area_registry               82      511945      511945     1.0x   1.00   1.00      1.0x      1.0x   82/82   = selector
+lookin                       4      188048      188048     1.0x   1.14   1.14      1.0x      1.0x    4/4    = selector
+user_search                 32     3786903     3093678     1.2x   1.02   1.01      7.9x      0.5x   32/32   BEATEN by UniqueDictIdx id 
+cluster                     21      254156      254156     1.0x   0.95   0.95      1.0x      1.0x   21/21   = selector
+entity_registry             16      714463      714463     1.0x   1.05   1.05      1.0x      1.0x   16/16   = selector
+window_store                 4       98378       98378     1.0x   0.73   0.73      1.0x      1.0x    4/4    = selector
+range_delete                 2       90508       90508     1.0x   0.85   0.85      1.0x      1.0x    2/2    = selector
+min_delete                  16      172062      102093     1.7x   0.96   0.94      2.0x      1.1x   16/16   BEATEN by SetAgg price 
+composite_key                2      319891      319891     1.0x   0.98   0.98      1.0x      1.0x    2/2    = selector
+composite_keyed_delete      82      673956      673956     1.0x   1.04   1.04      1.0x      1.0x   82/82   = selector
+composite_two_deletes       82      676108      676108     1.0x   1.03   1.03      1.0x      1.0x   82/82   = selector
+composite_key_decl           2      547216      547216     1.0x   1.09   1.09      1.0x      1.0x    2/2    = selector
+keyed_dict_delete           82      507172      507172     1.0x   0.97   0.97      1.0x      1.0x   82/82   = selector
+keyed_two_deletes          172      511273      511273     1.0x   0.97   0.97      1.0x      1.0x  172/172  = selector
+named_cache_lru             10    41963641    41963641     1.0x   1.74   1.74      1.0x      1.0x   10/10   = selector
+named_cache_lru_ordered     10    42574889    42574889     1.0x   1.72   1.72      1.0x      1.0x   10/10   = selector
+named_cache_lru_noevict     10      431609      431609     1.0x   0.99   0.99      1.0x      1.0x   10/10   = selector
+item_deletion                2      106920      106920     1.0x   0.97   0.97      1.0x      1.0x    2/2    = selector
+sat4j                       64      209898      209898     1.0x   0.75   0.75      1.0x      1.0x   64/64   = selector
+dependent_plugins            3     4962842     4962842     1.0x   1.00   1.00      1.0x      1.0x    3/3    = selector
+fuzzy_search                32     8152719     8152719     1.0x   1.03   1.03      1.0x      1.0x   32/32   = selector
+
+the selector's configuration is cheapest on 21 of 23 subjects measured
+
+where it is beaten -- and WHICH PHASE pays for it, because a loss
+that is all build is a statement about this workload's write
+fraction and a loss in the ops phase is a statement about the
+reads:
+  user_search              1.2x cheaper overall (build   7.9x, ops   0.5x)
+                         selector: TrigramIdx fullName/id 
+                         cheapest:  UniqueDictIdx id 
+  min_delete               1.7x cheaper overall (build   2.0x, ops   1.1x)
+                         selector: SetAgg price + MinAgg price 
+                         cheapest:  SetAgg price 
+
+$ main.exe enumerate hashes 200 400 800 1600
+
+ENUMERATE AND MEASURE.  Every configuration eval/Enumerate.v admits,
+generated and optimized HERE by the extracted pipeline, ranked by total
+counted work (build + all op kinds) at 1600 rows, 20 ops per kind.  'a'
+is the fitted exponent of that total over 4 sizes.
+THE RANKING DEPENDS ON THAT MIX and the table reports the two phases
+separately for that reason: at these sizes the build is the larger
+term, so a configuration that declines an index can win the total
+while losing every read.  Read 'ops x' before believing a verdict.
+'same out' counts configurations whose final store equals the
+selector's, which the soundness theorem says must be all of them --
+it is that theorem witnessed on each enumerated program.
+
+subject                   cfgs    sel work   best work best/sel  a sel a best   build x     ops x same out  verdict
+keycloak                   102      289407      289407     1.0x   0.97   0.97      1.0x      1.0x  102/102  = selector
+named_cache                 32      308576      308576     1.0x   0.96   0.96      1.0x      1.0x   32/32   = selector
+area_registry               82      285852      285852     1.0x   0.86   0.86      1.0x      1.0x   82/82   = selector
+lookin                       4       41508       41508     1.0x   0.92   0.92      1.0x      1.0x    4/4    = selector
+user_search                 32     2719090     2719090     1.0x   0.96   0.96      1.0x      1.0x   32/32   = selector
+cluster                     21      163359      163359     1.0x   0.81   0.81      1.0x      1.0x   21/21   = selector
+entity_registry             16      335114      335114     1.0x   0.91   0.91      1.0x      1.0x   16/16   = selector
+window_store                 4       98378       98378     1.0x   0.73   0.73      1.0x      1.0x    4/4    = selector
+range_delete                 2       90508       90508     1.0x   0.85   0.85      1.0x      1.0x    2/2    = selector
+min_delete                  16       84598       58192     1.5x   0.80   0.82      2.1x      1.1x   16/16   BEATEN by SetAgg price 
+composite_key                2      137917      137917     1.0x   0.79   0.79      1.0x      1.0x    2/2    = selector
+composite_keyed_delete      82      318051      318051     1.0x   0.92   0.92      1.0x      1.0x   82/82   = selector
+composite_two_deletes       82      319231      319231     1.0x   0.91   0.91      1.0x      1.0x   82/82   = selector
+composite_key_decl           2      236019      236019     1.0x   0.95   0.95      1.0x      1.0x    2/2    = selector
+keyed_dict_delete           82      297204      297204     1.0x   0.85   0.85      1.0x      1.0x   82/82   = selector
+keyed_two_deletes          172      296224      296224     1.0x   0.86   0.86      1.0x      1.0x  172/172  = selector
+named_cache_lru             10    41744407    41744407     1.0x   1.75   1.75      1.0x      1.0x   10/10   = selector
+named_cache_lru_ordered     10    42356299    42356299     1.0x   1.72   1.72      1.0x      1.0x   10/10   = selector
+named_cache_lru_noevict     10      212513      212513     1.0x   0.87   0.87      1.0x      1.0x   10/10   = selector
+item_deletion                2       22202       22202     1.0x   0.62   0.62      1.0x      1.0x    2/2    = selector
+sat4j                       64      177076      177076     1.0x   0.71   0.71      1.0x      1.0x   64/64   = selector
+dependent_plugins            3     5312042     5312042     1.0x   1.00   1.00      1.0x      1.0x    3/3    = selector
+fuzzy_search                32     5174390     5174390     1.0x   0.98   0.98      1.0x      1.0x   32/32   = selector
+
+the selector's configuration is cheapest on 22 of 23 subjects measured
+
+where it is beaten -- and WHICH PHASE pays for it, because a loss
+that is all build is a statement about this workload's write
+fraction and a loss in the ops phase is a statement about the
+reads:
+  min_delete               1.5x cheaper overall (build   2.1x, ops   1.1x)
+                         selector: SetAgg price + MinAgg price 
+                         cheapest:  SetAgg price 

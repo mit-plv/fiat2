@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
 Require Import coqutil.Datatypes.Result.
-Require fiat2.eval.Extract fiat2.eval.Elaborate.
+Require fiat2.eval.Extract fiat2.eval.Elaborate fiat2.eval.Enumerate.
 From Stdlib Require Import List String extraction.Extraction
   extraction.ExtrOcamlBasic extraction.ExtrOcamlZInt
   extraction.ExtrOcamlNativeString.
@@ -70,6 +70,19 @@ End Synth.
 Extraction Language OCaml.
 Set Extraction Output Directory "harness/generated".
 
+(* The enumeration crosses as DATA PLUS FUNCTIONS, not as terms: there are
+   864 configurations and each term is the size of a program, so normalising
+   them here would cost the Rocq build minutes and this module megabytes.
+   eval/Enumerate.v says why, and runner_reproduces_every_subject is the pin
+   that run_al -- the function the harness calls -- is the same pipeline
+   whose output each subject file proves sound.
+
+   This is also why the three files the optimizer reached through a module
+   ALIAS no longer use one: monolithic extraction cannot follow an alias,
+   and this is the first thing to ask for a function from inside the
+   optimizer rather than a term it produced. *)
 Extraction "extracted.ml"
   Extract.subjects Extract.alternatives Extract.ref_run
-  annotated_nf tbl_types_nf envs_nf synth.
+  annotated_nf tbl_types_nf envs_nf synth
+  Enumerate.esubjects Enumerate.configs_al Enumerate.run_al
+  Enumerate.describe Enumerate.is_sel_al.
