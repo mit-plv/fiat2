@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.IndexInterface.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Morphisms.
 Import ListNotations.
 
@@ -65,26 +65,18 @@ Section fold_expr.
       | EIf e1 e2 e3 => EIf (fold_expr e1) (fold_expr e2) (fold_expr e3)
       | ELet e1 x e2 => ELet (fold_expr e1) x (fold_expr e2)
       | EFlatmap tag e1 x e2 => EFlatmap tag (fold_expr e1) x (fold_expr e2)
-      | EFlatmap2 e1 e2 x1 x2 e3 => EFlatmap2 (fold_expr e1) (fold_expr e2) x1 x2 (fold_expr e3)
       | EFold e1 e2 x y e3 => EFold (fold_expr e1) (fold_expr e2) x y (fold_expr e3)
       | EACFold ag e => EACFold ag (fold_expr e)
       | EACIFold ag e => EACIFold ag (fold_expr e)
       | ERecord l => ERecord (List.map (fun '(s, e) => (s, fold_expr e)) l)
       | EAccess e x => EAccess (fold_expr e) x
       | EOptMatch e e_none x e_some => EOptMatch (fold_expr e) (fold_expr e_none) x (fold_expr e_some)
-      | EDictFold d e0 k v acc e => EDictFold (fold_expr d) (fold_expr e0) k v acc (fold_expr e)
       | ESort tag l => ESort tag (fold_expr l)
-      | EFilter tag e x p => EFilter tag (fold_expr e) x (fold_expr p)
-      | EJoin tag e1 e2 x y p r => EJoin tag (fold_expr e1) (fold_expr e2) x y (fold_expr p) (fold_expr r)
-      | EProj tag e x r => EProj tag (fold_expr e) x (fold_expr r)
-      | EBagOf e => EBagOf (fold_expr e)
-      | ESetOf e => ESetOf (fold_expr e)
       end.
 End fold_expr.
 
 Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
@@ -104,7 +96,6 @@ Section WithMap.
     all: try apply_fold_expr_preserve_ty_IH; repeat apply tenv_wf_step; auto;
       try now (apply_type_of__type_wf; eauto; try invert_type_wf; auto).
     1: apply type_of__type_wf in H10; auto.
-    3: apply type_of__type_wf in H11; auto.
     1: rewrite fst_map_fst; auto.
     1:{ lazymatch goal with H1: NoDup _, H2: Permutation _ _,
             H3: List.map fst _ = _ |- _ =>
@@ -155,16 +146,6 @@ Section WithMap.
         apply locals_wf_step; auto.
         type_of_list_entry. }
     1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        apply_type_sound e1; apply_type_sound e2.
-        simpl; repeat (apply_fold_expr_preserve_sem_IH; case_match; auto).
-        f_equal. apply In_flat_map2_ext; intros.
-        repeat (invert_type_of_value_clear; apply_Forall_In).
-        apply_fold_expr_preserve_sem_IH;
-          try apply tenv_wf_step; try apply locals_wf_step;
-          eauto with fiat2_hints. }
-    1:{ erewrite H_sem; eauto.
         2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
         repeat apply tenv_wf_step; eauto with fiat2_hints.
         simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
@@ -203,88 +184,6 @@ Section WithMap.
         all: apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
         apply locals_wf_step; eauto. eapply type_sound in H10; eauto. inversion H10; subst.
         all: trans_of_eq; congruence. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl; apply_fold_expr_preserve_sem_IH. case_match; auto.
-        apply_fold_expr_preserve_sem_IH.
-        eapply In_fold_right_ext with (P:=fun a => type_of_value a t); intros.
-        1: eapply type_sound; eauto.
-        apply_type_sound e1; rewrite_l_to_r; invert_type_of_value.
-        apply_Forall_In; intuition;
-          [ apply_fold_expr_preserve_sem_IH | eapply type_sound; resolve_locals_wf; eauto ];
-          repeat apply tenv_wf_step; repeat apply locals_wf_step;
-          eauto with fiat2_hints.
-        apply fold_expr_preserve_ty; repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        f_equal. apply In_filter_ext; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        apply locals_wf_step; auto. type_of_list_entry. }
-    1,2: erewrite H_sem; eauto;
-        [ | econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints ];
-        simpl; apply_fold_expr_preserve_sem_IH; case_match; auto;
-        f_equal; apply In_filter_ext; intros;
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints;
-        apply locals_wf_step; auto; apply_type_sound e1; rewrite_l_to_r;
-        invert_type_of_value; apply_Forall_In.
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
-        f_equal. apply In_flat_map_ext; intros. erewrite In_filter_ext.
-        1: apply map_ext_in; intros.
-        2: simpl; intros.
-        all: apply_fold_expr_preserve_sem_IH;
-          [ repeat apply tenv_wf_step | repeat apply locals_wf_step ]; eauto with fiat2_hints.
-        all: try type_of_list_entry.
-        all: lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition end.
-        type_of_list_entry. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
-        do 2 f_equal. apply In_flat_map_ext; intros. erewrite In_filter_ext.
-        1: apply map_ext_in; intros.
-        2: simpl; intros.
-        all: apply_fold_expr_preserve_sem_IH;
-          [ repeat apply tenv_wf_step | repeat apply locals_wf_step ]; eauto with fiat2_hints.
-        all: try lazymatch goal with
-                 H: In _ (filter _ _) |- _ =>
-                   apply filter_In in H; intuition end;
-        type_of_bag_entry. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty;
-        repeat apply tenv_wf_step; eauto with fiat2_hints.
-        simpl. repeat apply_fold_expr_preserve_sem_IH. repeat case_match; auto.
-        do 2 f_equal. apply In_flat_map_ext; intros. erewrite In_filter_ext.
-        1: apply map_ext_in; intros.
-        2: simpl; intros.
-        all: apply_fold_expr_preserve_sem_IH;
-          [ repeat apply tenv_wf_step | repeat apply locals_wf_step ]; eauto with fiat2_hints.
-        all: try lazymatch goal with
-                 H: In _ (filter _ _) |- _ =>
-                   apply filter_In in H; intuition end;
-        type_of_list_entry. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        f_equal. apply map_ext_in; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        repeat apply locals_wf_step; auto; type_of_list_entry. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        do 2 f_equal. apply map_ext_in; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        repeat apply locals_wf_step; auto. type_of_bag_entry. }
-    1:{ erewrite H_sem; eauto.
-        2: econstructor; eauto; apply fold_expr_preserve_ty; eauto with fiat2_hints.
-        simpl. apply_fold_expr_preserve_sem_IH. case_match; auto.
-        do 2 f_equal. apply map_ext_in; intros.
-        apply_fold_expr_preserve_sem_IH; eauto with fiat2_hints.
-        repeat apply locals_wf_step; auto. type_of_list_entry. }
   Qed.
 
   Lemma fold_expr_sound : forall f,
@@ -318,8 +217,7 @@ Section fold_command.
 End fold_command.
 
 Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
@@ -383,6 +281,93 @@ Section WithMap.
         all: eauto with fiat2_hints. }
   Qed.
 
+  Lemma fold_expr_sem_eq : forall f (Gstore Genv : tenv) e t (store env : locals),
+      type_of Gstore Genv e t ->
+      (forall (Gstore : tenv), preserve_ty Gstore f) ->
+      (forall (Gstore : tenv) (store : locals), preserve_sem Gstore store f) ->
+      tenv_wf Gstore -> tenv_wf Genv ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      interp_expr store env (fold_expr f e) = interp_expr store env e.
+  Proof.
+    intros * H_t H_ty H_sem ? ? ? ?.
+    eapply (fold_expr_preserve_sem Gstore store f (H_ty Gstore) (H_sem Gstore store));
+      eassumption.
+  Qed.
+
+  (* An expression-only rewrite preserves any parameterized_wf.
+
+     This is what carries an invariant the program itself established -- a
+     declared constraint, say -- across a whole phase of expression rewrites,
+     which are otherwise only known to preserve typing and semantics. *)
+  Lemma fold_command_id_preserve_parameterized_wf : forall f,
+      (forall (Gstore : tenv), preserve_ty Gstore f) ->
+      (forall (Gstore : tenv) (store : locals), preserve_sem Gstore store f) ->
+      forall c (P : string -> value -> Prop) (A : locals -> locals -> Prop)
+             (Gstore Genv : tenv),
+        tenv_wf Gstore -> tenv_wf Genv ->
+        parameterized_wf Gstore Genv P A c ->
+        parameterized_wf Gstore Genv P A (fold_command id f c).
+  Proof.
+    intros f H_ty H_sem.
+    induction c; simpl; intros * H_Gs H_Ge H_wf; inversion H_wf; subst.
+    (* CSkip *)
+    1: constructor.
+    (* CSeq *)
+    1:{ econstructor; [ eapply IHc1 | eapply IHc2 ]; eauto. }
+    (* CLet *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        eapply IHc; eauto with fiat2_hints. }
+    (* CLetMut: the body is rewritten even where it shadows, and the predicate
+       it is checked against is the relaxed rm_from_pred P x *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        eapply IHc; eauto with fiat2_hints. }
+    (* CAssign: the written value is unchanged, so the original obligation
+       discharges the new one *)
+    1:{ econstructor.
+        2: eassumption.
+        2: apply fold_expr_preserve_ty; eauto.
+        intros * H_A H_inv H_lws H_lwe.
+        erewrite fold_expr_sem_eq; [ | eauto .. ].
+        lazymatch goal with
+          H : forall _ _, _ -> _ -> _ -> _ -> P _ _ |- _ => apply H; assumption
+        end. }
+    (* CIf: the rewrite leaves the test's value alone, so each branch keeps the
+       assumption the original derivation gave it *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        1:{ eapply parameterized_wf_weaken; [ | eapply IHc1; eauto ].
+            intros * H_lws H_lwe H_inv [ H_A H_g ]; split; [ exact H_A | ].
+            erewrite <- fold_expr_sem_eq; [ exact H_g | eauto .. ]. }
+        1:{ eapply parameterized_wf_weaken; [ | eapply IHc2; eauto ].
+            intros * H_lws H_lwe H_inv [ H_A H_g ]; split; [ exact H_A | ].
+            erewrite <- fold_expr_sem_eq; [ exact H_g | eauto .. ]. } }
+    (* CForeach *)
+    1:{ econstructor.
+        1: apply fold_expr_preserve_ty; eauto.
+        eapply IHc; eauto with fiat2_hints. }
+  Qed.
+
+  (* The form the basic transformation phase is built from: the phase as a whole
+     keeps any parameterized_wf. *)
+  Corollary expr_transf_sound__preserve_parameterized_wf : forall f,
+      expr_transf_sound (locals:=locals) f ->
+      forall c (P : string -> value -> Prop) (A : locals -> locals -> Prop)
+             (Gstore Genv : tenv),
+        tenv_wf Gstore -> tenv_wf Genv ->
+        parameterized_wf Gstore Genv P A c ->
+        parameterized_wf Gstore Genv P A (fold_command id f c).
+  Proof.
+    unfold expr_transf_sound; intros f H_f.
+    apply fold_command_id_preserve_parameterized_wf;
+      unfold preserve_ty, preserve_sem; intros;
+      lazymatch goal with
+        H : context[_ -> _ /\ _], H' : type_of _ _ _ _ |- _ =>
+          apply H in H'; auto
+      end; intuition auto.
+  Qed.
+
   Lemma fold_command_id_sound : forall f,
       expr_transf_sound (locals:=locals) f ->
       transf_sound (locals:=locals) (fun _ _ => fold_command id f).
@@ -428,13 +413,12 @@ Section WithGlobals.
   End fold_command_with_globals.
 
   Section WithMap.
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (width:=width)).
+    Notation value := (value).
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Ltac invert_parameterized_wf :=
-      lazymatch goal with H: parameterized_wf _ _ _ _ |- _ => inversion H; subst end.
+      lazymatch goal with H: parameterized_wf _ _ _ _ _ |- _ => inversion H; subst end.
 
     Ltac apply_fold_command_with_globals_preserve_ty_IH :=
       lazymatch goal with
@@ -473,7 +457,7 @@ Section WithGlobals.
     Ltac apply_fold_command_with_globals_preserve_sem_IH :=
       lazymatch goal with
       | IH: context[interp_command _ _ (fold_command_with_globals _ ?c)],
-          H: parameterized_wf ?Gstore' ?Genv' _ ?c |-
+          H: parameterized_wf ?Gstore' ?Genv' _ _ ?c |-
           context[interp_command _ _ (fold_command_with_globals _ ?c)] =>
           erewrite <- IH with (Gstore:=Gstore') (Genv:=Genv'); eauto
       end.
@@ -488,11 +472,12 @@ Section WithGlobals.
             tenv_wf_with_globals Gstore ->
             holds_for_all_entries (value_wf_with_globals globals) store ->
             preserve_sem Gstore store f) ->
-        forall (Gstore Genv : tenv) (store env : locals),
+        forall A (Gstore Genv : tenv) (store env : locals),
           tenv_wf Gstore -> tenv_wf Genv -> tenv_wf_with_globals Gstore ->
-          parameterized_wf Gstore Genv (value_wf_with_globals globals) c ->
+          parameterized_wf Gstore Genv (value_wf_with_globals globals) A c ->
           locals_wf Gstore store -> locals_wf Genv env ->
           holds_for_all_entries (value_wf_with_globals globals) store ->
+          A store env ->
           interp_command store env c = interp_command store env (fold_command_with_globals f c).
     Proof.
       induction c; simpl; intros; auto; invert_parameterized_wf.
@@ -506,13 +491,21 @@ Section WithGlobals.
           1: apply not_In__tenv_wf_with_globals; auto.
           1:{ eapply type_sound; resolve_locals_wf; auto.
               apply fold_expr_preserve_ty; eauto with fiat2_hints. }
+          all: try exact I.
           unfold holds_for_all_entries.
           1: apply not_In__value_wf_with_globals; auto. }
       all: try erewrite <- fold_expr_preserve_sem; eauto;
         repeat case_match; auto;
         repeat apply_fold_command_with_globals_preserve_sem_IH; eauto with fiat2_hints.
-      1:{ eapply command_type_sound; eauto.
-          eapply parameterized_wf__well_typed; eauto. }
+      (* subcommands other than CSeq's first and CIf's branches carry no
+         assumption, and CIf's branches get theirs from the test *)
+      all: cbv beta.
+      all: try exact I.
+      (* CIf's branches get their assumption from the test, whose value the
+         rewrite leaves alone *)
+      all: try (split; [ assumption
+                       | erewrite <- fold_expr_preserve_sem; eauto ]).
+      1:{ eapply command_type_sound; eauto using parameterized_wf__well_typed. }
       1:{ eapply parameterized_wf__preserve_P with (Gstore:=Gstore); eauto. }
       1:{ resolve_locals_wf. erewrite fold_expr_preserve_sem; eauto with fiat2_hints. }
       1:{ apply_type_sound e. rewrite fold_expr_preserve_sem in E; eauto. rewrite E in *.
@@ -521,15 +514,27 @@ Section WithGlobals.
             H1: type_of_value _ _, H2: interp_expr _ _ _ = VList _ |- _ =>
               clear H1 H2
           end.
+          (* the body carries no assumption, so neither does the induction over
+             the rows: each row runs in the store the previous one left *)
+          lazymatch goal with H: A _ _ |- _ => clear H end.
           generalize dependent store. induction l; simpl; auto; intros.
-          invert_Forall. eapply IHc in H12 as IHc'; eauto with fiat2_hints.
+          invert_Forall.
+          assert (IHc' : interp_command store (map.put env x a) c
+                         = interp_command store (map.put env x a)
+                             (fold_command_with_globals f c)).
+          { eapply IHc with (A := fun _ _ => True) (Gstore := Gstore)
+                            (Genv := map.put Genv x t); eauto with fiat2_hints. }
           rewrite <- IHc'. apply IHl; auto.
-          2: eapply parameterized_wf__preserve_P with (Gstore:=Gstore) (Genv:=map.put Genv x t);
-          eauto with fiat2_hints.
-          apply command_type_sound with (Genv:=map.put Genv x t); auto.
-          2:{ apply tenv_wf_step; auto. apply_type_of__type_wf; auto. invert_type_wf; auto. }
-          2: eapply locals_wf_step; eauto.
-          eapply parameterized_wf__well_typed; eauto. }
+          1:{ apply command_type_sound with (Genv:=map.put Genv x t); auto.
+              2:{ apply tenv_wf_step; auto. apply_type_of__type_wf; auto.
+                  invert_type_wf; auto. }
+              2: eapply locals_wf_step; eauto.
+              eapply parameterized_wf__well_typed; eauto. }
+          1:{ eapply parameterized_wf__preserve_P
+                with (Gstore:=Gstore) (Genv:=map.put Genv x t)
+                     (A := fun _ _ => True);
+              eauto with fiat2_hints.
+              all: exact I. } }
     Qed.
 
     Ltac apply_preserve_parameterized_wf_IH :=
@@ -545,26 +550,32 @@ Section WithGlobals.
             tenv_wf_with_globals Gstore ->
             holds_for_all_entries (value_wf_with_globals globals) store ->
             preserve_sem Gstore store f) ->
-        forall c (Gstore Genv : tenv),
+        forall c A (Gstore Genv : tenv),
           tenv_wf Gstore -> tenv_wf Genv ->
           tenv_wf_with_globals Gstore ->
-          parameterized_wf Gstore Genv (value_wf_with_globals globals) c ->
-          parameterized_wf Gstore Genv (value_wf_with_globals globals) (fold_command_with_globals f c).
+          parameterized_wf Gstore Genv (value_wf_with_globals globals) A c ->
+          parameterized_wf Gstore Genv (value_wf_with_globals globals) A (fold_command_with_globals f c).
     Proof.
       induction c; simpl; auto; intros; invert_parameterized_wf.
       all: try (econstructor;
                 try (apply fold_expr_preserve_ty; eauto);
                 apply_preserve_parameterized_wf_IH; eauto with fiat2_hints).
+      (* CIf: the rewrite leaves the test's value alone, so each branch keeps
+         the assumption the original derivation gave it *)
+      3,4: eapply parameterized_wf_weaken; [ | eassumption ];
+           intros * ? ? ? [? ?]; split; auto;
+           erewrite <- fold_expr_preserve_sem with (Gstore := Gstore); eauto.
       1:{ econstructor.
           1: apply fold_expr_preserve_ty; eauto.
           case_match; auto. rewrite inb_false_iff in *.
           eapply parameterized_wf_Proper.
           3: apply rm_not_in_globals.
-          all: eauto. apply_preserve_parameterized_wf_IH; eauto with fiat2_hints.
+          all: eauto. 1: reflexivity.
+          apply_preserve_parameterized_wf_IH; eauto with fiat2_hints.
           1: apply tenv_wf_with_globals_step; auto.
           eapply parameterized_wf_Proper.
           3: apply iff2_sym, rm_not_in_globals.
-          all: eauto. }
+          all: eauto. all: reflexivity. }
       1:{ econstructor; eauto.
           2: apply fold_expr_preserve_ty; eauto.
           intros. erewrite fold_expr_preserve_sem; eauto. }
@@ -574,8 +585,7 @@ End WithGlobals.
 
 
 Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
@@ -595,6 +605,8 @@ Section WithMap.
       resolve_locals_wf; eauto; auto.
       2: eapply fold_command_with_globals_preserve_index_wf; eauto; auto.
       1: eapply fold_command_with_globals_preserve_ty; eauto; try reflexivity.
+      (* a whole program is checked under no assumption *)
+      all: try exact I.
       all: try (unfold preserve_ty; intros; eapply H; eauto).
       all: unfold preserve_sem; intros;
         lazymatch goal with
@@ -631,8 +643,7 @@ End fold_command_with_global.
 #[export] Hint Resolve fold_command_id_sound : transf_hints.
 
 Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
@@ -666,30 +677,6 @@ Section WithMap.
     rewrite H4, H5; auto.
   Qed.
 
-  Instance EFilter_Proper {t : type} (x0 : string) (Gstore Genv : tenv) :
-    tenv_wf Gstore -> tenv_wf Genv ->
-    Proper (sem_eq Gstore Genv (TList t) ==> singleton_rel x0 ==> sem_eq Gstore (map.put Genv x0 t) TBool ==> sem_eq Gstore Genv (TList t)) (EFilter LikeList).
-  Proof.
-    intros * ? ? e1 e1' H1 y y' Hy e2 e2' H2.
-    unfold sem_eq in *; intros.
-    unfold singleton_rel in *. intuition auto; subst.
-    1,2: constructor; auto.
-    repeat invert_type_of.
-    simpl. lazymatch goal with
-      H: context[interp_expr _ _ ?e = _] |-
-        context[match interp_expr _ _ ?e with _ => _ end] =>
-        rewrite H end; auto.
-    case_match; auto. f_equal.
-    apply filter_ext_in; intros.
-    lazymatch goal with
-      H: context[interp_expr _ _ ?e = _] |-
-        context[match interp_expr _ _ ?e with _ => _ end] =>
-        rewrite H end; eauto with fiat2_hints.
-    apply_type_sound e1'; auto. rewrite_l_to_r.
-    apply locals_wf_step; auto. do_injection2; subst.
-    invert_type_of_value. apply_Forall_In.
-  Qed.
-
   Lemma sem_eq_eq : forall Gstore Genv t e1 e2,
       sem_eq Gstore Genv t e1 e2 ->
       forall store env : locals,
@@ -706,8 +693,7 @@ Section WithMap.
 End WithMap.
 
 Section WithMap.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (width:=width)).
+  Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 

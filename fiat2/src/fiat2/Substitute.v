@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation.
 
 Fixpoint repeat_string (s : string) (n : nat) : string :=
@@ -59,11 +59,6 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
       let x' := fresh_var x free_vars in
       EFlatmap tag (substitute sub free_vars e1) x'
         (substitute ((x, EVar x') :: sub) (x' :: free_vars) e2)
-  | EFlatmap2 e1 e2 x1 x2 e3 =>
-      let x1' := fresh_var x1 free_vars in
-      let x2' := fresh_var x2 (x1' :: free_vars) in
-      EFlatmap2 (substitute sub free_vars e1) (substitute sub free_vars e2)
-                x1' x2' (substitute ((x2, EVar x2') :: (x1, EVar x1') :: sub) (x2' :: x1' :: free_vars) e3)
   | EFold e1 e2 v acc e3 =>
       let v' := fresh_var v free_vars in
       let acc' := fresh_var acc (v' :: free_vars) in
@@ -77,29 +72,7 @@ Fixpoint substitute (sub : list (string * expr)) (free_vars : list string) (e0 :
       let x' := fresh_var x free_vars in
       EOptMatch (substitute sub free_vars e1) (substitute sub free_vars e2) x'
         (substitute ((x, EVar x') :: sub) (x' :: free_vars) e3)
-  | EDictFold d e0 k v acc e =>
-      let k' := fresh_var k free_vars in
-      let v' := fresh_var v (k' :: free_vars) in
-      let acc' := fresh_var acc (v' :: k' :: free_vars) in
-      EDictFold (substitute sub free_vars d) (substitute sub free_vars e0) k' v' acc'
-        (substitute ((acc, EVar acc') :: (v, EVar v') :: (k, EVar k') :: sub) (acc' :: v' :: k' :: free_vars) e)
   | ESort tag e => ESort tag (substitute sub free_vars e)
-  | EFilter tag l x p =>
-      let x' := fresh_var x free_vars in
-      EFilter tag (substitute sub free_vars l) x'
-        (substitute ((x, EVar x') :: sub) (x' :: free_vars) p)
-  | EJoin tag l1 l2 x y p r =>
-      let x' := fresh_var x free_vars in
-      let y' := fresh_var y (x' :: free_vars) in
-      EJoin tag (substitute sub free_vars l1) (substitute sub free_vars l2) x' y'
-        (substitute ((y, EVar y') :: (x, EVar x') :: sub) (y' :: x' :: free_vars) p)
-        (substitute ((y, EVar y') :: (x, EVar x') :: sub) (y' :: x' :: free_vars) r)
-  | EProj tag l x r =>
-      let x' := fresh_var x free_vars in
-      EProj tag (substitute sub free_vars l) x'
-        (substitute ((x, EVar x') :: sub) (x' :: free_vars) r)
-  | EBagOf l => EBagOf (substitute sub free_vars l)
-  | ESetOf l => ESetOf (substitute sub free_vars l)
   end.
 
 Definition get_free_vars {A} {tenv : map.map string A} : tenv -> list string :=
@@ -237,19 +210,9 @@ Section WithMap.
           constructor.
           1:{ case_match; simpl in *. eapply H; eauto. }
           1: apply IHForall; auto. }
-      1,2,3: econstructor; eauto;
-      use_substitute_preserve_ty_IH; simpl; intros;
-      [ | | eauto | | | | | eauto | .. ];
-      repeat apply tenv_wf_step; eauto with fiat2_hints;
-      repeat apply_incl_lemmas;
-      repeat (case_match_string_eqb;
-              [ inj_constr_get_put; try apply fresh_var_neq; try apply fresh_var_neq2 | ]);
-      apply_sub_wf_with_map_incl.
     Qed.
 
 
-    Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-    Notation value := (value (word:=word)).
     Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
     Fixpoint make_sub_env (store env : locals) (sub : list (string * expr)) : locals :=
@@ -375,29 +338,6 @@ Section WithMap.
               [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
                 auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
               | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ repeat
-            (use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto;
-             lazymatch goal with
-               |- _ = match interp_expr _ _ ?e with _ => _ end =>
-                 apply_type_sound e
-             end; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-             invert_type_of_value).
-          f_equal. apply In_flat_map2_ext; intros; repeat apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: eapply locals_wf_step; eauto.
-          all: repeat apply locals_wf_step; eauto with fiat2_hints.
-          all: try apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; try apply tenv_wf_step;
-            eauto using locals_equiv_refl with fiat2_hints.
-          1: repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto.
-          repeat apply locals_equiv_step.
-          2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-          eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-          repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-          all: auto using locals_equiv_refl, incl_tl. }
       1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
           apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
           invert_type_of_value.
@@ -444,242 +384,6 @@ Section WithMap.
               [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
                 auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
               | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
-          invert_type_of_value.
-          revert IHe0_3. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto; intros.
-          apply In_fold_right_ext with (P:=fun v => type_of_value v t0); intros.
-          1: eapply type_sound; eauto; eapply make_sub_env_wf; [ .. | eauto ]; auto.
-          apply_Forall_In. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          8,9: intuition eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq; try apply fresh_var_neq2
-                            | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; intuition auto.
-          1: eapply type_sound; eauto.
-          all: repeat apply tenv_wf_step; repeat apply locals_wf_step;
-            eauto using locals_equiv_refl with fiat2_hints.
-          all: try (eapply make_sub_env_wf; [ | | | | eauto ]; auto).
-          repeat apply locals_equiv_step.
-          2-4: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq, fresh_var_neq2.
-          eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-          repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-          all: auto using locals_equiv_refl, incl_tl. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
-          invert_type_of_value. f_equal.
-          apply In_filter_ext; intros. apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl with fiat2_hints;
-            [ apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto
-            | apply locals_equiv_step;
-              [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
-                auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
-              | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
-          invert_type_of_value. f_equal.
-          apply In_filter_ext; intros. apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl with fiat2_hints;
-            [ apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto
-            | apply locals_equiv_step;
-              [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
-                auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
-              | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ].
-          invert_type_of_value. f_equal.
-          apply In_filter_ext; intros. apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl with fiat2_hints;
-            [ apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto
-            | apply locals_equiv_step;
-              [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
-                auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
-              | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_2; eauto; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          f_equal. apply In_flat_map_ext; intros. apply_Forall_In.
-          erewrite In_filter_ext; [ apply map_ext_in | ]; simpl; intros.
-          1:{ lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-              apply_Forall_In.
-              use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-              8: repeat eapply locals_wf_step; eauto.
-              all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-              all: [> | repeat (simpl; intros; case_match_string_eqb;
-                                [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-                   | repeat apply_incl_lemmas ].
-              erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl;
-                [ repeat apply tenv_wf_step; eauto with fiat2_hints
-                | repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto | ].
-              repeat apply locals_equiv_step.
-              2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-              eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-              repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-              all: auto using locals_equiv_refl, incl_tl. }
-          1:{ apply_Forall_In. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-              8: repeat eapply locals_wf_step; eauto.
-              all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-              all: [> | repeat (simpl; intros; case_match_string_eqb;
-                                [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-                   | repeat apply_incl_lemmas ].
-              erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl;
-                [ repeat apply tenv_wf_step; eauto with fiat2_hints
-                | repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto | ].
-              repeat apply locals_equiv_step.
-              2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-              eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-              repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-              all: auto using locals_equiv_refl, incl_tl. } }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_2; eauto; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          do 2 f_equal. apply In_flat_map_ext; intros.
-          repeat Forall_fst__Forall_bag_to_list. apply_Forall_In.
-          erewrite In_filter_ext; [ apply map_ext_in | ]; simpl; intros.
-          1:{ lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-              apply_Forall_In.
-              use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-              8: repeat eapply locals_wf_step; eauto.
-              all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-              all: [> | repeat (simpl; intros; case_match_string_eqb;
-                                [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-                   | repeat apply_incl_lemmas ].
-              erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl;
-                [ repeat apply tenv_wf_step; eauto with fiat2_hints
-                | repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto | ].
-              repeat apply locals_equiv_step.
-              2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-              eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-              repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-              all: auto using locals_equiv_refl, incl_tl. }
-          1:{ apply_Forall_In. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-              8: repeat eapply locals_wf_step; eauto.
-              all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-              all: [> | repeat (simpl; intros; case_match_string_eqb;
-                                [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-                   | repeat apply_incl_lemmas ].
-              erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl;
-                [ repeat apply tenv_wf_step; eauto with fiat2_hints
-                | repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto | ].
-              repeat apply locals_equiv_step.
-              2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-              eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-              repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-              all: auto using locals_equiv_refl, incl_tl. } }
-            1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_2; eauto; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          do 2 f_equal. apply In_flat_map_ext; intros.
-          repeat Forall_fst__Forall_bag_to_list. apply_Forall_In.
-          erewrite In_filter_ext; [ apply map_ext_in | ]; simpl; intros.
-          1:{ lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-              apply_Forall_In.
-              use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-              8: repeat eapply locals_wf_step; eauto.
-              all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-              all: [> | repeat (simpl; intros; case_match_string_eqb;
-                                [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-                   | repeat apply_incl_lemmas ].
-              erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl;
-                [ repeat apply tenv_wf_step; eauto with fiat2_hints
-                | repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto | ].
-              repeat apply locals_equiv_step.
-              2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-              eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-              repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-              all: auto using locals_equiv_refl, incl_tl. }
-          1:{ apply_Forall_In. use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-              8: repeat eapply locals_wf_step; eauto.
-              all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-              all: [> | repeat (simpl; intros; case_match_string_eqb;
-                                [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-                   | repeat apply_incl_lemmas ].
-              erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl;
-                [ repeat apply tenv_wf_step; eauto with fiat2_hints
-                | repeat apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto | ].
-              repeat apply locals_equiv_step.
-              2,3: simpl; unfold get_local; repeat rewrite_map_get_put_goal; auto using fresh_var_neq.
-              eapply make_sub_env__locals_equiv; [ | | eauto | .. ]; auto using locals_equiv_refl.
-              repeat eapply locals_equiv_tran, locals_equiv__put_fresh, map_get_fresh_var_None.
-              all: auto using locals_equiv_refl, incl_tl. } }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          f_equal. apply map_ext_in; intros; apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl with fiat2_hints;
-            [ apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto
-            | apply locals_equiv_step;
-              [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
-                auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
-              | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          do 2 f_equal. apply map_ext_in; intros; Forall_fst__Forall_bag_to_list; apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl with fiat2_hints;
-            [ apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto
-            | apply locals_equiv_step;
-              [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
-                auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
-              | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
-      1:{ use_substitute_preserve_sem_IH; [ | | | | eauto | .. ]; eauto.
-          apply_type_sound e0_1; [ | eapply make_sub_env_wf; [ .. | eauto ]; eauto ];
-            invert_type_of_value.
-          do 2 f_equal. apply map_ext_in; intros; apply_Forall_In.
-          use_substitute_preserve_sem_IH; [ | | | | eauto | .. ].
-          8: repeat eapply locals_wf_step; eauto.
-          all: repeat apply tenv_wf_step; eauto with fiat2_hints.
-          all: [> | repeat (simpl; intros; case_match_string_eqb;
-                            [ inj_constr_get_put; try apply fresh_var_neq | try apply_sub_wf_with_map_incl ])
-               | repeat apply_incl_lemmas ].
-          erewrite interp_expr__locals_equiv; [ | | | eauto | .. ]; eauto using locals_equiv_refl with fiat2_hints;
-            [ apply locals_wf_step; auto; eapply make_sub_env_wf; [ | | | | eauto ]; auto
-            | apply locals_equiv_step;
-              [ eapply make_sub_env__locals_equiv; [ | | eauto | .. ];
-                auto using locals_equiv_refl, locals_equiv__put_fresh, map_get_fresh_var_None
-              | simpl; unfold get_local; rewrite_map_get_put_goal; auto ] ]. }
     Qed.
 End WithMap.
 
@@ -700,8 +404,6 @@ Fixpoint free_immuts_in (e : expr) : list string :=
       free_immuts_in e1 ++ free_immuts_in e2 ++ free_immuts_in e3
   | ELet e1 x e2 | EFlatmap _ e1 x e2 =>
                      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
-  | EFlatmap2 e1 e2 x1 x2 e3 =>
-      free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x1 (remove string_dec x2 (free_immuts_in e3))
   | EFold e1 e2 v acc e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec v (remove string_dec acc (free_immuts_in e3))
   | EACFold _ e | EACIFold _ e => free_immuts_in e
@@ -710,18 +412,7 @@ Fixpoint free_immuts_in (e : expr) : list string :=
   | EAccess e s => free_immuts_in e
   | EOptMatch e1 e2 x e3 =>
       free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec x (free_immuts_in e3)
-  | EDictFold e1 e2 k v acc e3 =>
-      free_immuts_in e1 ++ free_immuts_in e2 ++ remove string_dec k (remove string_dec v (remove string_dec acc (free_immuts_in e3)))
   | ESort _ e => free_immuts_in e
-  | EFilter _ e1 x e2 =>
-      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
-  | EJoin _ e1 e2 x y e3 e4 =>
-      free_immuts_in e1 ++ free_immuts_in e2 ++
-        remove string_dec x (remove string_dec y (free_immuts_in e3)) ++
-        remove string_dec x (remove string_dec y (free_immuts_in e4))
-  | EProj _ e1 x e2 =>
-      free_immuts_in e1 ++ remove string_dec x (free_immuts_in e2)
-  | EBagOf l | ESetOf l => free_immuts_in l
   end.
 
 Ltac apply_in_app_or :=
@@ -755,12 +446,6 @@ Proof.
       rewrite Bool.orb_true_iff in *.
       1: case_match; apply_in_app_or; intuition idtac.
       1: apply in_or_app; destruct_match_hyp; intuition idtac. }
-  1:{ split; intro; rewrite !Bool.orb_true_iff, !Bool.andb_true_iff in *; rewrite !Bool.negb_true_iff in *; rewrite Bool.orb_true_iff in *;
-      repeat (apply_in_app_or; intuition idtac);
-      repeat (apply_in_remove; intuition idtac).
-      1,2: repeat right; intuition idtac; rewrite eqb_neq in *; congruence.
-      1: do 2 (apply in_or_app; intuition idtac; right); apply in_or_app;
-      rewrite eqb_neq in *; [ left | right ]; repeat apply in_in_remove; auto. }
 Qed.
 
 Fixpoint free_immuts_in_sub (sub : list (string * expr)) :=

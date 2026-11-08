@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface coqutil.Datatypes.Result.
+Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 Require Import Ltac2.Ltac2 Ltac2.Control Ltac2.Constr.
@@ -12,8 +12,8 @@ Ltac invert_type_wf :=
   | H: type_wf (TBag ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TSet ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TOption ?t) |- _ => inversion H; clear H; subst
-  | H: type_wf (TDict ?t _) |- _ => inversion H; clear H; subst
-  | H: type_wf (TDict _ ?t) |- _ => inversion H; clear H; subst
+  | H: type_wf (TDict _ ?t _) |- _ => inversion H; clear H; subst
+  | H: type_wf (TDict _ _ ?t) |- _ => inversion H; clear H; subst
   | H: type_wf (TRecord ?tl) |- _ => inversion H; clear H; subst
   end.
 
@@ -37,12 +37,12 @@ Proof.
   intros. invert_type_wf; auto.
 Qed.
 
-Lemma invert_TDict_wf_l: forall kt vt, type_wf (TDict kt vt) -> type_wf kt.
+Lemma invert_TDict_wf_l: forall dk kt vt, type_wf (TDict dk kt vt) -> type_wf kt.
 Proof.
   intros. invert_type_wf; auto.
 Qed.
 
-Lemma invert_TDict_wf_r: forall kt vt, type_wf (TDict kt vt) -> type_wf vt.
+Lemma invert_TDict_wf_r: forall dk kt vt, type_wf (TDict dk kt vt) -> type_wf vt.
 Proof.
   intros. invert_type_wf; auto.
 Qed.
@@ -448,6 +448,37 @@ Proof.
     + rewrite eqb_neq in *. intuition auto. congruence.
 Qed.
 
+Lemma NoDup_In_access_record : forall A (l : list (string * A)),
+    NoDup (List.map fst l) ->
+    forall s v, In (s, v) l ->
+                access_record l s = Success v.
+Proof.
+  intros * ? ? ? H_in; induction l; cbn in *.
+  1: intuition fail.
+  do 2 case_match; rewrite ?eqb_eq, ?eqb_neq in *; invert_NoDup.
+  1:{ subst. intuition idtac; try congruence.
+      apply in_map with (f:=fst) in H0;
+        cbn in *; intuition idtac. }
+  1:{ intuition idtac. congruence. }
+Qed.
+
+Lemma NoDup_Permutation_access_record : forall s A (l l' : list (string * A)),
+    NoDup (List.map fst l) ->
+    In s (List.map fst l) ->
+    Permutation l l' ->
+    access_record l s = access_record l' s.
+Proof.
+  intros * H_NoDup H_in H_permu.
+  apply In_access_record in H_in. destruct_exists.
+  rewrite_l_to_r.
+  apply access_record_sound in H.
+  symmetry. apply NoDup_In_access_record.
+  1:{ eapply Permutation_NoDup.
+      1: apply Permutation_map; eauto.
+      assumption. }
+  1:{ eapply Permutation_in; eauto. }
+Qed.
+
 Lemma Forall2_access_record : forall A A' P l l' x (a : A) (a' : A'),
     Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
     access_record l x = Success a ->
@@ -595,6 +626,29 @@ Proof.
   erewrite IHl; eauto. intuition auto with *.
 Qed.
 
+Lemma Forall_filter : forall A (P : A -> Prop) (g : A -> bool) (l : list A),
+    Forall P l -> Forall P (filter g l).
+Proof.
+  intros * H. rewrite Forall_forall in H |- *; intros x H_x.
+  apply filter_In in H_x as [ H_x _ ]; auto.
+Qed.
+
+Lemma NoDup_map_filter : forall A B (f : A -> B) (g : A -> bool) (l : list A),
+    NoDup (List.map f l) -> NoDup (List.map f (filter g l)).
+Proof.
+  induction l as [ | a l IH ]; cbn [List.map filter]; intros H_nd.
+  1: constructor.
+  inversion H_nd as [ | ? ? H_ni H_rest ]; subst.
+  destruct (g a); cbn [List.map].
+  - constructor.
+    + intros H_in. apply H_ni.
+      apply in_map_iff in H_in as [ x [ E_x H_x ] ].
+      apply filter_In in H_x as [ H_x _ ].
+      apply in_map_iff; eauto.
+    + apply IH; assumption.
+  - apply IH; assumption.
+Qed.
+
 Lemma Forall_false__filter : forall A f (l : list A), Forall (fun x => f x = false) l -> filter f l = nil.
 Proof.
   intros * H; induction l; simpl; auto. simpl in H.
@@ -699,8 +753,6 @@ Qed.
 
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value_eqb := (value_eqb (word:=word)).
 
   Lemma value_eqb_refl : forall (v : value), value_eqb v v = true.
   Proof.
@@ -732,7 +784,7 @@ Section WithWord.
   Lemma NoDup_SSorted__Lt : forall (k v : value) d,
       NoDup (k :: List.map fst d) ->
       StronglySorted dict_entry_leb ((k, v) :: d) ->
-      forall p, In p d -> value_compare (word:=word) k (fst p) = Lt.
+      forall p, In p d -> value_compare k (fst p) = Lt.
   Proof.
     intros. invert_NoDup; invert_SSorted. destruct p; simpl.
     apply_Forall_In; unfold dict_entry_leb in *; simpl in *.
@@ -744,7 +796,7 @@ Section WithWord.
   Lemma dict_lookup_Lt : forall d k,
       StronglySorted dict_entry_leb d ->
       (forall p, In p d -> value_compare k (fst p) = Lt) ->
-      dict_lookup (word:=word) k d = None.
+      dict_lookup k d = None.
   Proof.
     intros. induction d; auto.
     simpl. destruct a; simpl in *.
@@ -754,14 +806,14 @@ Section WithWord.
     - apply IHd; inversion H; auto.
   Qed.
 
-  Lemma not_In__dict_lookup : forall (v : value) d, ~ In v (List.map fst d) -> dict_lookup (word:=word) v d = None.
+  Lemma not_In__dict_lookup : forall (v : value) d, ~ In v (List.map fst d) -> dict_lookup v d = None.
   Proof.
     intros * H. induction d; simpl; auto.
     destruct a; simpl in *. intuition idtac. case_match; auto.
     apply value_eqb_eq in E; subst; intuition fail.
   Qed.
 
-  Lemma not_In__dict_delete : forall (k : value) d, ~ In k (List.map fst d) -> dict_delete (word:=word) k d = d.
+  Lemma not_In__dict_delete : forall (k : value) d, ~ In k (List.map fst d) -> dict_delete k d = d.
   Proof.
     induction d; intros; simpl; auto.
     destruct a; case_match; simpl in *.
@@ -770,7 +822,7 @@ Section WithWord.
   Qed.
 
   Lemma Forall_dict_lookup : forall P d k v,
-      Forall P d -> dict_lookup (width:=width) k d = Some v -> P (k, v).
+      Forall P d -> dict_lookup k d = Some v -> P (k, v).
   Proof.
     intros * H_P H. induction d; simpl in H; try congruence.
     destruct a. inversion H_P; subst.
@@ -782,7 +834,7 @@ Section WithWord.
   Qed.
 
   Lemma dict_insert_preserve_SSorted : forall d k v,
-      StronglySorted (dict_entry_leb (word:=word)) d ->
+      StronglySorted (dict_entry_leb) d ->
       StronglySorted dict_entry_leb (dict_insert k v d).
   Proof.
     induction d; intros; simpl.
@@ -807,6 +859,311 @@ Section WithWord.
             * simpl. rewrite value_compare_antisym. rewrite E. auto.
             * eapply List.Forall_In in H3; eauto.
   Qed.
+
+  Local Notation value := (value).
+
+  Lemma value_ltb_leb_trans : forall (a b c : value),
+      value_ltb a b = true -> value_leb b c = true -> value_ltb a c = true.
+  Proof.
+    unfold value_ltb, value_leb, leb_from_compare; intros a b c H_ab H_bc.
+    destruct (value_compare a b) eqn:E_ab; try discriminate.
+    destruct (value_compare b c) eqn:E_bc; try discriminate.
+    - apply value_compare_Eq_eq in E_bc; subst. rewrite E_ab; reflexivity.
+    - rewrite (value_compare_trans _ _ _ E_ab E_bc); reflexivity.
+  Qed.
+
+  Lemma value_ltb__value_eqb_false : forall (a b : value),
+      value_ltb a b = true -> value_eqb a b = false.
+  Proof.
+    unfold value_ltb, value_eqb; intros.
+    destruct (value_compare a b); congruence.
+  Qed.
+
+  Lemma neq__value_eqb_false : forall (a b : value),
+      a <> b -> value_eqb a b = false.
+  Proof.
+    intros a b H_neq. destruct (value_eqb a b) eqn:E; [ | reflexivity ].
+    apply value_eqb_eq in E; congruence.
+  Qed.
+
+  Lemma dict_lookup_delete_diff : forall k k' (d : list (value * value)),
+      k <> k' -> dict_lookup k (dict_delete k' d) = dict_lookup k d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn; intros; auto.
+    destruct (value_eqb k' k0) eqn:E.
+    - apply value_eqb_eq in E; subst.
+      rewrite neq__value_eqb_false; auto.
+    - cbn. destruct (value_eqb k k0); auto.
+  Qed.
+
+  Lemma dict_delete_lt_head : forall k k0 (v0 : value) d,
+      value_ltb k k0 = true ->
+      StronglySorted dict_entry_leb ((k0, v0) :: d) ->
+      dict_delete k ((k0, v0) :: d) = (k0, v0) :: d.
+  Proof.
+    intros * H_lt H_sort.
+    apply not_In__dict_delete. intro H_in.
+    apply in_map_iff in H_in as [[k1 v1] [H_k H_in]]; cbn in H_k; subst.
+    destruct H_in as [H_eq | H_in].
+    - injection H_eq; intros; subst.
+      apply value_ltb__value_eqb_false in H_lt.
+      rewrite value_eqb_refl in H_lt; discriminate.
+    - inversion H_sort; subst.
+      rewrite Forall_forall in *.
+      lazymatch goal with
+        H: forall x, In x d -> _ |- _ => apply H in H_in
+      end.
+      unfold dict_entry_leb in H_in; cbn in H_in.
+      pose proof (value_ltb_leb_trans _ _ _ H_lt H_in) as H_kk.
+      apply value_ltb__value_eqb_false in H_kk.
+      rewrite value_eqb_refl in H_kk; discriminate.
+  Qed.
+
+  Lemma dict_delete_insert_same : forall k (v : value) d,
+      StronglySorted dict_entry_leb d ->
+      dict_delete k (dict_insert k v d) = dict_delete k d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; intros H_sort.
+    - cbn. rewrite value_eqb_refl; reflexivity.
+    - cbn [dict_insert]. destruct (value_ltb k k0) eqn:E_lt.
+      + cbn [dict_delete]. rewrite value_eqb_refl.
+        symmetry. apply dict_delete_lt_head; auto.
+      + destruct (value_eqb k k0) eqn:E_eq; cbn [dict_delete].
+        * rewrite value_eqb_refl, E_eq; reflexivity.
+        * rewrite E_eq. inversion H_sort; subst.
+          rewrite IH; auto.
+  Qed.
+
+  Lemma dict_delete_insert_diff : forall k k' (v : value) d,
+      k <> k' -> StronglySorted dict_entry_leb d ->
+      dict_delete k (dict_insert k' v d) = dict_insert k' v (dict_delete k d).
+  Proof.
+    induction d as [| [k0 v0] d IH]; intros H_neq H_sort.
+    - cbn. rewrite neq__value_eqb_false; auto.
+    - inversion H_sort; subst.
+      cbn [dict_insert]. destruct (value_ltb k' k0) eqn:E_lt.
+      + cbn [dict_delete]. rewrite neq__value_eqb_false; auto.
+        destruct (value_eqb k k0) eqn:E_eq.
+        * destruct d as [| [k1 v1] d]; cbn [dict_insert]; auto.
+          lazymatch goal with
+            H: Forall _ ((k1, v1) :: d) |- _ => inversion H; subst
+          end.
+          unfold dict_entry_leb in *; cbn in *.
+          rewrite (value_ltb_leb_trans _ _ _ E_lt); auto.
+        * cbn [dict_insert]. rewrite E_lt; reflexivity.
+      + destruct (value_eqb k' k0) eqn:E_eq'.
+        * apply value_eqb_eq in E_eq'; subst.
+          cbn [dict_delete]. rewrite !neq__value_eqb_false; auto.
+          cbn [dict_insert]. rewrite E_lt, value_eqb_refl; reflexivity.
+        * cbn [dict_delete]. destruct (value_eqb k k0) eqn:E_eq; auto.
+          cbn [dict_insert]. rewrite E_lt, E_eq', IH; auto.
+  Qed.
+
+  Lemma dict_insert_lt_all : forall (k v : value) d,
+      Forall (fun p => value_ltb k (fst p) = true) d ->
+      dict_insert k v d = (k, v) :: d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn; auto; intros H.
+    invert_Forall. cbn in *.
+    lazymatch goal with H: value_ltb k k0 = true |- _ => rewrite H end.
+    reflexivity.
+  Qed.
+
+  Lemma dict_lookup_filter_true : forall (g : value -> bool) (k : value) d,
+      g k = true ->
+      dict_lookup k (filter (fun p => g (fst p)) d) = dict_lookup k d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn; auto; intros H_g.
+    destruct (value_eqb k k0) eqn:E.
+    - apply value_eqb_eq in E; subst.
+      rewrite H_g; cbn. rewrite value_eqb_refl; reflexivity.
+    - destruct (g k0); cbn; [ rewrite E | ]; apply IH; auto.
+  Qed.
+
+  Lemma filter_dict_insert_false : forall (g : value -> bool) (k v : value) d,
+      g k = false ->
+      filter (fun p => g (fst p)) (dict_insert k v d)
+      = filter (fun p => g (fst p)) d.
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn [dict_insert]; intros H_g.
+    - cbn. rewrite H_g; reflexivity.
+    - destruct (value_ltb k k0) eqn:E_lt.
+      + cbn [filter fst]. rewrite H_g; reflexivity.
+      + destruct (value_eqb k k0) eqn:E_eq.
+        * apply value_eqb_eq in E_eq; subst.
+          cbn [filter fst]. rewrite H_g; reflexivity.
+        * cbn [filter fst]. destruct (g k0); [ f_equal | ]; apply IH; auto.
+  Qed.
+
+  Lemma filter_dict_insert_true : forall (g : value -> bool) (k v : value) d,
+      g k = true -> StronglySorted dict_entry_leb d ->
+      filter (fun p => g (fst p)) (dict_insert k v d)
+      = dict_insert k v (filter (fun p => g (fst p)) d).
+  Proof.
+    induction d as [| [k0 v0] d IH]; cbn [dict_insert]; intros H_g H_sort.
+    - cbn. rewrite H_g; reflexivity.
+    - inversion H_sort; subst.
+      destruct (value_ltb k k0) eqn:E_lt.
+      + assert (H_all : Forall (fun p => value_ltb k (fst p) = true)
+                          (filter (fun p => g (fst p)) ((k0, v0) :: d))).
+        1:{ rewrite Forall_forall; intros [k1 v1] H_in.
+            apply filter_In in H_in as [ H_in _ ].
+            destruct H_in as [ H_eq | H_in ].
+            - injection H_eq; intros; subst; cbn; assumption.
+            - apply_Forall_In. unfold dict_entry_leb in *; cbn in *.
+              eapply value_ltb_leb_trans; eauto. }
+        rewrite (dict_insert_lt_all _ _ _ H_all).
+        cbn [filter fst]. rewrite H_g. reflexivity.
+      + destruct (value_eqb k k0) eqn:E_eq.
+        * apply value_eqb_eq in E_eq; subst.
+          cbn [filter fst]. rewrite H_g.
+          cbn [dict_insert]. rewrite E_lt, value_eqb_refl; reflexivity.
+        * cbn [filter fst]. destruct (g k0) eqn:E_g0.
+          -- cbn [dict_insert]. rewrite E_lt, E_eq. f_equal. apply IH; auto.
+          -- apply IH; auto.
+  Qed.
+
+  Lemma dict_wf_lookup_None : forall (d : list (value * value)) (k : value),
+      (forall k' v', In (k', v') d -> value_ltb k k' = true) ->
+      dict_lookup k d = None.
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_lookup]; [ reflexivity | ].
+    intros k H_lt.
+    destruct (value_eqb k k0) eqn:E.
+    1:{ apply value_eqb_eq in E; subst k0.
+        specialize (H_lt k v0 (or_introl eq_refl)).
+        unfold value_ltb in H_lt; rewrite value_compare_refl in H_lt.
+        discriminate. }
+    apply IH; intros k' v' H_in; apply (H_lt k' v'); right; exact H_in.
+  Qed.
+
+  Lemma dict_insert_preserve_dict_wf : forall (d : list (value * value)) (k v : value),
+      dict_wf d -> dict_wf (dict_insert k v d).
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_insert dict_wf]; intros k v H_wf.
+    1: split; [ intros ? ? [] | exact I ].
+    destruct H_wf as [ H_hd H_wf ].
+    destruct (value_ltb k k0) eqn:E_lt.
+    1:{ (* k goes in front *)
+        cbn [dict_wf]; split; [ | split; [ exact H_hd | exact H_wf ] ].
+        intros k' v' [ E | H_in ].
+        1: injection E as E _; subst k'; exact E_lt.
+        1:{ apply H_hd in H_in.
+            unfold value_ltb in *.
+            destruct (value_compare k k') eqn:E_kk'; try reflexivity.
+            (* k' <= k < k0 <= k' is impossible *)
+            all: destruct (value_compare k k0) eqn:E_kk0; try discriminate.
+            all: destruct (value_compare k0 k') eqn:E_k0k'; try discriminate.
+            1:{ apply value_compare_Eq_eq in E_kk'; subst k'.
+                pose proof (value_compare_trans _ _ _ E_kk0 E_k0k') as E_t.
+                rewrite value_compare_refl in E_t; discriminate. }
+            1:{ pose proof (value_compare_trans _ _ _ E_kk0 E_k0k') as E_t.
+                rewrite E_kk' in E_t; discriminate. } } }
+    destruct (value_eqb k k0) eqn:E_eq.
+    1:{ (* k replaces the head *)
+        apply value_eqb_eq in E_eq; subst k0.
+        cbn [dict_wf]; split; [ exact H_hd | exact H_wf ]. }
+    1:{ (* k goes further in *)
+        cbn [dict_wf]; split; [ | apply IH; exact H_wf ].
+        intros k' v' H_in.
+        (* the new entry's key is one that was already in, or k itself,
+           and k0 < k because it is neither less nor equal *)
+        apply dict_insert_incl in H_in; cbn [In] in H_in;
+          destruct H_in as [ E | H_in ].
+        1:{ injection E as E _; subst k'.
+            unfold value_ltb, value_eqb in *.
+            destruct (value_compare k0 k) eqn:E_k0k; try reflexivity.
+            1:{ apply value_compare_Eq_eq in E_k0k; subst.
+                rewrite value_compare_refl in E_eq; discriminate. }
+            1:{ rewrite (value_compare_antisym k k0), E_k0k in E_lt.
+                cbn in E_lt; discriminate. } }
+        1: apply H_hd in H_in; exact H_in. }
+  Qed.
+
+  Lemma dict_delete_preserve_dict_wf : forall (d : list (value * value)) (k : value),
+      dict_wf d -> dict_wf (dict_delete k d).
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_delete dict_wf]; intros k H_wf;
+      [ exact I | ].
+    destruct H_wf as [ H_hd H_wf ].
+    destruct (value_eqb k k0); [ exact H_wf | ].
+    cbn [dict_wf]; split; [ | apply IH; exact H_wf ].
+    intros k' v' H_in; apply (H_hd k' v').
+    apply dict_delete_incl in H_in; exact H_in.
+  Qed.
+
+  Lemma dict_wf_lookup_ext : forall (d1 d2 : list (value * value)),
+      dict_wf d1 -> dict_wf d2 ->
+      (forall k : value, dict_lookup k d1 = dict_lookup k d2) -> d1 = d2.
+  Proof.
+    induction d1 as [ | [ k1 v1 ] d1 IH ];
+      intros d2 H_wf1 H_wf2 H_lk.
+    1:{ destruct d2 as [ | [ k2 v2 ] d2 ]; [ reflexivity | ].
+        specialize (H_lk k2); cbn [dict_lookup] in H_lk.
+        rewrite value_eqb_refl in H_lk; discriminate. }
+    destruct d2 as [ | [ k2 v2 ] d2 ].
+    1:{ specialize (H_lk k1); cbn [dict_lookup] in H_lk.
+        rewrite value_eqb_refl in H_lk; discriminate. }
+    destruct H_wf1 as [ H_hd1 H_wf1 ]; destruct H_wf2 as [ H_hd2 H_wf2 ].
+    (* the two heads hold the smallest key of each, so they agree *)
+    assert (E_k : k1 = k2).
+    1:{ destruct (value_eqb k1 k2) eqn:E; [ apply value_eqb_eq; exact E | ].
+        (* otherwise one head's key is absent from the other dictionary *)
+        exfalso.
+        destruct (value_compare k1 k2) eqn:E_c.
+        1: apply value_compare_Eq_eq in E_c; unfold value_eqb in E;
+           rewrite E_c, value_compare_refl in E; discriminate.
+        (* k1 < k2: then k1 is below every key of d2, so d2 does not
+           hold it, while d1's head does *)
+        1:{ specialize (H_lk k1); cbn [dict_lookup] in H_lk.
+            rewrite value_eqb_refl, E in H_lk.
+            rewrite dict_wf_lookup_None in H_lk; [ discriminate | ].
+            intros k' v' H_in; apply H_hd2 in H_in.
+            unfold value_ltb in H_in |- *.
+            destruct (value_compare k2 k') eqn:E_2k'; try discriminate.
+            rewrite (value_compare_trans k1 k2 k' E_c E_2k'); reflexivity. }
+        (* and k2 < k1 symmetrically *)
+        1:{ assert (E_21 : value_compare k2 k1 = Lt).
+            1:{ rewrite (value_compare_antisym k1 k2) in E_c.
+                destruct (value_compare k2 k1); cbn in E_c; congruence. }
+            specialize (H_lk k2); cbn [dict_lookup] in H_lk.
+            rewrite value_eqb_refl in H_lk.
+            rewrite (value_eqb_sym k2 k1), E in H_lk.
+            rewrite dict_wf_lookup_None in H_lk; [ discriminate | ].
+            intros k' v' H_in; apply H_hd1 in H_in.
+            unfold value_ltb in H_in |- *.
+            destruct (value_compare k1 k') eqn:E_1k'; try discriminate.
+            rewrite (value_compare_trans k2 k1 k' E_21 E_1k'); reflexivity. } }
+    subst k2.
+    (* then the values at that key, and then the tails *)
+    assert (E_v : v1 = v2).
+    1:{ specialize (H_lk k1); cbn [dict_lookup] in H_lk.
+        rewrite value_eqb_refl in H_lk; injection H_lk as H_lk; exact H_lk. }
+    subst v2. f_equal.
+    apply IH; [ exact H_wf1 | exact H_wf2 | ].
+    intros k.
+    destruct (value_eqb k k1) eqn:E.
+    1:{ (* the head's key is in neither tail *)
+        apply value_eqb_eq in E; subst k.
+        rewrite (dict_wf_lookup_None d1), (dict_wf_lookup_None d2);
+          [ reflexivity | | ]; assumption. }
+    1:{ specialize (H_lk k); cbn [dict_lookup] in H_lk.
+        rewrite E in H_lk; exact H_lk. }
+  Qed.
+
+  Lemma dict_lookup_delete_same : forall (d : list (value * value)) (k : value),
+      dict_wf d -> dict_lookup k (dict_delete k d) = None.
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_delete dict_wf];
+      intros k H_wf; [ reflexivity | ].
+    destruct H_wf as [ H_hd H_wf ].
+    destruct (value_eqb k k0) eqn:E.
+    1:{ (* the entry goes, and the rest holds strictly larger keys *)
+        apply value_eqb_eq in E; subst k0.
+        apply dict_wf_lookup_None; exact H_hd. }
+    1:{ cbn [dict_lookup]; rewrite E. apply IH; exact H_wf. }
+  Qed.
+
 End WithWord.
 
 
@@ -899,8 +1256,6 @@ Qed.
 
 Section WithMap.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Lemma tenv_wf_empty : tenv_wf map.empty.
@@ -985,15 +1340,6 @@ Section WithMap.
     | H: locals_equiv ?G _ _, H': map.get ?G _ = Some _ |- _ =>
         apply H in H' end.
 
-  Lemma In_flat_map2_ext : forall (A B C : Type) (l : list A) (l' : list B) (f g : A -> B -> list C),
-      (forall a b, In a l -> In b l' -> f a b = g a b) -> flat_map2 f l l' = flat_map2 g l l'.
-  Proof.
-    induction l; auto.
-    destruct l'; auto.
-    cbn; intros. rewrite H; auto.
-    f_equal. erewrite IHl; eauto.
-  Qed.
-
   Ltac use_interp_expr__locals_equiv_IH :=
     lazymatch goal with
       IH: context[interp_expr _ _ ?e] |- context[interp_expr _ _ ?e] =>
@@ -1029,13 +1375,6 @@ Section WithMap.
         apply In_flat_map_ext; intros.
         apply_Forall_In.
         use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ repeat (use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto).
-        apply_type_sound e1; invert_type_of_value.
-        apply_type_sound e2; invert_type_of_value.
-        f_equal.
-        apply In_flat_map2_ext; intros. repeat apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ];
-          try apply tenv_wf_step; try apply locals_wf_step; eauto with fiat2_hints. }
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         revert IHe3. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto; intros.
@@ -1057,82 +1396,6 @@ Section WithMap.
     1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
         apply_type_sound e1; invert_type_of_value.
         all: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        revert IHe3. use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto; intros.
-        eapply In_fold_right_ext with (P:=fun v => type_of_value v t); intros.
-        1: apply_type_sound e2.
-        1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            2: repeat apply tenv_wf_step; eauto with fiat2_hints.
-            2: repeat apply locals_wf_step; apply_Forall_In; intuition auto.
-            apply_type_sound e3;
-              [ repeat apply tenv_wf_step; eauto with fiat2_hints
-              | repeat apply locals_wf_step; apply_Forall_In; intuition auto ]. } }
-    1,2,3: use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto;
-        apply_type_sound e1; invert_type_of_value;
-        f_equal; apply In_filter_ext; auto; intros; apply_Forall_In;
-    use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e2; invert_type_of_value.
-        f_equal. apply In_flat_map_ext; intros. apply_Forall_In.
-        erewrite In_filter_ext; eauto.
-        2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        apply map_ext_in; intros.
-        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e2; invert_type_of_value.
-        do 2 f_equal. apply In_flat_map_ext; intros.
-        repeat Forall_fst__Forall_bag_to_list. apply_Forall_In.
-        erewrite In_filter_ext; eauto.
-        2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        apply map_ext_in; intros.
-        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e2; invert_type_of_value.
-        do 2 f_equal. apply In_flat_map_ext; intros.
-        apply_Forall_In.
-        erewrite In_filter_ext; eauto.
-        2:{ intros. apply_Forall_In.
-            use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-            1: reflexivity.
-            repeat apply tenv_wf_step; eauto with fiat2_hints. }
-        apply map_ext_in; intros.
-        lazymatch goal with H: In _ (filter _ _) |- _ => apply filter_In in H; intuition auto end.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints.
-        repeat apply tenv_wf_step; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        f_equal. apply map_ext_in; intros. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        do 2 f_equal. apply map_ext_in; intros.
-        Forall_fst__Forall_bag_to_list. apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
-    1:{ use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto.
-        apply_type_sound e1; invert_type_of_value.
-        do 2 f_equal. apply map_ext_in; intros.
-        apply_Forall_In.
-        use_interp_expr__locals_equiv_IH; [ | | | eauto | .. ]; eauto with fiat2_hints. }
   Qed.
 
   Lemma map_incl__locals_equiv : forall G l l',
@@ -1243,7 +1506,7 @@ Section WithMap.
         lazymatch goal with
           H: type_of_unop _ _ _ |- _ => inversion H; subst end;
         try do_injection; try reflexivity.
-        use_synthesize_ty_unique_IH; congruence. }
+        all: use_synthesize_ty_unique_IH; congruence. }
     1:{ repeat destruct_match_hyp; try congruence;
         simpl in *; try invert_pair2;
         lazymatch goal with
@@ -1255,7 +1518,9 @@ Section WithMap.
                   repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
                   try congruence; repeat (try clear_refl; do_injection); subst; eauto; repeat (try clear_refl; do_injection); try (f_equal; use_synthesize_ty_unique_IH);
                   repeat apply tenv_wf_step; eauto with fiat2_hints).
-    1:{ do_injection. inversion H; subst; eauto. }
+    1:{ (* ETernop *)
+        destruct o; cbn in *; inversion H; subst;
+          repeat (destruct_match_hyp; try congruence); do_injection; eauto. }
     1:{ repeat destruct_match_hyp; try congruence;
         try do_injection;
         repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
@@ -1267,7 +1532,8 @@ Section WithMap.
         repeat (use_synthesize_ty_unique_IH; eauto with fiat2_hints);
         lazymatch goal with
           H: type_of_aci_aggr _ _ _ |- _ => inversion H; subst
-        end; auto. }
+        end; auto;
+        congruence. }
     1:{ generalize dependent tl. generalize dependent tl'.
         generalize dependent t'. revert e'.
         unfold record_type_from in *. induction l; intros.
@@ -1385,8 +1651,6 @@ Proof.
 Qed.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma Permutation_dedup_app : forall (l1 l2 l3 l4 : list value),
@@ -1625,7 +1889,6 @@ Create HintDb transf_hints.
 #[export] Hint Resolve <- is_NoDup_to_transparent : transf_hints.
 #[export] Hint Extern 5 (is_NoDup _) => simpl; intuition discriminate : transf_hints.
 #[export] Hint Extern 5 ((_ : string) <> _) => apply eqb_neq : transf_hints.
-#[export] Hint Extern 5 (word.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 (map.ok _) => typeclasses eauto : transf_hints.
 #[export] Hint Extern 5 string => exact (EmptyString:string) : transf_hints.
 
@@ -1646,30 +1909,17 @@ Fixpoint free_immut_in (x : string) (e : expr) : bool :=
   | ETernop _ e1 e2 e3 => free_immut_in x e1 || free_immut_in x e2 || free_immut_in x e3
   | EIf e1 e2 e3 => free_immut_in x e1 || free_immut_in x e2 || free_immut_in x e3
   | ELet e1 y e2 | EFlatmap _ e1 y e2 => free_immut_in x e1 || (negb (String.eqb x y) && free_immut_in x e2)
-  | EFlatmap2 e1 e2 x1 x2 e3 =>
-      free_immut_in x e1 || free_immut_in x e2 ||
-        (negb (String.eqb x x1) && negb (String.eqb x x2) && free_immut_in x e3)
   | EFold e1 e2 y z e3 => free_immut_in x e1 || free_immut_in x e2 || (negb (String.eqb x y) && negb (String.eqb x z) && free_immut_in x e3)
   | EACFold _ e => free_immut_in x e
   | EACIFold _ e => free_immut_in x e
   | ERecord l => existsb (fun '(_, e) => free_immut_in x e) l
   | EAccess e _ => free_immut_in x e
   | EOptMatch e e_none y e_some => free_immut_in x e || free_immut_in x e_none || (negb (String.eqb x y) && free_immut_in x e_some)
-  | EDictFold d e0 k v acc e => free_immut_in x d || free_immut_in x e0 ||
-                                  (negb (String.eqb x k) && negb (String.eqb x v) && negb (String.eqb x acc) &&
-                                     free_immut_in x e)
   | ESort _ l => free_immut_in x l
-  | EFilter _ e y p => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x p)
-  | EJoin _ e1 e2 x1 x2 p r => free_immut_in x e1 || free_immut_in x e2 ||
-                               (negb (String.eqb x x1) && negb (String.eqb x x2) && (free_immut_in x p || free_immut_in x r))
-  | EProj _ e y r => free_immut_in x e || (negb (String.eqb x y) && free_immut_in x r)
-  | EBagOf e | ESetOf e => free_immut_in x e
   end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Open Scope string_scope.
@@ -1702,16 +1952,6 @@ Section WithMap.
       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
       | apply IHe2; intuition idtac;
         rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
-    - invert_type_of_clear; econstructor.
-      1: apply IHe1; eauto; intuition idtac.
-      1: apply IHe2; eauto; intuition idtac.
-      destruct (x =? x1) eqn:Ex1;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ].
-      destruct (x =? x2) eqn:Ex2;
-        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-        | apply IHe3; intuition idtac;
-          rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
     - inversion H0; subst; econstructor.
       + apply IHe1; eauto; intuition fail.
       + apply IHe2; intuition fail.
@@ -1734,48 +1974,6 @@ Section WithMap.
         * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
         * apply IHe3; intuition idtac.
           rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
-    - inversion H0; subst; econstructor.
-      + apply IHe1; eauto; intuition fail.
-      + apply IHe2; intuition fail.
-      + destruct (x =? k) eqn:Ek.
-        * rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-        * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
-          destruct (x =? v) eqn:Ev.
-          -- rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-          -- rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x) in *; auto.
-             destruct (x =? acc) eqn:Eacc.
-             ++ rewrite eqb_eq in *; subst. rewrite Properties.map.put_put_same in *; auto.
-             ++ apply IHe3; intuition idtac.
-                rewrite eqb_neq in *. rewrite Properties.map.put_put_diff; auto.
-    - inversion H0; subst; constructor.
-      1,3,5: apply IHe1; auto; intuition fail.
-      1,2,3: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | apply IHe2; intuition idtac;
-        rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
-    - inversion H0; subst; econstructor.
-      1,5,9: apply IHe1; eauto; intuition fail.
-      1,4,7: apply IHe2; eauto; intuition fail.
-      1,3,5: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
-      (destruct (x =? y) eqn:Ey;
-       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-       | apply IHe3; simpl in *; rewrite Bool.orb_false_iff in *; intuition idtac; rewrite eqb_neq in *;
-         rewrite Properties.map.put_put_diff; auto ]).
-      1,2,3: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x) in *; auto ];
-      (destruct (x =? y) eqn:Ey;
-       [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-       | apply IHe4; simpl in *; rewrite Bool.orb_false_iff in *; intuition idtac; rewrite eqb_neq in *;
-         rewrite Properties.map.put_put_diff; auto ]).
-    - inversion H0; subst; econstructor.
-      1,3,5: apply IHe1; eauto; intuition fail.
-      1,2,3: destruct (x =? x0) eqn:Ex;
-      [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same in *; auto
-      | apply IHe2; intuition idtac;
-        rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto ].
   Qed.
 
   Lemma not_free_immut_put_ty2 : forall (x : string) (e : expr) (Gstore Genv : tenv) (t t' : type),
@@ -1819,17 +2017,6 @@ Section WithMap.
       rewrite Properties.map.put_put_same; auto.
       1,2,3: rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; auto;
       erewrite IHe2; intuition fail.
-    - rewrite <- IHe1; intuition idtac.
-      rewrite <- IHe2; intuition idtac.
-      repeat case_match; auto. f_equal.
-      apply In_flat_map2_ext; intros.
-      destruct (x =? x1) eqn:Ex1;
-        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto
-        | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac ].
-      destruct (x =? x2) eqn:Ex2;
-        [ rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto
-        | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac ].
-      rewrite <- (IHe3 x); auto.
     - rewrite <- IHe1; intuition idtac. case_match; auto. rewrite <- IHe2; auto.
       apply In_fold_right_ext with (P := fun _ => True); auto.
       intros. destruct (x0 =? x) eqn:Ex.
@@ -1849,75 +2036,6 @@ Section WithMap.
       * rewrite eqb_eq in *; subst.
         rewrite Properties.map.put_put_same. auto.
       * rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x0); intuition auto.
-    - rewrite <- IHe1; intuition idtac. case_match; auto. rewrite <- IHe2; auto.
-      apply In_fold_right_ext with (P := fun _ => True); auto.
-      intros. destruct (x =? k) eqn:Ek;
-        try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac.
-      destruct (x =? v) eqn:Ev;
-        try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition idtac.
-      destruct (x =? acc) eqn:Eacc;
-        try (rewrite eqb_eq in *; subst; rewrite Properties.map.put_put_same; auto).
-      rewrite eqb_neq in *. rewrite Properties.map.put_put_diff with (k1 := x); intuition auto.
-    - destruct tag; auto;
-      rewrite <- IHe1; intuition idtac; case_match; auto;
-      f_equal; clear E; induction l; auto; simpl;
-      (destruct (x0 =? x) eqn:E';
-       [ rewrite eqb_eq in *; subst;
-         rewrite Properties.map.put_put_same; destruct_one_match;
-         [f_equal |]; apply IHl
-       | rewrite eqb_neq in *; rewrite Properties.map.put_put_diff; intuition idtac;
-         rewrite <- IHe2 with (x := x0); intuition idtac;
-         destruct_one_match; auto; f_equal; apply IHl ]).
-    - destruct tag; auto;
-        rewrite <- IHe1, <- IHe2; intuition idtac; repeat case_match; auto.
-      1: do 2 f_equal; apply flat_map_ext; intros; clear E E0;
-      induction l0; auto; simpl.
-      2: do 2 f_equal; apply flat_map_ext; intros; clear E E0;
-      remember (bag_to_list l0) as l0'; clear Heql0';
-      induction l0'; auto; simpl.
-      3: f_equal; apply flat_map_ext; intros; clear E E0;
-      induction l0; auto; simpl.
-      all: enough (interp_expr store (map.put (map.put (map.put env x0 v) x a) y a0) e3 = interp_expr store (map.put (map.put env x a) y a0) e3);
-        [ | (destruct (x0 =? x) eqn:Ex;
-             [ rewrite eqb_eq in *; subst;
-               rewrite Properties.map.put_put_same; auto
-             | rewrite eqb_neq in *;
-               rewrite Properties.map.put_put_diff with (k1 := x0); auto;
-               (destruct (x0 =? y) eqn:Ey;
-               [ rewrite eqb_eq in *; subst;
-                 rewrite Properties.map.put_put_same; auto
-               | rewrite eqb_neq in *;
-                 rewrite Properties.map.put_put_diff; auto;
-                 simpl in H1; rewrite Bool.orb_false_iff in *;
-                 rewrite <- IHe3; intuition idtac ]) ]) ].
-      1: rewrite H0; destruct_one_match; simpl; try apply IHl0;
-      f_equal; try apply IHl0.
-      2: rewrite H0; destruct_one_match; simpl; try apply IHl0';
-      f_equal; try apply IHl0'.
-      3: rewrite H0; destruct_one_match; simpl; try apply IHl0;
-      f_equal; try apply IHl0.
-      all: destruct (x0 =? x) eqn:Ex;
-        [ rewrite eqb_eq in *; subst;
-          rewrite Properties.map.put_put_same; auto
-        | rewrite eqb_neq in *;
-          rewrite Properties.map.put_put_diff with (k1 := x0); auto;
-          (destruct (x0 =? y) eqn:Ey;
-           [ rewrite eqb_eq in *; subst;
-             rewrite Properties.map.put_put_same; auto
-           | rewrite eqb_neq in *;
-             rewrite Properties.map.put_put_diff with (k1 := x0); auto;
-             simpl in H1; rewrite Bool.orb_false_iff in *;
-             rewrite <- (IHe4 x0); intuition idtac ]) ].
-    - destruct tag; auto;
-        rewrite <- IHe1; intuition idtac; case_match; auto.
-      all: [> do 2 f_equal | do 2 f_equal | f_equal ]; apply map_ext; intro;
-        (destruct (x0 =? x) eqn:Ex;
-         [ rewrite eqb_eq in *; subst;
-           rewrite Properties.map.put_put_same; auto
-         | rewrite eqb_neq in *;
-           rewrite Properties.map.put_put_diff with (k1 := x0); auto ]).
   Qed.
 End WithMap.
 

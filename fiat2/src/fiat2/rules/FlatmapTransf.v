@@ -1,5 +1,5 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfSound fiat2.rules.CollectionTransf.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation.
 
 Open Scope string_scope.
@@ -15,8 +15,6 @@ Definition swap_if_nil_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_if_nil_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_if_nil_head.
@@ -56,8 +54,6 @@ Definition merge_if_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma merge_if_head_preserve_ty : forall Gstore, preserve_ty Gstore merge_if_head.
@@ -88,17 +84,26 @@ Section WithMap.
   Qed.
 End WithMap.
 
+(* The two conjuncts of a two-sided on one attribute: a lower bound and
+   an upper bound, on the same attribute of the same row. *)
+Definition is_two_sided_range (p1 p2 : expr) : bool :=
+  match p1, p2 with
+  | EUnop ONot (EBinop OLess (EAccess (EVar x1) a1) _),
+    EBinop OLess (EAccess (EVar x2) a2) _ =>
+      (String.eqb x1 x2 && String.eqb a1 a2)%bool
+  | _, _ => false
+  end.
+
 Definition split_if_head (e : expr) :=
   match e with
   | EIf (EBinop OAnd p1 p2) e1 (EAtom (ANil t)) =>
-      EIf p1 (EIf p2 e1 (EAtom (ANil t))) (EAtom (ANil t))
+      if is_two_sided_range p1 p2 then e
+      else EIf p1 (EIf p2 e1 (EAtom (ANil t))) (EAtom (ANil t))
   | _ => e
   end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma split_if_head_preserve_ty : forall Gstore, preserve_ty Gstore split_if_head.
@@ -116,6 +121,7 @@ Section WithMap.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
     repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
     repeat invert_type_of_clear. invert_type_of_op_clear.
+    apply_type_sound e1_1; invert_type_of_value_clear.
     apply_type_sound e1_2; invert_type_of_value_clear.
     cbn; destruct b, b0; reflexivity.
   Qed.
@@ -139,8 +145,6 @@ Definition swap_flatmap_if_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_flatmap_if_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_flatmap_if_head.
@@ -200,18 +204,25 @@ Proof.
   rewrite flat_map_app. congruence.
 Qed.
 
+(* Whether e is [x] *)
+Definition is_singleton_of (x : string) (e : expr) : bool :=
+  match e with
+  | EBinop OCons (EVar y) (EAtom (ANil _)) => String.eqb x y
+  | _ => false
+  end.
+
 Definition if_nil_into_flatmap_head (e : expr) :=
-  (* Expose filter construct *)
+  (* Expose filter construct; a flatmap that already is a filter is left alone,
+     since splitting it would only add an identity flatmap around the filter *)
   match e with
   | EFlatmap LikeList e1 x (EIf p e2 (EAtom (ANil t))) =>
-      EFlatmap LikeList (EFlatmap LikeList e1 x (EIf p (singleton (EVar x)) (EAtom (ANil None)))) x e2
+      if is_singleton_of x e2 then e
+      else EFlatmap LikeList (EFlatmap LikeList e1 x (EIf p (singleton (EVar x)) (EAtom (ANil None)))) x e2
   | _ => e
   end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma if_nil_into_flatmap_head_preserve_ty : forall Gstore, preserve_ty Gstore if_nil_into_flatmap_head.
@@ -230,6 +241,7 @@ Section WithMap.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
     repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
     repeat invert_type_of_clear.
+    destruct (interp_expr store env e1) eqn:E_e1; auto.
     apply_type_sound e1; invert_type_of_value_clear.
     lazymatch goal with
       _: VList _ = ?x, H': ?x = _ |- _ =>
@@ -254,249 +266,210 @@ Section WithMap.
   Qed.
 End WithMap.
 
-Definition join_to_flatmap_filter_head (e : expr) :=
+Definition flatmap_assoc_head (e : expr) :=
+  (* [y <- [x <- e1, e2], e3] --> [x <- e1, y <- e2, e3], where x is not free in e3 *)
   match e with
-  | EJoin LikeList e1 e2 x1 x2 p e3 =>
-      if free_immut_in x1 e2 then e
-      else EFlatmap LikeList e1 x1
-             (EFlatmap LikeList (EFilter LikeList e2 x2 p) x2
-                (EBinop OCons e3 (EAtom (ANil None))))
+  | EFlatmap LikeList (EFlatmap LikeList e1 x e2) y e3 =>
+      if free_immut_in x e3 then e
+      else EFlatmap LikeList e1 x (EFlatmap LikeList e2 y e3)
   | _ => e
   end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-  Lemma join_to_flatmap_filter_head_preserve_ty : forall Gstore, preserve_ty Gstore join_to_flatmap_filter_head.
+  Lemma not_free_immut_put_put_ty : forall x y e (Gstore Genv : tenv) tx ty t,
+      free_immut_in x e = false ->
+      type_of Gstore (map.put Genv y ty) e t ->
+      type_of Gstore (map.put (map.put Genv x tx) y ty) e t.
+  Proof.
+    intros. destruct (String.eqb x y) eqn:E.
+    - rewrite String.eqb_eq in E; subst.
+      rewrite Properties.map.put_put_same; assumption.
+    - rewrite String.eqb_neq in E.
+      rewrite Properties.map.put_put_diff_comm; auto.
+      apply not_free_immut_put_ty2; assumption.
+  Qed.
+
+  Lemma not_free_immut_put_put_sem : forall x y e (store env : locals) vx vy,
+      free_immut_in x e = false ->
+      interp_expr store (map.put (map.put env x vx) y vy) e = interp_expr store (map.put env y vy) e.
+  Proof.
+    intros. destruct (String.eqb x y) eqn:E.
+    - rewrite String.eqb_eq in E; subst.
+      rewrite Properties.map.put_put_same; reflexivity.
+    - rewrite String.eqb_neq in E.
+      rewrite Properties.map.put_put_diff_comm; auto.
+      symmetry. apply not_free_immut_put_sem; assumption.
+  Qed.
+
+  Lemma flatmap_assoc_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_assoc_head.
   Proof.
     unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
     repeat destruct_subexpr.
     simpl. repeat (case_match; auto).
     repeat invert_type_of_clear.
-    repeat econstructor; eauto using not_free_immut_put_ty2.
-    eapply type_of__type_wf. 3: eassumption.
-    1: eauto with fiat2_hints.
-    repeat apply tenv_wf_step; eauto with fiat2_hints.
+    repeat econstructor; eauto using not_free_immut_put_put_ty.
   Qed.
 
-  Lemma join_to_flatmap_filter_head_preserve_sem : forall Gstore (store : locals),
-      preserve_sem Gstore store join_to_flatmap_filter_head.
+  Lemma flatmap_assoc_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_assoc_head.
   Proof.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []).
+    repeat invert_type_of_clear.
+    cbn [interp_expr].
+    apply_type_sound e1_1; invert_type_of_value_clear.
+    f_equal. rewrite flat_map__flat_map.
+    apply flat_map_eq. rewrite Forall_forall; intros v H_in.
+    apply_Forall_In.
+    apply_type_sound2 e1_2;
+      try (apply tenv_wf_step; eauto with fiat2_hints);
+      try (apply locals_wf_step; auto).
+    invert_type_of_value_clear. try rewrite_expr_value.
+    apply flat_map_eq. rewrite Forall_forall; intros.
+    rewrite not_free_immut_put_put_sem; auto.
+  Qed.
+
+  Lemma flatmap_assoc_head_sound : expr_transf_sound (locals:=locals) flatmap_assoc_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_assoc_head_preserve_ty; auto.
+    eapply flatmap_assoc_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
+Definition flatmap_singleton_head (e : expr) :=
+  (* [x <- [e1], e2] --> let x = e1 in e2 *)
+  match e with
+  | EFlatmap LikeList (EBinop OCons e1 (EAtom (ANil _))) x e2 => ELet e1 x e2
+  | _ => e
+  end.
+
+Definition flatmap_identity_head (e : expr) :=
+  (* [x <- e1, ret x] --> e1 *)
+  match e with
+  | EFlatmap LikeList e1 x (EBinop OCons (EVar y) (EAtom (ANil _))) =>
+      if String.eqb x y then e1 else e
+  | _ => e
+  end.
+
+Lemma flat_map_singleton_id : forall A (l : list A),
+    flat_map (fun v => v :: nil) l = l.
+Proof.
+  induction l; cbn; congruence.
+Qed.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma flatmap_singleton_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_singleton_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+    econstructor; eauto.
+  Qed.
+
+  Lemma flatmap_singleton_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_singleton_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl.
+    repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+    apply_type_sound2 e2;
+      try (apply tenv_wf_step; eauto with fiat2_hints);
+      try (apply locals_wf_step; auto; eapply type_sound; eauto).
+    invert_type_of_value_clear.
+    try rewrite_expr_value. rewrite app_nil_r. reflexivity.
+  Qed.
+
+  Lemma flatmap_singleton_head_sound : expr_transf_sound (locals:=locals) flatmap_singleton_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_singleton_head_preserve_ty; auto.
+    eapply flatmap_singleton_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+
+  Lemma flatmap_identity_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_identity_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    rewrite String.eqb_eq in *; subst.
+    repeat invert_type_of_clear. repeat invert_type_of_op_clear.
+    repeat rewrite_map_get_put_hyp. repeat do_injection. assumption.
+  Qed.
+
+  Lemma flatmap_identity_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_identity_head.
+  Proof.
+    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
+    repeat destruct_subexpr. simpl. repeat (case_match; auto; []).
+    rewrite String.eqb_eq in *; subst.
     repeat invert_type_of_clear.
     apply_type_sound e1; invert_type_of_value_clear.
+    cbn [interp_expr interp_binop interp_atom]. try rewrite_expr_value.
+    unfold get_local. f_equal.
+    erewrite flat_map_ext; [ symmetry; apply flat_map_singleton_id | ].
+    intros. rewrite map.get_put_same. reflexivity.
+  Qed.
+
+  Lemma flatmap_identity_head_sound : expr_transf_sound (locals:=locals) flatmap_identity_head.
+  Proof.
+    unfold expr_transf_sound; split; intros.
+    1: apply flatmap_identity_head_preserve_ty; auto.
+    eapply flatmap_identity_head_preserve_sem; resolve_locals_wf; eauto.
+  Qed.
+End WithMap.
+
+Definition flatmap_if_head (e : expr) :=
+  (* [x <- (if p then e1 else []), e2] --> if p then [x <- e1, e2] else [] *)
+  match e with
+  | EFlatmap LikeList (EIf p e1 (EAtom (ANil _))) x e2 =>
+      EIf p (EFlatmap LikeList e1 x e2) (EAtom (ANil None))
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma flatmap_if_head_preserve_ty : forall Gstore, preserve_ty Gstore flatmap_if_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat invert_type_of_clear.
+    repeat (econstructor; eauto).
     lazymatch goal with
-      H: VList _ = _ |- _ => clear H
-    end.
-    apply_type_sound e2; invert_type_of_value_clear.
-    f_equal; subst.
-    apply flat_map_eq.
-    rewrite Forall_forall; intros.
-    rewrite <- (not_free_immut_put_sem e2); trivial.
-    repeat rewrite_r_to_l. reflexivity.
-  Qed.
-
-  Lemma join_to_flatmap_filter_head_sound : expr_transf_sound (locals:=locals) join_to_flatmap_filter_head.
-  Proof.
-    unfold expr_transf_sound; split; intros.
-    1: apply join_to_flatmap_filter_head_preserve_ty; auto.
-    eapply join_to_flatmap_filter_head_preserve_sem; resolve_locals_wf; eauto.
-  Qed.
-End WithMap.
-
-Definition to_filter_head (e : expr) :=
-  match e with
-  | EFlatmap LikeList e' x
-      (EIf p (EBinop OCons (EVar y) (EAtom (ANil _))) (EAtom (ANil _))) =>
-      if String.eqb x y then EFilter LikeList e' x p else e
-  | _ => e
-  end.
-
-Section WithMap.
-  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
-  Context {locals: map.map string value} {locals_ok: map.ok locals}.
-
-  Lemma to_filter_head_preserve_ty : forall Gstore, preserve_ty Gstore to_filter_head.
-  Proof.
-    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
-    repeat destruct_subexpr.
-    simpl. repeat (case_match; auto).
-    rewrite eqb_eq in *; subst. repeat invert_type_of_clear.
-    invert_type_of_op. rewrite_map_get_put_hyp. do_injection.
-    constructor; auto.
-  Qed.
-
-  Lemma to_filter_head_preserve_sem : forall Gstore (store : locals),
-      preserve_sem Gstore store to_filter_head.
-  Proof.
-    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    repeat destruct_subexpr. simpl. repeat (case_match; auto; []). simpl.
-    case_match; auto. f_equal.
-    rewrite eqb_eq in *; subst.
+      H: type_of _ (map.put _ _ _) _ (TList ?t2) |- type_wf ?t2 =>
+        apply type_of__type_wf in H
+    end; auto.
+    1: invert_type_wf; assumption.
+    apply tenv_wf_step; auto.
     lazymatch goal with
-      H: _ = VList _ |- _ => clear H
-    end. induction l; auto.
-    simpl. repeat (case_match; auto).
-    unfold get_local. rewrite map.get_put_same. simpl. f_equal. auto.
+      H: type_of _ _ _ (TList ?t1) |- type_wf ?t1 =>
+        apply type_of__type_wf in H
+    end; auto.
+    invert_type_wf; assumption.
   Qed.
 
-  Lemma to_filter_head_sound : expr_transf_sound (locals:=locals) to_filter_head.
-  Proof.
-    unfold expr_transf_sound; split; intros.
-    1: apply to_filter_head_preserve_ty; auto.
-    eapply to_filter_head_preserve_sem; resolve_locals_wf; eauto.
-  Qed.
-End WithMap.
-
-Definition to_join_head (e : expr) :=
-  match e with
-  | EFlatmap LikeList tbl1 x
-      (EFlatmap LikeList tbl2 y
-         (EIf p (EBinop OCons r (EAtom (ANil _))) (EAtom (ANil _)))) =>
-      if ((x =? y) || free_immut_in x tbl2)%bool
-      then e
-      else EJoin LikeList tbl1 tbl2 x y p r
-  | _ => e
-  end.
-
-Section WithMap.
-  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
-  Context {locals: map.map string value} {locals_ok: map.ok locals}.
-
-  Lemma to_join_head_preserve_ty : forall Gstore, preserve_ty Gstore to_join_head.
-  Proof.
-    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
-    repeat destruct_subexpr.
-    simpl. repeat (case_match; auto).
-    repeat invert_type_of_clear. invert_type_of_op.
-    econstructor; eauto.
-    rewrite Bool.orb_false_iff in *.
-    eapply not_free_immut_put_ty; eauto. intuition idtac.
-  Qed.
-
-  Lemma to_join_head_preserve_sem' : forall (store env: locals) (Gstore Genv: tenv) (tbl1 tbl2 p r : expr) (x y : string) (t1 t2 t3 : type) (t t' : option type),
-      tenv_wf Gstore -> tenv_wf Genv ->
-      type_of Gstore Genv tbl1 (TList t1) ->
-      type_of Gstore (map.put Genv x t1) tbl2 (TList t2) ->
-      free_immut_in x tbl2 = false ->
-      type_of Gstore (map.put (map.put Genv x t1) y t2) p TBool ->
-      locals_wf Gstore store ->
-      locals_wf Genv env ->
-      interp_expr store env (EFlatmap LikeList tbl1 x
-                               (EFlatmap LikeList tbl2 y
-                                  (EIf p (EBinop OCons r (EAtom (ANil t))) (EAtom (ANil t'))))) =
-        interp_expr store env (EJoin LikeList tbl1 tbl2 x y p r).
-  Proof.
-    intros store env Gstore Genv tbl1 tbl2 p r x y t1 t2 t3 t t' H_Gstore H_Genv H_tbl1 H_tbl2 H_free H_p H_str H_env.
-    simpl. apply type_of__type_wf in H_tbl1 as H_wf1; auto. apply type_of__type_wf in H_tbl2 as H_wf2; auto;
-      [| apply tenv_wf_step; inversion H_wf1]; auto.
-    eapply type_sound in H_tbl1; eauto. inversion H_tbl1; subst.
-    f_equal. apply not_free_immut_put_ty in H_tbl2 as H_tbl2'; auto.
-    eapply type_sound in H_tbl2'; eauto. inversion H_tbl2'; subst.
-    f_equal. apply flat_map_eq. rewrite Forall_forall. intros v H_v.
-    eapply type_sound with (env := (map.put env x v)) in H_tbl2; eauto.
-    - inversion H_tbl2; subst.
-      rewrite <- not_free_immut_put_sem in H2; auto. rewrite <- H2 in H0.
-      injection H0; intros; subst.
-      subst. clear H0 H2. induction l1; auto. simpl.
-      eapply type_sound in H_p; eauto.
-      + inversion H_p; subst. rewrite <- H2. destruct b; simpl; [f_equal |];
-          inversion H3; inversion H5; apply IHl1; auto.
-      + rewrite Forall_forall in *; repeat apply locals_wf_step;
-          repeat apply tenv_wf_step; intuition idtac;
-          inversion H_wf1; inversion H_wf2; auto.
-      + repeat apply locals_wf_step; auto.
-        * eapply List.Forall_In in H1; eauto.
-        * inversion H3; auto.
-    - apply tenv_wf_step; auto. inversion H_wf1; auto.
-    - rewrite Forall_forall in *; repeat apply locals_wf_step; intuition auto.
-  Qed.
-
-  Lemma to_join_head_preserve_sem : forall Gstore (store : locals), preserve_sem Gstore store to_join_head.
+  Lemma flatmap_if_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store flatmap_if_head.
   Proof.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-      repeat destruct_subexpr.
-      unfold to_join_head. repeat (case_match; auto).
-      repeat invert_type_of_clear. invert_type_of_op.
-      rewrite Bool.orb_false_iff in *.
-      erewrite to_join_head_preserve_sem' with (Gstore := Gstore); eauto; intuition idtac.
+    repeat destruct_subexpr. simpl.
+    destruct (interp_expr store env e1_1); auto.
+    destruct b; reflexivity.
   Qed.
 
-  Lemma to_join_head_sound : expr_transf_sound (locals:=locals) to_join_head.
+  Lemma flatmap_if_head_sound : expr_transf_sound (locals:=locals) flatmap_if_head.
   Proof.
     unfold expr_transf_sound; split; intros.
-    1: apply to_join_head_preserve_ty; auto.
-    eapply to_join_head_preserve_sem; resolve_locals_wf; eauto.
-  Qed.
-End WithMap.
-
-Definition filter_pushdown_head (e : expr) :=
-  match e with
-  | EJoin LikeList tbl1 tbl2 r1 r2 (EBinop OAnd p1 p) r =>
-      if free_immut_in r2 p1
-      then e
-      else EJoin LikeList (EFilter LikeList tbl1 r1 p1) tbl2 r1 r2 p r
-  | _ => e
-  end.
-
-Section WithMap.
-  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
-  Context {locals: map.map string value} {locals_ok: map.ok locals}.
-
-  Lemma filter_pushdown_head_preserve_ty : forall Gstore,
-      preserve_ty Gstore filter_pushdown_head.
-  Proof.
-    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
-    repeat destruct_subexpr.
-    simpl. repeat (case_match; auto).
-    repeat invert_type_of_clear. invert_type_of_op.
-    econstructor; eauto. constructor; auto.
-    eapply not_free_immut_put_ty; eauto.
-  Qed.
-
-  Lemma filter_pushdown_head_preserve_sem : forall Gstore (store : locals),
-      preserve_sem Gstore store filter_pushdown_head.
-  Proof.
-    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    destruct e; auto. destruct tag; auto. destruct e3; auto. destruct o; auto.
-    unfold filter_pushdown_head. destruct (free_immut_in y e3_1) eqn:E; auto.
-    simpl. destruct (interp_expr store env e1) eqn:E1; auto.
-    destruct (interp_expr store env e2) eqn:E2; auto. f_equal.
-    inversion H; subst.
-    eapply type_sound in H7, H8; eauto. rewrite E1 in H7. rewrite E2 in H8.
-    inversion H7; inversion H8; subst.
-    rewrite flat_map_filter. apply In_flat_map_ext; intros.
-    destruct (interp_expr store (map.put env x a) e3_1) eqn:E3_1;
-      try (clear E2 H8; induction l0; auto; simpl;
-           eapply not_free_immut_put_sem in E; rewrite <- E; rewrite E3_1; simpl;
-           apply IHl0; inversion H5; intuition idtac).
-    destruct b.
-    - clear E2 H8; induction l0; inversion H5; auto; simpl.
-      eapply not_free_immut_put_sem in E; rewrite <- E; rewrite E3_1; simpl.
-      destruct (interp_expr store (map.put (map.put env x a) y a0) e3_2) eqn:E3_2; simpl;
-        try (apply IHl0; intuition idtac).
-      destruct b; simpl; [f_equal |]; apply IHl0; intuition idtac.
-    - clear E2 H8; induction l0; inversion H5; auto; simpl.
-      eapply not_free_immut_put_sem in E; rewrite <- E; rewrite E3_1; simpl.
-      destruct (interp_expr store (map.put (map.put env x a) y a0) e3_2) eqn:E3_2; simpl;
-        apply IHl0; intuition idtac.
-  Qed.
-
-  Lemma filter_pushdown_head_sound : expr_transf_sound (locals:=locals) filter_pushdown_head.
-  Proof.
-    unfold expr_transf_sound; split; intros.
-    1: apply filter_pushdown_head_preserve_ty; auto.
-    eapply filter_pushdown_head_preserve_sem; resolve_locals_wf; eauto.
+    1: apply flatmap_if_head_preserve_ty; auto.
+    eapply flatmap_if_head_preserve_sem; resolve_locals_wf; eauto.
   Qed.
 End WithMap.
 
@@ -509,8 +482,6 @@ Definition swap_conjuncts_head (e : expr) :=
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
   Lemma swap_conjuncts_head_preserve_ty : forall Gstore,
@@ -542,31 +513,9 @@ Section WithMap.
   Qed.
 End WithMap.
 
-Definition filter_pushdown_likebag_head (e : expr) :=
-  match e with
-  | EJoin LikeBag tbl1 tbl2 r1 r2 (EBinop OAnd p1 p) r =>
-      if free_immut_in r2 p1
-      then e
-      else EJoin LikeBag (EFilter LikeBag tbl1 r1 p1) tbl2 r1 r2 p r
-  | _ => e
-  end.
-
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
-
-  Lemma filter_pushdown_likebag_head_preserve_ty : forall Gstore,
-      preserve_ty Gstore filter_pushdown_likebag_head.
-  Proof.
-    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
-    repeat destruct_subexpr.
-    simpl. repeat (case_match; auto).
-    repeat invert_type_of_clear. invert_type_of_op.
-    econstructor; eauto. constructor; auto.
-    eapply not_free_immut_put_ty; eauto.
-  Qed.
 
   Lemma filter_repeat_true : forall A f (v : A) n,
       f v = true -> filter f (repeat v n) = repeat v n.
@@ -594,131 +543,17 @@ Section WithMap.
     1: rewrite filter_repeat_false; auto.
   Qed.
 
-  Lemma filter_pushdown_likebag_head_preserve_sem : forall Gstore (store : locals),
-      preserve_sem Gstore store filter_pushdown_likebag_head.
-  Proof.
-    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    repeat destruct_subexpr. simpl.
-    repeat (case_match; auto; []). simpl.
-    repeat invert_type_of_clear.
-    invert_type_of_op_clear.
-    apply_type_sound e1; invert_type_of_value_clear.
-    apply_type_sound e2; invert_type_of_value_clear.
-    do 2 f_equal.
-    erewrite bag_to_list_filter_fst with
-      (f := fun v : value =>
-              match
-                interp_expr store (map.put env x v) e3_1
-              with
-              | VBool b => b
-              | _ => false
-              end).
-    rewrite flat_map_filter.
-    apply flat_map_eq.
-    rewrite Forall_forall; intros ? H_in.
-    apply bag_to_list_incl, In_fst in H_in.
-    destruct_exists; intuition idtac.
-    apply_Forall_In.
-    lazymatch goal with
-      H: type_of _ _ e3_1 _ |- _ =>
-        apply not_free_immut_put_ty in H
-      end; auto.
-    apply_type_sound e3_1;
-      eauto with fiat2_hints.
-    invert_type_of_value_clear; rewrite_expr_value.
-    case_match.
-    1:{ f_equal. apply filter_ext_in; intros ? H_in.
-    apply bag_to_list_incl, In_fst in H_in.
-    destruct_exists; intuition idtac.
-    apply_Forall_In.
-    rewrite <- not_free_immut_put_sem with (e:=e3_1); auto.
-    rewrite_expr_value; cbn.
-    case_match; auto. }
-    1:{ symmetry; apply List.map_nil.
-        apply List.filter_nil; intros ? H_in.
-    apply bag_to_list_incl, In_fst in H_in.
-    destruct_exists; intuition idtac.
-    apply_Forall_In.
-    rewrite <- not_free_immut_put_sem with (e:=e3_1); auto.
-    rewrite_expr_value; cbn.
-    apply_type_sound e3_2; eauto with fiat2_hints.
-    2: repeat apply tenv_wf_step; eauto with fiat2_hints.
-    invert_type_of_value_clear.
-    rewrite_expr_value; reflexivity. }
-  Qed.
-
-  Lemma filter_pushdown_likebag_head_sound : expr_transf_sound (locals:=locals) filter_pushdown_likebag_head.
-  Proof.
-    unfold expr_transf_sound; split; intros.
-    1: apply filter_pushdown_likebag_head_preserve_ty; auto.
-    eapply filter_pushdown_likebag_head_preserve_sem; resolve_locals_wf; eauto.
-  Qed.
 End WithMap.
-
-Definition to_proj_head (e : expr) :=
-  match e with
-  | EFlatmap LikeList e x
-      (EBinop OCons e' (EAtom (ANil _))) =>
-      EProj LikeList e x e'
-  | _ => e
-  end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-  Lemma to_proj_head_preserve_ty : forall Gstore, preserve_ty Gstore to_proj_head.
-  Proof.
-    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
-    repeat destruct_subexpr.
-    simpl. repeat (case_match; auto).
-    repeat invert_type_of_clear.
-    invert_type_of_op.
-    econstructor; eauto.
-  Qed.
-
-  Lemma to_proj_head_preserve_sem : forall Gstore (store : locals),
-      preserve_sem Gstore store to_proj_head.
-  Proof.
-    unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
-    repeat destruct_subexpr. simpl.
-    case_match; auto.
-  Qed.
-
-  Lemma to_proj_head_sound : expr_transf_sound (locals:=locals) to_proj_head.
-  Proof.
-    unfold expr_transf_sound; split; intros.
-    1: apply to_proj_head_preserve_ty; auto.
-    eapply to_proj_head_preserve_sem; resolve_locals_wf; eauto.
-  Qed.
 End WithMap.
-
-Definition swap_join_likebag_head (e : expr) :=
-  match e with
-  | EJoin LikeBag e1 e2 x1 x2 p e3 =>
-      if String.eqb x1 x2 then e
-      else EJoin LikeBag e2 e1 x2 x1 p e3
-  | _ => e
-  end.
 
 Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-  Context {width: Z} {word: word.word width} {word_ok: word.ok word}.
-  Notation value := (value (word:=word)).
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
-
-  Lemma swap_join_likebag_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_join_likebag_head.
-  Proof.
-    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
-    repeat destruct_subexpr.
-    simpl. repeat (case_match; auto).
-    repeat invert_type_of_clear.
-    rewrite String.eqb_neq in *.
-    econstructor; eauto.
-    all: rewrite Properties.map.put_put_diff; auto.
-  Qed.
 
   Lemma bag_insert_comm : forall (x y : value) l,
       bag_insert x (bag_insert y l) = bag_insert y (bag_insert x l).
@@ -799,65 +634,86 @@ Section WithMap.
     case_match; cbn; congruence.
   Qed.
 
-  Lemma swap_join_likebag_head_preserve_sem : forall Gstore (store : locals),
-      preserve_sem Gstore store swap_join_likebag_head.
+End WithMap.
+
+Definition swap_flatmap_likebag_head (e : expr) :=
+  (* Under bag semantics, the order of two independent nested iterations does not matter:
+     [x <- e1, y <- e2, e3] --> [y <- e2, x <- e1, e3]
+     when x and y differ, x is not free in e2 and y is not free in e1 *)
+  match e with
+  | EFlatmap LikeBag e1 x (EFlatmap LikeBag e2 y e3) =>
+      if (String.eqb x y || free_immut_in x e2 || free_immut_in y e1)%bool then e
+      else EFlatmap LikeBag e2 y (EFlatmap LikeBag e1 x e3)
+  | _ => e
+  end.
+
+Section WithMap.
+  Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
+  Context {locals: map.map string value} {locals_ok: map.ok locals}.
+
+  Lemma swap_flatmap_likebag_head_preserve_ty : forall Gstore, preserve_ty Gstore swap_flatmap_likebag_head.
+  Proof.
+    unfold preserve_ty. intros Gstore e t Genv H_Gstore H_Genv H.
+    repeat destruct_subexpr.
+    simpl. repeat (case_match; auto).
+    rewrite !Bool.orb_false_iff, String.eqb_neq in *; intuition idtac.
+    repeat invert_type_of_clear.
+    repeat econstructor.
+    - eapply not_free_immut_put_ty; eauto.
+    - apply not_free_immut_put_ty2; eauto.
+    - rewrite Properties.map.put_put_diff_comm; auto.
+  Qed.
+
+  Lemma swap_flatmap_likebag_head_preserve_sem : forall Gstore (store : locals),
+      preserve_sem Gstore store swap_flatmap_likebag_head.
   Proof.
     unfold preserve_sem. intros Gstore store e t Genv env H_Gstore H_Genv H H_str H_env.
     repeat destruct_subexpr. simpl.
-    repeat (case_match; auto; []). simpl.
-    rewrite String.eqb_neq in *.
+    repeat (case_match; auto; []).
+    rewrite !Bool.orb_false_iff, String.eqb_neq in *; intuition idtac.
     repeat invert_type_of_clear.
+    cbn [interp_expr].
+    lazymatch goal with
+      H: type_of _ (map.put _ _ _) e2_1 _ |- _ =>
+        apply not_free_immut_put_ty in H; auto
+    end.
     apply_type_sound e1; invert_type_of_value_clear.
-    apply_type_sound e2; invert_type_of_value_clear.
-    repeat lazymatch goal with
-      H: VBag _ = _ |- _ => clear H
-           end.
-    f_equal.
-    apply Permutation_list_to_bag_eq.
-    erewrite flat_map_eq.
-    (* swap the order of map.put *)
-    2:{ rewrite Forall_forall; intros ? H_in.
-        apply bag_to_list_incl, In_fst in H_in.
-        destruct_exists. destruct_and.
-        apply_Forall_In.
-        erewrite filter_ext_in.
-        2:{ intros ? H_in.
-            apply bag_to_list_incl, In_fst in H_in.
-            destruct_exists. destruct_and.
-            rewrite Properties.map.put_put_diff; auto.
-            reflexivity. }
-        erewrite map_ext_in.
-        2:{ intros.
-            rewrite Properties.map.put_put_diff; auto.
-            reflexivity. }
-        reflexivity. }
-    erewrite flat_map_eq.
-    2:{  rewrite Forall_forall; intros.
-         rewrite map_filter__flat_map . reflexivity. }
-    erewrite flat_map_eq with (l:=bag_to_list l).
-    2:{  rewrite Forall_forall; intros.
-         rewrite map_filter__flat_map . reflexivity. }
+    apply_type_sound e2_1; invert_type_of_value_clear.
+    repeat rewrite_expr_value.
+    f_equal. apply Permutation_list_to_bag_eq.
+    erewrite In_flat_map_ext with (l := bag_to_list l0);
+      [ | intros w _; rewrite <- (not_free_immut_put_sem e1 x0); [ rewrite <- H; reflexivity | assumption ] ].
+    erewrite In_flat_map_ext with (l := bag_to_list l);
+      [ | intros v _; rewrite <- (not_free_immut_put_sem e2_1 x); [ rewrite <- H0; reflexivity | assumption ] ].
+    cbn beta iota.
+    eapply perm_trans;
+      [ eapply Utils.Permutation_flat_map;
+        [ intros; apply list_to_bag_to_list_Permutation | apply Permutation_refl ] | ].
+    eapply perm_trans;
+      [ | apply Permutation_sym; eapply Utils.Permutation_flat_map;
+          [ intros; apply list_to_bag_to_list_Permutation | apply Permutation_refl ] ].
+    erewrite In_flat_map_ext with (l := bag_to_list l0);
+      [ | intros w _; apply In_flat_map_ext; intros v _;
+          rewrite Properties.map.put_put_diff_comm; [ reflexivity | congruence ] ].
     apply Permutation_flat_map_comm.
   Qed.
 
-  Lemma swap_join_likebag_head_sound : expr_transf_sound (locals:=locals) swap_join_likebag_head.
+  Lemma swap_flatmap_likebag_head_sound : expr_transf_sound (locals:=locals) swap_flatmap_likebag_head.
   Proof.
     unfold expr_transf_sound; split; intros.
-    1: apply swap_join_likebag_head_preserve_ty; auto.
-    eapply swap_join_likebag_head_preserve_sem; resolve_locals_wf; eauto.
+    1: apply swap_flatmap_likebag_head_preserve_ty; auto.
+    eapply swap_flatmap_likebag_head_preserve_sem; resolve_locals_wf; eauto.
   Qed.
 End WithMap.
 
-#[export] Hint Resolve to_filter_head_sound : transf_hints.
-#[export] Hint Resolve to_proj_head_sound : transf_hints.
-#[export] Hint Resolve to_join_head_sound : transf_hints.
-#[export] Hint Resolve filter_pushdown_head_sound : transf_hints.
 #[export] Hint Resolve swap_if_nil_head_sound : transf_hints.
 #[export] Hint Resolve merge_if_head_sound : transf_hints.
 #[export] Hint Resolve swap_flatmap_if_head_sound : transf_hints.
 #[export] Hint Resolve if_nil_into_flatmap_head_sound : transf_hints.
-#[export] Hint Resolve join_to_flatmap_filter_head_sound : transf_hints.
-#[export] Hint Resolve filter_pushdown_likebag_head_sound : transf_hints.
-#[export] Hint Resolve swap_join_likebag_head_sound : transf_hints.
 #[export] Hint Resolve swap_conjuncts_head_sound : transf_hints.
 #[export] Hint Resolve split_if_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_assoc_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_singleton_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_identity_head_sound : transf_hints.
+#[export] Hint Resolve flatmap_if_head_sound : transf_hints.
+#[export] Hint Resolve swap_flatmap_likebag_head_sound : transf_hints.

@@ -1,5 +1,4 @@
 Require Import fiat2.Value fiat2.Language fiat2.Interpret fiat2.TypeSystem.
-Require Import coqutil.Word.Interface.
 Require Import coqutil.Map.Interface.
 Require Import coqutil.Datatypes.Result.
 Import ResultMonadNotations.
@@ -26,12 +25,9 @@ Ltac destruct_match_hyp :=
       destruct x eqn:E end.
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
 
   Section WithMap.
     Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
-    Local Notation value := (Value.value (word := word)).
     Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
     Local Coercion is_true : bool >-> Sortclass.
@@ -52,8 +48,8 @@ Section WithWord.
       | H: type_wf (TBag ?t) |- type_wf ?t => inversion H; clear H; subst
       | H: type_wf (TSet ?t) |- type_wf ?t => inversion H; clear H; subst
       | H: type_wf (TOption ?t) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TDict ?t _) |- type_wf ?t => inversion H; clear H; subst
-      | H: type_wf (TDict _ ?t) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ ?t _) |- type_wf ?t => inversion H; clear H; subst
+      | H: type_wf (TDict _ _ ?t) |- type_wf ?t => inversion H; clear H; subst
       | H: type_wf (TRecord ?tl) |- Forall type_wf (List.map snd ?tl) => inversion H; clear H; subst
       end.
 
@@ -82,11 +78,18 @@ Section WithWord.
       all: try now (apply_type_of__type_wf_IH_goal;
                 apply tenv_wf_step; auto;
                 apply_type_of__type_wf_IH_hyp; invert_type_wf; auto).
+      (* unary operators *)
       1: inversion H; repeat constructor; auto; subst;
           repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
-      1: repeat apply_type_of__type_wf_IH_hyp; repeat apply tenv_wf_step;
-          auto; invert_type_wf; auto.
-      1: inversion H; repeat constructor; auto.
+      (* binary operators *)
+      1: inversion H; repeat constructor; auto; subst;
+          repeat apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
+      (* ternary operators *)
+      1: inversion H; subst; first [ apply IHtype_of1; auto | constructor ].
+      (* EACIFold *)
+      1: inversion H; subst; constructor;
+          first [ now constructor
+                | apply_type_of__type_wf_IH_hyp; invert_type_wf; auto ].
       1:{ constructor; auto.
           + apply Permutation_map with (f := fst) in H2. eapply Permutation_NoDup; eauto.
           + apply Permutation_map with (f := snd), Permutation_sym in H2.
@@ -97,19 +100,9 @@ Section WithWord.
       1: apply IHtype_of in H_env as H_wf; inversion H_wf; subst;
       eapply Forall_access_record; eauto.
       1,2: apply_type_of__type_wf_IH_hyp; constructor; invert_type_wf; auto.
-      1:{ constructor. apply IHtype_of4. repeat apply tenv_wf_step; auto.
-          + apply IHtype_of1 in H_env as H_wf1. inversion H_wf1; auto.
-          + apply IHtype_of2 in H_env as H_wf2. inversion H_wf2; auto. }
-      1,2: constructor; apply_type_of__type_wf_IH_goal;
-      repeat apply_type_of__type_wf_IH_hyp;
-      repeat apply tenv_wf_step; try invert_type_wf; auto.
-      1,2,3: constructor; apply IHtype_of2, tenv_wf_step; auto;
-      apply IHtype_of1 in H_env as H_wf1; inversion H_wf1; auto.
-      1,2: constructor; apply_type_of__type_wf_IH_hyp; invert_type_wf; auto.
     Qed.
 
     Inductive type_of_value : value -> type -> Prop :=
-    | TyVWord w : type_of_value (VWord w) TWord
     | TyVInt n : type_of_value (VInt n) TInt
     | TyVBool b : type_of_value (VBool b) TBool
     | TyVString s : type_of_value (VString s) TString
@@ -120,9 +113,9 @@ Section WithWord.
     | TyVRecord l tl : NoDup (List.map fst tl) -> StronglySorted record_entry_leb tl ->
                        Forall2 (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) l tl ->
                        type_of_value (VRecord l) (TRecord tl)
-    | TyVDict l tk tv : Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l ->
+    | TyVDict l dk tk tv : Forall (fun p => type_of_value (fst p) tk /\ type_of_value (snd p) tv) l ->
                         NoDup (List.map fst l) -> StronglySorted dict_entry_leb l ->
-                        type_of_value (VDict l) (TDict tk tv)
+                        type_of_value (VDict l) (TDict dk tk tv)
     | TyVBag l t : NoDup (List.map fst l) -> StronglySorted bag_entry_leb l ->
                    Forall (fun p => Nat.lt 0 (snd p)) l ->
                    Forall (fun p => type_of_value (fst p) t) l ->
@@ -188,7 +181,13 @@ Section WithWord.
     1, 2, 4, 5: repeat destruct_match;
     [ destruct_compare_types; invert_result; invert_type_wf; auto
     | invert_result; constructor; invert_type_wf; auto ].
-    1: repeat destruct_match; destruct_compare_types; invert_type_wf; auto.
+    1: repeat destruct_match.
+    1: { destruct_compare_types; invert_type_wf; auto. }
+    1: { repeat match goal with
+                | H : dict_kind_beq _ _ = true |- _ =>
+                    apply dict_kind_beq_eq in H; subst
+                end;
+         invert_result; constructor; invert_type_wf; auto. }
   Qed.
 
   Lemma fst_map_fst : forall (A B C : Type) (l : list (A * B)) (f : A -> B -> C),
@@ -339,7 +338,7 @@ Section WithWord.
                  Permutation ((s, t) :: tl) tl' ->
                  ~ In s (List.map fst l) -> NoDup (List.map fst tl') ->
                  List.map (fun '(s, _) => (s, get_attr_type tl' s)) l = List.map (fun '(s, _) => (s, get_attr_type tl s)) l).
-      { generalize dependent width; generalize dependent tenv; clear; intros. induction l; simpl; intros; auto.
+      { generalize dependent locals; generalize dependent tenv; clear; intros. induction l; simpl; intros; auto.
         destruct a; simpl in *. f_equal.
         - rewrite <- Permutation_NoDup_In_get_attr_type with (tl := (s,t) :: tl) (tl' := tl'); auto.
           + simpl. destruct (String.eqb s s0) eqn:E.
@@ -398,10 +397,10 @@ Section WithWord.
     | H:  type_of _ _ _ (TOption ?t) |- type_wf ?t =>
         let H' := fresh "H'" in
         apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict ?t _) |- type_wf ?t =>
+    | H:  type_of _ _ _ (TDict _ ?t _) |- type_wf ?t =>
         let H' := fresh "H'" in
         apply type_of__type_wf in H as H'
-    | H:  type_of _ _ _ (TDict _ ?t) |- type_wf ?t =>
+    | H:  type_of _ _ _ (TDict _ _ ?t) |- type_wf ?t =>
         let H' := fresh "H'" in
         apply type_of__type_wf in H as H'
     | H:  type_of _ _ _ (TRecord ?tl) |- context[?tl] =>
@@ -423,7 +422,6 @@ Section WithWord.
         H: synthesize_expr _ _ ?e = Success (TList ?t, _) |- context[?t] => eapply IH in H
     end.
 
-(*  Set Ltac Profiling. *)
     Lemma typechecker_sound : forall e Gstore Genv t e',
         tenv_wf Gstore -> tenv_wf Genv ->
         (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e t) /\
@@ -451,6 +449,7 @@ Section WithWord.
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
                 try apply_type_of__type_wf; auto; try invert_type_wf; auto).
+        all: constructor.
       - (* EIf *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (apply_typechecker_IH; try invert_result; try econstructor; eauto;
@@ -461,11 +460,6 @@ Section WithWord.
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto;
                   try apply tenv_wf_step; auto).
       - (* EFlatmap *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try econstructor; eauto;
-                  try apply_type_of__type_wf; auto; try invert_type_wf; auto;
-                  try apply tenv_wf_step; auto).
-      - (* EFlatmap2 *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try econstructor; eauto;
                   try apply_type_of__type_wf; auto; try invert_type_wf; auto;
@@ -510,44 +504,12 @@ Section WithWord.
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
                   try apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
-      - (* EDictFold *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
       - (* ESort *)
         split; intros; unfold_fold_typechecker; repeat destruct_match;
           repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
                   try apply tenv_wf_step; try invert_type_wf; auto;
                   try invert_type_wf; auto; try econstructor; eauto).
-      - (* EFilter *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* EJoin *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-        all: apply IHe2 in E3; auto; apply_type_of__type_wf; auto; invert_type_wf; auto.
-      - (* EProj *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* EBagOf *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
-      - (* ESetOf *)
-        split; intros; unfold_fold_typechecker; repeat destruct_match;
-          repeat (try apply_typechecker_IH; try invert_result; try apply_type_of__type_wf; auto;
-                  try repeat apply tenv_wf_step; try invert_type_wf; auto;
-                  try invert_type_wf; auto; try econstructor; eauto).
     Qed.
-(*  Show Ltac Profile. *)
 
     Ltac apply_type_sound_IH :=
       lazymatch goal with
@@ -571,13 +533,6 @@ Section WithWord.
       rewrite IHl; auto.
     Qed.
 
-    Lemma flat_map2_ext : forall A B C (f g : A -> B -> list C) l1 l2,
-        (forall a b, f a b = g a b) -> flat_map2 f l1 l2 = flat_map2 g l1 l2.
-    Proof.
-      induction l1; destruct l2; cbn; intros; auto.
-      rewrite H, IHl1; auto.
-    Qed.
-
     Lemma map_filter_ext_pointwise : forall A B (f g : A -> B) (p q : A -> bool) l,
         (forall a, f a = g a) -> (forall a, p a = q a) ->
         map f (filter p l) = map g (filter q l).
@@ -587,8 +542,8 @@ Section WithWord.
     Qed.
 
     Lemma atom_typechecker_preserve_sem : forall a t a',
-        (synthesize_atom a = Success (t, a') -> interp_atom (word:=word) a' = interp_atom a) /\
-          (analyze_atom t a = Success a' -> interp_atom (word:=word) a' = interp_atom a).
+        (synthesize_atom a = Success (t, a') -> interp_atom a' = interp_atom a) /\
+          (analyze_atom t a = Success a' -> interp_atom a' = interp_atom a).
     Proof.
       destruct a; split; cbn; unfold compare_types; intro H.
       all: repeat (destruct_match_hyp; try discriminate).
@@ -659,7 +614,6 @@ Section WithWord.
             | apply map_ext; intro
             | apply filter_ext; intro
             | apply fold_right_ext; intros
-            | apply flat_map2_ext; intros
             | lazymatch goal with
               | |- VList _ = VList _ => f_equal
               | |- VBag _ = VBag _ => f_equal
@@ -785,10 +739,10 @@ Section WithWord.
       - inversion H; intuition idtac.
     Qed.
 
-    Lemma TyVDict_def : forall l kt vt, type_wf kt -> type_wf vt ->
+    Lemma TyVDict_def : forall l dk kt vt, type_wf kt -> type_wf vt ->
                                         NoDup (map fst l) ->
                                         StronglySorted (fun p p' : value * value => dict_entry_leb p p') l ->
-                                        Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) l <-> type_of_value (VDict l) (TDict kt vt).
+                                        Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) l <-> type_of_value (VDict l) (TDict dk kt vt).
     Proof.
       split; intros.
       - constructor; auto.
@@ -798,7 +752,7 @@ Section WithWord.
     Lemma record_proj_sound : forall l, NoDup (List.map fst l) ->
                                         forall tl, Forall2 (fun p tp => fst p = fst tp /\ type_of_value (snd p) (snd tp)) l tl ->
                                                    forall x t, In (x, t) tl ->
-                                                               type_of_value (record_proj (width := width) x l) t.
+                                                               type_of_value (record_proj x l) t.
     Proof.
       intros l Hnodup tl Hvt x t Hin. generalize dependent tl. induction l; intros; simpl in *.
       - inversion Hvt; subst. apply in_nil in Hin. intuition idtac.
@@ -813,7 +767,7 @@ Section WithWord.
     Lemma dict_insert_preserve_NoDup : forall k k' v l,
         ~ In k (map fst l) ->
         k <> k' ->
-        ~ In k (map fst (dict_insert (word := word) k' v l)).
+        ~ In k (map fst (dict_insert k' v l)).
     Proof.
       induction l; intros.
       - simpl; intuition auto.
@@ -823,7 +777,7 @@ Section WithWord.
         destruct (value_compare k' v0); simpl; intuition auto.
     Qed.
 
-    Lemma dict_insert_incl : forall k v l, incl (dict_insert (word:=word) k v l) ((k, v) :: l).
+    Lemma dict_insert_incl : forall k v l, incl (dict_insert k v l) ((k, v) :: l).
     Proof.
       induction l; simpl; intuition auto with *.
       unfold value_ltb, value_eqb; destruct value_compare eqn:E; intuition auto with *.
@@ -855,18 +809,18 @@ Section WithWord.
     Ltac invert_In :=
       lazymatch goal with H: In _ (_ :: _) |- _ => inversion H end.
 
-    Lemma dict_insert_sound : forall l kt vt k v,
+    Lemma dict_insert_sound : forall l dk kt vt k v,
         type_wf kt -> type_wf vt ->
-        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value (VDict l) (TDict dk kt vt) ->
         type_of_value k kt ->
         type_of_value v vt ->
-        type_of_value (VDict (dict_insert k v l)) (TDict kt vt).
+        type_of_value (VDict (dict_insert k v l)) (TDict dk kt vt).
     Proof.
       intros. induction l; constructor; simpl; auto.
       1-2: constructor; intuition auto.
       1: apply NoDup_nil. 1: apply SSorted_nil.
       1-3: destruct a as [k' v']; inversion H1; subst;
-      assert (Hl: type_of_value (VDict l) (TDict kt vt));
+      assert (Hl: type_of_value (VDict l) (TDict dk kt vt));
       [ lazymatch goal with
          | H1: Forall _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
              inversion H1; inversion H2; inversion H3
@@ -881,8 +835,13 @@ Section WithWord.
         + constructor; auto. intro contra. invert_SSorted.
           inversion contra.
           * symmetry in H4. apply eq_value_compare_Eq in H4. congruence.
-          * rewrite Forall_forall in H10. apply In_fst in H4 as [[k'' v''] [HL HR]].
-            apply H10 in HL. unfold dict_entry_leb in HL; simpl in *; subst.
+          * lazymatch goal with
+              H: Forall _ l |- _ =>
+                rewrite Forall_forall in H;
+                apply In_fst in H4 as [[k'' v''] [HL HR]];
+                apply H in HL
+            end.
+            unfold dict_entry_leb in HL; simpl in *; subst.
             unfold value_leb in HL. unfold leb_from_compare in HL. rewrite value_compare_antisym in E.
             simpl in E. destruct_value_compare; discriminate.
         + inversion Hl; subst.
@@ -910,29 +869,29 @@ Section WithWord.
     Qed.
 
     Lemma dict_delete_preserve_NoDup : forall k k' l,
-        ~ In k (map fst l) -> ~ In k (map fst (dict_delete (word:=word) k' l)).
+        ~ In k (map fst l) -> ~ In k (map fst (dict_delete k' l)).
     Proof.
       induction l; simpl; auto; intros.
       repeat lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
         simpl; intuition idtac.
     Qed.
 
-    Lemma dict_delete_incl : forall k l, incl (dict_delete (word:=word) k l) l.
+    Lemma dict_delete_incl : forall k l, incl (dict_delete k l) l.
     Proof.
       induction l; simpl; intuition auto with *.
       lazymatch goal with |- context[match ?x with _ => _ end] => destruct x end;
       intuition auto with *.
     Qed.
 
-    Lemma dict_delete_sound : forall l kt vt k,
+    Lemma dict_delete_sound : forall l dk kt vt k,
         type_wf kt -> type_wf vt ->
-        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value (VDict l) (TDict dk kt vt) ->
         type_of_value k kt ->
-        type_of_value (VDict (dict_delete k l)) (TDict kt vt).
+        type_of_value (VDict (dict_delete k l)) (TDict dk kt vt).
     Proof.
       intros; induction l; constructor; simpl; auto using NoDup_nil, SSorted_nil.
       all: destruct a as [k' v']; inversion H1; subst;
-        assert (Hl: type_of_value (VDict l) (TDict kt vt));
+        assert (Hl: type_of_value (VDict l) (TDict dk kt vt));
         [ lazymatch goal with
           | H1: Forall _ _, H2: NoDup _, H3: StronglySorted _ _ |- _ =>
               inversion H1; inversion H2; inversion H3
@@ -953,9 +912,9 @@ Section WithWord.
           apply dict_delete_incl in H3; auto.
     Qed.
 
-    Lemma dict_lookup_sound : forall l kt vt k,
+    Lemma dict_lookup_sound : forall l dk kt vt k,
         type_wf kt -> type_wf vt ->
-        type_of_value (VDict l) (TDict kt vt) ->
+        type_of_value (VDict l) (TDict dk kt vt) ->
         type_of_value k kt ->
         type_of_value (VOption (dict_lookup k l)) (TOption vt).
     Proof.
@@ -1043,22 +1002,6 @@ Section WithWord.
         end; cbn; constructor.
   Qed.
 
-  Lemma type_of_aci_aggr_sound : forall ag t1 t2,
-      type_of_aci_aggr ag t1 t2 ->
-      match interp_aci_aggr ag with
-      | (zr, op) => type_of_value zr t2 /\
-                      forall v acc,
-                        type_of_value v t1 -> type_of_value acc t2 ->
-                        type_of_value (op v acc) t2
-      end.
-  Proof.
-    intros; invert_type_of_agg; cbn in *.
-    all: split; [ constructor | ]; intros;
-    repeat lazymatch goal with
-          H: type_of_value _ _ |- _ =>
-            inversion H; subst; clear H
-        end; cbn; repeat constructor.
-  Qed.
 
   Ltac apply_Forall_In :=
     lazymatch goal with
@@ -1210,6 +1153,136 @@ Section WithWord.
         right; auto. }
   Qed.
 
+  (* Turning a list into a bag preserves the element type *)
+  Lemma list_to_bag_sound : forall (l : list value) t,
+      Forall (fun v => type_of_value v t) l ->
+      type_of_value (VBag (list_to_bag l)) (TBag t).
+  Proof.
+    intros * H. constructor;
+      auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
+    rewrite Forall_forall; intros p H_in.
+    apply in_map with (f:=fst) in H_in.
+    apply list_to_bag_incl in H_in.
+    rewrite Forall_forall in H; auto.
+  Qed.
+
+  Lemma bag_remove_keys_incl : forall (l : list (value * nat)) v p,
+      In p (bag_remove v l) -> exists q, In q l /\ fst q = fst p.
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v p H.
+    1: contradiction.
+    unfold value_ltb, value_eqb in H.
+    destruct (value_compare v v') eqn:E_cmp.
+    (* Eq *)
+    - apply value_compare_Eq_eq in E_cmp; subst.
+      cbn in H. destruct n' as [ | [ | n'' ] ].
+      1,2: exists p; split; [ right; exact H | reflexivity ].
+      cbn in H; destruct H as [ H | H ].
+      1:{ exists (v', S (S n'')); split.
+          1: left; reflexivity.
+          1: rewrite <- H; reflexivity. }
+      1: exists p; split; [ right; exact H | reflexivity ].
+    (* Lt *)
+    - cbn in H. exists p; split; [ exact H | reflexivity ].
+    (* Gt *)
+    - cbn in H. destruct H as [ H | H ].
+      1: exists p; split; [ left; exact H | reflexivity ].
+      1:{ apply IHl in H; destruct H as [ q [ H_q H_fst ] ].
+          exists q; split; [ right; exact H_q | exact H_fst ]. }
+  Qed.
+
+  Lemma bag_remove_preserve_SSorted : forall (l : list (value * nat)) v,
+      StronglySorted bag_entry_leb l ->
+      StronglySorted bag_entry_leb (bag_remove v l).
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v H.
+    1: constructor.
+    unfold value_ltb, value_eqb.
+    destruct (value_compare v v') eqn:E_cmp; cbn.
+    - apply value_compare_Eq_eq in E_cmp; subst.
+      destruct n' as [ | [ | n'' ] ]; invert_SSorted; auto.
+      constructor; assumption.
+    - assumption.
+    - invert_SSorted. constructor.
+      1: apply IHl; assumption.
+      rewrite Forall_forall; intros p H_in.
+      apply bag_remove_keys_incl in H_in; destruct H_in as [ q [ H_q H_fst ] ].
+      unfold bag_entry_leb; rewrite <- H_fst.
+      lazymatch goal with H: Forall _ l |- _ => rewrite Forall_forall in H; apply H in H_q end.
+      exact H_q.
+  Qed.
+
+  Lemma bag_remove_preserve_NoDup : forall (l : list (value * nat)) v,
+      NoDup (List.map fst l) ->
+      StronglySorted bag_entry_leb l ->
+      NoDup (List.map fst (bag_remove v l)).
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v H_nd H_ss.
+    1: constructor.
+    unfold value_ltb, value_eqb.
+    destruct (value_compare v v') eqn:E_cmp; cbn.
+    - apply value_compare_Eq_eq in E_cmp; subst.
+      destruct n' as [ | [ | n'' ] ]; invert_NoDup; cbn; auto.
+    - assumption.
+    - invert_NoDup. cbn. constructor.
+      1:{ intro contra. apply In_fst in contra.
+          destruct contra as [ p [ H_in H_fst ] ].
+          apply bag_remove_keys_incl in H_in.
+          destruct H_in as [ q [ H_q H_q_fst ] ].
+          apply in_map with (f:=fst) in H_q.
+          rewrite H_q_fst, H_fst in H_q; auto. }
+      1: apply IHl; auto; invert_SSorted; assumption.
+  Qed.
+
+  Lemma bag_remove_preserve_pos : forall (l : list (value * nat)) v,
+      Forall (fun p => Nat.lt 0 (snd p)) l ->
+      Forall (fun p => Nat.lt 0 (snd p)) (bag_remove v l).
+  Proof.
+    induction l as [ | [ v' n' ] l IHl ]; cbn; intros v H.
+    1: constructor.
+    unfold value_ltb, value_eqb.
+    inversion H; subst.
+    destruct (value_compare v v') eqn:E_cmp; cbn.
+    - destruct n' as [ | [ | n'' ] ].
+      1,2: assumption.
+      constructor.
+      1: apply Nat.lt_0_succ.
+      1: assumption.
+    - assumption.
+    - constructor.
+      1: assumption.
+      1: apply IHl; assumption.
+  Qed.
+
+  Lemma bag_remove_preserve_ty : forall (l : list (value * nat)) v t,
+      Forall (fun p => type_of_value (fst p) t) l ->
+      Forall (fun p => type_of_value (fst p) t) (bag_remove v l).
+  Proof.
+    intros * H. rewrite Forall_forall; intros p H_in.
+    apply bag_remove_keys_incl in H_in; destruct H_in as [ q [ H_q H_fst ] ].
+    rewrite <- H_fst. rewrite Forall_forall in H; auto.
+  Qed.
+
+  Lemma bag_remove_sound : forall (l : list (value * nat)) v t,
+      type_of_value (VBag l) (TBag t) ->
+      type_of_value (VBag (bag_remove v l)) (TBag t).
+  Proof.
+    intros * H. inversion H; subst.
+    constructor;
+      auto using bag_remove_preserve_NoDup, bag_remove_preserve_SSorted,
+                 bag_remove_preserve_pos, bag_remove_preserve_ty.
+  Qed.
+
+  Lemma bag_diff_sound : forall (l1 l2 : list (value * nat)) t,
+      type_of_value (VBag l1) (TBag t) ->
+      type_of_value (VBag (bag_diff l1 l2)) (TBag t).
+  Proof.
+    unfold bag_diff; intros * H.
+    induction (bag_to_list l2) as [ | v vs IH ]; cbn.
+    1: assumption.
+    apply bag_remove_sound; assumption.
+  Qed.
+
   Lemma incl_repeat : forall A (x : A) l n,
       In x l -> incl (repeat x n) l.
   Proof.
@@ -1268,6 +1341,16 @@ Section WithWord.
         1:{ subst. unfold value_leb, leb_from_compare.
             rewrite value_compare_antisym. rewrite_asm. auto. }
         1: apply_Forall_In. }
+  Qed.
+
+  Lemma map_fst_dict_insert : forall k v (d : list (value * value)),
+      List.map fst (dict_insert k v d) = set_insert k (List.map fst d).
+  Proof.
+    intros k v d. induction d as [ | [ k' v' ] d IH ]; cbn [dict_insert set_insert List.map fst]; auto.
+    destruct (value_ltb k k') eqn:E1; cbn [List.map fst]; auto.
+    destruct (value_eqb k k') eqn:E2; cbn [List.map fst].
+    - apply value_eqb_eq in E2; subst. reflexivity.
+    - rewrite IH. reflexivity.
   Qed.
 
   Lemma list_to_set_SSorted : forall (l : list value),
@@ -1386,6 +1469,111 @@ Section WithWord.
         inversion H; subst; clear H
     end.
 
+  (* Inserting well-typed elements into a well-typed set gives a well-typed set *)
+  Lemma set_union_sound : forall (l1 l2 : list value) t,
+      Forall (fun v => type_of_value v t) l1 ->
+      type_of_value (VSet l2) (TSet t) ->
+      type_of_value (VSet (fold_right set_insert l2 l1)) (TSet t).
+  Proof.
+    induction 1; cbn; intros H_l2; auto.
+    specialize (IHForall H_l2). inversion IHForall; subst.
+    constructor; auto using set_insert_preserve_SSorted, set_insert_preserve_NoDup.
+    rewrite Forall_forall; intros ? H_in.
+    apply set_insert_incl in H_in as [ H_in | H_in ]; subst; auto.
+    apply_Forall_In.
+  Qed.
+
+  (* Any subset of a well-typed set, taken in order, is a well-typed set *)
+  Lemma set_filter_sound : forall (l : list value) t f,
+      type_of_value (VSet l) (TSet t) ->
+      type_of_value (VSet (filter f l)) (TSet t).
+  Proof.
+    intros * H. inversion H; subst. constructor.
+    - apply NoDup_filter; assumption.
+    - apply filter_preserve_SSorted; assumption.
+    - rewrite Forall_forall; intros ? H_in.
+      apply filter_In in H_in as [ H_in _ ].
+      apply_Forall_In.
+  Qed.
+
+  Lemma type_of_aci_aggr_sound : forall ag t1 t2,
+      type_of_aci_aggr ag t1 t2 ->
+      match interp_aci_aggr ag with
+      | (zr, op) => type_of_value zr t2 /\
+                      forall v acc,
+                        type_of_value v t1 -> type_of_value acc t2 ->
+                        type_of_value (op v acc) t2
+      end.
+  Proof.
+    intros; invert_type_of_agg; cbn in *.
+    (* AGMin, AGMax *)
+    1,2: split; [ constructor | ]; intros;
+         repeat lazymatch goal with
+               H: type_of_value _ _ |- _ =>
+                 inversion H; subst; clear H
+             end; cbn; repeat constructor.
+    (* AGUnion, AGIntersect *)
+    all: split; [ constructor | ]; intros * H_v H_acc;
+      inversion H_v; subst; inversion H_acc; subst; cbn;
+      [ repeat constructor; auto | ].
+    all: lazymatch goal with
+         | H: type_of_value _ (TSet _) |- _ => inversion H; subst
+         end; constructor.
+    - apply set_union_sound; auto.
+    - apply set_filter_sound; auto.
+  Qed.
+
+  (* Restricting a well-typed dictionary to a range of keys keeps it well-typed *)
+  Lemma dict_range_sound : forall (d : list (value * value)) dk kt vt lo hi,
+      type_of_value (VDict d) (TDict dk kt vt) ->
+      type_of_value (VDict (dict_range lo hi d)) (TDict dk kt vt).
+  Proof.
+    unfold dict_range; intros * H. inversion H; subst. constructor.
+    - rewrite Forall_forall in *; intros ? H_in.
+      apply filter_In in H_in as [ H_in _ ]. auto.
+    - rewrite map_fst_filter_fst with (P := in_key_range lo hi).
+      apply NoDup_filter; assumption.
+    - apply filter_preserve_SSorted; assumption.
+  Qed.
+
+  (* Removing a range of keys from a well-typed dictionary keeps it well-typed. *)
+  Lemma dict_range_delete_sound : forall (d : list (value * value)) dk kt vt lo hi,
+      type_of_value (VDict d) (TDict dk kt vt) ->
+      type_of_value (VDict (dict_range_delete lo hi d)) (TDict dk kt vt).
+  Proof.
+    unfold dict_range_delete; intros * H. inversion H; subst. constructor.
+    - rewrite Forall_forall in *; intros ? H_in.
+      apply filter_In in H_in as [ H_in _ ]. auto.
+    - rewrite map_fst_filter_fst with (P := fun k => negb (in_key_range lo hi k)).
+      apply NoDup_filter; assumption.
+    - apply filter_preserve_SSorted; assumption.
+  Qed.
+
+  (* The least key of a well-typed dictionary has the key type. *)
+  Lemma dict_min_key_sound : forall (d : list (value * value)) kt vt,
+      Forall (fun p => type_of_value (fst p) kt /\ type_of_value (snd p) vt) d ->
+      type_of_value (VOption (dict_min_key d)) (TOption kt).
+  Proof.
+    intros * H. destruct d as [ | [ k v ] d ]; cbn.
+    - constructor.
+    - constructor. inversion H as [ | ? ? Hhd ? ]. apply Hhd.
+  Qed.
+
+  Lemma dict_min_key_is_least : forall (d : list (value * value)) k,
+      StronglySorted dict_entry_leb d ->
+      dict_min_key d = Some k ->
+      Forall (fun p => value_leb k (fst p) = true) d.
+  Proof.
+    intros * Hss Hmin. destruct d as [ | [ k0 v0 ] d ]; cbn in Hmin.
+    - discriminate.
+    - inversion Hmin; subst. inversion Hss as [ | ? ? ? Hall ]; subst.
+      constructor.
+      + cbn. unfold value_leb, leb_from_compare. rewrite value_compare_refl. reflexivity.
+      + rewrite Forall_forall in *; intros p Hp.
+        specialize (Hall p Hp). unfold dict_entry_leb in Hall. cbn in Hall.
+        exact Hall.
+  Qed.
+
   Lemma type_sound : forall Gstore Genv e t,
       type_of Gstore Genv e t ->
       tenv_wf Gstore -> tenv_wf Genv ->
@@ -1400,32 +1588,85 @@ Section WithWord.
         match goal with H : type_of_atom _ _ |- _ => inversion H end; subst; constructor;
         auto using SSorted_nil, Forall_nil, NoDup_nil.
       - (* TyEUnop *)
-        inversion H; apply_type_sound_IH; try discriminate; repeat constructor; auto.
+        inversion H; apply_type_sound_IH; try discriminate;
+          try solve [ repeat constructor; auto ];
+          (* OTrigrams: every window is a string.  Solved here rather than by
+             a positional selector below, so the selectors keep their places. *)
+          try solve [ constructor; apply Forall_forall; intros ? H_in;
+                      apply in_map_iff in H_in as [ ? [ E ? ] ]; subst;
+                      constructor ].
+        (* ODictValues *)
+        1:{ lazymatch goal with H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst end.
+            apply list_to_bag_sound.
+            rewrite Forall_forall; intros v H_in.
+            apply in_map_iff in H_in; destruct H_in as [p [H_eq H_p]]; subst.
+            lazymatch goal with
+              H: Forall _ ?l, H': In _ ?l |- _ => rewrite Forall_forall in H; apply H in H'
+            end; intuition auto. }
+        (* OSetOfBag *)
+        1:{ lazymatch goal with H: TBag _ = TBag _ |- _ => inversion H; subst end.
+            cbn. constructor.
+            - assumption.
+            - apply StronglySorted_map_fst_bag; assumption.
+            - rewrite Forall_map; assumption. }
+         1:{ lazymatch goal with H: TList _ = TList _ |- _ => inversion H; subst end.
+             cbn. constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
+             rewrite Forall_forall; intros ? H_in.
+             lazymatch goal with
+               H: Forall _ _ |- _ =>
+                 eapply incl_Forall in H; [ | apply list_to_bag_incl ]
+             end.
+             apply in_map with (f:=fst) in H_in.
+             apply_Forall_In. }
+         1:{ lazymatch goal with H: TList _ = TList _ |- _ => inversion H; subst end.
+             cbn. constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
+             eapply incl_Forall; [ apply list_to_set_incl | ]; auto. }
+         1:{ lazymatch goal with
+               H: TDict _ _ _ = TDict _ _ _ |- _ => inversion H; subst
+             end.
+             eapply dict_min_key_sound; eauto. }
       - (* TyEBinop *)
         inversion H; subst.
-        26:{ (* OLookup *)
+        16:{ (* OLookup. *)
           cbn. revert IHtype_of2. apply_type_sound_IH. intros.
-          eapply dict_lookup_sound;[ | | | apply IHtype_of2 ]; auto;
+          eapply dict_lookup_sound with (dk := Unranged);[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.
           constructor; auto. }
-        26:{ (* ODelete *)
+        16:{ (* ODelete *)
           cbn. revert IHtype_of2. apply_type_sound_IH. intros.
           eapply dict_delete_sound;[ | | | apply IHtype_of2 ]; auto;
           try apply_type_of__type_wf; try invert_type_wf; auto.
           constructor; auto. }
-        24:{ revert IHtype_of2; apply_type_sound_IH; intros.
+        14:{ revert IHtype_of2; apply_type_sound_IH; intros.
              cbn. constructor; auto using bag_insert_preserve_pos,
                bag_insert_preserve_SSorted, bag_insert_preserve_NoDup.
              rewrite Forall_forall; intros ? H_in.
              eapply bag_insert_incl in H_in as [ H_in | H_in ].
              2: apply_Forall_In.
              rewrite_asm; auto. }
-        24:{ revert IHtype_of2; apply_type_sound_IH; intros.
+        14:{ revert IHtype_of2; apply_type_sound_IH; intros.
              cbn. constructor; auto using set_insert_preserve_SSorted, set_insert_preserve_NoDup.
              rewrite Forall_forall; intros ? H_in.
              eapply set_insert_incl in H_in as [ H_in | H_in ].
              2: apply_Forall_In.
              rewrite_asm; auto. }
+        14:{ (* OSetUnion *)
+             repeat apply_type_sound_IH. cbn. apply set_union_sound; auto; constructor; auto. }
+        14:{ (* OSetIntersect *)
+             repeat apply_type_sound_IH. cbn. apply set_filter_sound; constructor; auto. }
+        14:{ (* OSetDiff *)
+             repeat apply_type_sound_IH. cbn. apply set_filter_sound; constructor; auto. }
+        14:{ (* OSetMem *)
+             revert IHtype_of2; apply_type_sound_IH; intros.
+             cbn. constructor. }
+        14:{ (* OStrContains *)
+             repeat apply_type_sound_IH. cbn. constructor. }
+        (* OBagDiff, then OWords. *)
+        14:{ repeat apply_type_sound_IH. cbn. apply bag_diff_sound; constructor; auto. }
+        14:{ (* OWords: every element of the result is one of the words *)
+             repeat apply_type_sound_IH. cbn. constructor.
+             apply Forall_forall; intros v H_in.
+             apply in_map_iff in H_in as [ w [ E_w _ ] ]; subst v. constructor. }
         all: repeat apply_type_sound_IH; try discriminate; try type_injection; repeat constructor; auto.
         + apply Forall_app; auto.
         + assert (forall len lo, Forall (fun v => type_of_value v TInt) (eval_range lo len)).
@@ -1433,17 +1674,21 @@ Section WithWord.
             - apply Forall_nil.
             - repeat constructor; auto. }
           auto.
-        + assert (forall len lo, Forall (fun v => type_of_value v TWord) (eval_range_word lo len)).
-          { clear; induction len; simpl; intros.
-            - apply Forall_nil.
-            - repeat constructor; auto. }
-          auto.
       - (* TyETernop *)
         inversion H; subst.
-        cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
-        apply dict_insert_sound; auto;
-          try apply_type_of__type_wf; try invert_type_wf; auto.
-        constructor; auto.
+        + (* OInsert *)
+          cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+          apply dict_insert_sound; auto;
+            try apply_type_of__type_wf; try invert_type_wf; auto.
+          constructor; auto.
+        + (* OSubstring *)
+          repeat apply_type_sound_IH. cbn. constructor.
+        + (* ODictRange *)
+          cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+          apply dict_range_sound. constructor; auto.
+        + (* ODictRangeDelete *)
+          cbn. revert IHtype_of2; revert IHtype_of3. apply_type_sound_IH; intros.
+          apply dict_range_delete_sound. constructor; auto.
       - (* TyEIf *)
         repeat apply_type_sound_IH;
           match goal with
@@ -1497,19 +1742,6 @@ Section WithWord.
         inversion H_e2; subst.
         repeat rewrite_sym_asm.
         apply_Forall_In.
-      - (* TyEFlatmap2 *)
-        repeat apply_type_sound_IH;
-          repeat clear_expr_value. constructor.
-        generalize dependent l. induction l0; auto.
-        destruct l; auto.
-        intros. repeat invert_Forall. cbn.
-        apply IHl0 in H7; auto.
-        apply Forall_app; split; auto.
-        assert (type_of_value (interp_expr store (map.put (map.put env x1 a) x2 v) e3) (TList t3)).
-        { apply_type_sound_IH; auto; try apply tenv_wf_step;
-            try apply_type_of__type_wf; try apply locals_wf_step;
-            try invert_type_wf; auto. }
-        invert_type_of_value_clear; auto.
       - (* TyEFold *)
         repeat apply_type_sound_IH;
           try (match goal with
@@ -1588,26 +1820,6 @@ Section WithWord.
       - (* TyEOptMatch *)
         repeat apply_type_sound_IH; auto; try constructor;
           try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEDictFold *)
-        repeat apply_type_sound_IH.
-        all: try (lazymatch goal with
-                  | H: VDict ?l = _ |- _ => clear H
-                  end; induction l; simpl; try constructor; auto; apply_type_sound_IH; auto;
-                  invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-                  try apply_type_of__type_wf; try invert_type_wf; intuition idtac;
-                  lazymatch goal with
-                  | H: _ -> _ -> ?P |- ?P => apply H
-                  end;
-                  simpl in *; invert_NoDup; invert_SSorted; intuition idtac).
-        all: try (lazymatch goal with
-                  | H: VDict ?l = _ |- type_of_value (fold_right _ _ ?l) _ => clear H; induction l
-                  end;
-                  simpl; try constructor; auto; apply_type_sound_IH; auto;
-                  invert_Forall; repeat apply locals_wf_step; auto; repeat apply tenv_wf_step; auto;
-                  try apply_type_of__type_wf; try invert_type_wf; intuition idtac;
-                  lazymatch goal with
-                  | H: _ -> _ -> ?P |- ?P => apply H
-                  end; simpl in *; invert_NoDup; invert_SSorted; intuition idtac).
       - (* TyESort_List *)
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros.
         eapply List.Forall_In in H2; eauto. eapply Permutation_in.
@@ -1617,101 +1829,6 @@ Section WithWord.
         Forall_fst__Forall_bag_to_list. apply_Forall_In.
       - (* TyESort_Set *)
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros. apply_Forall_In.
-      - (* TyEFilter_List *)
-        repeat apply_type_sound_IH. constructor. apply Forall_Forall_filter. auto.
-      - (* TyEFilter_Bag *)
-        repeat apply_type_sound_IH. constructor.
-        1: rewrite (map_fst_filter_fst _ _ l
-                      (fun v => match interp_expr store (map.put env x v) p with
-                                | VBool b => b
-                                | _ => false
-                                end)); apply NoDup_filter; auto.
-        1: auto using filter_preserve_SSorted.
-        1,2: apply Forall_Forall_filter; auto.
-      - (* TyEFilter_Set *)
-        repeat apply_type_sound_IH. constructor;
-          auto using NoDup_filter, filter_preserve_SSorted, Forall_Forall_filter.
-      - (* TyEJoin_List *)
-        repeat apply_type_sound_IH.
-        rewrite <- H4 in H'0. eapply flat_map_type_sound; eauto. intros.
-        apply map_type_sound with (t := t2).
-        + constructor; apply Forall_Forall_filter; auto.
-        + intuition idtac. repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
-            try apply tenv_wf_step; try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEJoin_Bag *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
-        repeat Forall_fst__Forall_bag_to_list.
-        remember (bag_to_list l0) as l0'. clear Heql0'.
-        induction l0'; cbn; auto.
-        invert_Forall. apply Forall_app; intuition auto.
-        apply List.Forall_map.
-        apply Forall_Forall_filter.
-        remember (bag_to_list l) as l'. clear Heql'.
-        lazymatch goal with
-          H: Forall _ (flat_map _ _) |- _ =>
-            clear H
-        end.
-        induction l'; cbn; auto.
-        invert_Forall. constructor; intuition auto.
-        apply_type_sound_IH; auto.
-        1:{ apply tenv_wf_step; auto.
-            apply_type_of__type_wf; try invert_type_wf; auto. }
-        1: apply_type_of__type_wf; try invert_type_wf; auto.
-        1: apply locals_wf_step; auto.
-      - (* TyEJoin_Set *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
-        eapply incl_Forall; [ apply list_to_set_incl | ].
-        rewrite Forall_forall; intros ? H_in.
-        rewrite in_flat_map in H_in; destruct H_in as [? [? H_in]].
-        apply_Forall_In.
-        rewrite in_map_iff in H_in; destruct H_in as [? [? H_in]].
-        rewrite filter_In in H_in; intuition idtac.
-        subst; apply_type_sound_IH; auto.
-        1:{ apply tenv_wf_step; auto.
-            apply_type_of__type_wf; try invert_type_wf; auto. }
-        1: apply_type_of__type_wf; try invert_type_wf; auto.
-        1: apply locals_wf_step; auto.
-        apply_Forall_In.
-      - (* TyEProj_List *)
-        repeat apply_type_sound_IH.
-        apply map_type_sound with (t := t1).
-        + constructor. auto.
-        + intros; repeat apply_type_sound_IH; repeat apply locals_wf_step; auto;
-            try apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEProj_Bag *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
-        repeat Forall_fst__Forall_bag_to_list.
-        apply List.Forall_map.
-        remember (bag_to_list l) as l'. clear Heql'.
-        induction l'; cbn; auto.
-        invert_Forall; constructor; auto.
-        apply_type_sound_IH; auto.
-        apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEProj_Set *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
-        eapply incl_Forall; [ apply list_to_set_incl | ].
-        apply List.Forall_map; rewrite Forall_forall; intros.
-        apply_Forall_In.
-        apply_type_sound_IH; auto.
-        apply_type_of__type_wf; try invert_type_wf; auto.
-      - (* TyEBagOf *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_bag_NoDup, list_to_bag_SSorted, list_to_bag_pos.
-        rewrite Forall_forall; intros ? H_in.
-        lazymatch goal with
-          H: Forall _ _ |- _ =>
-            eapply incl_Forall in H; [ | apply list_to_bag_incl ]
-        end.
-        apply in_map with (f:=fst) in H_in.
-        apply_Forall_In.
-      - (* TyESetOf *)
-        repeat apply_type_sound_IH.
-        constructor; auto using list_to_set_NoDup, list_to_set_SSorted.
-        eapply incl_Forall; [ apply list_to_set_incl | ]; auto.
     Qed.
 
     Ltac apply_cmd_tc_sound_IH :=

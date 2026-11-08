@@ -1,69 +1,95 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.TransfUtils fiat2.TransfSound.
-Require Import coqutil.Map.Interface coqutil.Word.Interface.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith Permutation Sorted.
 Import ListNotations.
 
 Definition annotate_collection (e : expr) : expr :=
   match e with
-  | ESort LikeList l => ESort LikeBag (EBagOf l)
+  | ESort LikeList l => ESort LikeBag (EUnop OBagOfList l)
   | EFold l (EAtom (AInt 0)) v acc (EBinop OPlus (EVar v') (EVar acc')) =>
-      if (negb (v =? acc) && (v =? v') && (acc =? acc'))%bool then EACFold AGSum (EBagOf l)
+      if (negb (v =? acc) && (v =? v') && (acc =? acc'))%bool then EACFold AGSum (EUnop OBagOfList l)
       else e
-  | EUnop OLength l => EACFold AGCount (EBagOf l)
+  | EUnop OLength l => EACFold AGCount (EUnop OBagOfList l)
   | EFold l (EAtom (ANone _)) v0 acc0
       (EOptMatch (EVar acc1) (EUnop OSome (EVar v1))
          x0 (EIf (EBinop OLess (EVar v2) (EVar x1)) (EUnop OSome (EVar v3)) (EVar acc2))) =>
       if (all_neqb [v0; acc0; x0] && all_eqb [(v0, [v1; v2; v3]); (acc0, [acc1; acc2]); (x0, [x1])])%bool
-      then EACIFold AGMin (ESetOf l)
+      then EACIFold AGMin (EUnop OSetOfList l)
       else e
   | EBinop OEq e (EAtom (ANil t)) =>
-      EBinop OEq (EBagOf e) (EAtom (AEmptyBag t))
+      EBinop OEq (EUnop OBagOfList e) (EAtom (AEmptyBag t))
+  | _ => e
+  end.
+
+(* ------------------------------------------------------------------
+   AN INSERT AT THE END OF THE LIST, under a coercion that forgets position.
+
+   `tbl := tbl ++ [row]` is how a program appends in insertion order, and it
+   is the shape real code writes: a Java ArrayList.add, a Python
+   list.append.  Every subject in this development conses at the FRONT
+   instead, and that was a modelling bias rather than a faithful choice --
+   the cons was the only shape an index-maintenance rule recognised, so
+   writing the append the source actually performs would have cost the whole
+   index.
+
+   Under OBagOfList or OSetOfList the position is already gone, so the
+   append and the cons denote the same collection.  Normalising one into the
+   other is therefore sound outright, and it hands all four aggregate
+   indexes -- the sum, the count, the minimum and the set -- the shape their
+   existing cons-shaped maintenance rules already match.  One rule, four
+   indexes, and not one of their proofs changes.
+
+   It is deliberately NOT a case of annotate_collection: that pass only ever
+   RELAXES a collection, and this rewrites a list into a list, under a
+   coercion that was already there. *)
+Definition snoc_to_cons_under_coercion (e : expr) : expr :=
+  match e with
+  | EUnop OBagOfList (EBinop OConcat l (EBinop OCons row (EAtom (ANil _)))) =>
+      EUnop OBagOfList (EBinop OCons row l)
+  | EUnop OSetOfList (EBinop OConcat l (EBinop OCons row (EAtom (ANil _)))) =>
+      EUnop OSetOfList (EBinop OCons row l)
   | _ => e
   end.
 
 Fixpoint bag_of (e : expr) : expr :=
   match e with
   | EFlatmap LikeList e1 x e2 => EFlatmap LikeBag (bag_of e1) x (bag_of e2)
-  | EFilter LikeList e x p => EFilter LikeBag (bag_of e) x p
-  | EJoin LikeList e1 e2 x y p e3 => EJoin LikeBag (bag_of e1) (bag_of e2) x y p e3
-  | EProj LikeList e1 x e2 => EProj LikeBag (bag_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OBagInsert (bag_of e2) e1
   | EIf e1 e2 e3 => EIf e1 (bag_of e2) (bag_of e3)
-  | _ => EBagOf e
+  | EAtom (ANil t) => EAtom (AEmptyBag t)
+  | _ => EUnop OBagOfList e
   end.
 
 Fixpoint set_of (e : expr) : expr :=
   match e with
   | EFlatmap LikeList e1 x e2 => EFlatmap LikeSet (set_of e1) x (set_of e2)
-  | EFilter LikeList e x p => EFilter LikeSet (set_of e) x p
-  | EJoin LikeList e1 e2 x y p e3 => EJoin LikeSet (set_of e1) (set_of e2) x y p e3
-  | EProj LikeList e1 x e2 => EProj LikeSet (set_of e1) x e2
   | EBinop OCons e1 e2 => EBinop OSetInsert (set_of e2) e1
-  | _ => ESetOf e
+  | EIf e1 e2 e3 => EIf e1 (set_of e2) (set_of e3)
+  | EAtom (ANil t) => EAtom (AEmptySet t)
+  | _ => EUnop OSetOfList e
   end.
 
 Definition push_down_collection (e : expr) : expr :=
   match e with
-  | EBagOf e => bag_of e
-  | ESetOf e => set_of e
+  | EUnop OBagOfList e => bag_of e
+  | EUnop OSetOfList e => set_of e
   | _ => e
   end.
 
 Definition ex : expr :=
-  ESort LikeList (EFilter LikeList (ELoc "tbl") "x"
-    (EBinop OEq (EAccess (EVar "x") "attr") (EAtom (AInt 0)))).
+  ESort LikeList (EFlatmap LikeList (ELoc "tbl") "x"
+    (EIf (EBinop OEq (EAccess (EVar "x") "attr") (EAtom (AInt 0)))
+       (EBinop OCons (EVar "x") (EAtom (ANil None))) (EAtom (ANil None)))).
 (* Compute fold_expr push_down_collection (fold_expr annotate_collection ex). *)
 
 Definition ex1 : expr :=
-  EFold (EProj LikeList (ELoc "tbl") "r" (EAccess (EVar "r") "attr")) (EAtom (ANone None)) "v" "acc"
+  EFold (EFlatmap LikeList (ELoc "tbl") "r" (EBinop OCons (EAccess (EVar "r") "attr") (EAtom (ANil None))))
+    (EAtom (ANone None)) "v" "acc"
       (EOptMatch (EVar "acc") (EUnop OSome (EVar "v"))
          "x" (EIf (EBinop OLess (EVar "v") (EVar "x")) (EUnop OSome (EVar "v")) (EVar "acc"))).
 (* Compute fold_expr push_down_collection (fold_expr annotate_collection ex1). *)
 
 Section WithWord.
-  Context {width: Z} {word: word.word width}.
-  Context {word_ok: word.ok word}.
-  Local Notation value := (Value.value (word := word)).
 
   Local Coercion is_true : bool >-> Sortclass.
 
@@ -103,6 +129,47 @@ Section WithWord.
     lazymatch goal with
       H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H; subst
     end.
+
+  Lemma set_insert_In : forall (l : list value) v p,
+      In p (set_insert v l) <-> p = v \/ In p l.
+  Proof.
+    induction l as [ | a l IH ]; cbn; intros v p.
+    1: intuition congruence.
+    destruct (value_ltb v a) eqn:E_lt; cbn.
+    1: intuition congruence.
+    destruct (value_eqb v a) eqn:E_eq; cbn.
+    1:{ apply value_eqb_eq in E_eq; subst. intuition congruence. }
+    rewrite IH. intuition congruence.
+  Qed.
+
+  (* The set counterpart of bag_insert_bag_insert, and for the same reason: an
+     index whose buckets are SETS needs its step to commute.  set_insert is a
+     SORTED, DEDUPLICATING insert, so this goes through canonicity rather than
+     through the insertion's case analysis -- two sorted lists with the same
+     members are equal (Permutation_SSorted_eq).  Unlike the bag's, this
+     operation is also IDEMPOTENT, which is what lets two rows share a bucket
+     key without the order of arrival mattering. *)
+  Lemma set_insert_set_insert : forall (x y : value) s,
+      NoDup s -> StronglySorted value_leb s ->
+      set_insert x (set_insert y s) = set_insert y (set_insert x s).
+  Proof.
+    intros x y s H_nd H_s.
+    assert (H_sy : StronglySorted value_leb (set_insert y s))
+      by (apply set_insert_preserve_SSorted; exact H_s).
+    assert (H_ndy : NoDup (set_insert y s))
+      by (apply set_insert_preserve_NoDup; [ exact H_nd | exact H_s ]).
+    assert (H_sx : StronglySorted value_leb (set_insert x s))
+      by (apply set_insert_preserve_SSorted; exact H_s).
+    assert (H_ndx : NoDup (set_insert x s))
+      by (apply set_insert_preserve_NoDup; [ exact H_nd | exact H_s ]).
+    apply Permutation_SSorted_eq.
+    2: apply set_insert_preserve_SSorted; exact H_sy.
+    2: apply set_insert_preserve_SSorted; exact H_sx.
+    apply NoDup_Permutation.
+    1: apply set_insert_preserve_NoDup; [ exact H_ndy | exact H_sy ].
+    1: apply set_insert_preserve_NoDup; [ exact H_ndx | exact H_sx ].
+    intros p. rewrite !set_insert_In. intuition idtac.
+  Qed.
 
   Lemma bag_insert_bag_insert : forall (x y : value) b,
       StronglySorted bag_entry_leb b ->
@@ -148,6 +215,47 @@ Section WithWord.
   Proof.
     induction 1; cbn; auto; try congruence.
     apply bag_insert_bag_insert, list_to_bag_SSorted.
+  Qed.
+
+  (* ------------------------------------------------------------------
+     A bag's values are the set of the same elements.
+
+     Read at the level of expressions, map_fst_list_to_bag says that
+     OSetOfBag after OBagOfList is OSetOfList: the new operator does not add a way
+     of building a set, it just lets an existing one start from a bag.
+
+     No sortedness is needed, because the two insert functions agree
+     structurally.  bag_insert and set_insert split on the same two tests in
+     the same order; where the element is already present one bumps a count
+     and the other returns the list untouched, and neither changes a key.
+     ------------------------------------------------------------------ *)
+  Lemma map_fst_bag_insert : forall (v : value) (b : list (value * nat)),
+      List.map fst (bag_insert v b) = set_insert v (List.map fst b).
+  Proof.
+    induction b as [| [v' n'] b IH]; [ reflexivity | ].
+    cbn [bag_insert List.map fst set_insert].
+    destruct (value_ltb v v'); [ reflexivity | ].
+    destruct (value_eqb v v') eqn:E_eq.
+    - apply value_eqb_eq in E_eq; subst. cbn [List.map fst]. reflexivity.
+    - cbn [List.map fst]. rewrite IH. reflexivity.
+  Qed.
+
+  Lemma map_fst_list_to_bag : forall (l : list value),
+      List.map fst (list_to_bag l) = list_to_set l.
+  Proof.
+    induction l as [| v l IH]; [ reflexivity | ].
+    cbn [list_to_bag list_to_set fold_right].
+    rewrite map_fst_bag_insert, IH. reflexivity.
+  Qed.
+
+  (* And the bridge pays for itself: a set is canonical under reordering, which
+     would otherwise want a commutation lemma for set_insert of its own. *)
+  Lemma Permutation_list_to_set_eq : forall (l l' : list value),
+      Permutation l l' ->
+      list_to_set l = list_to_set l'.
+  Proof.
+    intros l l' H. rewrite <- !map_fst_list_to_bag.
+    f_equal. apply Permutation_list_to_bag_eq; assumption.
   Qed.
 
   Lemma lt_bag_insert : forall x (b : list (value * nat)),
@@ -393,14 +501,53 @@ Section WithWord.
       1: eapply annotate_collection_preserve_sem; eauto.
     Qed.
 
+    Lemma snoc_to_cons_under_coercion_preserve_ty : forall (Gstore : tenv),
+        preserve_ty Gstore snoc_to_cons_under_coercion.
+    Proof.
+      unfold preserve_ty; intros. repeat destruct_subexpr.
+      cbn. repeat (case_match; auto).
+      all: repeat invert_type_of_clear.
+      all: repeat invert_type_of_op_clear.
+      all: repeat (econstructor; eauto).
+    Qed.
+
+    Lemma snoc_to_cons_under_coercion_preserve_sem :
+      forall (Gstore : tenv) (store : locals),
+        preserve_sem Gstore store snoc_to_cons_under_coercion.
+    Proof.
+      unfold preserve_sem; intros. repeat destruct_subexpr.
+      destruct o; cbn [snoc_to_cons_under_coercion]; try reflexivity.
+      all: repeat destruct_subexpr.
+      all: cbn [snoc_to_cons_under_coercion].
+      all: repeat invert_type_of_clear; repeat invert_type_of_op_clear.
+      all: apply_type_sound e1; invert_type_of_value_clear.
+      all: cbn [interp_expr interp_unop interp_binop interp_atom];
+        rewrite <- H1.
+      (* the append and the cons are a permutation of each other, and both
+         coercions are invariant under one *)
+      1: f_equal; apply Permutation_list_to_bag_eq, Permutation_cons_append.
+      1: f_equal; apply Permutation_list_to_set_eq, Permutation_cons_append.
+    Qed.
+
+    Theorem snoc_to_cons_under_coercion_sound :
+      expr_transf_sound (locals:=locals) snoc_to_cons_under_coercion.
+    Proof.
+      unfold expr_transf_sound; intros; intuition idtac.
+      1: apply snoc_to_cons_under_coercion_preserve_ty; auto.
+      1: eapply snoc_to_cons_under_coercion_preserve_sem
+           with (Gstore := Gstore) (Genv := Genv); eauto.
+    Qed.
+
     Lemma bag_of_ty : forall e Gstore Genv t,
         type_of Gstore Genv e (TList t) ->
         type_of Gstore Genv (bag_of e) (TBag t).
     Proof.
       induction e using expr_IH; cbn; intros.
       all: try now (invert_type_of; econstructor; eauto).
-      all: case_match; invert_type_of; try invert_type_of_op;
+      all: try case_match; invert_type_of; try invert_type_of_op;
                     repeat (econstructor; eauto).
+      all: (* EAtom (ANil _) *)
+        invert_type_of_atom; constructor; auto.
     Qed.
 
     Definition VBag_of (v : value) :=
@@ -417,6 +564,8 @@ Section WithWord.
         interp_expr store env (bag_of e) = VBag_of (interp_expr store env e).
     Proof.
       induction 1; unfold VBag_of in *; auto; intros.
+      1:{ (* TyEAtom *)
+          cbn. destruct a; reflexivity. }
       1:{ cbn. case_match; auto; cbn. rewrite IHtype_of2; auto.
           case_match; auto. }
       1:{ cbn. apply_type_sound e1.
@@ -430,17 +579,6 @@ Section WithWord.
           apply_Forall_In. erewrite IHtype_of2; eauto with fiat2_hints.
           apply_type_sound e2; eauto with fiat2_hints. invert_type_of_value.
           apply list_to_bag_to_list_Permutation. }
-      1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
-          apply filter_list_to_bag with
-            (P:=fun v : value => match interp_expr store (map.put env x v) p with
-                                 | VBool b => b
-                                 | _ => false
-                                 end). }
-      1:{ cbn. rewrite IHtype_of1, IHtype_of2; auto. repeat (case_match; auto). f_equal.
-          auto using Permutation_list_to_bag_eq, Utils.Permutation_flat_map,
-            list_to_bag_to_list_Permutation, Permutation_map, Permutation_filter. }
-      1:{ cbn. rewrite IHtype_of1; auto. case_match; auto. f_equal.
-          auto using Permutation_list_to_bag_eq, Permutation_map, list_to_bag_to_list_Permutation. }
     Qed.
 
     Lemma set_of_ty : forall e Gstore Genv t,
@@ -449,8 +587,11 @@ Section WithWord.
     Proof.
       induction e using expr_IH; cbn; intros.
       all: try now (econstructor; eauto).
-      all: case_match; invert_type_of; try invert_type_of_op;
+      all: try now (invert_type_of; econstructor; eauto).
+      all: try case_match; invert_type_of; try invert_type_of_op;
         repeat (econstructor; eauto).
+      all: (* EAtom (ANil _) *)
+        invert_type_of_atom; constructor; auto.
     Qed.
 
     Definition VSet_of (v : value) :=
@@ -537,6 +678,100 @@ Section WithWord.
             inversion H_in; auto;
             apply value_eqb_neq in E; congruence. } }
     Qed.
+    Lemma SSorted_filter : forall (R : value -> value -> Prop) (p : value -> bool) l,
+        StronglySorted R l -> StronglySorted R (filter p l).
+    Proof.
+      induction l; cbn; auto; intros.
+      invert_SSorted. case_match; auto.
+      constructor; auto using Forall_Forall_filter.
+    Qed.
+
+    Lemma list_to_set_map_set_insert : forall (f : value -> value) v s,
+        list_to_set (List.map f (set_insert v s))
+        = set_insert (f v) (list_to_set (List.map f s)).
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted,
+                   set_insert_preserve_NoDup, set_insert_preserve_SSorted.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply set_insert_incl in H_u; destruct H_u as [H_u | H_u]; subst.
+        1: apply set_insert_incl_r; cbn; auto.
+        apply set_insert_incl_r; cbn; right.
+        apply list_to_set_incl_r, in_map; auto.
+      - unfold incl; intros w H_in.
+        apply set_insert_incl in H_in; destruct H_in as [H_in | H_in]; subst.
+        1: apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl_r, in_map, set_insert_incl_r; cbn; auto.
+    Qed.
+
+    Lemma list_to_set_map_list_to_set : forall (f : value -> value) l,
+        list_to_set (List.map f (list_to_set l)) = list_to_set (List.map f l).
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl in H_u.
+        apply list_to_set_incl_r, in_map; auto.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl_r, in_map, list_to_set_incl_r; auto.
+    Qed.
+
+    Lemma list_to_set_filter_list_to_set : forall (p : value -> bool) l,
+        list_to_set (filter p (list_to_set l)) = list_to_set (filter p l).
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, filter_In in H_in as [ H_w H_p ].
+        apply list_to_set_incl in H_w.
+        apply list_to_set_incl_r, filter_In; split; assumption.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, filter_In in H_in as [ H_w H_p ].
+        apply list_to_set_incl_r, filter_In; split;
+          [ apply list_to_set_incl_r | ]; assumption.
+    Qed.
+
+    (* A set is already canonical, so deduplicating it again does nothing.
+       This is the fact that lets a rewrite replace a set-level filter -- whose
+       semantics rebuilds the set from its survivors -- with an operator that
+       just drops elements. *)
+    Lemma list_to_set_canonical : forall (l : list value),
+        NoDup l -> StronglySorted value_leb l -> list_to_set l = l.
+    Proof.
+      intros. apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted,
+                   list_to_set_incl, list_to_set_incl_r.
+    Qed.
+
+    (* dropping every row whose attribute is k drops exactly k from the set *)
+    Lemma filter_list_to_set_map : forall (f : value -> value) k l,
+        filter (fun w => negb (value_eqb w k)) (list_to_set (List.map f l))
+        = list_to_set (List.map f (filter (fun v => negb (value_eqb (f v) k)) l)).
+    Proof.
+      intros.
+      apply NoDup_SSorted_double_incl_eq;
+        auto using list_to_set_NoDup, list_to_set_SSorted,
+                   NoDup_filter, SSorted_filter.
+      - unfold incl; intros w H_in.
+        apply filter_In in H_in; destruct H_in as [H_in H_q].
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply list_to_set_incl_r, in_map, filter_In; intuition auto.
+      - unfold incl; intros w H_in.
+        apply list_to_set_incl, in_map_iff in H_in.
+        destruct H_in as [u [H_eq H_u]]; subst.
+        apply filter_In in H_u; destruct H_u as [H_u H_p].
+        apply filter_In; intuition auto.
+        apply list_to_set_incl_r, in_map; auto.
+    Qed.
 
     Lemma incl_filter_incl : forall [A : Type] (f : A -> bool) (l1 l2 : list A),
         incl l1 l2 ->
@@ -562,7 +797,14 @@ Section WithWord.
         interp_expr store env (set_of e) = VSet_of (interp_expr store env e).
     Proof.
       induction 1; unfold VSet_of in *; auto; intros.
+      1:{ (* TyEAtom *)
+          cbn. destruct a; reflexivity. }
       1:{ cbn. case_match; auto; cbn; use_set_of_sem_IH; auto.
+          case_match; auto. }
+      1:{ (* TyEIf, as in bag_of_sem: the branch taken is the same one on both
+             sides, so only e1's value has to be pinned down *)
+          cbn. apply_type_sound e1.
+          invert_type_of_value_clear.
           case_match; auto. }
       1:{ cbn. use_set_of_sem_IH; auto.
           case_match; auto. f_equal.
@@ -583,29 +825,6 @@ Section WithWord.
               invert_type_of_value_clear. apply_Forall_In.
               rewrite IHtype_of2; eauto with fiat2_hints.
               case_match; auto using incl_refl, list_to_set_incl_r. } }
-      1:{ cbn. use_set_of_sem_IH; auto.
-          case_match; auto. f_equal.
-          apply NoDup_SSorted_double_incl_eq; auto using list_to_set_NoDup, list_to_set_SSorted, NoDup_filter, filter_preserve_SSorted;
-            eauto using incl_tran, list_to_set_incl_r,
-            incl_filter_incl, list_to_set_incl. }
-      1:{ cbn. use_set_of_sem_IH; auto.
-          case_match; auto.
-          use_set_of_sem_IH; auto.
-          case_match; auto. f_equal.
-          apply NoDup_SSorted_double_incl_eq; auto using list_to_set_NoDup, list_to_set_SSorted, NoDup_filter, filter_preserve_SSorted.
-          1:{ eapply incl_tran; [ apply list_to_set_incl | ].
-              eapply incl_tran; [ | apply list_to_set_incl_r ].
-              apply flat_map_incl_in2; [ apply list_to_set_incl | ].
-              intros. apply incl_map, incl_filter_incl, list_to_set_incl. }
-          1:{ eapply incl_tran; [ apply list_to_set_incl | ].
-              eapply incl_tran; [ | apply list_to_set_incl_r ].
-              apply flat_map_incl_in2; [ apply list_to_set_incl_r | ].
-              intros. apply incl_map, incl_filter_incl, list_to_set_incl_r. } }
-      1:{ cbn. use_set_of_sem_IH; auto.
-          case_match; auto. f_equal.
-          apply NoDup_SSorted_double_incl_eq; auto using list_to_set_NoDup, list_to_set_SSorted;
-            eauto using incl_tran, list_to_set_incl_r,
-            incl_map, list_to_set_incl. }
     Qed.
 
     Theorem push_down_collection_preserve_ty : forall e Gstore Genv t,
@@ -614,7 +833,9 @@ Section WithWord.
     Proof.
       destruct 1.
       all: try now (econstructor; eauto).
-      all: cbn; auto using bag_of_ty, set_of_ty.
+      destruct o; cbn; try now (econstructor; eauto).
+      1: invert_type_of_op; auto using bag_of_ty.
+      1: invert_type_of_op; auto using set_of_ty.
     Qed.
 
     Theorem push_down_collection_preserve_sem : forall e (Gstore Genv : tenv) t (store env : locals),
@@ -624,8 +845,9 @@ Section WithWord.
         interp_expr store env (push_down_collection e) = interp_expr store env e.
     Proof.
       destruct 1; auto; cbn; intros.
-      1: erewrite bag_of_sem; eauto.
-      1: erewrite set_of_sem; eauto.
+      destruct o; cbn; auto.
+      1: invert_type_of_op; erewrite bag_of_sem; eauto.
+      1: invert_type_of_op; erewrite set_of_sem; eauto.
     Qed.
 
     Theorem push_down_collection_sound : expr_transf_sound (locals:=locals) push_down_collection.
