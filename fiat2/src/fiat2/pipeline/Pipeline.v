@@ -3,6 +3,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.constraint.Decl fiat2.constraint.Surface fiat2.index.UniqueDictIndexImpl fiat2.index.UniqueIndexGate fiat2.index.UniqueIndexUse
   fiat2.index.TrigramIndexImpl fiat2.index.TrigramIndexUse fiat2.index.DictIndexKeyedDelete
   fiat2.rules.EraseField fiat2.index.RepIdx fiat2.rules.SetRemoveTransf
+  fiat2.index.IndexEnv
   fiat2.rules.FlagFilter fiat2.rules.SplitFilterProj fiat2.rules.PromoteGuard fiat2.rules.UnpushCollection.
 (* Required, NOT imported: CompositeDictIndexImpl has a to_idx, idx_ty,
    is_tbl_ty and idx_wf of its own, and importing it would shadow
@@ -2334,6 +2335,35 @@ end.
     map (fun ics =>
            let '(idxs, transfs, _) := mk_idxs [] O reps ics in
            mk_idx_related_transfs (mk_compo_idx idxs) (mk_idx_use_transfs transfs)) icss.
+
+  (* ------------------------------------------------------------------
+     THE DESCRIPTOR-LEVEL INDEX ENVIRONMENT.
+
+     index/IndexEnv.v says what an entry CLAIMS and proves three laws about
+     it, parameterized by an index and its invariant.  Neither is something a
+     rewrite can pattern-match: an index is a record of functions and its
+     invariant is a Prop.  So the environment carries the DESCRIPTOR a choice
+     already is -- index_choice -- and mk_idxs is the meaning function,
+     exactly as decl is the descriptor for a declaration and constr_of_decl
+     its meaning.  That split is why this half lives here and the semantic
+     half below index/.
+     ------------------------------------------------------------------ *)
+  Definition ienv : Type := list (string * (type * list index_choice)).
+
+  (* What one entry claims: the composite index mk_idxs builds from those
+     choices is installed at that table, and the program maintains it. *)
+  Definition ienv_fact (ds : list decl) (reps : nat)
+    (tbl : string) (t : type) (ics : list index_choice)
+    (Gstore Genv : ctenv) (c : command) : Prop :=
+    let '(idxs, _, _) := mk_idxs ds O reps ics in
+    idx_fact (locals := clocals)
+      (idx_b := mk_compo_idx idxs) (idx_wf_b := compo_idx_wf idxs)
+      "id_tag" "aux_tag" tbl t Gstore Genv c.
+
+  Definition ienv_respected (ds : list decl) (reps : nat) (ie : ienv)
+    (Gstore Genv : ctenv) (c : command) : Prop :=
+    Forall (fun e => let '(tbl, (t, ics)) := e in
+                     ienv_fact ds reps tbl t ics Gstore Genv c) ie.
 
   Lemma compose_all_idx_transfs_of_sound : forall reps icss,
       transf_sound (locals:=clocals) (compose_all_idx_transfs O (idx_transfs_of reps icss)).
