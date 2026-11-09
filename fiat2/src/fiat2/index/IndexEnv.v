@@ -129,4 +129,48 @@ Section IndexFactAcrossTables.
           [ exact H_ne | exact H_a | exact H_is | exact H_incl
           | exact H_Gs | exact H_Ge | intros; exact I | exact H_wf ]. }
   Qed.
+
+  (* ------------------------------------------------------------------
+     LAW 3, CONSUMPTION -- and the other half of stability.
+
+     A rule proved aug_transf_sound consumes exactly what an entry claims and
+     LEAVES IT STANDING.  With idx_fact_preserved that closes the circle: an
+     entry survives an installation at another table, and it survives the
+     rules run at its own, so it is a property of the program throughout the
+     index phase rather than a hypothesis produced and consumed in one step.
+
+     Nothing about any rule changes.  This only restates aug_transf_sound's
+     hypothesis and conclusion in the entry's vocabulary, which is the whole
+     claim being tested here: the interface is the same obligation, delivered
+     differently.  tenv_wf_with_globals [b] [aux_ty t] Gstore IS the entry's
+     typing conjunct, which is why no new premise appears. *)
+  Lemma rules_consume_and_preserve_fact :
+    forall (f : string -> command -> command),
+      aug_transf_sound (locals := locals) (is_tbl_ty (index := idx_b))
+        (aux_ty (idx := idx_b) id_tag aux_tag)
+        (aux_wf (idx_wf := idx_wf_b) id_tag aux_tag) f ->
+      forall (b : string) t c (Gstore Genv : tenv),
+        tenv_wf Gstore -> tenv_wf Genv ->
+        type_wf t -> is_tbl_ty (index := idx_b) t = true ->
+        well_typed Gstore Genv c ->
+        idx_fact b t Gstore Genv c ->
+        well_typed Gstore Genv (f b c)
+        /\ idx_fact b t Gstore Genv (f b c)
+        /\ (forall (store env : locals),
+               locals_wf Gstore store -> locals_wf Genv env ->
+               holds_for_all_entries
+                 (value_wf_with_globals (aux_wf (idx_wf := idx_wf_b) id_tag aux_tag)
+                    (b :: nil)) store ->
+               interp_command store env (f b c) = interp_command store env c).
+  Proof.
+    intros f H_f * H_Gs H_Ge H_t H_is H_wt [ H_ty H_wf ].
+    assert (H_glob : tenv_wf_with_globals (b :: nil)
+                       (aux_ty (idx := idx_b) id_tag aux_tag t :: nil) Gstore)
+      by (constructor; [ exact H_ty | constructor ]).
+    destruct (H_f Gstore Genv b t c H_Gs H_Ge H_t H_is H_glob H_wt H_wf)
+      as [ H_wt' [ H_wf' H_sem ] ].
+    split; [ exact H_wt' | ].
+    split; [ unfold idx_fact; split; [ exact H_ty | exact H_wf' ] | ].
+    exact H_sem.
+  Qed.
 End IndexFactAcrossTables.
