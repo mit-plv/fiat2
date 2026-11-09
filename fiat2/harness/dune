@@ -8,7 +8,7 @@
  (name conquord_harness)
  (wrapped false)
  (modules count value rt eval bridge free gen probe report differential
-          bench baseline mono opcount codegen)
+          bench baseline mono codegen)
  (libraries conquord_extracted containers-data))
 
 (executable

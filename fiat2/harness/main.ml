@@ -1,52 +1,12 @@
-(* Entry point.  One executable with four jobs, so that the shared modules
-   (the evaluator, the generators) are compiled once and none of them can
-   quietly diverge from the others.
+(* Entry point for the interpreted side.  One executable so that the shared
+   modules -- the evaluator, the generators, the counters -- are compiled once
+   and cannot quietly diverge.  README.md lists the commands.
 
-     report         what is in the extracted terms; evaluates nothing
-     types          the OCaml type declarations the compiled backend needs:
-                    one record per Conquord record type, with a structural
-                    compare and hash, and a Map/Hashtbl/Set instance per key
-                    type with dict_kind deciding tree or hash.  Writes to
-                    stdout; harness/monotypes.ml is where it goes, and
-                    `dune build @check` is what type-checks it
-     stores         the dictionary store against a reference map: that it is a
-                    finite map on the keys these subjects use, and that one
-                    delete removes one binding.  It exists because a library
-                    got that last one wrong -- see probe.ml
-     check          the store check, then the differential test against the
-                    Gallina interpreter
-     bench [n ...]  run the subjects and count
-     csv [n ...]    the same op-phase series as data, one row per point
-     timing [subject kind rows]
-                    a diagnostic: how precise the wall clock actually is,
-                    which decides whether seconds can be compared against
-                    hand-written code at all
-     baseline [n ...]
-                    the originals' own structures, beside what the
-                    optimizer derived
-     threeway [n ...]
-                    all three programs in one table: the query as written,
-                    the program derived from it, and the author's own code,
-                    compared on the one cost that crosses to the author
-     alternatives [n ...]
-                    a SIDE NOTE, kept out of the other tables: what the
-                    selector's own choice is worth, by running each
-                    configuration a file pins against the one the selector
-                    picks.  Both are sound; only the index list differs
-     enumerate [only=<name>,<name>] [n ...]
-                    the same question asked exhaustively: every
-                    configuration eval/Enumerate.v admits, measured, and
-                    the selector's pick ranked among them
-
-   With no argument it runs the report, which is what the README's one-line
-   recipe does.
-
-   Any command may be preceded or followed by a STRUCTURE SETTING -- typed,
-   trees or hashes -- which says what every point-access collection is charged
-   as, on BOTH sides of the author comparison.  count.ml says what the three
-   mean; the default is typed, which charges only what the type system
-   licenses.  `baseline matched` prints all three in sequence, which is the
-   comparison this parameter exists for. *)
+   Any command may be preceded or followed by a STRUCTURE SETTING (typed,
+   trees, hashes), a name alphabet, the fuzzy column's two axes, or share=K;
+   they are pulled out of argv below wherever they appear, so that they
+   compose with the size lists the commands take.  count.ml says what the
+   three settings charge. *)
 
 let () =
   let argv = Array.to_list Sys.argv in
@@ -86,7 +46,6 @@ let () =
   | _ :: "check" :: _ -> ignore (Probe.run ()); Differential.run ()
   | _ :: "stores" :: _ -> ignore (Probe.run ())
   | _ :: "types" :: _ -> Codegen.run ()
-  | _ :: "ops" :: _ -> Opcount.run ()
   | _ :: "bench" :: rest -> Bench.run (List.filter_map int_of_string_opt rest)
   | _ :: "csv" :: rest ->
       (* `only=a,b` restricts the subjects; anything else numeric is a size *)
