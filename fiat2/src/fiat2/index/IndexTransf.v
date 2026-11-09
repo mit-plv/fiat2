@@ -1072,49 +1072,6 @@ Section WithMap.
           | intros; exact I
           | apply well_typed__aux_wf_nil; auto; apply value_wf_with_globals_True ].
       Qed.
-      (* ------------------------------------------------------------------
-         CARRYING ANOTHER DECLARED TABLE'S INVARIANT THROUGH THIS
-         INSTALLATION.
-
-         transf_to_idx'_wf_pre carries a predicate about tbl itself.  What a
-         second declared table needs is a predicate about a DIFFERENT global
-         surviving tbl's installation, so that installations can be composed
-         innermost-first: the outer table's obligation is stated about a body
-         the inner installation has already rewritten.
-
-         parameterized_wf carries ONE predicate, so a derivation about both
-         has to be about their conjunction -- the same reason wf_pre fuses
-         aux_wf with at_id_tag Pv instead of proving them separately.
-         ------------------------------------------------------------------ *)
-      Definition idx_with_other (Pa : value -> Prop) (a : string)
-        : string -> value -> Prop :=
-        fun x v => value_wf_with_globals aux_wf (tbl :: nil) x v
-                   /\ value_wf_with_globals Pa (a :: nil) x v.
-
-      (* the tbl half, in the fused shape the strip_aux lemmas ask for *)
-      Lemma idx_with_other__fused : forall Pa a (store : locals),
-          holds_for_all_entries (idx_with_other Pa a) store ->
-          holds_for_all_entries
-            (value_wf_with_globals
-               (fun v => aux_wf v /\ at_id_tag (fun _ : value => True) v)
-               (tbl :: nil)) store.
-      Proof.
-        unfold holds_for_all_entries, idx_with_other; intros * H k v H_k.
-        apply (proj2 (iff2_aux_wf_True k v)). apply (proj1 (H k v H_k)).
-      Qed.
-
-      (* and the other half survives stripping, because stripping touches
-         only tbl *)
-      Lemma holds_other_strip_aux : forall Pa a (store : locals),
-          a <> tbl ->
-          holds_for_all_entries (value_wf_with_globals Pa (a :: nil)) store ->
-          holds_for_all_entries (value_wf_with_globals Pa (a :: nil)) (strip_aux store).
-      Proof.
-        intros * H_ne H. unfold strip_aux.
-        repeat (case_match; try exact H).
-        apply not_In__value_wf_with_globals; [ | exact H ].
-        cbn [In]; intuition congruence.
-      Qed.
 
       Lemma value_wf_with_globals_single : forall (Pv : value -> Prop) (n x : string) (v : value),
           value_wf_with_globals Pv (n :: nil) x v <-> (x <> n \/ Pv v).
@@ -1124,94 +1081,254 @@ Section WithMap.
         1: constructor; [ exact H | constructor ].
       Qed.
 
-      (* Shadowing tbl makes the index half vacuous and leaves the other
-         table's half as it was -- and the body is UNTRANSFORMED there, since
-         fold_command_with_global declines to descend under a shadow. *)
-      Lemma iff2_rm_idx_with_other_tbl : forall Pa a,
-          iff2 (rm_from_pred (idx_with_other Pa a) tbl)
-            (rm_from_pred (value_wf_with_globals Pa (a :: nil)) tbl).
+      Lemma Forall2_map_fst_eq :
+        forall A A' (P : A -> A' -> Prop) (l : list (string * A)) (l' : list (string * A')),
+          Forall2 (fun p p' => fst p = fst p' /\ P (snd p) (snd p')) l l' ->
+          List.map fst l = List.map fst l'.
       Proof.
-        unfold iff2, rm_from_pred, idx_with_other; intros Pa a x v; split; intros H.
-        1:{ destruct H as [ H_eq | [ _ H_a ] ]; [ left; exact H_eq | right; exact H_a ]. }
-        1:{ destruct (String.eqb x tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *.
-            1: left; exact E.
-            1:{ destruct H as [ H_eq | H_a ]; [ left; exact H_eq | ].
-                right; split;
-                  [ apply value_wf_with_globals_single; left; exact E | exact H_a ]. } }
+        induction 1; cbn; intuition congruence.
       Qed.
 
-      (* Shadowing the OTHER table makes its half vacuous, and what is left is
-         exactly the index invariant transf_to_idx'_index_wf establishes. *)
-      Lemma iff2_rm_idx_with_other_a : forall Pa a,
-          a <> tbl ->
-          iff2 (rm_from_pred (idx_with_other Pa a) a)
-            (value_wf_with_globals aux_wf (tbl :: nil)).
+      (* ------------------------------------------------------------------
+         THE STRUCTURE COMES FROM THE TYPE, NOT FROM THE INVARIANT.
+
+         aux_ty is a record type with an id_tag field, so locals_wf alone says
+         an installed table's value is a record with that field and that the
+         field carries the table's own type.  strip_aux_spec took those facts
+         out of aux_wf only because aux_wf was already in hand; aux_wf is
+         needed where the index's CONTENT matters, not for the bookkeeping
+         that relates the augmented store to the stripped one.
+         ------------------------------------------------------------------ *)
+      Lemma strip_aux_spec_ty : forall tbl_ty Gstore (store : locals),
+          map.get Gstore tbl = Some tbl_ty ->
+          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+          exists rv v_id,
+            map.get store tbl = Some (VRecord rv) /\
+            access_record rv id_tag = Success v_id /\
+            strip_aux store = map.put store tbl v_id /\
+            type_of_value v_id tbl_ty.
       Proof.
-        unfold iff2, rm_from_pred, idx_with_other; intros Pa a H_ne x v; split; intros H.
-        1:{ destruct H as [ H_eq | [ H_t _ ] ]; [ | exact H_t ].
-            apply value_wf_with_globals_single; left; congruence. }
-        1:{ destruct (String.eqb x a) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *.
-            1: left; exact E.
-            1:{ right; split;
-                  [ exact H | apply value_wf_with_globals_single; left; exact E ]. } }
+        intros * H_tbl H_store.
+        specialize (H_store tbl (aux_ty tbl_ty)).
+        rewrite map.get_put_same in H_store; specialize (H_store eq_refl).
+        destruct_match_hyp; try contradiction.
+        lazymatch goal with E : map.get store tbl = Some _ |- _ => rename E into E_tbl end.
+        unfold aux_ty in H_store.
+        invert_type_of_value_clear.
+        lazymatch goal with H : Forall2 _ ?rv _ |- _ =>
+          assert (H_in : In id_tag (List.map fst rv)) end.
+        1:{ erewrite Forall2_map_fst_eq by eassumption.
+            eapply Permutation_in;
+              [ apply Permutation_map, Permuted_record_sort | cbn; auto ]. }
+        apply In_access_record in H_in as [ v_id E_id ].
+        eexists; eexists.
+        split; [ (exact E_tbl || reflexivity) | ].
+        split; [ exact E_id | ].
+        split.
+        1:{ unfold strip_aux; rewrite ?E_tbl; rewrite ?E_id; reflexivity. }
+        1:{ eapply Forall2_access_record;
+              [ eassumption | exact E_id | apply aux_ty_access_id ]. }
       Qed.
 
-      (* An ordinary binder touches neither. *)
-      Lemma iff2_rm_idx_with_other_diff : forall Pa a y,
-          y <> tbl -> y <> a ->
-          iff2 (rm_from_pred (idx_with_other Pa a) y) (idx_with_other Pa a).
+      Lemma locals_wf_strip_aux_ty : forall tbl_ty Gstore (store : locals),
+          map.get Gstore tbl = Some tbl_ty ->
+          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+          locals_wf Gstore (strip_aux store).
       Proof.
-        unfold iff2, rm_from_pred, idx_with_other; intros Pa a y H_t H_a x v; split; intros H.
-        1:{ destruct H as [ H_eq | H_both ]; [ | exact H_both ]; subst.
-            split; apply value_wf_with_globals_single; left; congruence. }
-        1: right; exact H.
+        intros * H_tbl H_store.
+        destruct (strip_aux_spec_ty tbl_ty Gstore store H_tbl H_store)
+          as [ rv [ v_id [ E_tbl [ E_id [ E_strip H_ty ]]]]].
+        unfold locals_wf; intros x t H_x. rewrite E_strip.
+        destruct (String.eqb x tbl) eqn:E_x; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+        1:{ rewrite map.get_put_same. rewrite H_tbl in H_x; do_injection; auto. }
+        1:{ rewrite map.get_put_diff by congruence.
+            specialize (H_store x t).
+            rewrite map.get_put_diff in H_store by congruence.
+            apply H_store. exact H_x. }
       Qed.
 
-      Lemma idx_with_other__other : forall Pa a (store : locals),
-          holds_for_all_entries (idx_with_other Pa a) store ->
-          holds_for_all_entries (value_wf_with_globals Pa (a :: nil)) store.
+      Lemma strip_aux_consistent_ty : forall tbl_ty Gstore (store : locals),
+          map.get Gstore tbl = Some tbl_ty ->
+          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+          consistent_with_global (strip_aux store) store.
       Proof.
-        unfold holds_for_all_entries, idx_with_other; intros * H k v H_k.
-        apply (proj2 (H k v H_k)).
+        intros * H_tbl H_store.
+        destruct (strip_aux_spec_ty tbl_ty Gstore store H_tbl H_store)
+          as [ rv [ v_id [ E_tbl [ E_id [ E_strip H_ty ]]]]].
+        unfold consistent_with_global. rewrite E_strip, E_tbl, E_id.
+        rewrite map.get_put_same.
+        split; [ reflexivity | ].
+        intros; rewrite map.get_put_diff; auto.
       Qed.
 
-      (* What the augmented store gives us about the original one: it is still
-         well typed after stripping, and a rewritten expression reads the same
-         value there.  Stated as a lemma rather than applied inline because
-         eapply alone unifies transf_to_idx_preserve_sem'''s tbl_ty with the
-         ASSIGNED variable's type -- the one hypothesis in scope that matches
-         its map.get premise is the assignment's, not the table's. *)
-      Lemma strip_aux_sem_other :
-        forall Pa a tbl_ty Gstore Genv (store env : locals) e t,
+      (* Stripping touches only tbl, so an invariant that says nothing about
+         tbl survives it. *)
+      Lemma holds_strip_aux_keep : forall (P : string -> value -> Prop) (store : locals),
+          (forall v, P tbl v) ->
+          holds_for_all_entries P store ->
+          holds_for_all_entries P (strip_aux store).
+      Proof.
+        unfold holds_for_all_entries; intros * H_vac H k v H_k.
+        unfold strip_aux in H_k.
+        repeat (destruct_match_hyp; try (apply H; exact H_k)).
+        destruct (String.eqb k tbl) eqn:E_k; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+        1: apply H_vac.
+        1:{ rewrite map.get_put_diff in H_k by congruence. apply H; exact H_k. }
+      Qed.
+
+      (* ------------------------------------------------------------------
+         THE CARRY, WITH THE INVARIANT UNCHANGED.
+
+         An installation at tbl preserves any invariant that says nothing
+         about tbl -- the SAME predicate, not a fused one.
+
+         The tempting alternative is to fuse the index's own well-formedness
+         into the carried predicate, and strip_aux_spec pushes you there: it
+         takes the installed record's STRUCTURE out of aux_wf, so a proof
+         that uses it has to carry aux_wf too, and a parameterized_wf
+         derivation about a conjunction cannot be weakened back to a
+         conjunct.  strip_aux_spec_ty takes that structure out of the TYPE
+         instead -- aux_ty is a record type with an id_tag field, which
+         locals_wf already supplies -- so nothing has to be carried but the
+         invariant itself.
+
+         Because hypothesis and conclusion are the same predicate, this
+         composes with no bookkeeping at all, and it feeds idx_install_pre
+         unchanged.
+         ------------------------------------------------------------------ *)
+      Lemma transf_to_idx'_wf_keep :
+        forall c (P : string -> value -> Prop) tbl_ty free_vars Gstore Genv A A',
+          (forall v, P tbl v) ->
           map.get Gstore tbl = Some tbl_ty ->
           is_tbl_ty tbl_ty = true ->
+          incl (get_free_vars Genv) free_vars ->
           tenv_wf Gstore -> tenv_wf Genv ->
-          type_of Gstore Genv e t ->
-          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
-          locals_wf Genv env ->
-          holds_for_all_entries (idx_with_other Pa a) store ->
-          locals_wf Gstore (strip_aux store)
-          /\ interp_expr store env (fold_expr create_aux_read_head e)
-             = interp_expr (strip_aux store) env e.
+          (forall (store env : locals),
+              locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+              locals_wf Genv env ->
+              holds_for_all_entries P store ->
+              A' store env -> A (strip_aux store) env) ->
+          parameterized_wf Gstore Genv P A c ->
+          parameterized_wf (map.put Gstore tbl (aux_ty tbl_ty)) Genv
+            P A' (transf_to_idx' free_vars c).
       Proof.
-        intros * H_tbl H_is H_Gs H_Ge H_ty H_lws H_lwe H_inv.
-        assert (H_fused : holds_for_all_entries
-                            (value_wf_with_globals
-                               (fun v => aux_wf v /\ at_id_tag (fun _ : value => True) v)
-                               (tbl :: nil)) store)
-          by (eapply idx_with_other__fused; exact H_inv).
-        assert (H_lwS : locals_wf Gstore (strip_aux store))
-          by (eapply locals_wf_strip_aux; [ exact H_tbl | exact H_lws | exact H_fused ]).
-        split; [ exact H_lwS | ].
-        eapply transf_to_idx_preserve_sem'' with
-          (tbl := tbl) (tbl_ty := tbl_ty) (Gstore := Gstore) (Genv := Genv)
-          (store := strip_aux store) (store' := store) (env := env);
-          [ exact H_ty | exact H_tbl | exact H_Gs | exact H_Ge | exact H_is
-          | exact H_lwS | exact H_lwe
-          | eapply strip_aux_consistent; [ exact H_tbl | exact H_lws | exact H_fused ] ].
+        induction c; simpl; intros * H_vac H_tbl H_is H_incl H_Gs H_Ge H_sim H_wf;
+          invert_pwf.
+        (* CSkip *)
+        1: constructor.
+        (* CSeq *)
+        1:{ constructor.
+            1:{ eapply IHc1; eauto. }
+            1:{ apply IHc2 with (A := fun (_ _ : locals) => True); auto. } }
+        (* CLet *)
+        1:{ econstructor.
+            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
+            1:{ apply IHc with (A := fun (_ _ : locals) => True);
+                  [ exact H_vac | exact H_tbl | exact H_is
+                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
+                  | exact H_Gs | eauto with fiat2_hints
+                  | intros; exact I | assumption ]. } }
+        (* CLetMut *)
+        1:{ econstructor.
+            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
+            destruct (String.eqb x tbl) eqn:E_t; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+            1:{ (* tbl shadowed: the body is the original one, and the goal is
+                   the hypothesis's own body judgment *)
+                rewrite Properties.map.put_put_same; assumption. }
+            1:{ rewrite Properties.map.put_put_diff by congruence.
+                apply IHc with (A := fun (_ _ : locals) => True);
+                  [ unfold rm_from_pred; intros; right; apply H_vac
+                  | rewrite map.get_put_diff by congruence; exact H_tbl
+                  | exact H_is | exact H_incl
+                  | eauto with fiat2_hints | exact H_Ge
+                  | intros; exact I | assumption ]. } }
+        (* CAssign *)
+        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+            1:{ (* the write to the indexed table: the invariant says nothing
+                   about it, so there is nothing to prove about the value *)
+                rewrite_l_to_r. do_injection.
+                econstructor.
+                2: rewrite_map_get_put_goal; eauto.
+                2:{ econstructor; [ | | apply Permuted_record_sort | .. ];
+                      auto using StronglySorted_record_sort.
+                    1:{ repeat constructor; eauto using transf_to_idx_preserve_ty''.
+                        eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole t);
+                          eauto using aux_ty_wf with fiat2_hints.
+                        1:{ eapply type_of_strengthen.
+                            1: apply to_idx_ty; eauto with fiat2_hints.
+                            1: apply map_incl_empty.
+                            1: apply map_incl_refl. }
+                        1:{ unfold sub_wf; intros; simpl.
+                            destruct (String.eqb x hole) eqn:E_x;
+                              rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp;
+                              try do_injection; auto using transf_to_idx_preserve_ty''.
+                            rewrite map.get_empty in *; congruence. } }
+                    1:{ repeat constructor; intuition auto. destruct_In; auto. } }
+                1: intros; apply H_vac. }
+            1:{ (* a write to any other global *)
+                econstructor.
+                2: rewrite_map_get_put_goal; eauto.
+                2: eapply transf_to_idx_preserve_ty''; eauto.
+                1:{ intros store env H_A' H_inv H_lws H_lwe.
+                    assert (E_sem : interp_expr store env (fold_expr create_aux_read_head e)
+                                    = interp_expr (strip_aux store) env e)
+                      by (eapply transf_to_idx_preserve_sem'' with
+                            (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
+                            (store := strip_aux store) (store' := store) (env := env);
+                          [ eassumption | exact H_tbl | exact H_Gs | exact H_Ge | exact H_is
+                          | eapply locals_wf_strip_aux_ty; [ exact H_tbl | exact H_lws ]
+                          | exact H_lwe
+                          | eapply strip_aux_consistent_ty; [ exact H_tbl | exact H_lws ] ]).
+                    rewrite E_sem.
+                    lazymatch goal with
+                      H : forall _ _, _ -> _ -> _ -> _ -> P _ _ |- _ =>
+                        apply (H (strip_aux store) env
+                                 (H_sim store env H_lws H_lwe H_inv H_A')
+                                 (holds_strip_aux_keep P store H_vac H_inv)
+                                 ltac:(eapply locals_wf_strip_aux_ty;
+                                       [ exact H_tbl | exact H_lws ])
+                                 H_lwe) end. } } }
+        (* CIf *)
+        1:{ econstructor.
+            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
+            1:{ eapply IHc1;
+                  [ exact H_vac | exact H_tbl | exact H_is | exact H_incl
+                  | exact H_Gs | exact H_Ge | | eassumption ].
+                intros store env H_lws H_lwe H_inv [ H_A' H_g ].
+                split; [ apply (H_sim store env H_lws H_lwe H_inv H_A') | ].
+                erewrite <- transf_to_idx_preserve_sem'' with
+                    (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
+                    (store := strip_aux store) (store' := store) (env := env);
+                  [ exact H_g | eassumption | exact H_tbl | exact H_Gs | exact H_Ge
+                  | exact H_is
+                  | eapply locals_wf_strip_aux_ty; [ exact H_tbl | exact H_lws ]
+                  | exact H_lwe
+                  | eapply strip_aux_consistent_ty; [ exact H_tbl | exact H_lws ] ]. }
+            1:{ eapply IHc2;
+                  [ exact H_vac | exact H_tbl | exact H_is | exact H_incl
+                  | exact H_Gs | exact H_Ge | | eassumption ].
+                intros store env H_lws H_lwe H_inv [ H_A' H_g ].
+                split; [ apply (H_sim store env H_lws H_lwe H_inv H_A') | ].
+                erewrite <- transf_to_idx_preserve_sem'' with
+                    (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
+                    (store := strip_aux store) (store' := store) (env := env);
+                  [ exact H_g | eassumption | exact H_tbl | exact H_Gs | exact H_Ge
+                  | exact H_is
+                  | eapply locals_wf_strip_aux_ty; [ exact H_tbl | exact H_lws ]
+                  | exact H_lwe
+                  | eapply strip_aux_consistent_ty; [ exact H_tbl | exact H_lws ] ]. } }
+        (* CForeach *)
+        1:{ econstructor.
+            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
+            1:{ apply IHc with (A := fun (_ _ : locals) => True);
+                  [ exact H_vac | exact H_tbl | exact H_is
+                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
+                  | exact H_Gs | eauto with fiat2_hints
+                  | intros; exact I | assumption ]. } }
       Qed.
 
-      Lemma transf_to_idx'_wf_other :
+      (* and the two-table statement, now with NO fusion *)
+      Corollary transf_to_idx'_wf_other_ty :
         forall (Pa : value -> Prop) (a : string) tbl_ty c free_vars Gstore Genv A A',
           a <> tbl ->
           map.get Gstore tbl = Some tbl_ty ->
@@ -1221,453 +1338,14 @@ Section WithMap.
           (forall (store env : locals),
               locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
               locals_wf Genv env ->
-              holds_for_all_entries (idx_with_other Pa a) store ->
+              holds_for_all_entries (value_wf_with_globals Pa (a :: nil)) store ->
               A' store env -> A (strip_aux store) env) ->
           parameterized_wf Gstore Genv (value_wf_with_globals Pa (a :: nil)) A c ->
           parameterized_wf (map.put Gstore tbl (aux_ty tbl_ty)) Genv
-            (idx_with_other Pa a) A' (transf_to_idx' free_vars c).
+            (value_wf_with_globals Pa (a :: nil)) A' (transf_to_idx' free_vars c).
       Proof.
-        induction c; simpl; intros * H_ne H_tbl H_is H_incl H_Gs H_Ge H_sim H_wf;
-          invert_pwf.
-        (* CSkip *)
-        1: constructor.
-        (* CSeq *)
-        1:{ constructor.
-            1:{ eapply IHc1; eauto. }
-            1:{ apply IHc2 with (A := fun (_ _ : locals) => True); auto. } }
-        (* CLet *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            1:{ apply IHc with (A := fun (_ _ : locals) => True);
-                  [ exact H_ne
-                  | exact H_tbl
-                  | exact H_is
-                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
-                  | exact H_Gs
-                  | eauto with fiat2_hints
-                  | intros; exact I
-                  | assumption ]. } }
-        (* CLetMut *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            destruct (String.eqb x tbl) eqn:E_t; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ (* tbl shadowed.  fold_command_with_global declines to descend
-                   under a shadow, so the body here is the ORIGINAL one, and
-                   below the shadow the index half of the invariant is vacuous
-                   -- what is left is the hypothesis's own body judgment. *)
-                rewrite Properties.map.put_put_same.
-                eapply iff2_parameterized_wf;
-                  [ apply iff2_sym, iff2_rm_idx_with_other_tbl | assumption ]. }
-            destruct (String.eqb x a) eqn:E_a; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ (* the other table shadowed: only the index invariant is left,
-                   and establishing that needs nothing but well-typedness *)
-                rewrite Properties.map.put_put_diff by congruence.
-                eapply iff2_parameterized_wf;
-                  [ apply iff2_sym, iff2_rm_idx_with_other_a; congruence | ].
-                eapply transf_to_idx'_index_wf;
-                  [ rewrite map.get_put_diff by congruence; exact H_tbl
-                  | exact H_is
-                  | eapply parameterized_wf__well_typed; eassumption
-                  | exact H_incl
-                  | eauto with fiat2_hints
-                  | exact H_Ge ]. }
-            1:{ (* an ordinary binder touches neither table *)
-                rewrite Properties.map.put_put_diff by congruence.
-                eapply iff2_parameterized_wf;
-                  [ apply iff2_sym, iff2_rm_idx_with_other_diff; congruence | ].
-                apply IHc with (A := fun (_ _ : locals) => True);
-                  [ exact H_ne
-                  | rewrite map.get_put_diff by congruence; exact H_tbl
-                  | exact H_is
-                  | exact H_incl
-                  | eauto with fiat2_hints
-                  | exact H_Ge
-                  | intros; exact I
-                  | eapply iff2_parameterized_wf;
-                      [ | eassumption ];
-                      apply rm_not_in_globals; cbn [In]; intuition congruence ]. } }
-        (* CAssign *)
-        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ (* the write to the indexed table: the index's own obligation,
-                   and the other table's vacuously *)
-                rewrite_l_to_r. do_injection.
-                econstructor.
-                2: rewrite_map_get_put_goal; eauto.
-                2:{ econstructor; [ | | apply Permuted_record_sort | .. ];
-                      auto using StronglySorted_record_sort.
-                    1:{ repeat constructor; eauto using transf_to_idx_preserve_ty''.
-                        eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole t);
-                          eauto using aux_ty_wf with fiat2_hints.
-                        1:{ eapply type_of_strengthen.
-                            1: apply to_idx_ty; eauto with fiat2_hints.
-                            1: apply map_incl_empty.
-                            1: apply map_incl_refl. }
-                        1:{ unfold sub_wf; intros; simpl.
-                            destruct (String.eqb x hole) eqn:E_x;
-                              rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp;
-                              try do_injection; auto using transf_to_idx_preserve_ty''.
-                            rewrite map.get_empty in *; congruence. } }
-                    1:{ repeat constructor; intuition auto. destruct_In; auto. } }
-                1:{ intros store env H_A' H_inv H_lws H_lwe.
-                    split.
-                    1:{ apply value_wf_with_globals_single; right.
-                        cbn [interp_expr List.map].
-                        unfold aux_wf.
-                        rewrite record_sort_access_id, record_sort_access_aux.
-                        eapply to_idx_satisfy_idx_wf.
-                        3: apply transf_to_idx_preserve_ty'';
-                        [ | | eauto .. ]; auto.
-                        all: eauto using aux_ty_wf with fiat2_hints. }
-                    1:{ apply value_wf_with_globals_single; left; congruence. } } }
-            destruct (String.eqb x a) eqn:E_a; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ (* The write to the OTHER declared table.  This is where the two
-                   invariants cannot be kept apart: the obligation is about the
-                   value the REWRITTEN expression produces, and the only
-                   derivation that knows the predicate holds of it is the
-                   original one, stated in the stripped store -- which this
-                   store is related to only through the index invariant. *)
-                econstructor.
-                2: rewrite_map_get_put_goal; eauto.
-                2: eapply transf_to_idx_preserve_ty''; eauto.
-                1:{ intros store env H_A' H_inv H_lws H_lwe.
-                    destruct (strip_aux_sem_other Pa a tbl_ty Gstore Genv store env e t
-                                H_tbl H_is H_Gs H_Ge ltac:(eassumption) H_lws H_lwe H_inv)
-                      as [ H_lwS E_sem ].
-                    split.
-                    1:{ apply value_wf_with_globals_single; left; congruence. }
-                    1:{ apply value_wf_with_globals_single; right.
-                        rewrite E_sem.
-                        assert (H_inv' : holds_for_all_entries
-                                           (value_wf_with_globals Pa (a :: nil)) (strip_aux store))
-                          by (apply holds_other_strip_aux;
-                              [ congruence | eapply idx_with_other__other; exact H_inv ]).
-                        assert (H_A : A (strip_aux store) env)
-                          by (apply (H_sim store env H_lws H_lwe H_inv H_A')).
-                        lazymatch goal with
-                          H : forall _ _, _ -> _ -> _ -> _ -> value_wf_with_globals Pa _ _ _ |- _ =>
-                            specialize (H (strip_aux store) env H_A H_inv' H_lwS H_lwe) end.
-                        lazymatch goal with
-                          H : value_wf_with_globals Pa _ _ _ |- _ =>
-                            apply value_wf_with_globals_single in H; destruct H end;
-                          [ congruence | assumption ]. } } }
-            1:{ (* a write to neither table *)
-                econstructor.
-                2: rewrite_map_get_put_goal; eauto.
-                2: eapply transf_to_idx_preserve_ty''; eauto.
-                1:{ intros store env H_A' H_inv H_lws H_lwe.
-                    split; apply value_wf_with_globals_single; left; congruence. } } }
-        (* CIf *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            1:{ eapply IHc1;
-                  [ exact H_ne | exact H_tbl | exact H_is | exact H_incl
-                  | exact H_Gs | exact H_Ge | | eassumption ].
-                intros store env H_lws H_lwe H_inv [ H_A' H_g ].
-                destruct (strip_aux_sem_other Pa a tbl_ty Gstore Genv store env e TBool
-                            H_tbl H_is H_Gs H_Ge ltac:(eassumption) H_lws H_lwe H_inv)
-                  as [ H_lwS E_sem ].
-                split; [ apply (H_sim store env H_lws H_lwe H_inv H_A') | ].
-                rewrite <- E_sem; exact H_g. }
-            1:{ eapply IHc2;
-                  [ exact H_ne | exact H_tbl | exact H_is | exact H_incl
-                  | exact H_Gs | exact H_Ge | | eassumption ].
-                intros store env H_lws H_lwe H_inv [ H_A' H_g ].
-                destruct (strip_aux_sem_other Pa a tbl_ty Gstore Genv store env e TBool
-                            H_tbl H_is H_Gs H_Ge ltac:(eassumption) H_lws H_lwe H_inv)
-                  as [ H_lwS E_sem ].
-                split; [ apply (H_sim store env H_lws H_lwe H_inv H_A') | ].
-                rewrite <- E_sem; exact H_g. } }
-        (* CForeach *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            1:{ apply IHc with (A := fun (_ _ : locals) => True);
-                  [ exact H_ne
-                  | exact H_tbl
-                  | exact H_is
-                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
-                  | exact H_Gs
-                  | eauto with fiat2_hints
-                  | intros; exact I
-                  | assumption ]. } }
-      Qed.
-
-      (* ------------------------------------------------------------------
-         THE STORE-LEVEL FORM, WHICH IS WHAT COMPOSES.
-
-         idx_with_other above names the other table, so it fuses exactly two
-         predicates and stops there.  Installations have to nest: after
-         installing at b, installing at a must carry what the first one left,
-         which is already a fused predicate.  So the carried thing has to be a
-         predicate on the whole store, and the fusion an operation on those.
-
-         idx_fuse is that operation.  It says what the store looks like after
-         THIS installation: at tbl a record whose index field is well formed
-         and whose id field still satisfies what tbl satisfied before, and at
-         every other name exactly what P said.  Nesting is then ordinary
-         function composition -- idx_fuse_a (idx_fuse_b P) -- and both of the
-         single-table forms above are instances.
-         ------------------------------------------------------------------ *)
-      Definition idx_fuse (P : string -> value -> Prop) : string -> value -> Prop :=
-        fun x v => (x = tbl -> aux_wf v /\ at_id_tag (fun w => P tbl w) v)
-                   /\ (x <> tbl -> P x v).
-
-      Lemma idx_fuse__at_tbl : forall (P : string -> value -> Prop) (store : locals),
-          holds_for_all_entries (idx_fuse P) store ->
-          holds_for_all_entries
-            (value_wf_with_globals (fun v => aux_wf v /\ at_id_tag (fun w => P tbl w) v)
-               (tbl :: nil)) store.
-      Proof.
-        unfold holds_for_all_entries, idx_fuse; intros * H k v H_k.
-        apply value_wf_with_globals_single.
-        destruct (String.eqb k tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *.
-        1: right; apply (proj1 (H k v H_k)); exact E.
-        1: left; exact E.
-      Qed.
-
-      (* Everything the induction needs about the stripped store, in one
-         place: it is still well typed, it is consistent with the augmented
-         one, and it satisfies the predicate the body was proved against. *)
-      Lemma strip_aux_facts_gen :
-        forall (P : string -> value -> Prop) tbl_ty Gstore (store : locals),
-          map.get Gstore tbl = Some tbl_ty ->
-          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
-          holds_for_all_entries (idx_fuse P) store ->
-          locals_wf Gstore (strip_aux store)
-          /\ consistent_with_global (strip_aux store) store
-          /\ holds_for_all_entries P (strip_aux store).
-      Proof.
-        intros * H_tbl H_store H_inv.
-        pose proof (idx_fuse__at_tbl P store H_inv) as H_at.
-        destruct (strip_aux_spec (fun w => P tbl w) tbl_ty Gstore store H_tbl H_store H_at)
-          as [ rv [ v_id [ E_tbl [ E_id [ E_strip [ H_ty H_P ]]]]]].
-        split; [ eapply locals_wf_strip_aux; [ exact H_tbl | exact H_store | exact H_at ] | ].
-        split; [ eapply strip_aux_consistent; [ exact H_tbl | exact H_store | exact H_at ] | ].
-        unfold holds_for_all_entries; intros k v H_k.
-        rewrite E_strip in H_k.
-        destruct (String.eqb k tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-        1:{ rewrite map.get_put_same in H_k; do_injection; exact H_P. }
-        1:{ rewrite map.get_put_diff in H_k by congruence.
-            apply (proj2 (H_inv k v H_k)); exact E. }
-      Qed.
-
-      Lemma at_id_tag_impl : forall (P Q : value -> Prop) v,
-          (forall w, P w -> Q w) -> at_id_tag P v -> at_id_tag Q v.
-      Proof.
-        unfold at_id_tag; intros * H_pq H.
-        repeat destruct_match_hyp; try contradiction.
-        apply H_pq; exact H.
-      Qed.
-
-      (* Shadowing tbl: the body is untransformed, so what is needed is the
-         ORIGINAL predicate with tbl removed. *)
-      Lemma iff2_rm_idx_fuse_tbl : forall P,
-          iff2 (rm_from_pred P tbl) (rm_from_pred (idx_fuse P) tbl).
-      Proof.
-        unfold iff2, rm_from_pred, idx_fuse; intros P x v; split; intros H.
-        1:{ destruct H as [ H_eq | H_P ]; [ left; exact H_eq | ].
-            destruct (String.eqb x tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *;
-              [ left; exact E | ].
-            right; split; [ intro; congruence | intros _; exact H_P ]. }
-        1:{ destruct H as [ H_eq | H_both ]; [ left; exact H_eq | ].
-            destruct (String.eqb x tbl) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *;
-              [ left; exact E | ].
-            right; apply (proj2 H_both); exact E. }
-      Qed.
-
-      (* Shadowing anything else: removing a name commutes with the fusion. *)
-      Lemma iff2_idx_fuse_rm_diff : forall P y,
-          y <> tbl ->
-          iff2 (idx_fuse (rm_from_pred P y)) (rm_from_pred (idx_fuse P) y).
-      Proof.
-        unfold iff2, rm_from_pred, idx_fuse; intros P y H_ne x v; split; intros H.
-        1:{ destruct (String.eqb x y) eqn:E_y; rewrite ?eqb_eq, ?eqb_neq in *;
-              [ left; exact E_y | ].
-            right. destruct H as [ H1 H2 ]; split.
-            1:{ intros E_t; specialize (H1 E_t); destruct H1 as [ H_aux H_id ].
-                split; [ exact H_aux | ].
-                eapply at_id_tag_impl; [ | exact H_id ].
-                intros w Hw; destruct Hw as [ H_c | H_c ]; [ congruence | exact H_c ]. }
-            1:{ intros E_t; specialize (H2 E_t).
-                destruct H2 as [ H_c | H_c ]; [ congruence | exact H_c ]. } }
-        1:{ destruct H as [ H_eq | H_both ].
-            1:{ subst; split.
-                1: intros E_t; congruence.
-                1: intros _; left; reflexivity. }
-            1:{ destruct H_both as [ H1 H2 ]; split.
-                1:{ intros E_t; specialize (H1 E_t); destruct H1 as [ H_aux H_id ].
-                    split; [ exact H_aux | ].
-                    eapply at_id_tag_impl; [ | exact H_id ].
-                    intros w Hw; right; exact Hw. }
-                1:{ intros E_t; right; apply H2; exact E_t. } } }
-      Qed.
-
-      (* ------------------------------------------------------------------
-         THE GENERAL CARRY.  One induction, an arbitrary store predicate.
-
-         transf_to_idx'_wf_pre is the instance where P speaks about tbl alone
-         and transf_to_idx'_wf_other the instance where it speaks about one
-         other global.  The point of stating it this way is that the
-         conclusion is of the same SHAPE as the hypothesis -- a predicate on
-         the store -- so a second installation can consume what this one
-         produces, which neither instance can.
-         ------------------------------------------------------------------ *)
-      Lemma transf_to_idx'_wf_gen :
-        forall c (P : string -> value -> Prop) tbl_ty free_vars Gstore Genv A A',
-          map.get Gstore tbl = Some tbl_ty ->
-          is_tbl_ty tbl_ty = true ->
-          incl (get_free_vars Genv) free_vars ->
-          tenv_wf Gstore -> tenv_wf Genv ->
-          (forall (store env : locals),
-              locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
-              locals_wf Genv env ->
-              holds_for_all_entries (idx_fuse P) store ->
-              A' store env -> A (strip_aux store) env) ->
-          parameterized_wf Gstore Genv P A c ->
-          parameterized_wf (map.put Gstore tbl (aux_ty tbl_ty)) Genv
-            (idx_fuse P) A' (transf_to_idx' free_vars c).
-      Proof.
-        induction c; simpl; intros * H_tbl H_is H_incl H_Gs H_Ge H_sim H_wf;
-          invert_pwf.
-        (* CSkip *)
-        1: constructor.
-        (* CSeq *)
-        1:{ constructor.
-            1:{ eapply IHc1; eauto. }
-            1:{ apply IHc2 with (A := fun (_ _ : locals) => True); auto. } }
-        (* CLet *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            1:{ apply IHc with (A := fun (_ _ : locals) => True);
-                  [ exact H_tbl
-                  | exact H_is
-                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
-                  | exact H_Gs
-                  | eauto with fiat2_hints
-                  | intros; exact I
-                  | assumption ]. } }
-        (* CLetMut *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            destruct (String.eqb x tbl) eqn:E_t; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ rewrite Properties.map.put_put_same.
-                eapply iff2_parameterized_wf;
-                  [ apply iff2_rm_idx_fuse_tbl | assumption ]. }
-            1:{ rewrite Properties.map.put_put_diff by congruence.
-                eapply iff2_parameterized_wf;
-                  [ apply iff2_idx_fuse_rm_diff; congruence | ].
-                apply IHc with (A := fun (_ _ : locals) => True);
-                  [ rewrite map.get_put_diff by congruence; exact H_tbl
-                  | exact H_is
-                  | exact H_incl
-                  | eauto with fiat2_hints
-                  | exact H_Ge
-                  | intros; exact I
-                  | assumption ]. } }
-        (* CAssign *)
-        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ (* the write to the indexed table *)
-                rewrite_l_to_r. do_injection.
-                econstructor.
-                2: rewrite_map_get_put_goal; eauto.
-                2:{ econstructor; [ | | apply Permuted_record_sort | .. ];
-                      auto using StronglySorted_record_sort.
-                    1:{ repeat constructor; eauto using transf_to_idx_preserve_ty''.
-                        eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole t);
-                          eauto using aux_ty_wf with fiat2_hints.
-                        1:{ eapply type_of_strengthen.
-                            1: apply to_idx_ty; eauto with fiat2_hints.
-                            1: apply map_incl_empty.
-                            1: apply map_incl_refl. }
-                        1:{ unfold sub_wf; intros; simpl.
-                            destruct (String.eqb x hole) eqn:E_x;
-                              rewrite ?eqb_eq, ?eqb_neq in *; subst; rewrite_map_get_put_hyp;
-                              try do_injection; auto using transf_to_idx_preserve_ty''.
-                            rewrite map.get_empty in *; congruence. } }
-                    1:{ repeat constructor; intuition auto. destruct_In; auto. } }
-                1:{ intros store env H_A' H_inv H_lws H_lwe.
-                    destruct (strip_aux_facts_gen P _ Gstore store H_tbl H_lws H_inv)
-                      as [ H_lwS [ H_cons H_Pstrip ]].
-                    assert (E_sem : interp_expr store env (fold_expr create_aux_read_head e)
-                                    = interp_expr (strip_aux store) env e)
-                      by (eapply transf_to_idx_preserve_sem'' with
-                            (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
-                            (store := strip_aux store) (store' := store) (env := env);
-                          [ eassumption | exact H_tbl | exact H_Gs | exact H_Ge | exact H_is
-                          | exact H_lwS | exact H_lwe | exact H_cons ]).
-                    unfold idx_fuse; split; [ | intro; congruence ].
-                    intros _. cbn [interp_expr List.map]. split.
-                    1:{ unfold aux_wf.
-                        rewrite record_sort_access_id, record_sort_access_aux.
-                        eapply to_idx_satisfy_idx_wf.
-                        3: apply transf_to_idx_preserve_ty'';
-                        [ | | eauto .. ]; auto.
-                        all: eauto using aux_ty_wf with fiat2_hints. }
-                    1:{ unfold at_id_tag.
-                        rewrite record_sort_access_id, E_sem.
-                        assert (H_A : A (strip_aux store) env)
-                          by (apply (H_sim store env H_lws H_lwe H_inv H_A')).
-                        lazymatch goal with
-                          H : forall _ _, _ -> _ -> _ -> _ -> P _ _ |- _ =>
-                            apply (H (strip_aux store) env H_A H_Pstrip H_lwS H_lwe) end. } } }
-            1:{ (* a write to any other global *)
-                econstructor.
-                2: rewrite_map_get_put_goal; eauto.
-                2: eapply transf_to_idx_preserve_ty''; eauto.
-                1:{ intros store env H_A' H_inv H_lws H_lwe.
-                    destruct (strip_aux_facts_gen P _ Gstore store H_tbl H_lws H_inv)
-                      as [ H_lwS [ H_cons H_Pstrip ]].
-                    assert (E_sem : interp_expr store env (fold_expr create_aux_read_head e)
-                                    = interp_expr (strip_aux store) env e)
-                      by (eapply transf_to_idx_preserve_sem'' with
-                            (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
-                            (store := strip_aux store) (store' := store) (env := env);
-                          [ eassumption | exact H_tbl | exact H_Gs | exact H_Ge | exact H_is
-                          | exact H_lwS | exact H_lwe | exact H_cons ]).
-                    unfold idx_fuse; split; [ intro; congruence | ].
-                    intros _. rewrite E_sem.
-                    assert (H_A : A (strip_aux store) env)
-                      by (apply (H_sim store env H_lws H_lwe H_inv H_A')).
-                    lazymatch goal with
-                      H : forall _ _, _ -> _ -> _ -> _ -> P _ _ |- _ =>
-                        apply (H (strip_aux store) env H_A H_Pstrip H_lwS H_lwe) end. } } }
-        (* CIf *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            1:{ eapply IHc1;
-                  [ exact H_tbl | exact H_is | exact H_incl
-                  | exact H_Gs | exact H_Ge | | eassumption ].
-                intros store env H_lws H_lwe H_inv [ H_A' H_g ].
-                destruct (strip_aux_facts_gen P _ Gstore store H_tbl H_lws H_inv)
-                  as [ H_lwS [ H_cons H_Pstrip ]].
-                split; [ apply (H_sim store env H_lws H_lwe H_inv H_A') | ].
-                erewrite <- transf_to_idx_preserve_sem'' with
-                    (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
-                    (store := strip_aux store) (store' := store) (env := env);
-                  [ exact H_g | eassumption | exact H_tbl | exact H_Gs | exact H_Ge
-                  | exact H_is | exact H_lwS | exact H_lwe | exact H_cons ]. }
-            1:{ eapply IHc2;
-                  [ exact H_tbl | exact H_is | exact H_incl
-                  | exact H_Gs | exact H_Ge | | eassumption ].
-                intros store env H_lws H_lwe H_inv [ H_A' H_g ].
-                destruct (strip_aux_facts_gen P _ Gstore store H_tbl H_lws H_inv)
-                  as [ H_lwS [ H_cons H_Pstrip ]].
-                split; [ apply (H_sim store env H_lws H_lwe H_inv H_A') | ].
-                erewrite <- transf_to_idx_preserve_sem'' with
-                    (tbl := tbl) (Gstore := Gstore) (Genv := Genv)
-                    (store := strip_aux store) (store' := store) (env := env);
-                  [ exact H_g | eassumption | exact H_tbl | exact H_Gs | exact H_Ge
-                  | exact H_is | exact H_lwS | exact H_lwe | exact H_cons ]. } }
-        (* CForeach *)
-        1:{ econstructor.
-            1:{ eapply transf_to_idx_preserve_ty''; eauto. }
-            1:{ apply IHc with (A := fun (_ _ : locals) => True);
-                  [ exact H_tbl
-                  | exact H_is
-                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
-                  | exact H_Gs
-                  | eauto with fiat2_hints
-                  | intros; exact I
-                  | assumption ]. } }
+        intros * H_ne. apply transf_to_idx'_wf_keep.
+        intros v; apply value_wf_with_globals_single; left; congruence.
       Qed.
       End WithGlobal.
 

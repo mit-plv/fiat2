@@ -9,73 +9,42 @@ Require fiat2.index.CompositeDictIndexImpl.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.
 
-(* ============================================================
-   A deterministic heuristic selector.
+(* A deterministic heuristic selector.
 
    Every example in this development names its own heuristics: a list of
    basic rewrites and a list of index choices, written by hand beside the
    program.  That is fine for a soundness claim -- the optimizer is sound
-   for ANY choice list -- but it is not fine for a performance claim, where
+   for any choice list -- but it is not fine for a performance claim, where
    "with appropriate heuristics" has to mean something a program can compute
    rather than something a person chose after looking at the answer.
 
    This file computes them.  It is UNTRUSTED: nothing below is proved, and
    nothing below needs to be, because a wrong choice costs an optimization
-   and never soundness (every index_choice is sound on every table, and
-   every basic rewrite is semantics-preserving).  What it owes instead is
-   that it does not look at the examples, and that claim is checkable: this
-   file mentions no table name, no attribute name and no example.  The
-   examples appear only in eval/SelectorTests.v, which pins what the
-   selector picks against what each example asks for by hand.
+   and never soundness.  It does not look at the examples and avoids
+   overspecialization to particular examples in its selections.
 
    Three phases, in order:
 
      1. BASICS.  Scan the source program for the shapes that decide a basic
-        rewrite -- an emptiness test, a conjunctive filter, a filter on a
-        boolean attribute -- and emit the list.
+        rewrite, (e.g., an emptiness test, a conjunctive filter, a filter on a
+        boolean attribute), and emit the list.
      2. DEMANDS.  Run the basics, then scan the result for the shapes the
         index rules match.  The basics have to run first: the collection
         push-down is what turns a list filter into the bag or set filter
         every index rule is stated at, and FilterEmptyToSetMem is what turns
-        an emptiness test into the set-of-attribute read SetAgg answers.  A
-        demand read off the source would be read off the wrong program.
+        an emptiness test into the set-of-attribute read SetAgg answers.
      3. CHOICES.  Map each demand to the index that answers it, prune the
         ones another choice subsumes, and order the result by the ordering
         spec the rule-ordering hazards impose.
-
-   The demands are read off the program's SHAPES, not off its row type: an
-   index is asked for where the program contains a read or a write that
-   index makes cheaper, and nowhere else.  Asking for every index the row
-   type would admit is also sound, and strictly worse -- an index with no
-   reader still has to be maintained by every write.  A WRITE counts: the
-   keyed pair in HA_AreaRegistry and the dictionary in Ex_SumDelete are
-   both asked for by a delete and read by nothing, and declining them
-   because no query probes them would be declining the point.
-
-   SCOPE.  One table at a time, and join-free: a program with several
-   tables is selected by one call per table, and a read of two tables
-   nested inside each other is not attempted.  A join needs its inner read
-   brought into the shape an index rule matches, by a sequence of flatmap
-   shuffles that differs per program, and choosing that sequence is a
-   different problem from choosing an index.  Every evaluation subject is
-   join-free.
 
    READING ORDER.  The file is in DEPENDENCY order, which is not phase
    order: both consumers take a list of demands, so the demand language and
    its matchers have to come first.  Top to bottom the file is phase 2,
    then phase 1, then phase 3.
 
-   TWO LAYERS, which no longer carry the same weight.  Phases 2a-2c -- the
-   demand language, the fourteen independent shape matchers, the node
-   dispatcher and the traversal -- are the CANDIDATE GENERATOR, and
-   eval/Enumerate.v builds its whole pool out of demands_of and nothing
-   else, so they are load-bearing for the enumerate-and-measure result.
-   basics_of and choices_of are POLICY: one configuration chosen out of
-   that pool.  The enumeration lifts every veto they apply and measures the
-   alternatives, so they are a BASELINE that measurement checks rather than
-   the thing a performance claim rests on.  A reviewer who wants only the
-   method can stop at demands_of.
-   ============================================================ *)
+   This file provides a candidate generator, and eval/Enumerate.v builds
+   its whole pool out of demands_of and nothing else for the enumerate-and-
+   measure result. *)
 
 (* ---------- what a program can ask an index for ---------- *)
 
@@ -241,11 +210,6 @@ Definition composite_attrs (x : string) (p : expr) : option (list string) :=
    per-word fold or any binder name, so a read with another threshold,
    another aggregation or another arrangement of the same arithmetic is
    detected too.
-
-   It over-approximates on purpose.  A demand only OFFERS a candidate, and
-   the pipeline's soundness theorem is quantified over the choice list with
-   no side condition, so a candidate too many costs a measurement rather
-   than a wrong program.
 
    The one limit is DSubstr's limit too: the read has to use the language's
    operator.  A hand-rolled trigram extraction -- which Ex_TrigramSimilarity
