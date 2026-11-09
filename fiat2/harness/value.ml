@@ -1,98 +1,63 @@
-(* The values the evaluator computes with.
+(* The values the evaluator computes with, and the one place the
+   implementation departs from the Gallina semantics on purpose.
 
-   This is the one place where the implementation departs from the Gallina
-   semantics on purpose, so it is worth being exact about what the departure
-   is.
+   Value.v represents a dictionary as a sorted duplicate-free association
+   list, a bag as a sorted list of (element, multiplicity) pairs, and a set as
+   a sorted duplicate-free list.  Each is CANONICAL: for a given finite map,
+   multiset or set exactly one list satisfies the invariant, which is why the
+   semantics can compare two collections by comparing representations.
 
-   Value.v represents a dictionary as an association list that is sorted and
-   duplicate-free, a bag as a sorted duplicate-free list of (element,
-   multiplicity) pairs, and a set as a sorted duplicate-free list.  Each of
-   those is a CANONICAL form: for a given finite map, multiset or set there
-   is exactly one list satisfying the invariant, which is why the semantics
-   can compare two collections by comparing their representations.
-
-   A representation here has to denote the same map, multiset or set, and it
-   has to pay for anything the semantics can OBSERVE about the canonical
-   form.  What the semantics observes is narrow: OEq on two collections, and
-   ESort, which hands back the canonical order as a list.  Nothing else can
-   see it.  So the three types are represented by what their own operations
-   need, and the two observers pay:
+   A representation here must denote the same map, multiset or set, and must
+   pay for anything the semantics can OBSERVE about the canonical form.  What
+   it observes is narrow -- OEq on two collections, and ESort, which hands
+   back the canonical order -- so the three types are represented by what
+   their own operations need, and the two observers pay:
 
      dict   a balanced tree ordered by the same comparison, or a persistent
-            hash trie where the setting licenses one.  The tree is canonical
-            in the same sense as the sorted list, so the bijection is the
-            identity on bindings; either way a lookup, an insert, a delete
-            and a range restriction cost a path rather than a copy.
+            hash trie where the setting licenses one; either way a lookup,
+            insert, delete or range restriction costs a path, not a copy.
+            Only the RANGE RESTRICTION needs the order, and AEmptyDict's
+            dict_kind (Language.v:79) says which dictionaries may be asked for
+            one -- it sits outside the option, so it survives extraction on
+            every dictionary a program creates.  Across the subject terms 19
+            are Unranged and 2 are Ranged.
 
-            Of those four operations only the RANGE RESTRICTION needs the
-            order, and Language.v:79 says which dictionaries can be asked for
-            one: AEmptyDict carries a dict_kind, outside the option, so it
-            survives extraction on every dictionary a program creates.  Across
-            the subject terms 19 are Unranged and 2 are Ranged.
+            THE REPRESENTATION IS THE CHARGE.  A Ranged dictionary is a tree
+            under every setting; an Unranged one is whichever store
+            Count.licensed names, and [dempty] is the one place that is
+            decided.  [compare] counts the descent a tree really performs and
+            [hash] the hash a trie really takes, so the counters cannot
+            disagree with the store.
 
-            So the dictionary carries its [dict_rep] below, and THE
-            REPRESENTATION IS THE CHARGE.  A Ranged one is a balanced tree
-            under every setting, because a range query is not answerable
-            from anything else; an Unranged one is whichever store
-            Count.licensed names, VMap or CCHashTrie's persistent HAMT, and
-            [dempty] is the one place that choice is made.  Nothing models
-            the cost of a structure the harness does not run: [compare]
-            counts the descent a tree really performs and [hash] counts the
-            hash a trie really takes, so the counters see the store's own
-            work and cannot disagree with it.
+     set    a tree, or a hash trie under `hashes`.  A set rejects duplicates
+            on insert and OSetMem is a probe, so it needs one or the other;
+            what it does not need is the ORDER, and no set_kind exists for a
+            program to say so -- hence Count.unlicensed, and hence the Hashes
+            column being what a set_kind would be worth.
 
-            This replaced a wrapper that charged a hash-table price while
-            storing the tree -- it existed because OCaml's standard library
-            has no persistent hash map, and it stopped being needed when
-            CCHashTrie turned out to be a library rather than our code.  Its
-            obituary is at the foot of this file.
+     bag    an UNORDERED list, multiplicity by repetition.  Every bag
+            operation in these programs is an insert, a concatenation or a
+            fold; keeping one sorted would charge a logarithmic factor, and a
+            record-valued comparison, for work no backend would do.
+            Canonicalising is deferred to the two places that can see it,
+            which sort and are charged [canonicalisations].
 
-     set    a balanced tree, or a hash trie under `hashes`.  A set has to
-            reject duplicates on insert and OSetMem is a probe, so it needs
-            one structure or the other; what it does not need is the ORDER,
-            and no set_kind exists for a program to say so.  That is why the
-            choice is Count.unlicensed's and why only `hashes` takes it --
-            the Hashes column is what adding a set_kind would be worth.
+            The empty cases of bag equality are answered directly below,
+            because the generic arm sorted both sides -- so asking whether a
+            bucket had emptied cost the bucket a sort, Theta(b log b) where a
+            backend pays Theta(1).  It is order-preserving, not an
+            approximation: sorting [] yields [], and list_compare [] (_ :: _)
+            is -1 whatever the order.
 
-     bag    an UNORDERED list, with multiplicity as repetition.  A bag
-            rejects nothing and probes nothing: every operation on one in
-            these programs is an insert, a concatenation or a fold.  Keeping
-            it sorted would charge a logarithmic factor, and a record-valued
-            comparison, for work no backend would do.  The keyed stores exist
-            below and are probed, but [bempty] deliberately does not pick one,
-            because nothing in a program says which bags a backend would keep
-            keyed -- see the note there.  Canonicalising is
-            therefore deferred to the two places that can see it, and those
-            places sort and are charged for it -- counted separately, as
-            [canonicalisations], because a subject that triggered one often
-            would be one whose numbers deserve a second look.
-
-            That last sentence earned its keep.  A bag EQUALITY against the
-            empty bag is not a question about order, but the generic arm
-            answered it by sorting both sides, so asking whether a bucket had
-            emptied cost the bucket a sort -- MEASURED at 48 comparisons per
-            delete in HA_AreaRegistry, 62% of that kind's whole cost, and
-            Theta(b log b) in the bucket size where a backend pays Theta(1).
-            The empty cases are therefore answered directly below.  That is
-            the same move the dictionary makes above -- the representation
-            stays a list and the CHARGE is what a backend would pay -- and it
-            is order-preserving, not an approximation: sorting [] yields [],
-            and list_compare [] (_ :: _) is -1 whatever the order, so the
-            three arms return exactly what the generic one returned.
-
-   The comparison is NOT a free choice.  The semantics observes it -- OEq on
-   two collections compares canonical forms, and ODictRange reads the key
-   order directly -- so it has to be exactly Value.value_compare.  It is
-   transcribed below line for line, and that transcription is the thing to
-   audit in this file.
-
-   Two facts about the transcription:
-     * Rocq's String.compare walks the two strings comparing Ascii codes as
-       unsigned numbers, which is what OCaml's String.compare does on bytes.
-     * value_compare orders values of DIFFERENT constructors by the order its
-       final fall-through arms are written in, which is the [rank] below.  No
-       well-typed program ever compares across constructors, but the
-       evaluator is not allowed to assume that. *)
+   The comparison is NOT a free choice.  The semantics observes it -- OEq
+   compares canonical forms, ODictRange reads the key order -- so it has to be
+   exactly Value.value_compare, transcribed below line for line, and that
+   transcription is the thing to audit in this file.  Two facts about it:
+   Rocq's String.compare walks Ascii codes as unsigned numbers, which is what
+   OCaml's does on bytes; and value_compare orders values of DIFFERENT
+   constructors by the order its fall-through arms are written in, which is
+   [rank] below -- no well-typed program compares across constructors, but the
+   evaluator may not assume it. *)
 
 (* The dict_kind the dictionary's AEmptyDict carried, retained at runtime.
 
@@ -203,27 +168,12 @@ end = struct
     | DTree of t VMap.t
     | DHash of t VTrie.t
 
-  (* and the same two for a set, which is a map to unit.  A set has no kind
-     annotation to consult -- TSet carries none -- so [Count.unlicensed] is
-     what picks between them, exactly as it already decided the CHARGE. *)
+  (* as above: a set has no kind annotation, so Count.unlicensed picks *)
   and sstore =
     | STree of VSet.t
     | SHash of unit VTrie.t
 
-  (* A bag has THREE candidate implementations, not two, and that is not an
-     accident of this harness -- it is the shape of the question.  A bag's
-     operations in these programs are an insert, a concatenation and a fold,
-     none of which wants an order, so a LIST is the cheapest faithful
-     representation and the one a backend would pick for a bag it only builds
-     and folds.  A bag something is REMOVED from wants an index, and then a
-     multiset over a tree or a trie is right.  Which of those a given bag
-     deserves is a per-bag question, and the dial answers it per RUN.
-
-     [bempty] picks BTree for Ordered and BHash for Hashed, mirroring the set
-     above, so that a removal costs a removal in every column.  BList is what
-     the Ordered column would hold if the cheap-build reading won instead; the
-     choice is one line in [bempty] and the probe exercises all three, so the
-     measurement can decide rather than the comment. *)
+  (* three candidate implementations; see the signature above *)
   and bstore =
     | BList of t list        (* multiplicity by repetition, no order *)
     | BTree of int VMap.t    (* element -> multiplicity, balanced tree *)
@@ -609,36 +559,6 @@ let sdiff (a : sstore) (b : sstore) : sstore =
      OSetDiff s {x} -- the shape SetRemoveTransf emits -- one probe *)
   | _ -> sfold sremove b a
 
-(* [key_access] AND [key_work] USED TO LIVE HERE, and their absence is the
-   point of the three commits that moved the stores.  It priced a point access -- a hash of the key plus one
-   comparison for the bucket equality, with the structure's real descent
-   credited to neither counter -- and eval.ml called it for the optimizer's
-   output while baseline.ml called it for the originals, so that the two
-   columns were charged by one function rather than by two helpers that agreed
-   on inspection.
-
-   [key_work] was the other half of it: the cost of a key, computed per value
-   node, so that the pricing function had a number to multiply.  Both are
-   gone, and nothing calls either, because every collection now HOLDS the
-   structure its setting names and there is nothing left to price:
-   [compare] counts a tree's descent, [hash] a trie's hash and [equal] its
-   leaf comparison, on both sides, because both sides run the same store.  The reason the wrapper existed -- "OCaml has no persistent
-   hash map whose constants would not be the harness's own" -- stopped being
-   true when CCHashTrie turned out to be a library rather than our code.
-
-   Count.quiet went with them, and its absence is worth as much as theirs: it
-   ran a point access without charging the comparisons of the tree the hash
-   price was pretending not to use.  With the store real there is no descent
-   to suppress, so no counter in this harness is ever muted and no primitive
-   does work silently.
-
-   What the model got wrong, now that there is something to compare it with:
-   it charged a flat +1 for the bucket equality, where a real trie calls
-   [equal], which WALKS the key.  So a hit on a structured key cost more than
-   the model said -- item_deletion keys on a whole row, and the author's
-   containsHit went 80 to 120, exactly its extra nodes -- and a miss cost
-   less, because a trie that reaches no leaf compares nothing. *)
-
 let eqb (a : t) (b : t) : bool = compare a b = 0
 let ltb (a : t) (b : t) : bool = compare a b < 0
 
@@ -653,30 +573,21 @@ let ltb (a : t) (b : t) : bool = compare a b < 0
 
 (* A BAG IS A LIST UNDER EVERY SETTING, AND THE MEASUREMENT DECIDED THAT.
 
-   The dial was tried both other ways and is badly wrong both times, because
-   these programs BUILD bags constantly -- every flatmap and every coercion
-   makes one -- and only one subject's rules ever remove from one.
+   The dial was tried both other ways and is wrong by one to four orders of
+   magnitude both times, because these programs BUILD bags constantly -- every
+   flatmap and every coercion makes one -- and only one subject's rules ever
+   remove from one.  As a balanced tree, OBagOfList becomes n log n whole-row
+   comparisons and user_search/suggestMiss goes 60 -> 612,820.  As a trie,
+   every construction hashes every element for a benefit no fold collects, and
+   EVERY ratio in the hashes column gets worse -- which would wreck the one
+   thing that column is for.
 
-     Ordered as a balanced tree: OBagOfList becomes n log n whole-row
-     comparisons, and coercing the table to a bag is the whole of what a
-     source-form membership test does.  user_search/suggestMiss went 60 ->
-     612820, suggestShort 10074 -> 637464, window_store/fetchAll 508 -> 2599.
-
-     Hashed as a trie: every bag construction hashes every element for a
-     benefit no fold collects.  EVERY ratio in the hashes column got worse --
-     suggestShort 1.02 -> 38.02, area_registry/remove 3.88 -> 22.57,
-     cluster/available 7.03 -> 44.22 -- which would have wrecked the one thing
-     that column is for, measuring what a set_kind is worth.
-
-   So the structure choice for a bag CANNOT be made by a run-level dial, and
-   that is a finding rather than a limitation of this harness.  A dictionary's
-   choice is uniform because every dictionary here is probed; a set's is
-   uniform because every set here is tested for membership.  A bag's is not:
-   the right structure depends on whether THAT bag is ever removed from, which
-   is a per-bag question, and the only thing that can answer a per-bag question
-   is a per-bag annotation.  Both uniform answers are wrong by one to four
-   orders of magnitude, which is a stronger argument than the one I first gave
-   for an annotation, and it is the measured one.
+   So a bag's structure CANNOT be chosen by a run-level dial, and that is a
+   finding rather than a limitation of this harness.  A dictionary's choice is
+   uniform because every dictionary here is probed, a set's because every set
+   here is tested for membership.  A bag's is not: the right structure depends
+   on whether THAT bag is ever removed from, which only a per-bag annotation
+   can answer.
 
    The three stores stay.  BTree and BHash are what a bag that is removed from
    should hold, they are what OBagDiff is fast on, and the probe exercises all
