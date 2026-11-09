@@ -1,10 +1,11 @@
 (* ============================================================
    A PRIMARY KEY ON TWO ATTRIBUTES, AND ITS CHECK COMPILED TO ONE PROBE.
 
-   A regression test, not an evaluation subject.  The table declares (k1, k2)
-   a key -- not either attribute alone -- and the program does the two things
-   a declaration touches: a read at the composite key, and an insert, which
-   is where the declaration is checked.
+   A MEASURED SUBJECT -- eval/Extract.v lists it as composite_key_decl --
+   written because the corpus had no witness for a declared composite key.
+   The table declares (k1, k2) a key -- not either attribute alone -- and the
+   program does the two things a declaration touches: a read at the composite
+   key, and an insert, which is where the declaration is checked.
 
    WHAT IS WORTH READING IN THE TERMS BELOW: no rewrite was written for the
    check.  The declared constraint's body is a CONJUNCTION of per-attribute
