@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.TransfSound fiat2.IndexInterface fiat2.rules.CollectionTransf fiat2.index.DictIndexImpl
   fiat2.TransfUtils fiat2.rules.FlatmapTransf fiat2.index.IndexTransf
-  fiat2.Utils fiat2.Substitute fiat2.Pipeline fiat2.PruneDeadIndexes.
+  fiat2.Utils fiat2.Substitute fiat2.pipeline.Pipeline fiat2.pipeline.PruneDeadIndexes.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString
   coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List.

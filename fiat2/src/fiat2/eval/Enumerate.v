@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.constraint.Decl fiat2.constraint.Surface fiat2.Pipeline fiat2.Selector.
+Require Import fiat2.Language fiat2.constraint.Decl fiat2.constraint.Surface fiat2.pipeline.Pipeline fiat2.pipeline.Selector.
 Require fiat2.eval.Extract.
 Require Import fiat2.eval.Elaborate.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.

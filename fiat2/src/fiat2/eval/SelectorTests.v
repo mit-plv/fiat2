@@ -1,4 +1,4 @@
-Require Import fiat2.Selector fiat2.Pipeline fiat2.constraint.Decl fiat2.constraint.Surface fiat2.Language.
+Require Import fiat2.pipeline.Selector fiat2.pipeline.Pipeline fiat2.constraint.Decl fiat2.constraint.Surface fiat2.Language.
 Require fiat2.examples.Ex_Triangle.
 Require fiat2.eval.Jenkins_ItemDeletion
   fiat2.eval.Keycloak_CachedRealm fiat2.eval.Kafka_NamedCache

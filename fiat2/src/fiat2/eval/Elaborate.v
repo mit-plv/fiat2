@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.TypeSystem fiat2.Utils fiat2.constraint.Decl fiat2.constraint.Surface
-  fiat2.Pipeline fiat2.IndexInterface fiat2.index.IndexTransf fiat2.Selector.
+  fiat2.pipeline.Pipeline fiat2.IndexInterface fiat2.index.IndexTransf fiat2.pipeline.Selector.
 Require fiat2.Value.
 Require fiat2.eval.Annotations.
 Require fiat2.eval.Extract.

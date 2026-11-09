@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Utils fiat2.constraint.Decl fiat2.constraint.Surface fiat2.rules.FlatmapForms
-  fiat2.Pipeline fiat2.rules.SplitFilterProj fiat2.rules.PromoteGuard.
+  fiat2.pipeline.Pipeline fiat2.rules.SplitFilterProj fiat2.rules.PromoteGuard.
 (* Required, NOT imported, for conj_eq_pairs alone.  The composite demand
    below is phrased with the READ RULE'S OWN MATCHER rather than a copy of
    it, which is the strongest form of the discipline range_attr's comment
@@ -243,9 +243,9 @@ Definition composite_attrs (x : string) (p : expr) : option (list string) :=
    detected too.
 
    It over-approximates on purpose.  A demand only OFFERS a candidate, and
-   an index installed but never read is dropped by PruneDeadIndexes and the
-   pipeline re-run, so a candidate too many costs a measurement rather than
-   a wrong program.
+   the pipeline's soundness theorem is quantified over the choice list with
+   no side condition, so a candidate too many costs a measurement rather
+   than a wrong program.
 
    The one limit is DSubstr's limit too: the read has to use the language's
    operator.  A hand-rolled trigram extraction -- which Ex_TrigramSimilarity
@@ -872,17 +872,21 @@ Definition dedup_choices (l : list index_choice) : list index_choice :=
    eval/HA_EntityRegistry at arity three (get_entity_id_probes_triple,
    composite_unused_when_split).
 
-   AND IT IS NOW CLOSED DOWNSTREAM, which changes what this list has to do
-   rather than what it says.  PruneDeadIndexes runs the pipeline, finds the
+   WHAT CLOSES IT IS THE VETO BELOW, inside this list.  A separate result
+   says something more: the dead member is removable even from a hint list
+   this list would never produce.  PruneDeadIndexes -- a top-level entry
+   point of its own, which nothing on the default path composes and no
+   measured configuration passes through -- runs the pipeline, finds the
    members nothing reads, drops their CHOICES and runs it again; the
    pipeline's soundness theorem assumes nothing about the choice list, so
    the pruned program is sound for free.  On both subjects above the pruned
    hazard configuration equals the configuration this list picks, TERM FOR
-   TERM -- Kafka_Cluster's pruning_turns_the_hazard_into_the_chosen_
+   TERM: Kafka_Cluster's pruning_turns_the_hazard_into_the_chosen_
    configuration and HA_EntityRegistry's pruning_drops_the_dead_triple.  So
-   the veto below is no longer what keeps the hazard from costing anything;
-   it is what keeps the compiler from doing the work twice.  Both remain
-   worth having, and the veto is the cheaper of the two.
+   a caller who assembles the hazard configuration by hand can get back to
+   this one without a rule and without a measurement -- but on the default
+   path it is the veto, not that pass, that keeps the hazard from costing
+   anything.
 
    THIS LIST NOW IMPOSES IT, in choices_of: a composite demand and a split
    demand on the same table conflict, and the SPLIT WINS.  The reason is not
@@ -1004,11 +1008,13 @@ Definition choices_of (ce : cenv) (tbl : string) (ds : list demand)
      Lifting this needed an AIMED SplitIf -- one that declines on a named
      attribute tuple, as FlatmapTransf.is_two_sided_range declines on a range
      pair -- after which both could be emitted together.  See the note at the
-     end of this file.  It no longer needs one: emitting both and letting
-     PruneDeadIndexes drop whichever member goes unread reaches the same
-     program, and is pinned to on both subjects.  What the aimed SplitIf
-     would still buy is avoiding the second pipeline run, so it is a
-     compile-time question now rather than a generated-code one.
+     end of this file.  A caller who emits both anyway can recover: dropping
+     whichever member goes unread through PruneDeadIndexes reaches the same
+     program, and that is pinned on both subjects.  But that is a separate
+     entry point rather than a stage of this pipeline, so on the default
+     path the veto is still what prevents the dead member -- and what an
+     aimed SplitIf would buy is emitting both and having both READ, which
+     the veto forgoes.
 
      NOTE THAT NO SUBSUMPTION RULE IS NEEDED.  A read whose predicate is a
      composite conjunction yields DComposite and NOT DEq, so the

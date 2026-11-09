@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.constraint.Decl fiat2.constraint.Surface fiat2.constraint.Constraint fiat2.Substitute fiat2.constraint.PrimaryKeyCheck
-  fiat2.TransfUtils fiat2.Utils fiat2.rules.FlatmapForms fiat2.Pipeline fiat2.Selector
+  fiat2.TransfUtils fiat2.Utils fiat2.rules.FlatmapForms fiat2.pipeline.Pipeline fiat2.pipeline.Selector
   fiat2.TransfSound fiat2.IndexInterface fiat2.rules.CollectionTransf fiat2.index.DictIndexImpl
   fiat2.rules.FlatmapTransf fiat2.index.IndexTransf.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString.
