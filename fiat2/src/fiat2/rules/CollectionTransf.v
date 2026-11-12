@@ -21,27 +21,6 @@ Definition annotate_collection (e : expr) : expr :=
   | _ => e
   end.
 
-(* ------------------------------------------------------------------
-   AN INSERT AT THE END OF THE LIST, under a coercion that forgets position.
-
-   `tbl := tbl ++ [row]` is how a program appends in insertion order, and it
-   is the shape real code writes: a Java ArrayList.add, a Python
-   list.append.  Every subject in this development conses at the FRONT
-   instead, and that was a modelling bias rather than a faithful choice --
-   the cons was the only shape an index-maintenance rule recognised, so
-   writing the append the source actually performs would have cost the whole
-   index.
-
-   Under OBagOfList or OSetOfList the position is already gone, so the
-   append and the cons denote the same collection.  Normalising one into the
-   other is therefore sound outright, and it hands all four aggregate
-   indexes -- the sum, the count, the minimum and the set -- the shape their
-   existing cons-shaped maintenance rules already match.  One rule, four
-   indexes, and not one of their proofs changes.
-
-   It is deliberately NOT a case of annotate_collection: that pass only ever
-   RELAXES a collection, and this rewrites a list into a list, under a
-   coercion that was already there. *)
 Definition snoc_to_cons_under_coercion (e : expr) : expr :=
   match e with
   | EUnop OBagOfList (EBinop OConcat l (EBinop OCons row (EAtom (ANil _)))) =>
@@ -142,13 +121,6 @@ Section WithWord.
     rewrite IH. intuition congruence.
   Qed.
 
-  (* The set counterpart of bag_insert_bag_insert, and for the same reason: an
-     index whose buckets are SETS needs its step to commute.  set_insert is a
-     SORTED, DEDUPLICATING insert, so this goes through canonicity rather than
-     through the insertion's case analysis -- two sorted lists with the same
-     members are equal (Permutation_SSorted_eq).  Unlike the bag's, this
-     operation is also IDEMPOTENT, which is what lets two rows share a bucket
-     key without the order of arrival mattering. *)
   Lemma set_insert_set_insert : forall (x y : value) s,
       NoDup s -> StronglySorted value_leb s ->
       set_insert x (set_insert y s) = set_insert y (set_insert x s).
@@ -217,18 +189,6 @@ Section WithWord.
     apply bag_insert_bag_insert, list_to_bag_SSorted.
   Qed.
 
-  (* ------------------------------------------------------------------
-     A bag's values are the set of the same elements.
-
-     Read at the level of expressions, map_fst_list_to_bag says that
-     OSetOfBag after OBagOfList is OSetOfList: the new operator does not add a way
-     of building a set, it just lets an existing one start from a bag.
-
-     No sortedness is needed, because the two insert functions agree
-     structurally.  bag_insert and set_insert split on the same two tests in
-     the same order; where the element is already present one bumps a count
-     and the other returns the list untouched, and neither changes a key.
-     ------------------------------------------------------------------ *)
   Lemma map_fst_bag_insert : forall (v : value) (b : list (value * nat)),
       List.map fst (bag_insert v b) = set_insert v (List.map fst b).
   Proof.
@@ -248,8 +208,6 @@ Section WithWord.
     rewrite map_fst_bag_insert, IH. reflexivity.
   Qed.
 
-  (* And the bridge pays for itself: a set is canonical under reordering, which
-     would otherwise want a commutation lemma for set_insert of its own. *)
   Lemma Permutation_list_to_set_eq : forall (l l' : list value),
       Permutation l l' ->
       list_to_set l = list_to_set l'.
@@ -751,7 +709,6 @@ Section WithWord.
                    list_to_set_incl, list_to_set_incl_r.
     Qed.
 
-    (* dropping every row whose attribute is k drops exactly k from the set *)
     Lemma filter_list_to_set_map : forall (f : value -> value) k l,
         filter (fun w => negb (value_eqb w k)) (list_to_set (List.map f l))
         = list_to_set (List.map f (filter (fun v => negb (value_eqb (f v) k)) l)).
@@ -801,8 +758,7 @@ Section WithWord.
           cbn. destruct a; reflexivity. }
       1:{ cbn. case_match; auto; cbn; use_set_of_sem_IH; auto.
           case_match; auto. }
-      1:{ (* TyEIf, as in bag_of_sem: the branch taken is the same one on both
-             sides, so only e1's value has to be pinned down *)
+      1:{ (* TyEIf *)
           cbn. apply_type_sound e1.
           invert_type_of_value_clear.
           case_match; auto. }
