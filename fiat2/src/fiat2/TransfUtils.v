@@ -209,7 +209,7 @@ Section fold_command.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
       | CLet e x c => CLet (fold_expr g e) x (fold_command c)
-      | CLetMut e x c => CLetMut (fold_expr g e) x (fold_command c)
+      | CLetMut e x ot c => CLetMut (fold_expr g e) x ot (fold_command c)
       | CAssign x e => CAssign x (fold_expr g e)
       | CIf e c1 c2 => CIf (fold_expr g e) (fold_command c1) (fold_command c2)
       | CForeach e x c => CForeach (fold_expr g e) x (fold_command c)
@@ -322,6 +322,7 @@ Section WithMap.
        it is checked against is the relaxed rm_from_pred P x *)
     1:{ econstructor.
         1: apply fold_expr_preserve_ty; eauto.
+        1: eassumption.
         eapply IHc; eauto with fiat2_hints. }
     (* CAssign: the written value is unchanged, so the original obligation
        discharges the new one *)
@@ -400,9 +401,9 @@ Section WithGlobals.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command_with_globals c1) (fold_command_with_globals c2)
       | CLet e x c => CLet (fold_expr f e) x (fold_command_with_globals c)
-      | CLetMut e x c =>
+      | CLetMut e x ot c =>
           (* Avoid applying the transformation if the global variable is shadowed *)
-          CLetMut (fold_expr f e) x
+          CLetMut (fold_expr f e) x ot
             (if inb String.eqb x globals then c else fold_command_with_globals c)
       | CAssign x e => CAssign x (fold_expr f e)
       | CIf e c1 c2 =>
@@ -567,6 +568,7 @@ Section WithGlobals.
            erewrite <- fold_expr_preserve_sem with (Gstore := Gstore); eauto.
       1:{ econstructor.
           1: apply fold_expr_preserve_ty; eauto.
+          1: eassumption.
           case_match; auto. rewrite inb_false_iff in *.
           eapply parameterized_wf_Proper.
           3: apply rm_not_in_globals.
@@ -594,9 +596,9 @@ Section fold_command_with_global.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command_with_global free_vars c1) (fold_command_with_global free_vars c2)
       | CLet e x c => CLet (fold_expr g e) x (fold_command_with_global (x :: free_vars) c)
-      | CLetMut e x c =>
+      | CLetMut e x ot c =>
           (* Avoid applying the transformation if the global variable is shadowed *)
-          CLetMut (fold_expr g e) x
+          CLetMut (fold_expr g e) x ot
             (if String.eqb x tbl then c else fold_command_with_global free_vars c)
       | CAssign x e => CAssign x (fold_expr g e)
       | CIf e c1 c2 =>

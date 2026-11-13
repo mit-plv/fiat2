@@ -1427,7 +1427,7 @@ Section WithIndexUse.
 
     Definition unique_idx_transf (ce : cenv) (Gstore Genv : tenv) (c : command) : command :=
       match c with
-      | CLetMut _ tbl _ =>
+      | CLetMut _ tbl _ _ =>
           apply_idx_related_transfs (idx := uidx_rec) id_tag aux_tag
             (unique_lookup_gated (decls_of ce tbl)) Gstore Genv c
       | _ => c

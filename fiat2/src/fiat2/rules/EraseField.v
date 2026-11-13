@@ -74,8 +74,8 @@ Section WithField.
     | CLet e x c => CLet e x (erase_body c)
     (* stop where the table's name is shadowed: the inner binding is a
        different variable and still has the field *)
-    | CLetMut e x c =>
-        CLetMut e x (if String.eqb x tbl then c else erase_body c)
+    | CLetMut e x ot c =>
+        CLetMut e x ot (if String.eqb x tbl then c else erase_body c)
     | CAssign x e =>
         CAssign x (if String.eqb x tbl then erase_record_field e else e)
     | CIf e c1 c2 => CIf e (erase_body c1) (erase_body c2)
@@ -115,7 +115,7 @@ Section WithField.
     | CLet e _ c => (expr_reads_no_field e && command_reads_no_field c)%bool
     (* shadowing is refused outright: one proof case fewer, and the index
        layer already declines to descend through such a binder *)
-    | CLetMut e x c =>
+    | CLetMut e x _ c =>
         (negb (String.eqb x tbl) && expr_reads_no_field e
          && command_reads_no_field c)%bool
     | CAssign _ e => expr_reads_no_field e
@@ -135,7 +135,7 @@ Section WithField.
     | CSkip => true
     | CSeq c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
     | CLet _ _ c => writes_erasable c
-    | CLetMut _ x c => if String.eqb x tbl then true else writes_erasable c
+    | CLetMut _ x _ c => if String.eqb x tbl then true else writes_erasable c
     | CAssign x e => if String.eqb x tbl then erasable_record e else true
     | CIf _ c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
     | CForeach _ _ c => writes_erasable c
@@ -226,14 +226,20 @@ Qed.
 (* Three conditions, all decidable and all checked on the program in hand:
    the initializer and every write to the table are record literals the
    erasure can shorten, and once it has, nothing reads the field. *)
+Definition erase_record_type (f : string) (t : type) : type :=
+  match t with
+  | TRecord tl => TRecord (rm_field f tl)
+  | _ => t
+  end.
+
 Definition erase_dead_field (f : string) {tenv : map.map string type}
   (_ _ : tenv) (c : command) : command :=
   match c with
-  | CLetMut e tbl c0 =>
+  | CLetMut e tbl ot c0 =>
       let c0' := erase_body tbl f c0 in
       if (erasable_record e && writes_erasable tbl c0
           && command_reads_no_field tbl f c0')%bool
-      then CLetMut (erase_record_field f e) tbl c0'
+      then CLetMut (erase_record_field f e) tbl (option_map (erase_record_type f) ot) c0'
       else c
   | _ => c
   end.
@@ -592,11 +598,11 @@ Section WithMap.
         intros s s' v H_s. apply IHc; assumption. }
   Qed.
 
-  Lemma erase_letmut_preserve_sem : forall tbl f e c0 (store env : locals),
+  Lemma erase_letmut_preserve_sem : forall tbl f e ot ot' c0 (store env : locals),
       command_reads_no_field tbl f (erase_body tbl f c0) = true ->
       interp_command store env
-        (CLetMut (erase_record_field f e) tbl (erase_body tbl f c0))
-      = interp_command store env (CLetMut e tbl c0).
+        (CLetMut (erase_record_field f e) tbl ot' (erase_body tbl f c0))
+      = interp_command store env (CLetMut e tbl ot c0).
   Proof.
     intros * H_rd; cbn [interp_command].
     apply stores_eq_except__update_eq; intros x H_x; symmetry.
@@ -789,7 +795,7 @@ Section WithMap.
         destruct H_rd as [ [ H_ne R1 ] R2 ].
         apply Bool.negb_true_iff, String.eqb_neq in H_ne.
         rewrite (proj2 (String.eqb_neq _ _) H_ne) in R2, H_we |- *.
-        econstructor; [ apply erase_preserve_ty_expr; eassumption | ].
+        econstructor; [ apply erase_preserve_ty_expr; eassumption | eassumption | ].
         rewrite (Properties.map.put_comm tbl x
                    (TRecord (rm_field f tl)) t Gstore (not_eq_sym H_ne)).
         apply IHc; [ | exact R2 | exact H_we ].
@@ -858,7 +864,7 @@ Section WithMap.
       transf_sound (locals := locals) (erase_dead_field f).
   Proof.
     unfold transf_sound, erase_dead_field; intros f Gstore Genv c H_Gs H_Ge H_wt.
-    destruct c as [ | | | e tbl c0 | | | ];
+    destruct c as [ | | | e tbl ot c0 | | | ];
       try (split; [ exact H_wt | intros; reflexivity ]).
     destruct (erasable_record e && writes_erasable tbl c0
               && command_reads_no_field tbl f (erase_body tbl f c0))%bool eqn:E;
@@ -881,11 +887,13 @@ Section WithMap.
     (* type preservation *)
     1:{ econstructor.
         1: apply erase_record_ty_init; eassumption.
+        1: change (TRecord (rm_field f tl)) with (erase_record_type f (TRecord tl));
+           apply type_annot_ok_map; assumption.
         1: apply erase_preserve_ty_cmd; assumption. }
     (* and semantics *)
     1:{ intros store env H_store H_env.
         rewrite <- (erase_record_field_ERecord f l E_init).
-        apply (erase_letmut_preserve_sem tbl f (ERecord l) c0 store env E_reads). }
+        apply (erase_letmut_preserve_sem tbl f (ERecord l) _ _ c0 store env E_reads). }
   Qed.
 
 End WithMap.

@@ -463,7 +463,7 @@ Section WithWord.
       | CLet e x c =>
           let env' := map.put env x (interp_expr store env e) in
           interp_command store env' c
-      | CLetMut e x c1 =>
+      | CLetMut e x _ c1 =>
           let store' := map.put store x (interp_expr store env e) in
           let store'' := interp_command store' env c1 in
           map.update store'' x (map.get store x)

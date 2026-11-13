@@ -101,10 +101,11 @@ Section WithMap.
   | PWCLet A e t x c : type_of Gstore Genv e t ->
                        parameterized_wf Gstore (map.put Genv x t) P (fun _ _ => True) c ->
                        parameterized_wf Gstore Genv P A (CLet e x c)
-  | PWCLetMut A e t x c :
+  | PWCLetMut A e t x ot c :
     type_of Gstore Genv e t ->
+    type_annot_ok ot t ->
     parameterized_wf (map.put Gstore x t) Genv (rm_from_pred P x) (fun _ _ => True) c ->
-    parameterized_wf Gstore Genv P A (CLetMut e x c)
+    parameterized_wf Gstore Genv P A (CLetMut e x ot c)
   | PWCAssign A x t e :
     (forall store env, A store env ->
                        holds_for_all_entries P store ->

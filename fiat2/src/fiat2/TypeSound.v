@@ -1845,14 +1845,22 @@ Section WithWord.
       induction c; simpl; intros Gstore Genv c' H_str H_env H.
       all: repeat destruct_match.
       1,2: try constructor; try apply_cmd_tc_sound_IH.
-      1,2,5: lazymatch goal with
+      1,3,6: lazymatch goal with
            | H: synthesize_expr _ _ _ = Success _ |- _ =>
                let H_wf := fresh "H_wf" in
                apply typechecker_sound in H; auto;
                apply type_of__type_wf in H as H_wf; auto
            end;
-      econstructor; eauto; apply_cmd_tc_sound_IH; apply tenv_wf_step;
+      econstructor; eauto; try exact I; apply_cmd_tc_sound_IH; apply tenv_wf_step;
       try invert_type_wf; auto.
+      - lazymatch goal with
+        | H : type_wf_comp _ = true |- _ => apply type_wf_comp_sound in H
+        end.
+        lazymatch goal with
+        | H : Success (_, _) = Success (_, _) |- _ => injection H as ? ?; subst
+        end.
+        econstructor; [ eapply typechecker_sound; eauto | exact eq_refl | ].
+        apply_cmd_tc_sound_IH; apply tenv_wf_step; auto.
       - econstructor; eauto. eapply typechecker_sound; eauto.
       - constructor; try apply_cmd_tc_sound_IH.
         eapply typechecker_sound; eauto. constructor.

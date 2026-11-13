@@ -84,10 +84,10 @@ Section WithIndexVars.
          is born satisfying its declarations and every write keeps them. *)
       Definition cenv_respected (ce : cenv) (Gstore Genv : tenv) (c : command) : Prop :=
         match c with
-        | CLetMut e tbl body =>
+        | CLetMut e tbl ot body =>
             forall row_ty ds,
               cenv_lookup tbl ce = Some (row_ty, ds) ->
-              idx_install_pre (declared_holds row_ty ds) Gstore Genv (CLetMut e tbl body)
+              idx_install_pre (declared_holds row_ty ds) Gstore Genv (CLetMut e tbl ot body)
         | _ => True
         end.
 
@@ -153,11 +153,11 @@ Section WithIndexVars.
       Lemma fold_command_id_preserve_cenv_respected : forall f,
           (forall (Gstore : tenv), preserve_ty Gstore f) ->
           (forall (Gstore : tenv) (store : locals), preserve_sem Gstore store f) ->
-          forall (a : atom) ce (Gstore Genv : tenv) tbl body,
+          forall (a : atom) ce (Gstore Genv : tenv) tbl ot body,
             f (EAtom a) = EAtom a ->
             tenv_wf Gstore -> tenv_wf Genv ->
-            cenv_respected ce Gstore Genv (CLetMut (EAtom a) tbl body) ->
-            cenv_respected ce Gstore Genv (fold_command id f (CLetMut (EAtom a) tbl body)).
+            cenv_respected ce Gstore Genv (CLetMut (EAtom a) tbl ot body) ->
+            cenv_respected ce Gstore Genv (fold_command id f (CLetMut (EAtom a) tbl ot body)).
       Proof.
         intros f H_ty H_sem * H_fix H_Gs H_Ge H_ce.
         cbn [fold_command fold_expr]; unfold id at 1; rewrite H_fix.
@@ -179,11 +179,11 @@ Section WithIndexVars.
          each rule does. *)
       Corollary expr_transf_sound__preserve_cenv_respected : forall f,
           expr_transf_sound (locals:=locals) f ->
-          forall (a : atom) ce (Gstore Genv : tenv) tbl body,
+          forall (a : atom) ce (Gstore Genv : tenv) tbl ot body,
             f (EAtom a) = EAtom a ->
             tenv_wf Gstore -> tenv_wf Genv ->
-            cenv_respected ce Gstore Genv (CLetMut (EAtom a) tbl body) ->
-            cenv_respected ce Gstore Genv (fold_command id f (CLetMut (EAtom a) tbl body)).
+            cenv_respected ce Gstore Genv (CLetMut (EAtom a) tbl ot body) ->
+            cenv_respected ce Gstore Genv (fold_command id f (CLetMut (EAtom a) tbl ot body)).
       Proof.
         unfold expr_transf_sound; intros f H_f.
         apply fold_command_id_preserve_cenv_respected;

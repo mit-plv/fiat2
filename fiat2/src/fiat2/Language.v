@@ -349,12 +349,16 @@ Proof.
   apply IHl in E2. injection E2 as E2. subst. reflexivity.
 Qed.
 
+Inductive invariant :=
+  ConstraintInv (tbl : string) (path : list string) (row : string) (cond : expr)
+| IndexInv (tbl : string) (id_path : list string) (aux_path : list string) (hole : string) (to_idx : expr).
+
 (* Commands *)
 Inductive command : Type :=
 | CSkip
 | CSeq (c1 c2 : command)
 | CLet (e : expr) (x : string) (c : command)
-| CLetMut (e : expr) (x : string) (c : command)
+| CLetMut (e : expr) (x : string) (ot : option type) (c : command)
 | CAssign(x : string) (e : expr)
 | CIf (e : expr) (c1 c2 : command)
 | CForeach (e : expr) (x : string) (c : command).

@@ -106,9 +106,9 @@ Section WithMap.
 
     Definition apply_below_letmut f (Gstore Genv : tenv) (c : command) :=
       match c with
-      | CLetMut e x c' =>
+      | CLetMut e x ot c' =>
           match synthesize_expr Gstore Genv e with
-          | Success (t, _) => CLetMut e x (f (map.put Gstore x t) Genv c')
+          | Success (t, _) => CLetMut e x ot (f (map.put Gstore x t) Genv c')
           | Failure _ => c
           end
       | _ => c
@@ -129,10 +129,13 @@ Section WithMap.
           apply H; auto.
           eapply tenv_wf_step, type_of__type_wf;
             [ | | | eauto ]; assumption. }
-      1:{ eapply H in H7; eauto; intuition idtac.
-          1:{ cbn. rewrite H8; auto.
+      1:{ lazymatch goal with
+          | Hc : well_typed (map.put Gstore x t) Genv c |- _ => eapply H in Hc as [ _ H_sem ]
+          end.
+          1:{ cbn. rewrite H_sem; auto.
               apply locals_wf_step;
                 eauto using type_sound. }
+          2: assumption.
           eapply tenv_wf_step, type_of__type_wf;
             [ | | | eauto ]; assumption. }
     Qed.
@@ -152,7 +155,7 @@ Section WithMap.
     Definition below_letmut_pre (P : tenv -> tenv -> command -> Prop)
       (Gstore Genv : tenv) (c : command) : Prop :=
       match c with
-      | CLetMut e x c' =>
+      | CLetMut e x _ c' =>
           match synthesize_expr Gstore Genv e with
           | Success (t, _) => P (map.put Gstore x t) Genv c'
           | Failure _ => True
@@ -568,14 +571,14 @@ Section WithMap.
             (forall x v, P x v <-> value_wf_with_globals aux_wf nil x v) ->
             parameterized_wf Gstore Genv P A c.
       Proof.
-        induction 3; intros.
+        induction 3; intros P A H_P.
         all: try now (constructor; auto).
         1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints. }
         1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints.
             intros. split.
             1: constructor.
-            1:{ unfold rm_from_pred. intros; right. rewrite H3. constructor. } }
-        1:{ econstructor; eauto. intros. rewrite H3; constructor. }
+            1:{ unfold rm_from_pred. intros; right. rewrite H_P. constructor. } }
+        1:{ econstructor; eauto. intros. rewrite H_P; constructor. }
         1:{ econstructor; eauto. apply IHwell_typed; eauto with fiat2_hints. }
       Qed.
 
@@ -880,6 +883,7 @@ Section WithMap.
         (* CLetMut *)
         1:{ econstructor.
             1:{ eapply transf_to_idx_preserve_ty''; eauto. }
+            1: eassumption.
             case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ rewrite Properties.map.put_put_same.
                 apply well_typed__aux_wf_nil;
@@ -1036,19 +1040,21 @@ Section WithMap.
 
       Definition transf_to_idx (free_vars : list string) (c : command) : command :=
         match c with
-        | CLetMut e tbl c =>
+        | CLetMut e tbl ot c =>
             CLetMut (ERecord [(id_tag, e); (aux_tag, substitute ((hole, e) :: nil) free_vars to_idx)]) tbl
+              (option_map aux_ty ot)
               (transf_to_idx' tbl free_vars c)
         | _ => c
         end.
 
-      Lemma transf_to_idx_preserve_ty : forall tbl tbl_ty e c free_vars Gstore Genv,
+      Lemma transf_to_idx_preserve_ty : forall tbl tbl_ty e ot c free_vars Gstore Genv,
           tenv_wf Gstore -> tenv_wf Genv ->
           type_of Gstore Genv e tbl_ty ->
+          type_annot_ok ot tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
           is_tbl_ty tbl_ty = true ->
           incl (get_free_vars Genv) free_vars ->
-          well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl c)).
+          well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl ot c)).
       Proof.
         simpl; intros. subst. econstructor.
         1:{ econstructor.
@@ -1062,14 +1068,16 @@ Section WithMap.
                   [ do_injection; rewrite eqb_refl; auto
                   | rewrite map.get_empty in *; discriminate ]. } }
             1: eapply Permuted_record_sort.
-            1:{ cbn; repeat constructor; intuition auto. inversion H5; auto using in_nil. }
+            1:{ cbn; repeat constructor; intuition auto.
+                match goal with Hi : In _ _ |- _ => inversion Hi; auto using in_nil end. }
             1: apply StronglySorted_record_sort. }
+        1: apply (type_annot_ok_map aux_ty); assumption.
         1:{ erewrite <- Properties.map.put_put_same.
             eapply transf_to_idx_preserve_ty'; try reflexivity; eauto using incl_refl with fiat2_hints.
             rewrite_map_get_put_goal; auto. }
       Qed.
 
-      Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e c (Gstore Genv : tenv) free_vars,
+      Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e ot c (Gstore Genv : tenv) free_vars,
           is_tbl_ty tbl_ty = true ->
           type_of Gstore Genv e tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
@@ -1077,7 +1085,7 @@ Section WithMap.
           tenv_wf Gstore -> tenv_wf Genv ->
           forall (store env : locals),
             locals_wf Gstore store -> locals_wf Genv env ->
-            interp_command store env (transf_to_idx free_vars (CLetMut e tbl c)) = interp_command store env (CLetMut e tbl c).
+            interp_command store env (transf_to_idx free_vars (CLetMut e tbl ot c)) = interp_command store env (CLetMut e tbl ot c).
       Proof.
         simpl; intros.
         apply stores_eq_except__update_eq. symmetry.
@@ -1095,13 +1103,13 @@ Section WithMap.
 
       Definition apply_after_letmut f (c : command) :=
         match c with
-        | CLetMut e x c => CLetMut e x (f x c)
+        | CLetMut e x ot c => CLetMut e x ot (f x c)
         | _ => c
         end.
 
       Definition apply_idx_related_transfs (f : string -> command -> command) (Gstore Genv : tenv) (c : command) :=
         match c with
-        | CLetMut e x _ => match synthesize_expr Gstore Genv e with
+        | CLetMut e x _ _ => match synthesize_expr Gstore Genv e with
                            | Success (t, _) => if is_tbl_ty t
                                                then apply_after_letmut f (transf_to_idx (get_free_vars Genv) c)
                                                  else c
@@ -1155,13 +1163,17 @@ Section WithMap.
         2: constructor;  try eapply map.get_put_same; auto.
         split.
         1:{ econstructor.
-            2: apply H_wf; auto.
-            1: apply_to_aux_preserve_ty. }
+            3: apply H_wf; auto.
+            1: apply_to_aux_preserve_ty.
+            1: apply (type_annot_ok_map aux_ty); assumption. }
         1:{ intros. unfold transf_to_idx, apply_after_letmut.
             cbn [interp_command]. eapply stores_eq_except__update_eq; intros.
             destruct (map.get Gstore x0) eqn:E.
             1:{ symmetry.
-                intuition idtac. erewrite H11; auto.
+                intuition idtac.
+                lazymatch goal with
+                | Hs : forall _ _, _ -> _ -> _ -> interp_command _ _ (f _ _) = _ |- _ => erewrite Hs
+                end; auto.
                 2:{ resolve_locals_wf. eapply type_sound.
                     1: apply_to_aux_preserve_ty.
                 all: resolve_locals_wf; eauto using incl_refl with fiat2_hints. }
@@ -1211,7 +1223,7 @@ Section WithMap.
       Definition idx_install_pre (Pv : value -> Prop)
         (Gstore Genv : tenv) (c : command) : Prop :=
         match c with
-        | CLetMut e tbl body =>
+        | CLetMut e tbl _ body =>
             (* the variable is born satisfying the invariant *)
             (forall (store env : locals),
                 locals_wf Gstore store -> locals_wf Genv env ->
@@ -1260,8 +1272,9 @@ Section WithMap.
         2: constructor;  try eapply map.get_put_same; auto.
         split.
         1:{ econstructor.
-            2: apply H_wf; auto.
-            1: apply_to_aux_preserve_ty. }
+            3: apply H_wf; auto.
+            1: apply_to_aux_preserve_ty.
+            1: apply (type_annot_ok_map aux_ty); assumption. }
         1:{ intros. unfold transf_to_idx, apply_after_letmut.
             cbn [interp_command]. eapply stores_eq_except__update_eq; intros.
             destruct (map.get Gstore x0) eqn:E.

@@ -77,9 +77,9 @@ Fixpoint elab (ce : cenv) (free_vars : list string) (sc : scommand) : command :=
   | SSkip => CSkip
   | SSeq c1 c2 => CSeq (elab ce free_vars c1) (elab ce free_vars c2)
   | SLet e x c => CLet e x (elab ce (x :: free_vars) c)
-  | SLetMut e x c => CLetMut e x (elab (cenv_rm x ce) free_vars c)
+  | SLetMut e x c => CLetMut e x None (elab (cenv_rm x ce) free_vars c)
   | SLetConstrained x row_ty ds c =>
-      CLetMut (EAtom (ANil (Some row_ty))) x
+      CLetMut (EAtom (ANil (Some row_ty))) x (Some (TList row_ty))
         (elab ((x, (row_ty, ds)) :: cenv_rm x ce) free_vars c)
   | SAssign x e policy =>
       match cenv_lookup x ce with
