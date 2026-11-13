@@ -9,7 +9,6 @@ Section WithMap.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
   Section WithIndex.
-    Context {idx : IndexInterface.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
     Context (is_tbl_ty : type -> bool) (aux_ty : type -> type) (aux_wf : value -> Prop).
 
     Notation expr_aug_transf_sound := (expr_aug_transf_sound is_tbl_ty aux_ty aux_wf).

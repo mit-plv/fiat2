@@ -746,14 +746,6 @@ Section WithHole.
               eauto using value_eqb_sym. }
       Qed.
 
-      Lemma to_idx_wf : forall (v : value) (t : type),
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-      Proof.
-        intros; unfold idx_wf; auto.
-      Qed.
-
       (* The kind is a pattern variable, not this section's dk: a pattern may
          only mention constructors.  Every rule that matches a rebuild of the
          index therefore has to CHECK the kind it finds against its own, or it
@@ -838,8 +830,8 @@ Section WithHole.
 
       Instance dict_idx : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance dict_idx_ok : IndexInterface.ok dict_idx idx_wf :=
-        IndexInterface.Build_ok dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance dict_idx_ok : IndexInterface.ok dict_idx :=
+        IndexInterface.Build_ok dict_idx to_idx_ty.
 
       Section WithTags.
         Context (id_tag aux_tag idx_tag: string).

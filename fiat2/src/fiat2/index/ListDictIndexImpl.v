@@ -424,14 +424,6 @@ Section WithHole.
         unfold bucket_of; destruct (filter _ _); reflexivity.
       Qed.
 
-      Lemma to_idx_wf : forall (v : value) (t : type),
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-      Proof.
-        intros; unfold idx_wf; auto.
-      Qed.
-
       (* The rebuild, as a pattern.  Unranged is written literally: this
          index has one kind, so unlike DictIndexImpl's eto_idx there is no
          kind to check against the section's own. *)
@@ -504,8 +496,8 @@ Section WithHole.
 
       Instance list_dict_idx : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance list_dict_idx_ok : IndexInterface.ok list_dict_idx idx_wf :=
-        IndexInterface.Build_ok list_dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance list_dict_idx_ok : IndexInterface.ok list_dict_idx :=
+        IndexInterface.Build_ok list_dict_idx to_idx_ty.
 
       Section WithTags.
         Context (id_tag aux_tag idx_tag: string).

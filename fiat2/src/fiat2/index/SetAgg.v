@@ -46,13 +46,6 @@ Section WithHole.
       | _ => TUnit
       end.
 
-    Lemma idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t).
-      destruct t; cbn; intros; try congruence.
-      destruct t; try congruence.
-      inversion H; subst.
-      constructor; apply get_attr_type_ty_wf; assumption.
-    Qed.
-
     Section WithMap.
       Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
       Notation value := (value).
@@ -80,14 +73,6 @@ Section WithHole.
         all: try (apply get_attr_type_ty_wf; exact H_rwf).
       Qed.
 
-      Lemma to_idx_wf : forall (v : value) (t : type),
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-      Proof.
-        unfold idx_wf; intros; auto.
-      Qed.
-
       Lemma set_mem_singleton : forall (v k : value), set_mem v [k] = value_eqb v k.
       Proof.
         intros. unfold set_mem; cbn. apply Bool.orb_false_r.
@@ -95,8 +80,8 @@ Section WithHole.
 
       Instance set_agg : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance set_agg_ok : IndexInterface.ok set_agg idx_wf :=
-        IndexInterface.Build_ok set_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance set_agg_ok : IndexInterface.ok set_agg :=
+        IndexInterface.Build_ok set_agg to_idx_ty.
 
       (* Unfold interp_expr one layer at a time. *)
 

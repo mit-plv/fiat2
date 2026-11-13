@@ -60,15 +60,6 @@ Section WithHole.
     | _ => t
     end.
 
-  Lemma idx_ty_wf : forall tag t,
-      type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty tag t).
-  Proof.
-    unfold is_tbl_ty, idx_ty; intros * H_wf H_tbl.
-    destruct t; try discriminate.
-    inversion H_wf; subst.
-    destruct tag; constructor; assumption.
-  Qed.
-
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
     Notation value := (value).
@@ -86,21 +77,12 @@ Section WithHole.
       destruct tag; repeat econstructor; rewrite_map_get_put_goal; reflexivity.
     Qed.
 
-    Lemma to_idx_wf : forall tag (v : value) (t : type),
-        type_wf t -> is_tbl_ty t = true ->
-        type_of_value v t ->
-        idx_wf tag v (interp_expr map.empty (map.put map.empty hole v) (to_idx tag)).
-    Proof.
-      unfold idx_wf; intros; auto.
-    Qed.
-
     Instance rep_idx (tag : collection_tag) : IndexInterface.index :=
       IndexInterface.mk hole (to_idx tag) (idx_ty tag) is_tbl_ty.
 
     Instance rep_idx_ok (tag : collection_tag) :
-      IndexInterface.ok (rep_idx tag) (idx_wf tag) :=
-      IndexInterface.Build_ok (rep_idx tag) (idx_wf tag)
-        (idx_ty_wf tag) (to_idx_ty tag) (to_idx_wf tag).
+      IndexInterface.ok (rep_idx tag) :=
+      IndexInterface.Build_ok (rep_idx tag) (to_idx_ty tag).
 
     Section WithTags.
       Context (id_tag aux_tag idx_tag : string).

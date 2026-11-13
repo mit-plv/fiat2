@@ -62,7 +62,7 @@ Section WithIndexVars.
     (* What transf_to_idx' delivers, with the weak index well-formedness and
        the declared constraint side by side. *)
     Definition unique_aux_pre (rt : list (string * type)) (v : value) : Prop :=
-      aux_wf (idx_wf := uidx_wf) id_tag aux_tag v
+      aux_wf (idx := uidx) id_tag aux_tag v
       /\ at_id_tag id_tag (key_holds rt) v.
 
     (* And what a rewrite over this index gets to assume: the strong form. *)
@@ -131,7 +131,7 @@ Section WithIndexVars.
             by (eapply type_of_value_at_id_tag; [ exact H_tags_diff | exact H_ty | exact E ])
       end.
       eapply idx_wf__idx_wf_unique;
-        [ exact H_rt | exact H_attr | exact H_vid | assumption | assumption ].
+        [ exact H_rt | exact H_attr | exact H_vid | reflexivity | assumption ].
     Qed.
 
     Section WithGlobal.

@@ -4,8 +4,8 @@ Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
 
-Lemma map_fst_map_triple : forall A B C D (l : list (A * B * C)) (f : B -> D),
-    List.map fst (List.map (fun '(a, b, _) => (a, f b)) l) = List.map fst (List.map fst l).
+Lemma map_fst_map_pair : forall A B D (l : list (A * B)) (f : B -> D),
+    List.map fst (List.map (fun '(a, b) => (a, f b)) l) = List.map fst l.
 Proof.
   intros; induction l; cbn; auto.
   repeat case_match; cbn; congruence.
@@ -22,31 +22,31 @@ Section compo_idx.
   Notation value := (value).
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
 
-  Context (idxs : list (string * IndexInterface.index * (value -> value -> Prop))).
-  Context {idxs_ok : Forall (fun '(_, idx, idx_wf) => ok idx idx_wf) idxs}.
-  Context (H_tag_NoDup : NoDup (List.map fst (List.map fst idxs))).
+  Context (idxs : list (string * IndexInterface.index)).
+  Context {idxs_ok : Forall (fun '(_, idx) => ok idx) idxs}.
+  Context (H_tag_NoDup : NoDup (List.map fst idxs)).
   Context (hole0 : string).
-  Context (H_holes_eq : Forall (fun '(_, idx, _) => @hole idx = hole0) idxs).
+  Context (H_holes_eq : Forall (fun '(_, idx) => @hole idx = hole0) idxs).
 
   Definition compo_idx_ty (t : type) : type :=
-    TRecord (record_sort (List.map (fun '(tag, idx, _) => (tag, @idx_ty idx t)) idxs)).
+    TRecord (record_sort (List.map (fun '(tag, idx) => (tag, @idx_ty idx t)) idxs)).
 
   Definition to_compo_idx : expr :=
-    ERecord (List.map (fun '(tag, idx, _) => (tag, @to_idx idx)) idxs).
+    ERecord (List.map (fun '(tag, idx) => (tag, @to_idx idx)) idxs).
 
   Definition compo_idx_wf (v v' : value) : Prop :=
     match v' with
     | VRecord v' =>
-        Forall (fun '(tag, _, idx_wf) =>
+        Forall (fun '(tag, idx) =>
                   match access_record v' tag with
-                  | Success v' => idx_wf v v'
+                  | Success v' => v' = interp_expr map.empty (map.put map.empty (@hole idx) v) (@to_idx idx)
                   | _ => False
                   end) idxs
     | _ => False
     end.
 
   Definition compo_is_tbl_ty (t : type) : bool :=
-    forallb (fun '(tag, idx, _) => @is_tbl_ty idx t) idxs.
+    forallb (fun '(tag, idx) => @is_tbl_ty idx t) idxs.
 
   Lemma to_compo_idx_ty : forall (t : type),
       type_wf t -> compo_is_tbl_ty t = true ->
@@ -55,60 +55,27 @@ Section compo_idx.
     unfold compo_is_tbl_ty, to_compo_idx, compo_idx_ty.
     intros. econstructor; eauto using Permuted_record_sort, StronglySorted_record_sort.
     1:{ clear. induction idxs; cbn; auto.
-        do 2 case_match; cbn; congruence. }
+        case_match; cbn; congruence. }
     1:{ induction idxs; auto. cbn in *.
         repeat invert_Forall; invert_NoDup; rewrite Bool.andb_true_iff in *; intuition idtac.
         constructor; auto.
-        do 2 case_match; cbn; subst. eapply (to_idx_ty (idx:=i)); eauto. }
+        case_match; cbn; subst. eapply (to_idx_ty (idx:=i)); eauto. }
     1:{ revert H_tag_NoDup; clear; intros.
-        induction idxs; intros; cbn; auto using NoDup_nil.
-        cbn in *; invert_NoDup.
-        constructor; auto. do 2 case_match; cbn in *.
-        rewrite map_fst_map_triple; auto. }
+        rewrite map_fst_map_pair; auto. }
   Qed.
 
-  Lemma compo_idx_ty_wf : forall t : type,
-      type_wf t -> compo_is_tbl_ty t = true ->
-      type_wf (compo_idx_ty t).
-  Proof.
-    unfold compo_is_tbl_ty, compo_idx_ty; intros ? ? H.
-    eapply List.forallb_to_Forall with (P:=fun '(_, idx, _) => @is_tbl_ty idx t = true) in H.
-    2: intros; repeat case_match; auto.
-    constructor; auto using StronglySorted_record_sort.
-    1:{ eapply Permutation_NoDup.
-        1: apply Permutation_map, Permuted_record_sort.
-        induction idxs; cbn in *; auto.
-        repeat invert_Forall; invert_NoDup.
-        constructor; auto.
-        repeat case_match; cbn in *.
-        rewrite map_fst_map_triple; auto. }
-    1:{ rewrite Forall_map.
-        eapply Permutation_Forall.
-        1: apply Permuted_record_sort.
-        induction H; cbn in *; auto.
-        repeat invert_Forall; invert_NoDup.
-        constructor; repeat case_match; auto.
-        cbn; apply idx_ty_wf; auto. }
-  Qed.
-
-  (* NoDup_In_access_record and NoDup_Permutation_access_record moved to
-     Utils.v: they are facts about access_record and Permutation with
-     nothing to do with an index, and the dead-field pass needs them too. *)
-
-  Lemma to_compo_idx_wf : forall (v : value) (t : type),
-      type_wf t -> compo_is_tbl_ty t = true ->
-      type_of_value v t ->
+  Lemma to_compo_idx_wf : forall (v : value),
       compo_idx_wf v (interp_expr map.empty (map.put map.empty hole0 v) to_compo_idx).
   Proof.
     intros.
-    unfold compo_idx_wf, compo_idx_ty, to_compo_idx, compo_is_tbl_ty, record_proj in *.
+    unfold compo_idx_wf, to_compo_idx, record_proj in *.
     cbn [interp_expr].
-    rewrite Forall_forall; intros. do 2 case_match.
+    rewrite Forall_forall; intros. case_match.
     erewrite NoDup_Permutation_access_record.
     4: apply Permutation_sym, Permuted_record_sort.
     2:{ eapply Permutation_NoDup.
         1: eapply Permutation_map, Permuted_record_sort.
-        rewrite fst_map_fst, map_fst_map_triple; auto. }
+        rewrite !map_map. erewrite map_ext; [ eassumption | intros [ ? ? ]; reflexivity ]. }
     2:{ rewrite in_map_iff. eexists; intuition idtac.
         2:{ eapply Permutation_in.
             1: apply Permuted_record_sort.
@@ -117,26 +84,18 @@ Section compo_idx.
             rewrite in_map_iff; exists x.
             subst; auto. }
         reflexivity. }
-    eapply List.forallb_to_Forall with (P:=fun '(_, idx, _) => @is_tbl_ty idx t = true) in H0.
-    2: intros; repeat case_match; auto.
-    repeat apply_Forall_In. cbn in *.
-    eapply to_idx_wf in H1; eauto.
+    eapply List.Forall_In in H_holes_eq as H_h; [ | eassumption ]. cbn in *.
     erewrite NoDup_In_access_record; eauto.
     2:{ erewrite in_map_iff. exists (s, to_idx).
         subst; intuition auto.
-        erewrite in_map_iff. exists (s, i, P); auto. }
-    rewrite fst_map_fst, map_fst_map_triple; auto.
+        erewrite in_map_iff. exists (s, i); auto. }
+    rewrite !map_map. erewrite map_ext; [ eassumption | intros [ ? ? ]; reflexivity ].
   Qed.
 
   Instance compo_idx : IndexInterface.index := IndexInterface.mk hole0 to_compo_idx compo_idx_ty compo_is_tbl_ty.
 
-  (* A record of indexes is an index: each member satisfies ok, which asks
-     nothing of the table, so the record asks nothing either. *)
-  Instance compo_idx_ok : IndexInterface.ok compo_idx compo_idx_wf.
-  Proof.
-    constructor;
-      [ exact compo_idx_ty_wf | exact to_compo_idx_ty | exact to_compo_idx_wf ].
-  Defined.
+  Instance compo_idx_ok : IndexInterface.ok compo_idx :=
+    IndexInterface.Build_ok compo_idx to_compo_idx_ty.
 End compo_idx.
 
 
@@ -235,7 +194,7 @@ Section WithMap.
     Qed.
 
     Section WithIndex.
-      Context {idx : IndexInterface.index} {idx_wf : value -> value -> Prop} {idx_ok : ok idx idx_wf}.
+      Context {idx : IndexInterface.index} {idx_ok : ok idx}.
       Context (id_tag aux_tag: string).
       Context (H_tags_diff : id_tag <> aux_tag).
 
@@ -594,7 +553,7 @@ Section WithMap.
             | Success v_id =>
                 match access_record rv aux_tag with
                 | Success v_aux =>
-                    idx_wf v_id v_aux
+                    v_aux = interp_expr map.empty (map.put map.empty hole v_id) to_idx
                 | _ => False
                 end
             | _ => False
@@ -714,7 +673,8 @@ Section WithMap.
         unfold aux_wf, at_id_tag in *.
         repeat destruct_match_hyp; try contradiction.
         eexists; eexists. unfold strip_aux.
-        rewrite E_tbl. rewrite_l_to_r.
+        rewrite E_tbl.
+        lazymatch goal with E : access_record _ id_tag = _ |- _ => rewrite E end.
         intuition eauto using type_of_value_at_id_tag.
       Qed.
 
@@ -777,8 +737,8 @@ Section WithMap.
           is_tbl_ty t = true ->
           incl (get_free_vars Genv) free_vars ->
           locals_wf Gstore store -> locals_wf Genv env ->
-          idx_wf (interp_expr store env e)
-            (interp_expr store env (substitute ((hole, e) :: nil) free_vars to_idx)).
+          interp_expr store env (substitute ((hole, e) :: nil) free_vars to_idx)
+          = interp_expr map.empty (map.put map.empty hole (interp_expr store env e)) to_idx.
       Proof.
       intros. erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole t).
       5: eauto. 8,9: eauto. all: auto.
@@ -792,8 +752,8 @@ Section WithMap.
             [ do_injection; auto
             | rewrite map.get_empty in *; discriminate ]. }
       unfold make_sub_env.
-      erewrite interp_expr_strengthen with (e:=to_idx); [ eapply to_idx_wf | .. ].
-      6: apply to_idx_ty.
+      erewrite interp_expr_strengthen with (e:=to_idx); [ reflexivity | .. ].
+      3: apply to_idx_ty.
       all: eauto with fiat2_hints.
       1: apply map_incl_empty.
       1: simpl; apply map_incl_step; auto using string_dec, map_incl_refl.

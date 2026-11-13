@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TypeSound.
+Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
 Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith.
 
@@ -10,19 +10,18 @@ Class index :=
       is_tbl_ty : type -> bool;
     }.
 
-Class ok (idx : index)
-  (idx_wf : value -> value -> Prop)
-  {tenv : map.map string type} {tenv_ok : map.ok tenv}
-  {locals : map.map string value} {locals_ok : map.ok locals} :=
-  { idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t);
-    to_idx_ty : forall (t : type),
+Class ok (idx : index) {tenv : map.map string type} {tenv_ok : map.ok tenv} :=
+  { to_idx_ty : forall (t : type),
       type_wf t -> is_tbl_ty t = true ->
-      type_of map.empty (map.put map.empty hole t) to_idx (idx_ty t);
-    to_idx_wf : forall (v : value) (t : type),
-      type_wf t -> is_tbl_ty t = true ->
-      type_of_value v t ->
-      idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx);
-  }.
+      type_of map.empty (map.put map.empty hole t) to_idx (idx_ty t) }.
 
-Arguments IndexInterface.Build_ok idx idx_wf {tenv tenv_ok locals locals_ok}
-  (idx_ty_wf to_idx_ty to_idx_wf)%function_scope.
+Arguments IndexInterface.Build_ok idx {tenv tenv_ok} to_idx_ty%_function_scope.
+
+Lemma idx_ty_wf {idx : index} {tenv : map.map string type} {tenv_ok : map.ok tenv} {idx_ok : ok idx} :
+  forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t).
+Proof.
+  intros t H_wf H_is.
+  eapply type_of__type_wf; [ | | apply to_idx_ty; eauto ].
+  1: apply tenv_wf_empty.
+  1: apply tenv_wf_step; auto using tenv_wf_empty.
+Qed.

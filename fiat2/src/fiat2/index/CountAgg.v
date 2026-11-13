@@ -32,10 +32,6 @@ Section WithHole.
 
   Definition idx_ty (t : type) : type := TInt.
 
-  Lemma idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t).
-    intros; constructor.
-  Qed.
-
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
     Notation value := (value).
@@ -53,18 +49,10 @@ Section WithHole.
       repeat econstructor; repeat rewrite_map_get_put_goal; eauto.
     Qed.
 
-    Lemma to_idx_wf : forall (v : value) (t : type),
-        type_wf t -> is_tbl_ty t = true ->
-        type_of_value v t ->
-        idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-    Proof.
-      unfold idx_wf; intros; auto.
-    Qed.
-
     Instance count_agg : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-    Instance count_agg_ok : IndexInterface.ok count_agg idx_wf :=
-      IndexInterface.Build_ok count_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+    Instance count_agg_ok : IndexInterface.ok count_agg :=
+      IndexInterface.Build_ok count_agg to_idx_ty.
 
     (* The number of rows, as an integer.  Written as a fold of addition over
        ones so that it mirrors SumAgg's sum of an attribute, and so that no

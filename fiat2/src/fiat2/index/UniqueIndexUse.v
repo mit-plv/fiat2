@@ -1047,21 +1047,27 @@ Section WithIndexUse.
        ------------------------------------------------------------------ *)
     Lemma compo_declared__unique_aux_wf_at :
       forall idxs rt kt row_ty ds (v : value),
-        In (idx_tag, uidx, uidx_wf) idxs ->
+        NoDup (List.map fst idxs) ->
+        Forall (fun '(_, idx) => @IndexInterface.hole idx = hole) idxs ->
+        In (idx_tag, uidx) idxs ->
         declares_unique attr ds = true ->
         type_wf (TRecord rt) ->
         access_record rt attr = Success kt ->
         type_of_value v
           (aux_ty (idx := compo_idx idxs hole) id_tag aux_tag (TList (TRecord rt))) ->
-        aux_wf (idx_wf := compo_idx_wf idxs) id_tag aux_tag v ->
+        aux_wf (idx := compo_idx idxs hole) id_tag aux_tag v ->
         at_id_tag id_tag (declared_holds (locals := locals) row_ty ds) v ->
         unique_aux_wf_at v.
     Proof.
-      unfold aux_wf, at_id_tag, aux_wf_for_idx, compo_idx_wf.
-      intros * H_in H_uq H_rt H_attr H_ty H_aux H_id.
+      unfold aux_wf, at_id_tag, aux_wf_for_idx.
+      intros * H_nodup H_holes H_in H_uq H_rt H_attr H_ty H_aux H_id.
       repeat destruct_match_hyp; try contradiction.
-      eapply List.Forall_In in H_aux as H_mem; [ | exact H_in ]; cbn in H_mem.
-      repeat destruct_match_hyp; try contradiction.
+      cbn [IndexInterface.hole IndexInterface.to_idx compo_idx] in *. subst.
+      lazymatch goal with E : access_record _ id_tag = Success ?vid |- _ =>
+        pose proof (to_compo_idx_wf idxs H_nodup hole H_holes vid) as H_c end.
+      unfold compo_idx_wf in H_c; destruct_match_hyp; try contradiction.
+      eapply List.Forall_In in H_c as H_mem; [ | exact H_in ]; cbn in H_mem.
+      destruct_match_hyp; try contradiction.
       eapply (idx_wf__idx_wf_unique hole attr tup acc
                 (tenv := tenv) (tenv_ok := tenv_ok)
  (locals_ok := locals_ok));
@@ -1357,18 +1363,18 @@ Section WithIndexUse.
     (* The record this index sits in.  A singleton here; the same statements
        hold of any record that has this member, which is what
        compo_declared__unique_aux_wf_at is quantified over. *)
-    Notation uidx_entry := (idx_tag, uidx, uidx_wf).
+    Notation uidx_entry := (idx_tag, uidx).
     Notation uidx_rec := (compo_idx [uidx_entry] hole).
 
     Lemma uidx_entry_ok :
-      Forall (fun '(_, idx, idx_wf) => IndexInterface.ok idx idx_wf) [uidx_entry].
+      Forall (fun '(_, idx) => IndexInterface.ok idx) [uidx_entry].
     Proof.
       constructor; [ | constructor ].
       cbn. apply (unique_dict_idx_ok hole attr tup acc H_ne).
     Qed.
 
     Lemma uidx_rec_ok :
-      IndexInterface.ok uidx_rec (compo_idx_wf [uidx_entry]).
+      IndexInterface.ok uidx_rec.
     Proof.
       apply (compo_idx_ok [uidx_entry] (idxs_ok := uidx_entry_ok));
         [ cbn; repeat constructor; cbn; intuition idtac
@@ -1383,7 +1389,7 @@ Section WithIndexUse.
         unique_bridges
           (@IndexInterface.is_tbl_ty uidx_rec)
           (aux_ty (idx := uidx_rec) id_tag aux_tag)
-          (fun v => aux_wf (idx_wf := compo_idx_wf [uidx_entry]) id_tag aux_tag v
+          (fun v => aux_wf (idx := uidx_rec) id_tag aux_tag v
                     /\ at_id_tag id_tag (declared_holds (locals := locals) row_ty ds) v).
     Proof.
       intros row_ty ds H_uq. unfold unique_bridges; split; [ | split ].
@@ -1408,8 +1414,8 @@ Section WithIndexUse.
           repeat destruct_match_hyp; try discriminate.
           rewrite inb_true_iff in H_is.
           destruct (In_access_record _ _ _ H_is) as [ kt E_attr ].
-          eapply compo_declared__unique_aux_wf_at;
-            [ apply in_eq | exact H_uq | | exact E_attr | exact H_ty | exact H_aux | exact H_id ].
+          eapply compo_declared__unique_aux_wf_at with (idxs := [uidx_entry]);
+            [ cbn; repeat constructor; intuition idtac | repeat constructor; reflexivity | apply in_eq | exact H_uq | | exact E_attr | exact H_ty | exact H_aux | exact H_id ].
           invert_type_wf; assumption. }
     Qed.
 

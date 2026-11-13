@@ -28,10 +28,6 @@ Section WithHole.
 
     Definition idx_ty (t : type) : type := TInt.
 
-    Lemma idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t).
-      intros; constructor.
-    Qed.
-
     Section WithMap.
       Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
       Notation value := (value).
@@ -50,19 +46,11 @@ Section WithHole.
         repeat econstructor; repeat rewrite_map_get_put_goal; eauto.
       Qed.
 
-      Lemma to_idx_wf : forall (v : value) (t : type),
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-      Proof.
-        unfold idx_wf; intros; auto.
-      Qed.
-
 
       Instance sum_agg : IndexInterface.index := IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance sum_agg_ok : IndexInterface.ok sum_agg idx_wf :=
-        IndexInterface.Build_ok sum_agg idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance sum_agg_ok : IndexInterface.ok sum_agg :=
+        IndexInterface.Build_ok sum_agg to_idx_ty.
 
       Ltac apply_int_binop_Z_add_AC :=
         intros; unfold apply_int_binop;

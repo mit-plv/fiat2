@@ -71,15 +71,6 @@ Section WithHole.
       | _ => TUnit
       end.
 
-    Lemma idx_ty_wf : forall t, type_wf t -> is_tbl_ty t = true -> type_wf (idx_ty t).
-    Proof.
-      destruct t; cbn; intros; try congruence.
-      destruct t; try congruence.
-      invert_type_wf. constructor.
-      1: apply get_attr_type_ty_wf; auto.
-      1: assumption.
-    Qed.
-
     Section WithMap.
       Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
       Notation value := (value).
@@ -117,14 +108,6 @@ Section WithHole.
 
       Definition idx_wf (tbl_v idx_v : value) : Prop :=
         idx_v = interp_expr map.empty (map.put map.empty hole tbl_v) to_idx.
-
-      Lemma to_idx_wf : forall (v : value) (t : type),
-          type_wf t -> is_tbl_ty t = true ->
-          type_of_value v t ->
-          idx_wf v (interp_expr map.empty (map.put map.empty hole v) to_idx).
-      Proof.
-        intros; unfold idx_wf; reflexivity.
-      Qed.
 
       (* ------------------------------------------------------------------
          What the index is, as a list of entries.
@@ -244,8 +227,8 @@ Section WithHole.
       Instance unique_dict_idx : IndexInterface.index :=
         IndexInterface.mk hole to_idx idx_ty is_tbl_ty.
 
-      Instance unique_dict_idx_ok : IndexInterface.ok unique_dict_idx idx_wf :=
-        IndexInterface.Build_ok unique_dict_idx idx_wf idx_ty_wf to_idx_ty to_idx_wf.
+      Instance unique_dict_idx_ok : IndexInterface.ok unique_dict_idx :=
+        IndexInterface.Build_ok unique_dict_idx to_idx_ty.
 
       (* ------------------------------------------------------------------
          The same index, as an index for a primary key.
