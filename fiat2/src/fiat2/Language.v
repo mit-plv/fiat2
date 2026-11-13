@@ -49,7 +49,6 @@ Section TypeIH.
 End TypeIH.
 
 Scheme Boolean Equality for dict_kind. (* creates dict_kind_beq *)
-Scheme Boolean Equality for type. (* creates type_beq *)
 
 Lemma dict_kind_beq_refl : forall dk, dict_kind_beq dk dk = true.
 Proof. destruct dk; reflexivity. Qed.
@@ -63,8 +62,52 @@ Definition is_ranged (dk : dict_kind) : bool :=
 Lemma is_ranged_true : forall dk, is_ranged dk = true -> dk = Ranged.
 Proof. destruct dk; cbn; congruence. Qed.
 
-Declare Scope fiat2_scope. Local Open Scope fiat2_scope.
-Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
+Scheme Equality for list.
+Arguments list_beq {A}.
+
+Fixpoint type_eqb (t t' : type) {struct t} : bool :=
+  match t, t' with
+  | TInt, TInt
+  | TBool, TBool
+  | TString, TString
+  | TUnit, TUnit => true
+  | TOption t1, TOption t1' => type_eqb t1 t1'
+  | TList t1, TList t1' => type_eqb t1 t1'
+  | TRecord l, TRecord l' => list_beq (fun p p' => andb (String.eqb (fst p) (fst p'))
+                                                       (type_eqb (snd p) (snd p'))) l l'
+  | TDict dk kt vt, TDict dk' kt' vt' => andb (dict_kind_beq dk dk') (andb (type_eqb kt kt') (type_eqb vt vt'))
+  | TBag t, TBag t' => type_eqb t t'
+  | TSet t, TSet t' => type_eqb t t'
+  | _, _ => false
+  end.
+
+Lemma type_eqb_refl : forall t, type_eqb t t = true.
+Proof.
+  induction t using type_IH; auto; cbn.
+  1:{ induction H; try constructor.
+      cbn; rewrite eqb_refl. rewrite IHForall, H; auto. }
+  1:{ rewrite dict_kind_beq_refl, IHt1, IHt2; auto. }
+Qed.
+
+Lemma type_eqb_eq : forall t t', type_eqb t t' = true <-> t = t'.
+Proof.
+  split.
+  1:{ revert t t'.
+      induction t using type_IH; intros;
+        destruct t'; try discriminate; simpl in *; intuition idtac;
+      try (lazymatch goal with
+             IH: context[_ -> _], H: type_eqb _ _ = _ |- _ =>
+               apply IH in H end; congruence).
+      - generalize dependent l0. induction l; destruct l0; simpl in *; try discriminate; intuition idtac.
+        destruct (andb (fst a =? fst p)%string (type_eqb (snd a) (snd p))) eqn:E; simpl in *; try discriminate.
+        inversion H; subst. apply (IHl H4) in H0. injection H0; intros; subst.
+        destruct a, p; inversion H; simpl in *; subst. apply andb_prop in E as [EL ER].
+        rewrite eqb_eq in EL. apply H3 in ER. congruence.
+      - apply andb_prop in H as [HK H]. apply andb_prop in H as [HL HR].
+        apply dict_kind_beq_eq in HK.
+        apply IHt1 in HL; apply IHt2 in HR. congruence. }
+  1: intro; subst; apply type_eqb_refl.
+Qed.
 
 (* Abstract syntax tree *)
 
@@ -207,6 +250,104 @@ Section ExprIH.
       | ESort tag l => f_sort tag l (expr_IH l)
       end.
 End ExprIH.
+
+Definition type_eq_dec (t t' : type) : {t = t'} + {t <> t'}.
+Proof.
+  destruct (type_eqb t t') eqn:E.
+  1: left; apply type_eqb_eq; exact E.
+  1: right; intro H; apply type_eqb_eq in H; congruence.
+Defined.
+
+Definition opt_type_eq_dec (t t' : option type) : {t = t'} + {t <> t'}.
+Proof. decide equality; apply type_eq_dec. Defined.
+
+Definition opt_type_pair_eq_dec (t t' : option (type * type)) : {t = t'} + {t <> t'}.
+Proof. decide equality; decide equality; apply type_eq_dec. Defined.
+
+Definition dict_kind_eq_dec (d d' : dict_kind) : {d = d'} + {d <> d'}.
+Proof. decide equality. Defined.
+
+Definition atom_eq_dec (a a' : atom) : {a = a'} + {a <> a'}.
+Proof.
+  decide equality;
+    first [ apply Z.eq_dec | apply Bool.bool_dec | apply string_dec | apply opt_type_eq_dec
+          | apply opt_type_pair_eq_dec | apply dict_kind_eq_dec ].
+Defined.
+
+Definition unop_eq_dec (o o' : unop) : {o = o'} + {o <> o'}.
+Proof. decide equality. Defined.
+
+Definition binop_eq_dec (o o' : binop) : {o = o'} + {o <> o'}.
+Proof. decide equality. Defined.
+
+Definition ternop_eq_dec (o o' : ternop) : {o = o'} + {o <> o'}.
+Proof. decide equality. Defined.
+
+Definition tag_eq_dec (t t' : collection_tag) : {t = t'} + {t <> t'}.
+Proof. decide equality. Defined.
+
+Definition aggr_eq_dec (a a' : aggr) : {a = a'} + {a <> a'}.
+Proof. decide equality. Defined.
+
+Definition aci_aggr_eq_dec (a a' : aci_aggr) : {a = a'} + {a <> a'}.
+Proof. decide equality. Defined.
+
+Definition dec_to_bool {A} (d : forall x y : A, {x = y} + {x <> y}) (x y : A) : bool :=
+  if d x y then true else false.
+
+Lemma dec_to_bool_true : forall A d (x y : A), dec_to_bool d x y = true -> x = y.
+Proof. unfold dec_to_bool; intros; destruct (d x y); congruence. Qed.
+
+Local Open Scope bool_scope.
+
+Fixpoint expr_eqb (e e' : expr) {struct e} : bool :=
+  match e, e' with
+  | EVar x, EVar x' => String.eqb x x'
+  | ELoc x, ELoc x' => String.eqb x x'
+  | EAtom a, EAtom a' => dec_to_bool atom_eq_dec a a'
+  | EUnop o e1, EUnop o' e1' => dec_to_bool unop_eq_dec o o' && expr_eqb e1 e1'
+  | EBinop o e1 e2, EBinop o' e1' e2' =>
+      dec_to_bool binop_eq_dec o o' && expr_eqb e1 e1' && expr_eqb e2 e2'
+  | ETernop o e1 e2 e3, ETernop o' e1' e2' e3' =>
+      dec_to_bool ternop_eq_dec o o' && expr_eqb e1 e1' && expr_eqb e2 e2'
+      && expr_eqb e3 e3'
+  | EIf e1 e2 e3, EIf e1' e2' e3' => expr_eqb e1 e1' && expr_eqb e2 e2' && expr_eqb e3 e3'
+  | ELet e1 x e2, ELet e1' x' e2' => expr_eqb e1 e1' && String.eqb x x' && expr_eqb e2 e2'
+  | EFlatmap t e1 x e2, EFlatmap t' e1' x' e2' =>
+      dec_to_bool tag_eq_dec t t' && expr_eqb e1 e1' && String.eqb x x' && expr_eqb e2 e2'
+  | EFold e1 e2 x y e3, EFold e1' e2' x' y' e3' =>
+      expr_eqb e1 e1' && expr_eqb e2 e2' && String.eqb x x' && String.eqb y y'
+      && expr_eqb e3 e3'
+  | EACFold a e1, EACFold a' e1' => dec_to_bool aggr_eq_dec a a' && expr_eqb e1 e1'
+  | EACIFold a e1, EACIFold a' e1' => dec_to_bool aci_aggr_eq_dec a a' && expr_eqb e1 e1'
+  | ERecord l, ERecord l' =>
+      list_beq (fun p p' => String.eqb (fst p) (fst p') && expr_eqb (snd p) (snd p')) l l'
+  | EAccess r s, EAccess r' s' => expr_eqb r r' && String.eqb s s'
+  | EOptMatch e1 e2 x e3, EOptMatch e1' e2' x' e3' =>
+      expr_eqb e1 e1' && expr_eqb e2 e2' && String.eqb x x' && expr_eqb e3 e3'
+  | ESort t e1, ESort t' e1' => dec_to_bool tag_eq_dec t t' && expr_eqb e1 e1'
+  | _, _ => false
+  end.
+
+Lemma expr_eqb_true : forall e e', expr_eqb e e' = true -> e = e'.
+Proof.
+  induction e using expr_IH; destruct e'; cbn [expr_eqb]; intro Heq; try discriminate;
+    repeat lazymatch goal with
+      | E : (_ && _)%bool = true |- _ => apply andb_prop in E as [ ? ? ]
+      end;
+    repeat lazymatch goal with
+      | E : String.eqb _ _ = true |- _ => apply String.eqb_eq in E
+      | E : dec_to_bool _ _ _ = true |- _ => apply dec_to_bool_true in E
+      | IH : forall e', expr_eqb ?e e' = true -> ?e = e', E : expr_eqb ?e _ = true |- _ =>
+          apply IH in E
+      end;
+    subst; try reflexivity.
+  revert l0 Heq. induction H as [ | [ s e ] l He Hl IHl ];
+    intros [ | [ s' e' ] l0 ] E; cbn in E; try discriminate; auto.
+  apply andb_prop in E as [ E1 E2 ]. apply andb_prop in E1 as [ Es Ee ].
+  apply String.eqb_eq in Es. apply He in Ee. cbn in Es, Ee; subst.
+  apply IHl in E2. injection E2 as E2. subst. reflexivity.
+Qed.
 
 (* Commands *)
 Inductive command : Type :=

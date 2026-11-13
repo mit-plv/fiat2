@@ -26,11 +26,3 @@ Class ok (idx : index)
 
 Arguments IndexInterface.Build_ok idx idx_wf {tenv tenv_ok locals locals_ok}
   (idx_ty_wf to_idx_ty to_idx_wf)%function_scope.
-
-(* A claim that holds of some tables and not others -- a primary-key index's
-   dictionary mapping each key to a SINGLE row, say -- is therefore not stated
-   here.  It is a strictly stronger relation stated beside the index
-   (UniqueDictIndexImpl.idx_wf_unique), assembled where a rewrite needs it from
-   the unconditional relation the installation gives and the constraint the
-   program maintains (UniqueIndexInstall.idx_wf__idx_wf_unique).  A declaration
-   decides which questions an index can answer, not whether it may be built. *)

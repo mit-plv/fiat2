@@ -923,7 +923,7 @@ Section WithRule.
        and its contribution would be left behind in a bucket this rule
        never visits.
        ------------------------------------------------------------------ *)
-    Definition composite_keyed_delete_gated (ds : list decl)
+    Definition composite_keyed_delete_gated (ds : list constr)
       : string -> command -> command :=
       if declares_unique key ds
       then filter_neq_to_composite_keyed_delete_transf

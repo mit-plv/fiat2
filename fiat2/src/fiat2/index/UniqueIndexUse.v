@@ -1024,13 +1024,15 @@ Section WithIndexUse.
         declared_holds (locals := locals) row_ty ds v ->
         constr_holds (locals := locals) (unique_constr attr row_ty) v.
     Proof.
-      unfold declares_unique, declared_holds, constrs_hold, constrs_of_decls.
+      unfold declares_unique, declared_holds, constrs_hold.
       intros * H_ex H_all.
       apply existsb_exists in H_ex as [ d [ H_in H_d ] ].
-      destruct d; cbn [decl_is_unique] in H_d; try discriminate.
-      rewrite String.eqb_eq in H_d; subst.
-      rewrite Forall_forall in H_all. apply H_all.
-      apply in_map_iff. exists (DUnique attr); split; [ reflexivity | assumption ].
+      unfold decl_is_unique in H_d.
+      destruct (unique_key_of d) as [ a | ] eqn:E_d; try discriminate.
+      rewrite String.eqb_eq in H_d; subst a.
+      apply unique_key_of_sound in E_d as [ rt E_d ]; subst d.
+      rewrite Forall_forall in H_all.
+      eapply unique_constr_holds_row_ty_irrel; apply H_all; exact H_in.
     Qed.
 
     (* ------------------------------------------------------------------
@@ -1157,7 +1159,7 @@ Section WithIndexUse.
        What this buys is the whole point: the bridges are owed only where the
        gate fires, so an undeclared table owes nothing at all.
        ------------------------------------------------------------------ *)
-    Definition unique_lookup_gated (ds : list decl) : string -> command -> command :=
+    Definition unique_lookup_gated (ds : list constr) : string -> command -> command :=
       if declares_unique attr ds then unique_lookup_transf else fun _ => id.
 
     Lemma unique_lookup_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
@@ -1233,7 +1235,7 @@ Section WithIndexUse.
       apply unique_scan_head_sound; assumption.
     Qed.
 
-    Definition unique_scan_gated (ds : list decl) : string -> command -> command :=
+    Definition unique_scan_gated (ds : list constr) : string -> command -> command :=
       if declares_unique attr ds then unique_scan_transf else fun _ => id.
 
     Lemma unique_scan_gated_sound : forall ds is_tbl_ty' aux_ty aux_wf,
@@ -1411,7 +1413,7 @@ Section WithIndexUse.
           invert_type_wf; assumption. }
     Qed.
 
-    Definition decls_of (ce : cenv) (tbl : string) : list decl :=
+    Definition decls_of (ce : cenv) (tbl : string) : list constr :=
       match cenv_lookup tbl ce with
       | Some (_, ds) => ds
       | None => []
@@ -1473,7 +1475,7 @@ Section WithIndexUse.
       forall sc ce free_vars (Gstore Genv : tenv) tbl row_ty ds,
         tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
         incl (get_free_vars Genv) free_vars ->
-        Forall (decl_wf row_ty) ds ->
+        Forall (constr_wf row_ty) ds ->
         well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
         well_typed Gstore Genv
           (unique_idx_transf ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) Gstore Genv

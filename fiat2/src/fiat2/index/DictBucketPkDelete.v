@@ -462,7 +462,7 @@ Section WithRule.
       apply filter_neq_to_bucket_pk_delete_head_sound; exact H_br.
     Qed.
 
-    Definition bucket_pk_delete_gated (ds : list decl)
+    Definition bucket_pk_delete_gated (ds : list constr)
       : string -> command -> command :=
       if declares_unique key ds
       then filter_neq_to_bucket_pk_delete_transf

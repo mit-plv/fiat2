@@ -434,50 +434,6 @@ Section WithMap.
 End WithMap.
 
 (* Bidirectional type checking *)
-Fixpoint type_eqb (t t' : type) {struct t} : bool :=
-  match t, t' with
-  | TInt, TInt
-  | TBool, TBool
-  | TString, TString
-  | TUnit, TUnit => true
-  | TOption t1, TOption t1' => type_eqb t1 t1'
-  | TList t1, TList t1' => type_eqb t1 t1'
-  | TRecord l, TRecord l' => list_beq (fun p p' => andb (String.eqb (fst p) (fst p'))
-                                                       (type_eqb (snd p) (snd p'))) l l'
-  | TDict dk kt vt, TDict dk' kt' vt' => andb (dict_kind_beq dk dk') (andb (type_eqb kt kt') (type_eqb vt vt'))
-  | TBag t, TBag t' => type_eqb t t'
-  | TSet t, TSet t' => type_eqb t t'
-  | _, _ => false
-  end.
-
-Lemma type_eqb_refl : forall t, type_eqb t t = true.
-Proof.
-  induction t using type_IH; auto; cbn.
-  1:{ induction H; try constructor.
-      cbn; rewrite eqb_refl. rewrite IHForall, H; auto. }
-  1:{ rewrite dict_kind_beq_refl, IHt1, IHt2; auto. }
-Qed.
-
-Lemma type_eqb_eq : forall t t', type_eqb t t' = true <-> t = t'.
-Proof.
-  split.
-  1:{ revert t t'.
-      induction t using type_IH; intros;
-        destruct t'; try discriminate; simpl in *; intuition idtac;
-      try (lazymatch goal with
-             IH: context[_ -> _], H: type_eqb _ _ = _ |- _ =>
-               apply IH in H end; congruence).
-      - generalize dependent l0. induction l; destruct l0; simpl in *; try discriminate; intuition idtac.
-        destruct (andb (fst a =? fst p)%string (type_eqb (snd a) (snd p))) eqn:E; simpl in *; try discriminate.
-        inversion H; subst. apply (IHl H4) in H0. injection H0; intros; subst.
-        destruct a, p; inversion H; simpl in *; subst. apply andb_prop in E as [EL ER].
-        rewrite eqb_eq in EL. apply H3 in ER. congruence.
-      - apply andb_prop in H as [HK H]. apply andb_prop in H as [HL HR].
-        apply dict_kind_beq_eq in HK.
-        apply IHt1 in HL; apply IHt2 in HR. congruence. }
-  1: intro; subst; apply type_eqb_refl.
-Qed.
-
 Definition compare_types (expected : type) (t : type) {A : Type} (a : A): result A :=
   if type_eqb expected t then Success a else error:(a "has type" t "but expected" expected).
 

@@ -752,7 +752,7 @@ Section WithRule.
        stays shared its key with a row that leaves, deleting that key
        would take out the survivor's entry.
        ------------------------------------------------------------------ *)
-    Definition cbucket_delete_gated (ds : list decl)
+    Definition cbucket_delete_gated (ds : list constr)
       : string -> command -> command :=
       if declares_unique key ds
       then cfilter_neq_to_bucket_delete_transf

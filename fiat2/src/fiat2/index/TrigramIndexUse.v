@@ -4571,7 +4571,7 @@ Section WithIndexUse.
        a different reason: a lookup needs the key to resolve a bucket's keys
        to single rows, while maintenance needs it to know that the row it
        takes out of the buckets is the only one the filter removed. *)
-    Definition tri_delete_gated (ds : list decl) : string -> command -> command :=
+    Definition tri_delete_gated (ds : list constr) : string -> command -> command :=
       if declares_unique key ds
       then filter_neq_to_tri_delete_transf
       else fun _ => id.
@@ -4601,7 +4601,7 @@ Section WithIndexUse.
     (* The all-trigram rules.  A one-trigram pattern makes tri_cands_from's
        fold empty, so the candidate set IS a single bucket, and the k = 1
        case needs no rule of its own. *)
-    Definition trigram_lookup_gated (ds : list decl) : string -> command -> command :=
+    Definition trigram_lookup_gated (ds : list constr) : string -> command -> command :=
       if declares_unique key ds
       then fun tbl => Basics.compose (trigram_lookup_all_guarded_transf tbl)
                         (trigram_lookup_all_transf tbl)
@@ -4628,7 +4628,7 @@ Section WithIndexUse.
        threshold rule carries the side condition `cgram <> k`, and folding
        it into the existing bundle would add that hypothesis to
        trigram_lookup_gated_sound. *)
-    Definition thr_lookup_gated (ds : list decl) : string -> command -> command :=
+    Definition thr_lookup_gated (ds : list constr) : string -> command -> command :=
       if declares_unique key ds
       then thr_lookup_transf
       else fun _ => id.

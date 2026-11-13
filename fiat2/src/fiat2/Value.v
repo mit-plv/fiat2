@@ -72,7 +72,6 @@ Section WithWord.
     end.
 
   (* ===== Comparison ===== *)
-  Scheme Equality for list.
 
   Section __.
     Context {A} (A_compare : A -> A -> comparison).
@@ -631,5 +630,3 @@ Section WithWord.
     - apply Forall_map. assumption.
   Qed.
 End WithWord.
-
-Arguments list_beq {A}.

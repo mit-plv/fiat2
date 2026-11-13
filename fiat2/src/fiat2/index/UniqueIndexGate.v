@@ -19,9 +19,8 @@ Import ListNotations.
    that looked for it would answer differently depending on what ran before.
 
    The declarations are the pattern instead.  They sit in a cenv, beside the
-   program rather than inside it, so no rewrite can alter them; decl already
-   classifies them, so matching one is a constructor match and a string
-   compare, with no need to compare expressions.  The gate is then exactly as
+   program rather than inside it, so no rewrite can alter them, and matching
+   one is a comparison against the uniqueness pattern.  The gate is then exactly as
    local and as decidable as every other rewrite's pattern match, and it fires
    only on a table whose declarations name the key the index is built on.  The
    gate itself is UniqueIndexUse.unique_lookup_gated; this file supplies what
@@ -46,14 +45,13 @@ Section WithIndexVars.
 
   Notation uidx := (unique_dict_idx hole attr tup acc).
 
-  (* The pattern, matched on a declaration rather than on an expression. *)
-  Definition decl_is_unique (d : decl) : bool :=
-    match d with
-    | DUnique a => String.eqb a attr
-    | _ => false
+  Definition decl_is_unique (d : constr) : bool :=
+    match unique_key_of d with
+    | Some a => String.eqb a attr
+    | None => false
     end.
 
-  Definition declares_unique (ds : list decl) : bool := existsb decl_is_unique ds.
+  Definition declares_unique (ds : list constr) : bool := existsb decl_is_unique ds.
 
   Section WithMap.
     Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
@@ -69,8 +67,8 @@ Section WithIndexVars.
        cannot be weakened to one about a single conjunct.  The key is extracted
        instead where it is used, and there the value's type is at hand, which
        is what the extraction needs. *)
-    Definition declared_holds (row_ty : type) (ds : list decl) : value -> Prop :=
-      constrs_hold (locals:=locals) (constrs_of_decls row_ty ds).
+    Definition declared_holds (row_ty : type) (ds : list constr) : value -> Prop :=
+      constrs_hold (locals:=locals) ds.
 
     (* An annotated empty list has only the one type, which both the
        installation's precondition and the elaborated letmut's own typing
@@ -105,7 +103,7 @@ Section WithIndexVars.
         forall sc ce free_vars (Gstore Genv : tenv) tbl row_ty ds,
           tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
           incl (get_free_vars Genv) free_vars ->
-          Forall (decl_wf row_ty) ds ->
+          Forall (constr_wf row_ty) ds ->
           well_typed Gstore Genv (elab ce free_vars (SLetConstrained tbl row_ty ds sc)) ->
           cenv_respected ((tbl, (row_ty, ds)) :: cenv_rm tbl ce) Gstore Genv
             (elab ce free_vars (SLetConstrained tbl row_ty ds sc)).

@@ -4,6 +4,7 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith List Permutation.
 Import ListNotations.
+Local Open Scope bool_scope.
 
 (* Constraints and guards
 
@@ -25,35 +26,167 @@ Import ListNotations.
    own, the second is also where preservation lives, with constr_guard as the
    reference. *)
 
-(* A declared constraint, classified.
+(* A declaration is a constr.  The patterns below recognize the ones a
+   cheaper guard exists for: each extracts candidate parameters and accepts
+   only if rebuilding the pattern from them gives back the declaration. *)
+Definition constr_eqb (k k' : constr) : bool :=
+  String.eqb (c_row k) (c_row k') && expr_eqb (c_body k) (c_body k').
 
-   constr is a boolean expression over a row and the table.  A
-   declaration names its class, and constr_of_decl says what the class
-   means.  DCheck is the general case for expressiveness.
+Lemma constr_eqb_true : forall k k', constr_eqb k k' = true -> k = k'.
+Proof.
+  unfold constr_eqb; intros [ r b ] [ r' b' ] H; cbn in H.
+  apply andb_prop in H as [ H1 H2 ].
+  apply String.eqb_eq in H1; apply expr_eqb_true in H2; subst; reflexivity.
+Qed.
 
-   The classes are chosen by what some rewrite can exploit, not by what can be
-   written. *)
-Inductive decl : Type :=
-(* attr is a primary key: no two rows of the table agree on it *)
-| DUnique (attr : string)
-(* body holds of every row, and reads only the row it is given *)
-| DRow (row : string) (body : expr)
-(* row is the binder, body the predicate every row must satisfy *)
-| DCheck (row : string) (body : expr)
-(* attrs together form a primary key: no two rows of the table agree on all of them.
-   DUnique is its arity-one case up to the key being a one-field record. *)
-| DUniqueMany (attrs : list string).
-
-Definition constr_of_decl (row_ty : type) (d : decl) : constr :=
-  match d with
-  | DUnique attr => unique_constr attr row_ty
-  | DRow row body => mk_constr row body
-  | DCheck row body => mk_constr row body
-  | DUniqueMany attrs => unique_many_constr attrs row_ty
+Definition unique_attr_ok (row_ty : type) (attr : string) : bool :=
+  match row_ty with
+  | TRecord rt => match access_record rt attr with Success _ => true | _ => false end
+  | _ => false
   end.
 
-Definition constrs_of_decls (row_ty : type) (ds : list decl) : list constr :=
-  List.map (constr_of_decl row_ty) ds.
+Definition unique_candidate (b : expr) : option string :=
+  match b with
+  | EBinop OEq (EUnop OLength (EFlatmap _ _ _ (EIf (EBinop OEq (EAccess _ attr) _) _ _))) _ =>
+      Some attr
+  | _ => None
+  end.
+
+Definition as_unique (row_ty : type) (k : constr) : option string :=
+  match unique_candidate (c_body k) with
+  | Some attr =>
+      if constr_eqb k (unique_constr attr row_ty) && unique_attr_ok row_ty attr
+      then Some attr else None
+  | None => None
+  end.
+
+(* The same pattern where the row type is not known, read off the
+   pattern's own annotation instead. *)
+Definition unique_key_of (k : constr) : option string :=
+  match c_body k with
+  | EBinop OEq (EUnop OLength (EFlatmap _ _ _
+      (EIf (EBinop OEq (EAccess _ attr) _) (EBinop OCons _ (EAtom (ANil (Some rt)))) _))) _ =>
+      if constr_eqb k (unique_constr attr rt) then Some attr else None
+  | _ => None
+  end.
+
+Lemma unique_key_of_sound : forall k attr,
+    unique_key_of k = Some attr -> exists rt, k = unique_constr attr rt.
+Proof.
+  unfold unique_key_of; intros * H.
+  repeat lazymatch type of H with
+    | (match ?y with _ => _ end) = _ => destruct y eqn:?; try discriminate
+    end.
+  injection H as H; subst.
+  eexists; apply constr_eqb_true; eassumption.
+Qed.
+
+Fixpoint attrs_of_conj (e : expr) : list string :=
+  match e with
+  | EBinop OEq (EAccess _ a) _ => [a]
+  | EBinop OAnd (EBinop OEq (EAccess _ a) _) rest => a :: attrs_of_conj rest
+  | _ => []
+  end.
+
+Fixpoint nodupb (l : list string) : bool :=
+  match l with
+  | [] => true
+  | a :: l => negb (existsb (String.eqb a) l) && nodupb l
+  end.
+
+Lemma nodupb_NoDup : forall l, nodupb l = true -> NoDup l.
+Proof.
+  induction l as [ | a l IH ]; cbn; intro H; [ constructor | ].
+  apply andb_prop in H as [ H1 H2 ]. constructor; [ | auto ].
+  intro H_in. apply Bool.negb_true_iff in H1.
+  assert (existsb (String.eqb a) l = true)
+    by (apply existsb_exists; exists a; split; [ exact H_in | apply String.eqb_refl ]).
+  congruence.
+Qed.
+
+Definition unique_many_attrs_ok (row_ty : type) (al : list string) : bool :=
+  match row_ty with
+  | TRecord rt =>
+      nodupb al
+      && forallb (fun a => existsb (String.eqb a) (List.map fst rt)) al
+  | _ => false
+  end.
+
+Definition unique_many_candidate (b : expr) : option (list string) :=
+  match b with
+  | EBinop OEq (EUnop OLength (EFlatmap _ _ _ (EIf cond _ _))) _ =>
+      Some (attrs_of_conj cond)
+  | _ => None
+  end.
+
+Definition as_unique_many (row_ty : type) (k : constr) : option (list string) :=
+  match unique_many_candidate (c_body k) with
+  | Some al =>
+      if constr_eqb k (unique_many_constr al row_ty) && unique_many_attrs_ok row_ty al
+      then Some al else None
+  | None => None
+  end.
+
+Lemma as_unique_sound : forall row_ty k attr,
+    as_unique row_ty k = Some attr ->
+    k = unique_constr attr row_ty
+    /\ exists rt kt, row_ty = TRecord rt /\ access_record rt attr = Success kt.
+Proof.
+  unfold as_unique; intros * H.
+  destruct (unique_candidate (c_body k)) as [ a | ]; try discriminate.
+  destruct (constr_eqb k (unique_constr a row_ty) && unique_attr_ok row_ty a) eqn:E;
+    try discriminate.
+  injection H as H; subst.
+  apply andb_prop in E as [ E1 E2 ].
+  split; [ apply constr_eqb_true; exact E1 | ].
+  unfold unique_attr_ok in E2.
+  destruct row_ty; try discriminate.
+  destruct (access_record l attr) eqn:E3; try discriminate; eauto.
+Qed.
+
+Lemma as_unique_many_sound : forall row_ty k al,
+    as_unique_many row_ty k = Some al ->
+    k = unique_many_constr al row_ty
+    /\ exists rt, row_ty = TRecord rt /\ NoDup al
+                  /\ Forall (fun a => In a (List.map fst rt)) al.
+Proof.
+  unfold as_unique_many; intros * H.
+  destruct (unique_many_candidate (c_body k)) as [ al' | ]; try discriminate.
+  destruct (constr_eqb k (unique_many_constr al' row_ty)
+            && unique_many_attrs_ok row_ty al') eqn:E; try discriminate.
+  injection H as H; subst.
+  apply andb_prop in E as [ E1 E2 ].
+  split; [ apply constr_eqb_true; exact E1 | ].
+  unfold unique_many_attrs_ok in E2.
+  destruct row_ty; try discriminate.
+  apply andb_prop in E2 as [ E2 E3 ].
+  exists l; split; [ reflexivity | split; [ apply nodupb_NoDup; exact E2 | ] ].
+  apply Forall_forall; intros a H_in.
+  rewrite forallb_forall in E3. apply E3 in H_in.
+  apply existsb_exists in H_in as [ a' [ H_in E4 ] ].
+  apply String.eqb_eq in E4; subst; exact H_in.
+Qed.
+
+Definition reads_only_row (k : constr) : bool :=
+  negb (free_immut_in c_tbl (c_body k)) && negb (free_immut_in c_all (c_body k))
+  && negb (String.eqb (c_row k) c_tbl) && negb (String.eqb (c_row k) c_all).
+
+(* What the elaboration recognized a declaration as. *)
+Inductive cclass : Type :=
+| CUnique (attr : string)
+| CRow
+| CGeneral
+| CUniqueMany (attrs : list string).
+
+Definition classify (row_ty : type) (k : constr) : cclass :=
+  match as_unique row_ty k with
+  | Some attr => CUnique attr
+  | None =>
+      match as_unique_many row_ty k with
+      | Some al => CUniqueMany al
+      | None => if reads_only_row k then CRow else CGeneral
+      end
+  end.
 
 (* The write shapes a class-specific guard can recognize.  A primary key's
    cheap test is equivalent to the quantifier for a write that conses one
@@ -116,31 +249,31 @@ Definition classify_write (tbl : string) (e : expr) : write_shape :=
    per row; a recognized class on a recognized write gets the test that class
    is checked cheaply by.
 
-   A row-removing write needs no test at all, for either recognized class: a
-   row predicate and a key are both preserved when rows are dropped.  DCheck
-   does not get this, and must not: its body may read the table, so what it
-   says of a row can depend on which other rows are present. *)
+   A row-removing write needs no test at all for a key or a row predicate:
+   both are preserved when rows are dropped.  A general constraint does not
+   get this, and must not: its body may read the table, so what it says of a
+   row can depend on which other rows are present. *)
 Definition decl_guard (row_ty : type) (tbl : string) (free_vars : list string)
-  (d : decl) (e : expr) : expr :=
-  match d, classify_write tbl e with
+  (k : constr) (e : expr) : expr :=
+  match classify row_ty k, classify_write tbl e with
   (* the two row-adding shapes get the same test: see snoc_onto *)
-  | DUnique attr, WCons row | DUnique attr, WSnoc row =>
+  | CUnique attr, WCons row | CUnique attr, WSnoc row =>
       unique_guard_let tbl attr row
-  | DUniqueMany attrs, WCons row | DUniqueMany attrs, WSnoc row =>
+  | CUniqueMany attrs, WCons row | CUniqueMany attrs, WSnoc row =>
       unique_many_guard_let tbl attrs row
-  | DRow r b, WCons row | DRow r b, WSnoc row =>
-      row_guard (mk_constr r b) free_vars row
-  | DUnique _, WFilter _ _ | DUniqueMany _, WFilter _ _
-  | DRow _ _, WFilter _ _ => EAtom (ABool true)
-  | _, _ => constr_guard (constr_of_decl row_ty d) free_vars e
+  | CRow, WCons row | CRow, WSnoc row =>
+      row_guard k free_vars row
+  | CUnique _, WFilter _ _ | CUniqueMany _, WFilter _ _
+  | CRow, WFilter _ _ => EAtom (ABool true)
+  | _, _ => constr_guard k free_vars e
   end.
 
 Fixpoint decls_guard (row_ty : type) (tbl : string) (free_vars : list string)
-  (ds : list decl) (e : expr) : expr :=
-  match ds with
+  (ks : list constr) (e : expr) : expr :=
+  match ks with
   | nil => EAtom (ABool true)
-  | d :: ds => EBinop OAnd (decl_guard row_ty tbl free_vars d e)
-                 (decls_guard row_ty tbl free_vars ds e)
+  | k :: ks => EBinop OAnd (decl_guard row_ty tbl free_vars k e)
+                 (decls_guard row_ty tbl free_vars ks e)
   end.
 
 Lemma cons_onto_eq : forall tbl e row,
@@ -248,46 +381,47 @@ Section WithWord.
     1: right; constructor; [ left; auto | constructor ].
   Qed.
 
-  (* What a declaration has to satisfy to be declarable, stated per class.
-     The point of stating it per class rather than as constr_wf of its meaning
-     is that the facts a class-specific guard needs are then available
-     directly, instead of being recovered by inverting a typing derivation: a
-     primary key needs its attribute to be a field of the row type, which is
-     decidable and is checked where the declaration is written. *)
-  Definition decl_wf (row_ty : type) (d : decl) : Prop :=
-    match d with
-    | DUnique attr =>
-        exists rt kt, row_ty = TRecord rt /\ access_record rt attr = Success kt
-    | DRow row body => row <> c_all /\ row_constr_wf row_ty (mk_constr row body)
-    | DCheck row body => constr_wf row_ty (mk_constr row body)
-    (* NoDup is what makes the key identify its attributes, and membership is
-       what makes the conjunction typeable *)
-    | DUniqueMany attrs =>
-        exists rt, row_ty = TRecord rt
-                   /\ NoDup attrs
-                   /\ Forall (fun a => In a (List.map fst rt)) attrs
+  (* What a recognized class gives a guard to work with. *)
+  Definition class_wf (row_ty : type) (k : constr) (c : cclass) : Prop :=
+    match c with
+    | CUnique attr =>
+        k = unique_constr attr row_ty
+        /\ exists rt kt, row_ty = TRecord rt /\ access_record rt attr = Success kt
+    | CRow => c_row k <> c_all /\ row_constr_wf (tenv:=tenv) row_ty k
+    | CGeneral => constr_wf (tenv:=tenv) row_ty k
+    | CUniqueMany al =>
+        k = unique_many_constr al row_ty
+        /\ exists rt, row_ty = TRecord rt /\ NoDup al
+                      /\ Forall (fun a => In a (List.map fst rt)) al
     end.
 
-  Lemma decl_wf__constr_wf : forall row_ty d,
-      type_wf row_ty -> decl_wf row_ty d ->
-      constr_wf (tenv:=tenv) row_ty (constr_of_decl row_ty d).
+  Lemma reads_only_row_wf : forall row_ty k,
+      reads_only_row k = true -> constr_wf (tenv:=tenv) row_ty k ->
+      c_row k <> c_all /\ row_constr_wf (tenv:=tenv) row_ty k.
   Proof.
-    destruct d; cbn [constr_of_decl decl_wf]; intros H_wf H_d.
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
-        eapply unique_constr_wf; eauto. }
-    1:{ destruct H_d as [ H_ne H_row ].
-        apply row_constr_wf__constr_wf; assumption. }
-    1: assumption.
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
-        eapply unique_many_constr_wf; [ exact H_wf | exact HF ]. }
+    unfold reads_only_row, constr_wf, row_constr_wf, c_env, row_env; intros * H H_k.
+    repeat (apply andb_prop in H as [ H ? ]).
+    repeat lazymatch goal with
+      | E : negb _ = true |- _ => apply Bool.negb_true_iff in E
+      | E : String.eqb _ _ = false |- _ => apply String.eqb_neq in E
+      end.
+    split; [ assumption | ].
+    eapply not_free_immut_put_ty in H_k; [ | eassumption ].
+    rewrite Properties.map.put_put_diff in H_k by congruence.
+    eapply (not_free_immut_put_ty c_tbl); eassumption.
   Qed.
 
-  Lemma decls_wf__constrs_wf : forall row_ty ds,
-      type_wf row_ty -> Forall (decl_wf row_ty) ds ->
-      Forall (constr_wf (tenv:=tenv) row_ty) (constrs_of_decls row_ty ds).
+  Lemma classify_wf : forall row_ty k,
+      constr_wf (tenv:=tenv) row_ty k -> class_wf row_ty k (classify row_ty k).
   Proof.
-    unfold constrs_of_decls; induction ds; cbn [List.map]; intros H_wf H_ds; auto.
-    invert_Forall. constructor; auto using decl_wf__constr_wf.
+    unfold classify; intros * H.
+    destruct (as_unique row_ty k) as [ attr | ] eqn:E1.
+    1: apply as_unique_sound; exact E1.
+    destruct (as_unique_many row_ty k) as [ al | ] eqn:E2.
+    1: apply as_unique_many_sound; exact E2.
+    destruct (reads_only_row k) eqn:E3.
+    1: apply reads_only_row_wf; assumption.
+    exact H.
   Qed.
 
   Lemma type_of_snoc_inv : forall (Gstore Genv : tenv) row tbl ta t,
@@ -320,61 +454,62 @@ Section WithWord.
     assumption.
   Qed.
 
-  Lemma decl_guard_ty : forall row_ty d free_vars tbl u (Gstore Genv : tenv),
+  Lemma decl_guard_ty : forall row_ty k free_vars tbl u (Gstore Genv : tenv),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      decl_wf row_ty d ->
+      constr_wf row_ty k ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
-      type_of Gstore Genv (decl_guard row_ty tbl free_vars d u) TBool.
+      type_of Gstore Genv (decl_guard row_ty tbl free_vars k u) TBool.
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv.
     unfold decl_guard.
-    destruct d as [ attr | r b | r b | al ];
+    pose proof (classify_wf row_ty k H_d) as H_c;
+    destruct (classify row_ty k) as [ attr | | | al ];
       destruct (classify_write tbl u) as [ row | row | y q | ] eqn:E_sh;
       cbn beta iota.
     (* the free guard, and every fallback on the general one *)
     all: lazymatch goal with
          | |- type_of _ _ (EAtom (ABool true)) _ => repeat constructor
          | |- type_of _ _ (constr_guard _ _ _) _ =>
-             eapply constr_guard_ty; eauto using decl_wf__constr_wf
+             eapply constr_guard_ty; eauto
          | _ => idtac
          end.
     (* a primary key, written by a cons onto the table *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
         eapply unique_guard_let_ty with (kt := kt).
         1: exact H_Gs. 1: exact H_Ge. 1: exact H_wf. 1: exact H_attr.
         1: exact H_tbl.
         1: eapply type_of_cons_inv; exact H_u. }
     (* ... and by an append onto it *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
         eapply unique_guard_let_ty with (kt := kt).
         1: exact H_Gs. 1: exact H_Ge. 1: exact H_wf. 1: exact H_attr.
         1: exact H_tbl.
         1: eapply type_of_snoc_inv; exact H_u. }
     (* a row constraint tests the row being written *)
-    1:{ destruct H_d as [ H_ne H_row ].
+    1:{ destruct H_c as [ H_ne H_row ].
         apply classify_write_cons in E_sh; subst.
         eapply row_guard_ty with (row_ty := row_ty).
         1: exact H_Gs. 1: exact H_Ge. 1: exact H_wf. 1: exact H_row.
         1: eapply type_of_cons_inv; exact H_u.
         1: exact H_fv. }
-    1:{ destruct H_d as [ H_ne H_row ].
+    1:{ destruct H_c as [ H_ne H_row ].
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
         eapply row_guard_ty with (row_ty := row_ty).
         1: exact H_Gs. 1: exact H_Ge. 1: exact H_wf. 1: exact H_row.
         1: eapply type_of_snoc_inv; exact H_u.
         1: exact H_fv. }
     (* and the cheap guard for a composite key, same shape and same place *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
         eapply unique_many_guard_let_ty.
         1: exact H_Gs. 1: exact H_Ge. 1: exact H_wf. 1: exact HF.
         1: exact H_tbl.
         1: eapply type_of_cons_inv; exact H_u. }
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
         eapply unique_many_guard_let_ty.
         1: exact H_Gs. 1: exact H_Ge. 1: exact H_wf. 1: exact HF.
@@ -384,7 +519,7 @@ Section WithWord.
 
   Lemma decls_guard_ty : forall ds row_ty free_vars tbl u (Gstore Genv : tenv),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
@@ -490,21 +625,22 @@ Section WithWord.
   Qed.
 
   Lemma decl_guard_sound :
-    forall row_ty d free_vars tbl u (Gstore Genv : tenv) (store env : locals),
+    forall row_ty k free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      decl_wf row_ty d ->
+      constr_wf row_ty k ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       locals_wf Gstore store -> locals_wf Genv env ->
       (forall v, map.get store tbl = Some v ->
-                 constr_holds (constr_of_decl row_ty d) v) ->
-      interp_expr store env (decl_guard row_ty tbl free_vars d u) = VBool true ->
-      constr_holds (constr_of_decl row_ty d) (interp_expr store env u).
+                 constr_holds k v) ->
+      interp_expr store env (decl_guard row_ty tbl free_vars k u) = VBool true ->
+      constr_holds k (interp_expr store env u).
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv H_guard.
     unfold decl_guard in H_guard.
-    destruct d as [ attr | r b | r b | al ];
+    pose proof (classify_wf row_ty k H_d) as H_c;
+    destruct (classify row_ty k) as [ attr | | | al ];
       destruct (classify_write tbl u) as [ row | row | y q | ] eqn:E_sh;
       cbn beta iota in H_guard.
     (* every case that falls back on the general guard *)
@@ -512,21 +648,20 @@ Section WithWord.
          | interp_expr _ _ (constr_guard _ _ _) = _ =>
              eapply constr_guard_sound with (row_ty := row_ty) (free_vars := free_vars);
              [ exact H_Gs | exact H_Ge | exact H_wf
-             | apply decl_wf__constr_wf; assumption
+             | exact H_d
              | exact H_u | exact H_fv | exact H_store | exact H_env
              | exact H_guard ]
          | _ => idtac
          end.
     (* the cheap guard, for a key written by a cons onto the table *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
-        cbn [constr_of_decl].
         (* the table's rows, and the uniqueness the invariant gives of them *)
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_key attr) l)).
         { eapply (proj1 (unique_constr_holds_iff attr rt kt l H_wf H_attr H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         eapply unique_guard_let_establishes with (kt := kt) (l := l).
         1: exact H_Gs.
         1: exact H_Ge.
@@ -540,14 +675,13 @@ Section WithWord.
         1: exact H_nd.
         1: exact H_guard. }
     (* THE same key, written by an append. *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
-        cbn [constr_of_decl].
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_key attr) l)).
         { eapply (proj1 (unique_constr_holds_iff attr rt kt l H_wf H_attr H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         assert (H_row_ty : type_of Gstore Genv row (TRecord rt))
           by (eapply type_of_snoc_inv; exact H_u).
         assert (H_rv : type_of_value (interp_expr store env row) (TRecord rt))
@@ -573,8 +707,7 @@ Section WithWord.
         1: exact H_nd.
         1: exact H_guard. }
     (* no guard at all: a key survives a write that only removes rows *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
-        cbn [constr_of_decl] in H_inv |- *.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
@@ -584,12 +717,11 @@ Section WithWord.
           [ exact H_wf | exact H_attr | exact H_l | apply H_inv; exact E_tbl ]. }
     (* a row constraint: its guard is the declared guard, by
        row_split_guard_sound, so the declared guard passed too *)
-    1:{ destruct H_d as [ H_ne H_row ].
+    1:{ destruct H_c as [ H_ne H_row ].
         apply classify_write_cons in E_sh; subst.
-        cbn [constr_of_decl] in H_inv |- *.
         destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
-        assert (H_at : constr_holds (mk_constr r b) (get_local store tbl))
+        assert (H_at : constr_holds (k) (get_local store tbl))
           by (unfold get_local; rewrite E_tbl; apply H_inv; exact E_tbl).
         eapply constr_guard_sound with (row_ty := row_ty) (free_vars := free_vars);
           [ exact H_Gs | exact H_Ge | exact H_wf
@@ -604,12 +736,11 @@ Section WithWord.
           | exact H_tbl | eapply type_of_cons_inv; exact H_u | exact H_fv
           | exact H_store | exact H_env | exact H_at ]. }
     (* the row predicate, at the append.  Same guard, same bridge. *)
-    1:{ destruct H_d as [ H_ne H_row ].
+    1:{ destruct H_c as [ H_ne H_row ].
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
-        cbn [constr_of_decl] in H_inv |- *.
         destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
-        assert (H_at : constr_holds (mk_constr r b) (get_local store tbl))
+        assert (H_at : constr_holds (k) (get_local store tbl))
           by (unfold get_local; rewrite E_tbl; apply H_inv; exact E_tbl).
         assert (H_row_ty : type_of Gstore Genv row row_ty)
           by (eapply type_of_snoc_inv; exact H_u).
@@ -637,8 +768,7 @@ Section WithWord.
           | exact H_tbl | exact H_row_ty | exact H_fv
           | exact H_store | exact H_env | exact H_at ]. }
     (* no guard at all: a row predicate survives it too *)
-    1:{ destruct H_d as [ H_ne H_row ].
-        cbn [constr_of_decl] in H_inv |- *.
+    1:{ destruct H_c as [ H_ne H_row ].
         destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
@@ -648,14 +778,13 @@ Section WithWord.
           [ exact H_wf | exact H_ne | exact H_row | exact H_l
           | apply H_inv; exact E_tbl ]. }
     (* the cheap guard for a composite key written by a cons *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
-        cbn [constr_of_decl].
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_keys al) l)).
         { eapply (proj1 (unique_many_constr_holds_iff al rt l H_wf Hnd HF H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         eapply unique_many_guard_let_establishes with (l := l).
         1: exact H_Gs.
         1: exact H_Ge.
@@ -670,14 +799,13 @@ Section WithWord.
         1: exact H_nd.
         1: exact H_guard. }
     (* the composite key, at the append *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
-        cbn [constr_of_decl].
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_keys al) l)).
         { eapply (proj1 (unique_many_constr_holds_iff al rt l H_wf Hnd HF H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         assert (H_row_ty : type_of Gstore Genv row (TRecord rt))
           by (eapply type_of_snoc_inv; exact H_u).
         assert (H_rv : type_of_value (interp_expr store env row) (TRecord rt))
@@ -705,8 +833,7 @@ Section WithWord.
         1: exact H_nd.
         1: exact H_guard. }
     (* and no guard at all: a composite key survives a row-removing write *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
-        cbn [constr_of_decl] in H_inv |- *.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
@@ -721,15 +848,15 @@ Section WithWord.
   Lemma decls_guard_sound :
     forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       locals_wf Gstore store -> locals_wf Genv env ->
       (forall v, map.get store tbl = Some v ->
-                 Forall (fun d => constr_holds (constr_of_decl row_ty d) v) ds) ->
+                 Forall (fun d => constr_holds d v) ds) ->
       interp_expr store env (decls_guard row_ty tbl free_vars ds u) = VBool true ->
-      Forall (fun d => constr_holds (constr_of_decl row_ty d)
+      Forall (fun d => constr_holds d
                          (interp_expr store env u)) ds.
   Proof.
     induction ds as [ | d ds IH ]; cbn [decls_guard]; intros * H_Gs H_Ge H_wf H_ds
@@ -768,20 +895,19 @@ Section WithWord.
   Corollary decls_guard_sound_constrs :
     forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       locals_wf Gstore store -> locals_wf Genv env ->
       holds_for_all_entries
-        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+        (value_wf_with_globals (constrs_hold ds)
            (tbl :: nil)) store ->
       interp_expr store env (decls_guard row_ty tbl free_vars ds u) = VBool true ->
-      constrs_hold (constrs_of_decls row_ty ds) (interp_expr store env u).
+      constrs_hold ds (interp_expr store env u).
   Proof.
-    unfold constrs_hold, constrs_of_decls; intros * H_Gs H_Ge H_wf H_ds H_tbl H_u
+    unfold constrs_hold; intros * H_Gs H_Ge H_wf H_ds H_tbl H_u
       H_fv H_store H_env H_inv H_guard.
-    apply (proj2 (Forall_map _ _ _)).
     eapply decls_guard_sound with (row_ty := row_ty) (tbl := tbl)
                                   (free_vars := free_vars);
       [ exact H_Gs | exact H_Ge | exact H_wf | exact H_ds | exact H_tbl
@@ -793,8 +919,8 @@ Section WithWord.
         lazymatch goal with
           H: tbl <> tbl \/ _ |- _ => destruct H as [ H_ne | H_h ]; [ congruence | ]
         end.
-        unfold constrs_hold, constrs_of_decls in H_h.
-        exact (proj1 (Forall_map _ _ _) H_h). }
+        unfold constrs_hold in H_h.
+        exact H_h. }
   Qed.
 
   (* ---------------------------------------------------------------------
@@ -871,47 +997,47 @@ Section WithWord.
   Qed.
 
   Lemma decl_guard_agrees :
-    forall row_ty d free_vars tbl u (Gstore Genv : tenv) (store env : locals),
+    forall row_ty k free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      decl_wf row_ty d ->
+      constr_wf row_ty k ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       locals_wf Gstore store -> locals_wf Genv env ->
       (forall v, map.get store tbl = Some v ->
-                 constr_holds (constr_of_decl row_ty d) v) ->
-      interp_expr store env (decl_guard row_ty tbl free_vars d u)
+                 constr_holds k v) ->
+      interp_expr store env (decl_guard row_ty tbl free_vars k u)
       = interp_expr store env
-          (constr_guard (constr_of_decl row_ty d) free_vars u).
+          (constr_guard k free_vars u).
   Proof.
     intros * H_Gs H_Ge H_wf H_d H_tbl H_u H_fv H_store H_env H_inv.
     unfold decl_guard.
-    destruct d as [ attr | r b | r b | al ];
+    pose proof (classify_wf row_ty k H_d) as H_c;
+    destruct (classify row_ty k) as [ attr | | | al ];
       destruct (classify_write tbl u) as [ row | row | y q | ] eqn:E_sh;
       cbn beta iota.
     (* every case that emits the general guard already *)
     all: try reflexivity.
     (* a key written by a cons onto the table *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_key attr) l)).
         { eapply (proj1 (unique_constr_holds_iff attr rt kt l H_wf H_attr H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         eapply unique_guard_let_sound with (kt := kt) (l := l);
           [ exact H_Gs | exact H_Ge | exact H_wf | exact H_attr | exact H_tbl
           | eapply type_of_cons_inv; exact H_u | exact H_fv | exact H_store
           | exact H_env | exact E_tbl | exact H_nd ]. }
     (* THE same key at an append. *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
-        cbn [constr_of_decl].
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_key attr) l)).
         { eapply (proj1 (unique_constr_holds_iff attr rt kt l H_wf H_attr H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         assert (H_row_ty : type_of Gstore Genv row (TRecord rt))
           by (eapply type_of_snoc_inv; exact H_u).
         assert (H_rv : type_of_value (interp_expr store env row) (TRecord rt))
@@ -951,8 +1077,7 @@ Section WithWord.
                  | exact H_c ]. } }
     (* a key under a row-removing write: the general guard passes too, so
        dropping it changes nothing, not even which writes run their policy *)
-    1:{ destruct H_d as [ rt [ kt [ E_rt H_attr ] ] ]; subst.
-        cbn [constr_of_decl] in H_inv |- *.
+    1:{ destruct H_c as [ E_k [ rt [ kt [ E_rt H_attr ] ] ] ]; subst.
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
@@ -966,9 +1091,8 @@ Section WithWord.
         eapply unique_constr_holds_filter;
           [ exact H_wf | exact H_attr | exact H_l | apply H_inv; exact E_tbl ]. }
     (* a row constraint: this is exactly row_split_guard_sound *)
-    1:{ destruct H_d as [ H_ne H_row ].
+    1:{ destruct H_c as [ H_ne H_row ].
         apply classify_write_cons in E_sh; subst.
-        cbn [constr_of_decl] in H_inv |- *.
         destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         symmetry.
@@ -978,9 +1102,8 @@ Section WithWord.
           | exact H_store | exact H_env
           | unfold get_local; rewrite E_tbl; apply H_inv; exact E_tbl ]. }
     (* the row predicate at an append *)
-    1:{ destruct H_d as [ H_ne H_row ].
+    1:{ destruct H_c as [ H_ne H_row ].
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
-        cbn [constr_of_decl] in H_inv |- *.
         destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_row_ty : type_of Gstore Genv row row_ty)
@@ -999,7 +1122,7 @@ Section WithWord.
           by (eapply Forall_Permutation_iff;
               [ apply Permutation_cons_append | exact H_Fc ]).
         transitivity (interp_expr store env
-                        (constr_guard (mk_constr r b)
+                        (constr_guard (k)
                            free_vars (EBinop OCons row (ELoc tbl)))).
         1:{ symmetry.
             eapply row_split_guard_sound with (row_ty := row_ty);
@@ -1023,8 +1146,7 @@ Section WithWord.
                  | apply Permutation_sym, Permutation_cons_append
                  | exact H_c ]. } }
     (* a row constraint under a row-removing write *)
-    1:{ destruct H_d as [ H_ne H_row ].
-        cbn [constr_of_decl] in H_inv |- *.
+    1:{ destruct H_c as [ H_ne H_row ].
         destruct (locals_wf_list Gstore store tbl row_ty H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
@@ -1039,26 +1161,25 @@ Section WithWord.
           [ exact H_wf | exact H_ne | exact H_row | exact H_l
           | apply H_inv; exact E_tbl ]. }
     (* a composite key written by a cons onto the table *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         apply classify_write_cons in E_sh; subst.
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_keys al) l)).
         { eapply (proj1 (unique_many_constr_holds_iff al rt l H_wf Hnd HF H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         eapply unique_many_guard_let_sound with (l := l);
           [ exact H_Gs | exact H_Ge | exact H_wf | exact Hnd | exact HF
           | exact H_tbl | eapply type_of_cons_inv; exact H_u | exact H_fv
           | exact H_store | exact H_env | exact E_tbl | exact H_nd ]. }
     (* the composite key at an append *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         apply classify_write_snoc in E_sh; destruct E_sh as [ ta E_sh ]; subst.
-        cbn [constr_of_decl].
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         assert (H_nd : NoDup (List.map (row_keys al) l)).
         { eapply (proj1 (unique_many_constr_holds_iff al rt l H_wf Hnd HF H_l)).
-          cbn [constr_of_decl] in H_inv. apply H_inv; exact E_tbl. }
+          apply H_inv; exact E_tbl. }
         assert (H_row_ty : type_of Gstore Genv row (TRecord rt))
           by (eapply type_of_snoc_inv; exact H_u).
         assert (H_rv : type_of_value (interp_expr store env row) (TRecord rt))
@@ -1097,8 +1218,7 @@ Section WithWord.
                  | apply Permutation_sym, Permutation_cons_append
                  | exact H_c ]. } }
     (* and under a row-removing write, where the general guard passes too *)
-    1:{ destruct H_d as [ rt [ E_rt [ Hnd HF ] ] ]; subst.
-        cbn [constr_of_decl] in H_inv |- *.
+    1:{ destruct H_c as [ E_k [ rt [ E_rt [ Hnd HF ] ] ] ]; subst.
         destruct (locals_wf_list Gstore store tbl (TRecord rt) H_store H_tbl)
           as [ l [ E_tbl H_l ] ].
         destruct (classify_write_filter_interp tbl u y q store env l E_sh E_tbl)
@@ -1117,22 +1237,22 @@ Section WithWord.
   Lemma decls_guard_agrees :
     forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       locals_wf Gstore store -> locals_wf Genv env ->
       (forall v, map.get store tbl = Some v ->
-                 Forall (fun d => constr_holds (constr_of_decl row_ty d) v) ds) ->
+                 Forall (fun d => constr_holds d v) ds) ->
       interp_expr store env (decls_guard row_ty tbl free_vars ds u)
       = interp_expr store env
-          (conj_guards (constrs_of_decls row_ty ds) free_vars u).
+          (conj_guards ds free_vars u).
   Proof.
     induction ds as [ | d ds IH ]; intros * H_Gs H_Ge H_wf H_ds H_tbl H_u H_fv
       H_store H_env H_inv.
     1: reflexivity.
     invert_Forall.
-    cbn [decls_guard constrs_of_decls List.map conj_guards fold_right].
+    cbn [decls_guard conj_guards fold_right].
     rewrite !interp_EBinop.
     f_equal.
     1:{ eapply decl_guard_agrees with (row_ty := row_ty) (tbl := tbl)
@@ -1149,17 +1269,17 @@ Section WithWord.
   Corollary decls_guard_agrees_constrs :
     forall ds row_ty free_vars tbl u (Gstore Genv : tenv) (store env : locals),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       locals_wf Gstore store -> locals_wf Genv env ->
       holds_for_all_entries
-        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+        (value_wf_with_globals (constrs_hold ds)
            (tbl :: nil)) store ->
       interp_expr store env (decls_guard row_ty tbl free_vars ds u)
       = interp_expr store env
-          (conj_guards (constrs_of_decls row_ty ds) free_vars u).
+          (conj_guards ds free_vars u).
   Proof.
     intros * H_Gs H_Ge H_wf H_ds H_tbl H_u H_fv H_store H_env H_inv.
     eapply decls_guard_agrees with (row_ty := row_ty) (tbl := tbl)
@@ -1171,7 +1291,7 @@ Section WithWord.
     lazymatch goal with
       H: tbl <> tbl \/ _ |- _ => destruct H as [ H_ne | H_h ]; [ congruence | ]
     end.
-    unfold constrs_hold, constrs_of_decls in H_h.
-    exact (proj1 (Forall_map _ _ _) H_h).
+    unfold constrs_hold in H_h.
+    exact H_h.
   Qed.
 End WithWord.

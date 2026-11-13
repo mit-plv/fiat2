@@ -37,7 +37,7 @@ Inductive scommand : Type :=
 | SLetMut (e : expr) (x : string) (c : scommand)
 (* x is born empty, holds rows of row_ty, and every constraint in ks must hold
    of it for as long as it is in scope *)
-| SLetConstrained (x : string) (row_ty : type) (ds : list decl) (c : scommand)
+| SLetConstrained (x : string) (row_ty : type) (ds : list constr) (c : scommand)
 (* policy is what runs instead of the write when a constraint would break; it
    is dead syntax when x carries no constraint *)
 | SAssign (x : string) (e : expr) (policy : scommand)
@@ -47,9 +47,9 @@ Inductive scommand : Type :=
 (* Which constraints are in force on which variable.  Entries are added by a
    declaration and removed when the variable is shadowed, so a write is checked
    against exactly the constraints that are standing where it occurs. *)
-Definition cenv : Type := list (string * (type * list decl)).
+Definition cenv : Type := list (string * (type * list constr)).
 
-Fixpoint cenv_lookup (x : string) (ce : cenv) : option (type * list decl) :=
+Fixpoint cenv_lookup (x : string) (ce : cenv) : option (type * list constr) :=
   match ce with
   | nil => None
   | (y, ks) :: ce => if String.eqb y x then Some ks else cenv_lookup x ce
@@ -132,7 +132,7 @@ Section WithWord.
     match sc with
     | SLetMut _ _ sc' => declared_spine_wf sc'
     | SLetConstrained _ row_ty ds _ =>
-        type_wf row_ty /\ Forall (decl_wf row_ty) ds
+        type_wf row_ty /\ Forall (constr_wf row_ty) ds
     | _ => False
     end.
 
@@ -150,15 +150,15 @@ Section WithWord.
     forall row_ty ds free_vars tbl u policy (A : locals -> locals -> Prop)
            (Gstore Genv : tenv),
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       map.get Gstore tbl = Some (TList row_ty) ->
       type_of Gstore Genv u (TList row_ty) ->
       incl (get_free_vars Genv) free_vars ->
       parameterized_wf Gstore Genv
-        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+        (value_wf_with_globals (constrs_hold ds)
            (tbl :: nil)) A policy ->
       parameterized_wf Gstore Genv
-        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+        (value_wf_with_globals (constrs_hold ds)
            (tbl :: nil)) A
         (CIf (decls_guard row_ty tbl free_vars ds u) (CAssign tbl u) policy).
   Proof.
@@ -190,11 +190,11 @@ Section WithWord.
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
       incl (get_free_vars Genv) free_vars ->
       map.get Gstore tbl = Some (TList row_ty) ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       cenv_lookup tbl ce = Some (row_ty, ds) ->
       well_typed Gstore Genv (elab ce free_vars sc) ->
       parameterized_wf Gstore Genv
-        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+        (value_wf_with_globals (constrs_hold ds)
            (tbl :: nil)) A
         (elab ce free_vars sc).
   Proof.
@@ -278,11 +278,11 @@ Section WithWord.
       tenv_wf Gstore -> tenv_wf Genv -> type_wf row_ty ->
       incl (get_free_vars Genv) free_vars ->
       map.get Gstore tbl = Some (TList row_ty) ->
-      Forall (decl_wf row_ty) ds ->
+      Forall (constr_wf row_ty) ds ->
       well_typed Gstore Genv (elab ((tbl, (row_ty, ds)) :: nil) free_vars sc) ->
       locals_wf Gstore (map.put store tbl (VList nil)) -> locals_wf Genv env ->
       holds_for_all_entries
-        (value_wf_with_globals (constrs_hold (constrs_of_decls row_ty ds))
+        (value_wf_with_globals (constrs_hold ds)
            (tbl :: nil))
         (interp_command (map.put store tbl (VList nil)) env
            (elab ((tbl, (row_ty, ds)) :: nil) free_vars sc)).

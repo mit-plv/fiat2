@@ -1202,7 +1202,7 @@ Section WithRule.
        Without it another row could share the key, and its contribution
        would be left behind in a bucket this rule never visits.
        ------------------------------------------------------------------ *)
-    Definition keyed_delete_gated (ds : list decl) : string -> command -> command :=
+    Definition keyed_delete_gated (ds : list constr) : string -> command -> command :=
       if declares_unique key ds
       then filter_neq_to_keyed_delete_transf
       else fun _ => id.
