@@ -17,6 +17,12 @@ Ltac NoDup_map_record_sort :=
   | cbn; repeat constructor; intuition idtac;
     destruct_In; auto ].
 
+Ltac subst_type_annot :=
+  lazymatch goal with
+  | H : type_annot_ok (Some _) ?t |- _ =>
+      let H_eq := fresh in pose proof H as H_eq; cbn in H_eq; subst t
+  end.
+
 Section compo_idx.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Notation value := (value).
@@ -106,11 +112,7 @@ Section WithMap.
 
     Definition apply_below_letmut f (Gstore Genv : tenv) (c : command) :=
       match c with
-      | CLetMut e x ot c' =>
-          match synthesize_expr Gstore Genv e with
-          | Success (t, _) => CLetMut e x ot (f (map.put Gstore x t) Genv c')
-          | Failure _ => c
-          end
+      | CLetMut e x (Some t) c' => CLetMut e x (Some t) (f (map.put Gstore x t) Genv c')
       | _ => c
       end.
 
@@ -121,9 +123,7 @@ Section WithMap.
       unfold transf_sound; intros.
       destruct c; auto; cbn.
       repeat (case_match; auto).
-      apply typechecker_sound in E as H_ty; auto.
-      invert_well_typed.
-      eapply synthesizable_ty_unique in E as E'; eauto; subst.
+      invert_well_typed. subst_type_annot.
       intuition idtac.
       1:{ econstructor; eauto.
           apply H; auto.
@@ -140,26 +140,10 @@ Section WithMap.
             [ | | | eauto ]; assumption. }
     Qed.
 
-    (* ------------------------------------------------------------------
-       The premise-carrying companion of apply_below_letmut_sound.
-
-       A transformation that is sound only under a condition on the command it
-       is handed can still be pushed below a letmut: the condition is then
-       asked of the BODY, in the store the letmut extends.  The type the store
-       is extended with is the SYNTHESIZED one, exactly as apply_below_letmut
-       itself computes it -- not an arbitrary type_of derivation.  That
-       matters: synthesize_expr is a function, so this condition can be
-       carried across a rewrite of the initializer, whereas type_of is not
-       deterministic and a type_of premise could not be.
-       ------------------------------------------------------------------ *)
     Definition below_letmut_pre (P : tenv -> tenv -> command -> Prop)
       (Gstore Genv : tenv) (c : command) : Prop :=
       match c with
-      | CLetMut e x _ c' =>
-          match synthesize_expr Gstore Genv e with
-          | Success (t, _) => P (map.put Gstore x t) Genv c'
-          | Failure _ => True
-          end
+      | CLetMut e x (Some t) c' => P (map.put Gstore x t) Genv c'
       | _ => True
       end.
 
@@ -182,11 +166,8 @@ Section WithMap.
     Proof.
       intros P f H_f * H_Gs H_Ge H_wt H_pre.
       unfold apply_below_letmut, below_letmut_pre in *.
-      destruct c as [ | | | e x c' | | | ]; auto.
-      destruct (synthesize_expr Gstore Genv e) as [ [ t a ] | ] eqn:E; auto.
-      apply typechecker_sound in E as H_ty; auto.
-      invert_well_typed.
-      eapply synthesizable_ty_unique in E as E'; eauto; subst.
+      destruct c as [ | | | e x [ t | ] c' | | | ]; auto.
+      invert_well_typed. subst_type_annot.
       assert (H_Gs' : tenv_wf (map.put Gstore x t)).
       1:{ eapply tenv_wf_step, type_of__type_wf; [ | | | eauto ]; assumption. }
       specialize (H_f _ _ _ H_Gs' H_Ge ltac:(eassumption) H_pre) as [ H_wt' H_sem' ].
@@ -1109,12 +1090,10 @@ Section WithMap.
 
       Definition apply_idx_related_transfs (f : string -> command -> command) (Gstore Genv : tenv) (c : command) :=
         match c with
-        | CLetMut e x _ _ => match synthesize_expr Gstore Genv e with
-                           | Success (t, _) => if is_tbl_ty t
-                                               then apply_after_letmut f (transf_to_idx (get_free_vars Genv) c)
-                                                 else c
-                             | _ => c
-                             end
+        | CLetMut e x (Some t) _ =>
+            if is_tbl_ty t
+            then apply_after_letmut f (transf_to_idx (get_free_vars Genv) c)
+            else c
         | _ => c
         end.
 
@@ -1148,7 +1127,7 @@ Section WithMap.
       Proof.
         unfold apply_idx_related_transfs, transf_sound; intros.
         repeat (case_match; auto). invert_well_typed.
-        eapply synthesizable_ty_unique in E0 as H_syn_ty; eauto; subst.
+        subst_type_annot.
         assert (H_ty : well_typed (map.put Gstore x (aux_ty t)) Genv (transf_to_idx' x (get_free_vars Genv) c0)).
         { erewrite <- Properties.map.put_put_same.
           eapply transf_to_idx_preserve_ty'; try reflexivity; [ | eauto using incl_refl .. ].
@@ -1223,16 +1202,15 @@ Section WithMap.
       Definition idx_install_pre (Pv : value -> Prop)
         (Gstore Genv : tenv) (c : command) : Prop :=
         match c with
-        | CLetMut e tbl _ body =>
+        | CLetMut e tbl (Some t) body =>
             (* the variable is born satisfying the invariant *)
             (forall (store env : locals),
                 locals_wf Gstore store -> locals_wf Genv env ->
                 Pv (interp_expr store env e))
             (* and the body keeps it there *)
-            /\ (forall t, type_of Gstore Genv e t ->
-                      parameterized_wf (map.put Gstore tbl t) Genv
-                        (value_wf_with_globals Pv (tbl :: nil))
-                        (fun _ _ => True) body)
+            /\ parameterized_wf (map.put Gstore tbl t) Genv
+                 (value_wf_with_globals Pv (tbl :: nil))
+                 (fun _ _ => True) body
         | _ => True
         end.
 
@@ -1254,7 +1232,7 @@ Section WithMap.
         repeat (case_match; auto).
         cbn [idx_install_pre] in H_pre; destruct H_pre as [ H_init H_body ].
         invert_well_typed.
-        eapply synthesizable_ty_unique in E0 as H_syn_ty; eauto; subst.
+        subst_type_annot.
         assert (H_ty : well_typed (map.put Gstore x (aux_ty t)) Genv (transf_to_idx' x (get_free_vars Genv) c0)).
         { erewrite <- Properties.map.put_put_same.
           eapply transf_to_idx_preserve_ty'; try reflexivity; [ | eauto using incl_refl .. ].

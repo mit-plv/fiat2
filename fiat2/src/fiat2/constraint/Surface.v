@@ -136,16 +136,6 @@ Section WithWord.
     | _ => False
     end.
 
-  (* Every initializer above the declared table synthesizes.  This is
-     below_letmut_pre_syn's requirement, stated on the SURFACE program. *)
-  Fixpoint spine_synthesizes (Gstore Genv : tenv) (sc : scommand) : Prop :=
-    match sc with
-    | SLetMut e x sc' =>
-        exists t a, synthesize_expr Gstore Genv e = Success (t, a)
-                    /\ spine_synthesizes (map.put Gstore x t) Genv sc'
-    | _ => True
-    end.
-
   Lemma checked_assign_wf_decls :
     forall row_ty ds free_vars tbl u policy (A : locals -> locals -> Prop)
            (Gstore Genv : tenv),
