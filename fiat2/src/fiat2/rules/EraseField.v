@@ -66,7 +66,8 @@ Section WithField.
     | _ => e
     end.
 
-  (* Only an assignment to tbl changes, and this pass rewrites no reads. *)
+  (* Only an assignment to tbl changes, and this pass rewrites no reads.
+     Invariants are dropped: this pass runs after every rewrite that uses them. *)
   Fixpoint erase_body (c : command) : command :=
     match c with
     | CSkip => CSkip
@@ -75,7 +76,8 @@ Section WithField.
     (* stop where the table's name is shadowed: the inner binding is a
        different variable and still has the field *)
     | CLetMut e x ot invs c =>
-        CLetMut e x ot invs (if String.eqb x tbl then c else erase_body c)
+        CLetMut e x ot (if String.eqb x tbl then invs else nil)
+          (if String.eqb x tbl then c else erase_body c)
     | CAssign x e =>
         CAssign x (if String.eqb x tbl then erase_record_field e else e)
     | CIf e c1 c2 => CIf e (erase_body c1) (erase_body c2)
@@ -239,7 +241,7 @@ Definition erase_dead_field (f : string) {tenv : map.map string type}
       let c0' := erase_body tbl f c0 in
       if (erasable_record e && writes_erasable tbl c0
           && command_reads_no_field tbl f c0')%bool
-      then CLetMut (erase_record_field f e) tbl (option_map (erase_record_type f) ot) invs c0'
+      then CLetMut (erase_record_field f e) tbl (option_map (erase_record_type f) ot) nil c0'
       else c
   | _ => c
   end.
@@ -795,7 +797,7 @@ Section WithMap.
         destruct H_rd as [ [ H_ne R1 ] R2 ].
         apply Bool.negb_true_iff, String.eqb_neq in H_ne.
         rewrite (proj2 (String.eqb_neq _ _) H_ne) in R2, H_we |- *.
-        econstructor; [ apply erase_preserve_ty_expr; eassumption | eassumption | ].
+        econstructor; [ apply erase_preserve_ty_expr; eassumption | eassumption | | constructor ].
         rewrite (Properties.map.put_comm tbl x
                    (TRecord (rm_field f tl)) t Gstore (not_eq_sym H_ne)).
         apply IHc; [ | exact R2 | exact H_we ].
@@ -889,7 +891,8 @@ Section WithMap.
         1: apply erase_record_ty_init; eassumption.
         1: change (TRecord (rm_field f tl)) with (erase_record_type f (TRecord tl));
            apply type_annot_ok_map; assumption.
-        1: apply erase_preserve_ty_cmd; assumption. }
+        1: apply erase_preserve_ty_cmd; assumption.
+        1: constructor. }
     (* and semantics *)
     1:{ intros store env H_store H_env.
         rewrite <- (erase_record_field_ERecord f l E_init).

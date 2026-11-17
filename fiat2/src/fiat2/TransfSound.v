@@ -105,6 +105,7 @@ Section WithMap.
     type_of Gstore Genv e t ->
     type_annot_ok ot t ->
     parameterized_wf (map.put Gstore x t) Genv (rm_from_pred P x) (fun _ _ => True) c ->
+    Forall (inv_wf (map.put Gstore x t)) invs ->
     parameterized_wf Gstore Genv P A (CLetMut e x ot invs c)
   | PWCAssign A x t e :
     (forall store env, A store env ->

@@ -323,7 +323,8 @@ Section WithMap.
     1:{ econstructor.
         1: apply fold_expr_preserve_ty; eauto.
         1: eassumption.
-        eapply IHc; eauto with fiat2_hints. }
+        1: eapply IHc; eauto with fiat2_hints.
+        1: eassumption. }
     (* CAssign: the written value is unchanged, so the original obligation
        discharges the new one *)
     1:{ econstructor.
@@ -569,6 +570,7 @@ Section WithGlobals.
       1:{ econstructor.
           1: apply fold_expr_preserve_ty; eauto.
           1: eassumption.
+          2: eassumption.
           case_match; auto. rewrite inb_false_iff in *.
           eapply parameterized_wf_Proper.
           3: apply rm_not_in_globals.
@@ -590,6 +592,7 @@ Section fold_command_with_global.
   Context (tbl : string).
   Context (f : list string -> command -> command).
   Context (g : expr -> expr).
+  Context (h : invariant -> invariant).
   Fixpoint fold_command_with_global (free_vars : list string) (c : command) : command :=
     f free_vars
       match c with
@@ -598,7 +601,8 @@ Section fold_command_with_global.
       | CLet e x c => CLet (fold_expr g e) x (fold_command_with_global (x :: free_vars) c)
       | CLetMut e x ot invs c =>
           (* Avoid applying the transformation if the global variable is shadowed *)
-          CLetMut (fold_expr g e) x ot invs
+          CLetMut (fold_expr g e) x ot
+            (if String.eqb x tbl then invs else List.map h invs)
             (if String.eqb x tbl then c else fold_command_with_global free_vars c)
       | CAssign x e => CAssign x (fold_expr g e)
       | CIf e c1 c2 =>

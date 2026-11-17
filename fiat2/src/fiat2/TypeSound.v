@@ -1831,6 +1831,44 @@ Section WithWord.
         repeat apply_type_sound_IH. constructor. rewrite Forall_forall; intros. apply_Forall_In.
     Qed.
 
+    Lemma type_at_wf : forall p t t',
+        type_wf t -> type_at t p = Some t' -> type_wf t'.
+    Proof.
+      induction p; cbn; intros t t' H_wf H.
+      1: congruence.
+      destruct t; try discriminate.
+      destruct (access_record l a) eqn:E; try discriminate.
+      inversion H_wf; subst.
+      eapply IHp; [ | eassumption ].
+      eapply Forall_access_record; eassumption.
+    Qed.
+
+    Lemma typecheck_inv_sound : forall Gstore i u,
+        tenv_wf Gstore -> typecheck_inv Gstore i = Success u -> inv_wf Gstore i.
+    Proof.
+      unfold typecheck_inv; intros * H_Gs H.
+      destruct i; try discriminate.
+      destruct (map.get Gstore tbl) as [ t | ] eqn:E_t; try discriminate.
+      destruct (type_at t path) as [ [] | ] eqn:E_p; try discriminate.
+      destruct (analyze_expr _ _ _ _) eqn:E_c; try discriminate.
+      assert (H_row : type_wf t0).
+      1:{ apply H_Gs in E_t. eapply type_at_wf in E_p; [ | eassumption ].
+          inversion E_p; assumption. }
+      econstructor; [ eassumption | eassumption | ].
+      eapply typechecker_sound; [ | | eassumption | constructor ]; auto.
+      apply tenv_wf_step; auto.
+      unfold tenv_wf; intros. rewrite map.get_empty in *; discriminate.
+    Qed.
+
+    Lemma typecheck_invs_sound : forall Gstore invs u,
+        tenv_wf Gstore -> typecheck_invs Gstore invs = Success u ->
+        Forall (inv_wf Gstore) invs.
+    Proof.
+      induction invs; cbn; intros u H_Gs H; auto.
+      destruct (typecheck_inv Gstore a) eqn:E; try discriminate.
+      constructor; eauto using typecheck_inv_sound.
+    Qed.
+
     Ltac apply_cmd_tc_sound_IH :=
       lazymatch goal with
       | IH: context[well_typed _ _ ?c] |- well_typed _ _ ?c =>
@@ -1850,17 +1888,21 @@ Section WithWord.
                let H_wf := fresh "H_wf" in
                apply typechecker_sound in H; auto;
                apply type_of__type_wf in H as H_wf; auto
-           end;
-      econstructor; eauto; try exact I; apply_cmd_tc_sound_IH; apply tenv_wf_step;
-      try invert_type_wf; auto.
+           end.
+      1,3: econstructor; [ eassumption | ];
+      apply_cmd_tc_sound_IH; apply tenv_wf_step; try invert_type_wf; auto.
+      - econstructor; [ eassumption | exact I | | ].
+        1: apply_cmd_tc_sound_IH; apply tenv_wf_step; auto.
+        1: eapply typecheck_invs_sound; [ apply tenv_wf_step; auto | eassumption ].
       - lazymatch goal with
         | H : type_wf_comp _ = true |- _ => apply type_wf_comp_sound in H
         end.
         lazymatch goal with
         | H : Success (_, _) = Success (_, _) |- _ => injection H as ? ?; subst
         end.
-        econstructor; [ eapply typechecker_sound; eauto | exact eq_refl | ].
-        apply_cmd_tc_sound_IH; apply tenv_wf_step; auto.
+        econstructor; [ eapply typechecker_sound; eauto | exact eq_refl | | ].
+        1: apply_cmd_tc_sound_IH; apply tenv_wf_step; auto.
+        1: eapply typecheck_invs_sound; [ apply tenv_wf_step; auto | eassumption ].
       - econstructor; eauto. eapply typechecker_sound; eauto.
       - constructor; try apply_cmd_tc_sound_IH.
         eapply typechecker_sound; eauto. constructor.

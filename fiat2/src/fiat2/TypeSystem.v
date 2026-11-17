@@ -343,6 +343,7 @@ Section WithMap.
   | WTCLetMut e t x ot invs c : type_of Gstore Genv e t ->
                            type_annot_ok ot t ->
                            well_typed (map.put Gstore x t) Genv c ->
+                           Forall (inv_wf (map.put Gstore x t)) invs ->
                            well_typed Gstore Genv (CLetMut e x ot invs c)
   | WTCAssign x t e : map.get Gstore x = Some t ->
                     type_of Gstore Genv e t ->
@@ -1217,6 +1218,26 @@ Section WithMap.
              end
          end.
 
+  Definition typecheck_inv (Gstore : tenv) (i : invariant) : result unit :=
+    match i with
+    | ConstraintInv tbl path row cond =>
+        match map.get Gstore tbl with
+        | Some t => match type_at t path with
+                    | Some (TList row_ty) =>
+                        analyze_expr Gstore (map.put map.empty row row_ty) TBool cond ;; Success tt
+                    | _ => error:("The constrained path of" tbl "is not a list")
+                    end
+        | None => error:(tbl "not found in the mutable variable type environment")
+        end
+    | IndexInv _ _ _ _ _ => error:("Index invariants are not expected in source programs")
+    end.
+
+  Fixpoint typecheck_invs (Gstore : tenv) (invs : list invariant) : result unit :=
+    match invs with
+    | nil => Success tt
+    | i :: invs => typecheck_inv Gstore i ;; typecheck_invs Gstore invs
+    end.
+
   Fixpoint typecheck (Gstore Genv : tenv) (c : command) : result command :=
     match c with
     | CSkip => Success CSkip
@@ -1233,6 +1254,7 @@ Section WithMap.
                                                   else error:("Malformed type" t)
                                       | None => synthesize_expr Gstore Genv e
                                       end ;;
+                    typecheck_invs (map.put Gstore x t) invs ;;
                     c' <- typecheck (map.put Gstore x t) Genv c ;;
                     Success (CLetMut e' x (Some t) invs c')
     | CAssign x e => match map.get Gstore x with
