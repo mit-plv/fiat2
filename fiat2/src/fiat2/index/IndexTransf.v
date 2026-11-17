@@ -112,7 +112,7 @@ Section WithMap.
 
     Definition apply_below_letmut f (Gstore Genv : tenv) (c : command) :=
       match c with
-      | CLetMut e x (Some t) c' => CLetMut e x (Some t) (f (map.put Gstore x t) Genv c')
+      | CLetMut e x (Some t) invs c' => CLetMut e x (Some t) invs (f (map.put Gstore x t) Genv c')
       | _ => c
       end.
 
@@ -143,7 +143,7 @@ Section WithMap.
     Definition below_letmut_pre (P : tenv -> tenv -> command -> Prop)
       (Gstore Genv : tenv) (c : command) : Prop :=
       match c with
-      | CLetMut e x (Some t) c' => P (map.put Gstore x t) Genv c'
+      | CLetMut e x (Some t) _ c' => P (map.put Gstore x t) Genv c'
       | _ => True
       end.
 
@@ -166,7 +166,7 @@ Section WithMap.
     Proof.
       intros P f H_f * H_Gs H_Ge H_wt H_pre.
       unfold apply_below_letmut, below_letmut_pre in *.
-      destruct c as [ | | | e x [ t | ] c' | | | ]; auto.
+      destruct c as [ | | | e x [ t | ] invs c' | | | ]; auto.
       invert_well_typed. subst_type_annot.
       assert (H_Gs' : tenv_wf (map.put Gstore x t)).
       1:{ eapply tenv_wf_step, type_of__type_wf; [ | | | eauto ]; assumption. }
@@ -1021,21 +1021,21 @@ Section WithMap.
 
       Definition transf_to_idx (free_vars : list string) (c : command) : command :=
         match c with
-        | CLetMut e tbl ot c =>
+        | CLetMut e tbl ot invs c =>
             CLetMut (ERecord [(id_tag, e); (aux_tag, substitute ((hole, e) :: nil) free_vars to_idx)]) tbl
-              (option_map aux_ty ot)
+              (option_map aux_ty ot) invs
               (transf_to_idx' tbl free_vars c)
         | _ => c
         end.
 
-      Lemma transf_to_idx_preserve_ty : forall tbl tbl_ty e ot c free_vars Gstore Genv,
+      Lemma transf_to_idx_preserve_ty : forall tbl tbl_ty e ot invs c free_vars Gstore Genv,
           tenv_wf Gstore -> tenv_wf Genv ->
           type_of Gstore Genv e tbl_ty ->
           type_annot_ok ot tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
           is_tbl_ty tbl_ty = true ->
           incl (get_free_vars Genv) free_vars ->
-          well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl ot c)).
+          well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl ot invs c)).
       Proof.
         simpl; intros. subst. econstructor.
         1:{ econstructor.
@@ -1058,7 +1058,7 @@ Section WithMap.
             rewrite_map_get_put_goal; auto. }
       Qed.
 
-      Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e ot c (Gstore Genv : tenv) free_vars,
+      Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e ot invs c (Gstore Genv : tenv) free_vars,
           is_tbl_ty tbl_ty = true ->
           type_of Gstore Genv e tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
@@ -1066,7 +1066,7 @@ Section WithMap.
           tenv_wf Gstore -> tenv_wf Genv ->
           forall (store env : locals),
             locals_wf Gstore store -> locals_wf Genv env ->
-            interp_command store env (transf_to_idx free_vars (CLetMut e tbl ot c)) = interp_command store env (CLetMut e tbl ot c).
+            interp_command store env (transf_to_idx free_vars (CLetMut e tbl ot invs c)) = interp_command store env (CLetMut e tbl ot invs c).
       Proof.
         simpl; intros.
         apply stores_eq_except__update_eq. symmetry.
@@ -1084,13 +1084,13 @@ Section WithMap.
 
       Definition apply_after_letmut f (c : command) :=
         match c with
-        | CLetMut e x ot c => CLetMut e x ot (f x c)
+        | CLetMut e x ot invs c => CLetMut e x ot invs (f x c)
         | _ => c
         end.
 
       Definition apply_idx_related_transfs (f : string -> command -> command) (Gstore Genv : tenv) (c : command) :=
         match c with
-        | CLetMut e x (Some t) _ =>
+        | CLetMut e x (Some t) _ _ =>
             if is_tbl_ty t
             then apply_after_letmut f (transf_to_idx (get_free_vars Genv) c)
             else c
@@ -1202,7 +1202,7 @@ Section WithMap.
       Definition idx_install_pre (Pv : value -> Prop)
         (Gstore Genv : tenv) (c : command) : Prop :=
         match c with
-        | CLetMut e tbl (Some t) body =>
+        | CLetMut e tbl (Some t) _ body =>
             (* the variable is born satisfying the invariant *)
             (forall (store env : locals),
                 locals_wf Gstore store -> locals_wf Genv env ->

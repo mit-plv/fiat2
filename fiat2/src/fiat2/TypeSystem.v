@@ -315,10 +315,10 @@ Section WithMap.
   | WTCLet e t x c : type_of Gstore Genv e t ->
                      well_typed Gstore (map.put Genv x t) c ->
                      well_typed Gstore Genv (CLet e x c)
-  | WTCLetMut e t x ot c : type_of Gstore Genv e t ->
+  | WTCLetMut e t x ot invs c : type_of Gstore Genv e t ->
                            type_annot_ok ot t ->
                            well_typed (map.put Gstore x t) Genv c ->
-                           well_typed Gstore Genv (CLetMut e x ot c)
+                           well_typed Gstore Genv (CLetMut e x ot invs c)
   | WTCAssign x t e : map.get Gstore x = Some t ->
                     type_of Gstore Genv e t ->
                     well_typed Gstore Genv (CAssign x e)
@@ -1201,7 +1201,7 @@ Section WithMap.
     | CLet e x c => '(t, e') <- synthesize_expr Gstore Genv e ;;
                     c' <- typecheck Gstore (map.put Genv x t) c ;;
                     Success (CLet e' x c')
-    | CLetMut e x ot c => '(t, e') <- match ot with
+    | CLetMut e x ot invs c => '(t, e') <- match ot with
                                       | Some t => if type_wf_comp t
                                                   then e' <- analyze_expr Gstore Genv t e ;;
                                                        Success (t, e')
@@ -1209,7 +1209,7 @@ Section WithMap.
                                       | None => synthesize_expr Gstore Genv e
                                       end ;;
                     c' <- typecheck (map.put Gstore x t) Genv c ;;
-                    Success (CLetMut e' x (Some t) c')
+                    Success (CLetMut e' x (Some t) invs c')
     | CAssign x e => match map.get Gstore x with
                      | Some t => e' <- analyze_expr Gstore Genv t e ;;
                                  Success (CAssign x e')

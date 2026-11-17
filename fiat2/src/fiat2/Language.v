@@ -358,7 +358,7 @@ Inductive command : Type :=
 | CSkip
 | CSeq (c1 c2 : command)
 | CLet (e : expr) (x : string) (c : command)
-| CLetMut (e : expr) (x : string) (ot : option type) (c : command)
+| CLetMut (e : expr) (x : string) (ot : option type) (invs: list invariant) (c : command)
 | CAssign(x : string) (e : expr)
 | CIf (e : expr) (c1 c2 : command)
 | CForeach (e : expr) (x : string) (c : command).

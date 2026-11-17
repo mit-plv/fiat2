@@ -209,7 +209,7 @@ Section fold_command.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
       | CLet e x c => CLet (fold_expr g e) x (fold_command c)
-      | CLetMut e x ot c => CLetMut (fold_expr g e) x ot (fold_command c)
+      | CLetMut e x ot invs c => CLetMut (fold_expr g e) x ot invs (fold_command c)
       | CAssign x e => CAssign x (fold_expr g e)
       | CIf e c1 c2 => CIf (fold_expr g e) (fold_command c1) (fold_command c2)
       | CForeach e x c => CForeach (fold_expr g e) x (fold_command c)
@@ -401,9 +401,9 @@ Section WithGlobals.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command_with_globals c1) (fold_command_with_globals c2)
       | CLet e x c => CLet (fold_expr f e) x (fold_command_with_globals c)
-      | CLetMut e x ot c =>
+      | CLetMut e x ot invs c =>
           (* Avoid applying the transformation if the global variable is shadowed *)
-          CLetMut (fold_expr f e) x ot
+          CLetMut (fold_expr f e) x ot invs
             (if inb String.eqb x globals then c else fold_command_with_globals c)
       | CAssign x e => CAssign x (fold_expr f e)
       | CIf e c1 c2 =>
@@ -596,9 +596,9 @@ Section fold_command_with_global.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command_with_global free_vars c1) (fold_command_with_global free_vars c2)
       | CLet e x c => CLet (fold_expr g e) x (fold_command_with_global (x :: free_vars) c)
-      | CLetMut e x ot c =>
+      | CLetMut e x ot invs c =>
           (* Avoid applying the transformation if the global variable is shadowed *)
-          CLetMut (fold_expr g e) x ot
+          CLetMut (fold_expr g e) x ot invs
             (if String.eqb x tbl then c else fold_command_with_global free_vars c)
       | CAssign x e => CAssign x (fold_expr g e)
       | CIf e c1 c2 =>
