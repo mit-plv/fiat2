@@ -324,7 +324,7 @@ Section WithMap.
         1: apply fold_expr_preserve_ty; eauto.
         1: eassumption.
         1: eapply IHc; eauto with fiat2_hints.
-        1: eassumption. }
+        all: eassumption. }
     (* CAssign: the written value is unchanged, so the original obligation
        discharges the new one *)
     1:{ econstructor.
@@ -570,7 +570,7 @@ Section WithGlobals.
       1:{ econstructor.
           1: apply fold_expr_preserve_ty; eauto.
           1: eassumption.
-          2: eassumption.
+          2,3: eassumption.
           case_match; auto. rewrite inb_false_iff in *.
           eapply parameterized_wf_Proper.
           3: apply rm_not_in_globals.

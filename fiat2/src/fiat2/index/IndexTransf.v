@@ -352,6 +352,13 @@ Section WithMap.
             econstructor; [ rewrite map.get_put_diff by congruence; eassumption | eassumption .. ].
       Qed.
 
+      Lemma get_put_other_None : forall (G : tenv) x y t t',
+          map.get G x = None -> map.get G y = Some t' ->
+          map.get (map.put G y t) x = None.
+      Proof.
+        intros. rewrite map.get_put_diff; congruence.
+      Qed.
+
       Lemma transf_invs_wf_below : forall tbl_ty Gstore x t invs,
           tenv_wf (map.put Gstore x t) ->
           map.get Gstore tbl = Some tbl_ty ->
@@ -397,7 +404,8 @@ Section WithMap.
                 | rewrite Properties.map.put_put_diff in *; auto;
                   use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints ].
                 rewrite_map_get_put_goal. }
-            1: eapply transf_invs_wf_below; eauto with fiat2_hints. }
+            1: eapply transf_invs_wf_below; eauto with fiat2_hints.
+            1: eapply get_put_other_None; eassumption. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ econstructor; [ rewrite_map_get_put_goal; eauto | ].
                 repeat rewrite_l_to_r; repeat (do_injection; clear_refl).
@@ -945,6 +953,7 @@ Section WithMap.
             1:{ eapply transf_to_idx_preserve_ty''; eauto. }
             1: eassumption.
             2: eapply transf_invs_wf_below; eauto with fiat2_hints.
+            2: eapply get_put_other_None; eassumption.
             case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ rewrite Properties.map.put_put_same.
                 apply well_typed__aux_wf_nil;
@@ -1134,6 +1143,7 @@ Section WithMap.
           type_annot_ok ot tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
           Forall (inv_wf (map.put Gstore tbl tbl_ty)) invs ->
+          map.get Gstore tbl = None ->
           is_tbl_ty tbl_ty = true ->
           incl (get_free_vars Genv) free_vars ->
           well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl ot invs c)).
@@ -1158,6 +1168,7 @@ Section WithMap.
             eapply transf_to_idx_preserve_ty'; try reflexivity; eauto using incl_refl with fiat2_hints.
             rewrite_map_get_put_goal; auto. }
         1: apply transf_to_idx_invs_wf; eauto with fiat2_hints.
+        1: assumption.
       Qed.
 
       Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e ot invs c (Gstore Genv : tenv) free_vars,
@@ -1247,7 +1258,8 @@ Section WithMap.
             3: apply H_wf; auto.
             1: apply_to_aux_preserve_ty.
             1: apply (type_annot_ok_map aux_ty); assumption.
-            1: apply transf_to_idx_invs_wf; eauto with fiat2_hints. }
+            1: apply transf_to_idx_invs_wf; eauto with fiat2_hints.
+            1: assumption. }
         1:{ intros. unfold transf_to_idx, apply_after_letmut.
             cbn [interp_command]. eapply stores_eq_except__update_eq; intros.
             destruct (map.get Gstore x0) eqn:E.
@@ -1356,7 +1368,8 @@ Section WithMap.
             3: apply H_wf; auto.
             1: apply_to_aux_preserve_ty.
             1: apply (type_annot_ok_map aux_ty); assumption.
-            1: apply transf_to_idx_invs_wf; eauto with fiat2_hints. }
+            1: apply transf_to_idx_invs_wf; eauto with fiat2_hints.
+            1: assumption. }
         1:{ intros. unfold transf_to_idx, apply_after_letmut.
             cbn [interp_command]. eapply stores_eq_except__update_eq; intros.
             destruct (map.get Gstore x0) eqn:E.

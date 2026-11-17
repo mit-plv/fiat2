@@ -1891,18 +1891,20 @@ Section WithWord.
            end.
       1,3: econstructor; [ eassumption | ];
       apply_cmd_tc_sound_IH; apply tenv_wf_step; try invert_type_wf; auto.
-      - econstructor; [ eassumption | exact I | | ].
+      - econstructor; [ eassumption | exact I | | | ].
         1: apply_cmd_tc_sound_IH; apply tenv_wf_step; auto.
         1: eapply typecheck_invs_sound; [ apply tenv_wf_step; auto | eassumption ].
+        1: assumption.
       - lazymatch goal with
         | H : type_wf_comp _ = true |- _ => apply type_wf_comp_sound in H
         end.
         lazymatch goal with
         | H : Success (_, _) = Success (_, _) |- _ => injection H as ? ?; subst
         end.
-        econstructor; [ eapply typechecker_sound; eauto | exact eq_refl | | ].
+        econstructor; [ eapply typechecker_sound; eauto | exact eq_refl | | | ].
         1: apply_cmd_tc_sound_IH; apply tenv_wf_step; auto.
         1: eapply typecheck_invs_sound; [ apply tenv_wf_step; auto | eassumption ].
+        1: assumption.
       - econstructor; eauto. eapply typechecker_sound; eauto.
       - constructor; try apply_cmd_tc_sound_IH.
         eapply typechecker_sound; eauto. constructor.

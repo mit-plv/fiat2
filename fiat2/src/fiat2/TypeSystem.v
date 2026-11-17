@@ -344,6 +344,7 @@ Section WithMap.
                            type_annot_ok ot t ->
                            well_typed (map.put Gstore x t) Genv c ->
                            Forall (inv_wf (map.put Gstore x t)) invs ->
+                           map.get Gstore x = None ->
                            well_typed Gstore Genv (CLetMut e x ot invs c)
   | WTCAssign x t e : map.get Gstore x = Some t ->
                     type_of Gstore Genv e t ->
@@ -1247,16 +1248,21 @@ Section WithMap.
     | CLet e x c => '(t, e') <- synthesize_expr Gstore Genv e ;;
                     c' <- typecheck Gstore (map.put Genv x t) c ;;
                     Success (CLet e' x c')
-    | CLetMut e x ot invs c => '(t, e') <- match ot with
-                                      | Some t => if type_wf_comp t
-                                                  then e' <- analyze_expr Gstore Genv t e ;;
-                                                       Success (t, e')
-                                                  else error:("Malformed type" t)
-                                      | None => synthesize_expr Gstore Genv e
-                                      end ;;
-                    typecheck_invs (map.put Gstore x t) invs ;;
-                    c' <- typecheck (map.put Gstore x t) Genv c ;;
-                    Success (CLetMut e' x (Some t) invs c')
+    | CLetMut e x ot invs c =>
+        match map.get Gstore x with
+        | Some _ => error:(x "shadows a mutable variable")
+        | None => Success tt
+        end ;;
+        '(t, e') <- match ot with
+                    | Some t => if type_wf_comp t
+                                then e' <- analyze_expr Gstore Genv t e ;;
+                                     Success (t, e')
+                                else error:("Malformed type" t)
+                    | None => synthesize_expr Gstore Genv e
+                    end ;;
+        typecheck_invs (map.put Gstore x t) invs ;;
+        c' <- typecheck (map.put Gstore x t) Genv c ;;
+        Success (CLetMut e' x (Some t) invs c')
     | CAssign x e => match map.get Gstore x with
                      | Some t => e' <- analyze_expr Gstore Genv t e ;;
                                  Success (CAssign x e')

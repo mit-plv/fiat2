@@ -797,7 +797,8 @@ Section WithMap.
         destruct H_rd as [ [ H_ne R1 ] R2 ].
         apply Bool.negb_true_iff, String.eqb_neq in H_ne.
         rewrite (proj2 (String.eqb_neq _ _) H_ne) in R2, H_we |- *.
-        econstructor; [ apply erase_preserve_ty_expr; eassumption | eassumption | | constructor ].
+        econstructor; [ apply erase_preserve_ty_expr; eassumption | eassumption | | constructor
+                      | rewrite map.get_put_diff in * by congruence; assumption ].
         rewrite (Properties.map.put_comm tbl x
                    (TRecord (rm_field f tl)) t Gstore (not_eq_sym H_ne)).
         apply IHc; [ | exact R2 | exact H_we ].
@@ -892,7 +893,8 @@ Section WithMap.
         1: change (TRecord (rm_field f tl)) with (erase_record_type f (TRecord tl));
            apply type_annot_ok_map; assumption.
         1: apply erase_preserve_ty_cmd; assumption.
-        1: constructor. }
+        1: constructor.
+        1: assumption. }
     (* and semantics *)
     1:{ intros store env H_store H_env.
         rewrite <- (erase_record_field_ERecord f l E_init).
