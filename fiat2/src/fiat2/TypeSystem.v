@@ -308,6 +308,31 @@ Section WithMap.
       type_annot_ok ot t -> type_annot_ok (option_map f ot) (f t).
   Proof. destruct ot; cbn; intros; subst; auto. Qed.
 
+  Fixpoint type_at (t : type) (p : list string) : option type :=
+    match p with
+    | nil => Some t
+    | f :: p' => match t with
+                 | TRecord tl => match access_record tl f with
+                                 | Success t' => type_at t' p'
+                                 | Failure _ => None
+                                 end
+                 | _ => None
+                 end
+    end.
+
+  Inductive inv_wf (Gstore : tenv) : invariant -> Prop :=
+  | WFConstraintInv tbl path row cond t row_ty :
+    map.get Gstore tbl = Some t ->
+    type_at t path = Some (TList row_ty) ->
+    type_of Gstore (map.put map.empty row row_ty) cond TBool ->
+    inv_wf Gstore (ConstraintInv tbl path row cond)
+  | WFIndexInv tbl id_path aux_path hole to_idx t t_id t_aux :
+    map.get Gstore tbl = Some t ->
+    type_at t id_path = Some t_id ->
+    type_at t aux_path = Some t_aux ->
+    type_of map.empty (map.put map.empty hole t_id) to_idx t_aux ->
+    inv_wf Gstore (IndexInv tbl id_path aux_path hole to_idx).
+
   Inductive well_typed (Gstore Genv : tenv) : command -> Prop :=
   | WTCSkip : well_typed Gstore Genv CSkip
   | WTCSeq c1 c2 : well_typed Gstore Genv c1 -> well_typed Gstore Genv c2 ->
