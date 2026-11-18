@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.Substitute.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String.
 Import ListNotations.
@@ -13,6 +13,78 @@ Fixpoint value_at (v : value) (p : list string) : option value :=
                                end
                | _ => None
                end
+  end.
+
+Fixpoint replace_loc (x h : string) (e : expr) : expr :=
+  match e with
+  | EVar y => EVar y
+  | ELoc y => if String.eqb y x then EVar h else ELoc y
+  | EAtom a => EAtom a
+  | EUnop o e => EUnop o (replace_loc x h e)
+  | EBinop o e1 e2 => EBinop o (replace_loc x h e1) (replace_loc x h e2)
+  | ETernop o e1 e2 e3 => ETernop o (replace_loc x h e1) (replace_loc x h e2) (replace_loc x h e3)
+  | EIf e1 e2 e3 => EIf (replace_loc x h e1) (replace_loc x h e2) (replace_loc x h e3)
+  | ELet e1 y e2 => ELet (replace_loc x h e1) y (replace_loc x h e2)
+  | EFlatmap tag e1 y e2 => EFlatmap tag (replace_loc x h e1) y (replace_loc x h e2)
+  | EFold e1 e2 y z e3 => EFold (replace_loc x h e1) (replace_loc x h e2) y z (replace_loc x h e3)
+  | EACFold ag e => EACFold ag (replace_loc x h e)
+  | EACIFold ag e => EACIFold ag (replace_loc x h e)
+  | ERecord l => ERecord (List.map (fun p => (fst p, replace_loc x h (snd p))) l)
+  | EAccess e s => EAccess (replace_loc x h e) s
+  | EOptMatch e e_none y e_some => EOptMatch (replace_loc x h e) (replace_loc x h e_none) y (replace_loc x h e_some)
+  | ESort tag e => ESort tag (replace_loc x h e)
+  end.
+
+Fixpoint binders (e : expr) : list string :=
+  match e with
+  | EVar _ | ELoc _ | EAtom _ => nil
+  | EUnop _ e | EACFold _ e | EACIFold _ e | EAccess e _ | ESort _ e => binders e
+  | EBinop _ e1 e2 => binders e1 ++ binders e2
+  | ETernop _ e1 e2 e3 | EIf e1 e2 e3 => binders e1 ++ binders e2 ++ binders e3
+  | ELet e1 y e2 | EFlatmap _ e1 y e2 => y :: binders e1 ++ binders e2
+  | EFold e1 e2 y z e3 => y :: z :: binders e1 ++ binders e2 ++ binders e3
+  | ERecord l => fold_right (fun p acc => binders (snd p) ++ acc) nil l
+  | EOptMatch e e_none y e_some => y :: binders e ++ binders e_none ++ binders e_some
+  end.
+
+Fixpoint loc_in (x : string) (e : expr) : bool :=
+  match e with
+  | EVar _ | EAtom _ => false
+  | ELoc y => String.eqb x y
+  | EUnop _ e | EACFold _ e | EACIFold _ e | EAccess e _ | ESort _ e => loc_in x e
+  | EBinop _ e1 e2 => loc_in x e1 || loc_in x e2
+  | ETernop _ e1 e2 e3 | EIf e1 e2 e3 => loc_in x e1 || loc_in x e2 || loc_in x e3
+  | ELet e1 _ e2 | EFlatmap _ e1 _ e2 => loc_in x e1 || loc_in x e2
+  | EFold e1 e2 _ _ e3 => loc_in x e1 || loc_in x e2 || loc_in x e3
+  | ERecord l => existsb (fun p => loc_in x (snd p)) l
+  | EOptMatch e e_none _ e_some => loc_in x e || loc_in x e_none || loc_in x e_some
+  end.
+
+Fixpoint access_path (e : expr) (p : list string) : expr :=
+  match p with
+  | nil => e
+  | f :: p => access_path (EAccess e f) p
+  end.
+
+Definition inv_mentions (x : string) (i : invariant) : bool :=
+  match i with
+  | ConstraintInv tbl _ _ cond => String.eqb tbl x || loc_in x cond
+  | IndexInv tbl _ _ _ _ => String.eqb tbl x
+  end.
+
+(* Whether i holds once x is assigned e, decided before the assignment *)
+Definition inv_guard (x : string) (e : expr) (i : invariant) : expr :=
+  match i with
+  | ConstraintInv tbl path row cond =>
+      let h := fresh_var "_new" (row :: binders cond) in
+      let acc := fresh_var "_acc" (h :: row :: nil) in
+      let src := if String.eqb tbl x then EVar h else ELoc tbl in
+      ELet e h (EFold (access_path src path) (EAtom (ABool true)) row acc
+                  (EIf (replace_loc x h cond) (EVar acc) (EAtom (ABool false))))
+  | IndexInv tbl id_path aux_path hole to_idx =>
+      let h := "_new" in
+      let src := if String.eqb tbl x then EVar h else ELoc tbl in
+      ELet e h (EBinop OEq (access_path src aux_path) (ELet (access_path src id_path) hole to_idx))
   end.
 
 Section WithMap.
@@ -326,5 +398,278 @@ Section WithMap.
     apply H_f in H_c as [ H_c H_sem_f ]; auto.
     split; [ exact H_c | ].
     intros. unfold Basics.compose. rewrite H_sem_f, H_sem_g; auto.
+  Qed.
+
+  Lemma replace_loc_sem : forall x h v e (store env : locals),
+      ~ In h (binders e) -> map.get env h = Some v ->
+      interp_expr store env (replace_loc x h e) = interp_expr (map.put store x v) env e.
+  Proof.
+    intros x h v e. induction e using expr_IH; intros store env H_h H_env; cbn [replace_loc binders] in *.
+    all: cbn [In] in H_h; repeat rewrite in_app_iff in H_h.
+    all: cbn [interp_expr].
+    1: reflexivity.
+    1:{ destruct (String.eqb x0 x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in E; subst; cbn [interp_expr];
+        unfold get_local.
+        1: rewrite map.get_put_same, H_env; reflexivity.
+        1: rewrite map.get_put_diff by congruence; reflexivity. }
+    1: reflexivity.
+    all: try (rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3 by (auto; intuition idtac); reflexivity).
+    (* ELet *)
+    1:{ rewrite IHe1 by (try assumption; intuition idtac). apply IHe2; [ intuition idtac | ].
+        rewrite map.get_put_diff by intuition congruence. assumption. }
+    (* EFlatmap *)
+    1:{ rewrite IHe1 by (try assumption; intuition idtac).
+        destruct tag; destruct (interp_expr (map.put store x v) env e1); try reflexivity.
+        all: erewrite flat_map_ext; [ reflexivity | intros; cbn beta ].
+        all: rewrite IHe2; [ reflexivity | intuition idtac | ].
+        all: try (rewrite map.get_put_diff by intuition congruence; exact H_env).
+        all: exact H_env. }
+    (* EFold *)
+    1:{ rewrite IHe1, IHe2 by (try assumption; intuition idtac).
+        destruct (interp_expr (map.put store x v) env e1); try reflexivity.
+        apply fold_right_ext; intros.
+        apply IHe3; [ intuition idtac | ].
+        rewrite !map.get_put_diff by intuition congruence. assumption. }
+    (* ERecord *)
+    1:{ do 2 f_equal. rewrite map_map. apply map_ext_in.
+        intros [ s e ] H_in. cbn. f_equal.
+        rewrite Forall_forall in H. apply (H (s, e)); [ exact H_in | | exact H_env ].
+        intro contra. apply H_h. clear H H_h. induction l as [ | p l IH ]; cbn in *; [ contradiction | ].
+        rewrite in_app_iff. destruct H_in as [ -> | H_in ]; [ left; exact contra | right; apply IH; exact H_in ]. }
+    (* EOptMatch *)
+    1:{ rewrite IHe1 by (try assumption; intuition idtac).
+        destruct (interp_expr (map.put store x v) env e1) as [ | | | [ v' | ] | | | | | | ]; try reflexivity.
+        1:{ apply IHe3; [ intuition idtac | ].
+            rewrite map.get_put_diff by intuition congruence. assumption. }
+        1: apply IHe2; intuition idtac. }
+  Qed.
+
+  Lemma loc_in_false_sem : forall x v e (store env : locals),
+      loc_in x e = false ->
+      interp_expr (map.put store x v) env e = interp_expr store env e.
+  Proof.
+    intros x v e. induction e using expr_IH; intros store env H_x; cbn [loc_in] in H_x; cbv beta in *.
+    all: repeat rewrite Bool.orb_false_iff in H_x.
+    all: cbn [interp_expr].
+    all: try (rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3 by tauto; reflexivity).
+    (* ELoc *)
+    1:{ unfold get_local. rewrite map.get_put_diff; [ reflexivity | ].
+        intro; subst; rewrite eqb_refl in H_x; discriminate. }
+    (* EFlatmap *)
+    1:{ rewrite IHe1 by tauto.
+        destruct tag; destruct (interp_expr store env e1); try reflexivity.
+        all: erewrite flat_map_ext; [ reflexivity | intros; cbn beta ].
+        all: rewrite IHe2 by tauto; reflexivity. }
+    (* EFold *)
+    1:{ rewrite IHe1, IHe2 by tauto.
+        destruct (interp_expr store env e1); try reflexivity.
+        apply fold_right_ext; intros. apply IHe3; tauto. }
+    (* ERecord *)
+    1:{ do 2 f_equal. apply map_ext_in. intros [ s e ] H_in. f_equal.
+        rewrite Forall_forall in H. apply (H (s, e) H_in).
+        cbn [snd]. destruct (loc_in x e) eqn:E; [ | reflexivity ].
+        rewrite <- H_x. symmetry. apply existsb_exists. exists (s, e); auto. }
+    (* EOptMatch *)
+    1:{ rewrite IHe1 by tauto.
+        destruct (interp_expr store env e1) as [ | | | [ v' | ] | | | | | | ]; try reflexivity.
+        1: apply IHe3; tauto.
+        1: apply IHe2; tauto. }
+  Qed.
+
+  Lemma inv_holds_put_unmentioned : forall x v i (store : locals),
+      inv_mentions x i = false ->
+      inv_holds (map.put store x v) i <-> inv_holds store i.
+  Proof.
+    intros * H_x. destruct i as [ tbl path row cond | tbl id_path aux_path hole to_idx ];
+      cbn [inv_mentions inv_holds] in *.
+    all: rewrite ?Bool.orb_false_iff in H_x.
+    all: rewrite map.get_put_diff by (intro; subst; rewrite eqb_refl in H_x; intuition discriminate).
+    2: reflexivity.
+    destruct (map.get store tbl) as [ v' | ]; [ | reflexivity ].
+    destruct (value_at v' path) as [ [] | ]; try reflexivity.
+    split; apply Forall_impl; intros r H_r.
+    all: rewrite loc_in_false_sem in * by tauto; assumption.
+  Qed.
+
+  Lemma interp_access_path : forall p e (store env : locals) v,
+      value_at (interp_expr store env e) p = Some v ->
+      interp_expr store env (access_path e p) = v.
+  Proof.
+    induction p as [ | f p IH ]; cbn; intros e store env v H.
+    1: injection H as ->; reflexivity.
+    apply IH. cbn [interp_expr].
+    destruct (interp_expr store env e); try discriminate.
+    destruct (access_record l f) eqn:E; try discriminate.
+    rewrite (access_record__record_proj _ _ _ E). assumption.
+  Qed.
+
+  Lemma Forall2_access_record_Success : forall A B (P : A -> B -> Prop) l tl s t,
+      Forall2 (fun p tp => fst p = fst tp /\ P (snd p) (snd tp)) l tl ->
+      access_record tl s = Success t ->
+      exists v, access_record l s = Success v.
+  Proof.
+    induction 1 as [ | [ s0 v0 ] [ s1 t1 ] l tl [ E_s _ ] _ IH ]; cbn in *; intros H_tl; try discriminate.
+    subst s1. destruct (String.eqb s s0); eauto.
+  Qed.
+
+  Lemma value_at_typed : forall p v t t',
+      type_of_value v t -> type_at t p = Some t' ->
+      exists v', value_at v p = Some v' /\ type_of_value v' t'.
+  Proof.
+    induction p as [ | f p IH ]; cbn; intros v t t' H_v H_t.
+    1: injection H_t as <-; eauto.
+    destruct t; try discriminate.
+    lazymatch type of H_t with
+    | match access_record ?tl f with _ => _ end = _ =>
+        destruct (access_record tl f) eqn:E_t; try discriminate
+    end.
+    inversion H_v; subst.
+    lazymatch goal with H : Forall2 _ _ _ |- _ =>
+      destruct (Forall2_access_record_Success _ _ _ _ _ _ _ H E_t) as [ v1 E_v ];
+      pose proof (Forall2_access_record_type_of_value _ _ _ _ _ H E_v E_t) end.
+    rewrite E_v. eapply IH; eassumption.
+  Qed.
+
+  Lemma locals_wf_put_typed : forall Gstore (store : locals) x t v,
+      locals_wf Gstore store -> map.get Gstore x = Some t -> type_of_value v t ->
+      locals_wf Gstore (map.put store x v).
+  Proof.
+    unfold locals_wf; intros * H_wf H_x H_v y ty H_y.
+    destruct (String.eqb y x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+    1: rewrite map.get_put_same; rewrite H_x in H_y; injection H_y as <-; assumption.
+    1: rewrite map.get_put_diff by assumption; apply H_wf; assumption.
+  Qed.
+
+  Lemma fold_right_all_iff : forall (f : value -> value -> value) (b : value -> bool) l,
+      (forall r a, In r l -> f r a = if b r then a else VBool false) ->
+      fold_right f (VBool true) l = VBool true <-> Forall (fun r => b r = true) l.
+  Proof.
+    induction l as [ | r l IH ]; cbn; intros H.
+    1: split; auto.
+    rewrite H by auto. rewrite Forall_cons_iff.
+    destruct (b r).
+    1: rewrite IH by auto; intuition idtac.
+    1: split; [ discriminate | intuition discriminate ].
+  Qed.
+
+  Lemma Forall_iff_typed : forall (rows : list value) (P Q : value -> Prop) t,
+      Forall (fun r => type_of_value r t) rows ->
+      (forall r, type_of_value r t -> P r <-> Q r) ->
+      Forall P rows <-> Forall Q rows.
+  Proof.
+    intros * H_rows H_iff. rewrite !Forall_forall in *.
+    split; intros H r H_r; apply H_iff; auto.
+  Qed.
+
+  Lemma guard_src_value : forall Gstore tbl ttbl x h v (store env : locals),
+      locals_wf Gstore store -> map.get Gstore tbl = Some ttbl ->
+      exists vt, map.get (map.put store x v) tbl = Some vt /\
+                   interp_expr store (map.put env h v) (if String.eqb tbl x then EVar h else ELoc tbl) = vt.
+  Proof.
+    intros * H_store H_get.
+    destruct (String.eqb tbl x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in E; subst.
+    1:{ exists v. rewrite map.get_put_same. cbn [interp_expr]. unfold get_local.
+        rewrite map.get_put_same. auto. }
+    1:{ pose proof (H_store _ _ H_get) as H_v.
+        destruct (map.get store tbl) as [ vt | ] eqn:E_t; try contradiction.
+        exists vt. rewrite map.get_put_diff by assumption.
+        cbn [interp_expr]. unfold get_local. rewrite E_t. auto. }
+  Qed.
+
+  Theorem inv_guard_iff : forall Gstore Genv x t e i (store env : locals),
+      tenv_wf Gstore -> tenv_wf Genv -> inv_wf Gstore i ->
+      map.get Gstore x = Some t -> type_of Gstore Genv e t ->
+      locals_wf Gstore store -> locals_wf Genv env ->
+      interp_expr store env (inv_guard x e i) = VBool true <->
+        inv_holds (map.put store x (interp_expr store env e)) i.
+  Proof.
+    intros * H_Gs H_Ge H_i H_x H_e H_store H_env.
+    assert (H_v : type_of_value (interp_expr store env e) t) by (eapply type_sound; eauto).
+    destruct H_i as [ tbl path row cond ttbl row_ty H_get H_at H_cond
+                    | tbl id_path aux_path hole to_idx ttbl t_id t_aux H_get H_id H_aux H_ti ];
+      cbn [inv_guard].
+    1:{ set (h := fresh_var "_new" (row :: binders cond)).
+        set (acc := fresh_var "_acc" (h :: row :: nil)).
+        pose proof (fresh_var_is_fresh "_new" (row :: binders cond)) as H_h; fold h in H_h.
+        pose proof (fresh_var_is_fresh "_acc" (h :: row :: nil)) as H_acc; fold acc in H_acc.
+        cbn [In] in H_h, H_acc.
+        cbn [interp_expr inv_holds].
+        set (v := interp_expr store env e) in *.
+        assert (H_store' : locals_wf Gstore (map.put store x v)) by (eapply locals_wf_put_typed; eauto).
+        destruct (guard_src_value Gstore tbl ttbl x h v store env H_store H_get) as [ vt [ E_vt E_src ] ].
+        rewrite E_vt.
+        pose proof (H_store' _ _ H_get) as H_vt; rewrite E_vt in H_vt.
+        destruct (value_at_typed _ _ _ _ H_vt H_at) as [ vr [ E_vr H_vr ] ].
+        inversion H_vr as [ | | | | | rows ? H_rows | | | | | ]; subst.
+        rewrite E_vr.
+        rewrite (interp_access_path _ _ _ _ (VList rows)) by exact E_vr.
+        assert (H_row_ty : type_wf row_ty).
+        1:{ assert (H_t : type_wf ttbl) by (eapply H_Gs; eassumption).
+            pose proof (type_at_wf _ _ _ H_t H_at) as H_wf.
+            inversion H_wf; assumption. }
+        assert (H_Grow : tenv_wf (map.put map.empty row row_ty))
+          by (apply tenv_wf_step; [ apply tenv_wf_empty | assumption ]).
+        set (b := fun r => match interp_expr (map.put store x v) (map.put map.empty row r) cond with
+                           | VBool bb => bb
+                           | _ => false
+                           end).
+        cbn [interp_atom].
+        rewrite fold_right_all_iff with (b := b).
+        1:{ apply Forall_iff_typed with (t := row_ty); [ assumption | ].
+            intros r H_r. subst b; cbn beta.
+            assert (H_c : type_of_value (interp_expr (map.put store x v) (map.put map.empty row r) cond) TBool).
+            1:{ eapply type_sound; eauto. apply locals_wf_step; [ apply locals_wf_empty | assumption ]. }
+            inversion H_c as [ | bb E_c | | | | | | | | | ].
+            split; [ intros ->; reflexivity | intro H; injection H; auto ]. }
+        1:{ intros r a H_r. cbn [interp_expr].
+            assert (H_hrow : h <> row) by (intro E; apply H_h; left; symmetry; exact E).
+            assert (H_hacc : h <> acc) by (intro E; apply H_acc; left; exact E).
+            assert (H_rowacc : row <> acc) by (intro E; apply H_acc; right; left; exact E).
+            rewrite (replace_loc_sem x h v); [ | tauto | ].
+            2: rewrite map.get_put_diff, map.get_put_diff, map.get_put_same by assumption; reflexivity.
+            rewrite (interp_expr__locals_equiv _ _ _ _ H_Gs H_Grow H_cond
+                       (map.put store x v) (map.put map.empty row r) (map.put store x v)
+                       (map.put (map.put (map.put env h v) row r) acc a) H_store').
+            2: apply locals_wf_step; [ apply locals_wf_empty | rewrite Forall_forall in H_rows; auto ].
+            2: apply locals_equiv_refl.
+            2:{ unfold locals_equiv; intros y ty H_y.
+                destruct (String.eqb y row) eqn:E_y; rewrite ?eqb_eq, ?eqb_neq in E_y; subst.
+                1: rewrite (map.get_put_diff _ row a acc H_rowacc), !map.get_put_same; reflexivity.
+                1: rewrite map.get_put_diff, map.get_empty in H_y by assumption; discriminate. }
+            subst b; cbn beta.
+            assert (H_c : type_of_value (interp_expr (map.put store x v) (map.put map.empty row r) cond) TBool)
+              by (eapply type_sound; eauto; apply locals_wf_step;
+                  [ apply locals_wf_empty | rewrite Forall_forall in H_rows; auto ]).
+            destruct (interp_expr (map.put store x v) (map.put map.empty row r) cond) as [ | bb | | | | | | | | ];
+              try (inversion H_c; fail).
+            destruct bb; cbn [interp_expr interp_atom]; [ | reflexivity ].
+            unfold get_local. rewrite map.get_put_same. reflexivity. } }
+    1:{ cbn [interp_expr inv_holds interp_binop].
+        set (v := interp_expr store env e) in *.
+        assert (H_store' : locals_wf Gstore (map.put store x v)) by (eapply locals_wf_put_typed; eauto).
+        destruct (guard_src_value Gstore tbl ttbl x "_new" v store env H_store H_get) as [ vt [ E_vt E_src ] ].
+        rewrite E_vt.
+        pose proof (H_store' _ _ H_get) as H_vt; rewrite E_vt in H_vt.
+        destruct (value_at_typed _ _ _ _ H_vt H_id) as [ v_id [ E_id H_vid ] ].
+        destruct (value_at_typed _ _ _ _ H_vt H_aux) as [ v_aux [ E_aux _ ] ].
+        rewrite E_id, E_aux.
+        rewrite (interp_access_path _ _ _ _ v_aux), (interp_access_path _ _ _ _ v_id)
+          by (rewrite E_src; eassumption).
+        assert (H_tid : type_wf t_id)
+          by (apply (type_at_wf id_path ttbl t_id); [ eapply H_Gs; exact H_get | exact H_id ]).
+        rewrite (interp_expr__locals_equiv _ _ _ _ tenv_wf_empty
+                   (tenv_wf_step _ _ tenv_wf_empty H_tid hole) H_ti
+                   map.empty (map.put map.empty hole v_id) store
+                   (map.put (map.put env "_new" v) hole v_id)).
+        2: apply locals_wf_empty.
+        2: apply locals_wf_step; [ apply locals_wf_empty | assumption ].
+        2: unfold locals_equiv; intros y ty H_y; rewrite map.get_empty in H_y; discriminate.
+        2:{ unfold locals_equiv; intros y ty H_y.
+            destruct (String.eqb y hole) eqn:E_y; rewrite ?eqb_eq, ?eqb_neq in E_y; subst.
+            1: rewrite !map.get_put_same; reflexivity.
+            1: rewrite map.get_put_diff, map.get_empty in H_y by assumption; discriminate. }
+        split.
+        1: intro H; injection H as H; apply value_eqb_eq; assumption.
+        1: intros ->; rewrite value_eqb_refl; reflexivity. }
   Qed.
 End WithMap.

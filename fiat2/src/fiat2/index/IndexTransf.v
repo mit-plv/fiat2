@@ -666,16 +666,6 @@ Section WithMap.
         destruct (access_record l id_tag); destruct (access_record l aux_tag); cbn [value_at]; tauto.
       Qed.
 
-      Lemma locals_wf_put_typed : forall Gstore (store : locals) x t v,
-          locals_wf Gstore store -> map.get Gstore x = Some t -> type_of_value v t ->
-          locals_wf Gstore (map.put store x v).
-      Proof.
-        unfold locals_wf; intros * H_wf H_x H_v y ty H_y.
-        destruct (String.eqb y x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-        1: rewrite map.get_put_same; rewrite H_x in H_y; injection H_y as <-; assumption.
-        1: rewrite map.get_put_diff by assumption; apply H_wf; assumption.
-      Qed.
-
       Lemma strip_aux_idx_inv : forall tbl_ty Gstore (store : locals),
           map.get Gstore tbl = Some tbl_ty ->
           locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
@@ -700,15 +690,6 @@ Section WithMap.
                 apply H_store; exact H_x. } }
         1:{ unfold consistent_with_global. rewrite map.get_put_same, E_tbl, E_id.
             split; [ reflexivity | ]. intros; rewrite map.get_put_diff; auto. }
-      Qed.
-
-      Lemma Forall_iff_typed : forall (rows : list value) (P Q : value -> Prop) t,
-          Forall (fun r => type_of_value r t) rows ->
-          (forall r, type_of_value r t -> P r <-> Q r) ->
-          Forall P rows <-> Forall Q rows.
-      Proof.
-        intros * H_rows H_iff. rewrite !Forall_forall in *.
-        split; intros H r H_r; apply H_iff; auto.
       Qed.
 
       (* The rewritten invariant says about the augmented store what the
