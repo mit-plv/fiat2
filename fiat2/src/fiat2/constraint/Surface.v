@@ -1,4 +1,6 @@
-Require Import fiat2.Language fiat2.Invariant.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
+  fiat2.Utils fiat2.Invariant.
+Require Import coqutil.Map.Interface.
 From Stdlib Require Import String List.
 Import ListNotations.
 
@@ -58,3 +60,108 @@ Fixpoint elab (ictx : list invariant) (sc : scommand) : command :=
   | SIf e c1 c2 => CIf e (elab ictx c1) (elab ictx c2)
   | SForeach e x c => CForeach e x (elab ictx c)
   end.
+
+Section WithMap.
+  Notation value := (value).
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+  Context {locals : map.map string value} {locals_ok : map.ok locals}.
+
+  Lemma guards_true : forall x e ictx (store env : locals),
+      interp_expr store env (guards x e ictx) = VBool true ->
+      forall i, In i ictx -> interp_expr store env (inv_guard x e i) = VBool true.
+  Proof.
+    unfold guards. induction ictx as [ | i0 ictx IH ]; intros store env H i H_i; [ contradiction | ].
+    cbn [fold_right interp_expr interp_binop] in H. unfold apply_bool_binop in H.
+    destruct (interp_expr store env (inv_guard x e i0)) eqn:E0; try discriminate.
+    destruct (interp_expr store env (fold_right _ _ ictx)) eqn:E1; try discriminate.
+    injection H as H. apply Bool.andb_true_iff in H as [ -> -> ].
+    destruct H_i as [ <- | H_i ]; auto.
+  Qed.
+
+  Lemma decl_invs_hold_empty : forall x ds (store : locals),
+      holds_all (map.put store x (VList nil)) (decl_invs x ds).
+  Proof.
+    intros. unfold holds_all, decl_invs. rewrite Forall_map.
+    apply Forall_forall; intros. cbn [inv_holds value_at].
+    rewrite map.get_put_same. constructor.
+  Qed.
+
+  Lemma Forall_inv_wf_put_fresh : forall Gstore x t ictx,
+      map.get Gstore x = None ->
+      Forall (inv_wf Gstore) ictx -> Forall (inv_wf (map.put Gstore x t)) ictx.
+  Proof.
+    intros * H_x H. eapply Forall_impl; [ | exact H ]. intros.
+    eapply inv_wf_weaken; [ | eassumption ].
+    apply map_incl_step_r; [ apply map_incl_refl | assumption ].
+  Qed.
+
+  Theorem elab_maintains_invs : forall sc ictx (Gstore Genv : tenv) path_cond,
+      tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
+      well_typed Gstore Genv (elab ictx sc) ->
+      maintains_invs Gstore Genv ictx path_cond (elab ictx sc).
+  Proof.
+    induction sc; cbn [elab]; intros * H_Gs H_Ge H_ictx H_wt.
+    (* SSkip *)
+    1: constructor.
+    (* SSeq *)
+    1: invert_well_typed; constructor; auto.
+    (* SLet *)
+    1:{ invert_well_typed. econstructor; [ eassumption | ].
+        apply IHsc; auto.
+        apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]. }
+    (* SLetMut *)
+    1:{ invert_well_typed. econstructor; eauto.
+        1:{ apply IHsc; auto using Forall_inv_wf_put_fresh.
+            apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]. }
+        intros. constructor. }
+    (* SLetConstrained *)
+    1:{ invert_well_typed. econstructor; eauto.
+        1:{ apply IHsc; auto.
+            1: apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ].
+            apply Forall_app; auto using Forall_inv_wf_put_fresh. }
+        intros. apply decl_invs_hold_empty. }
+    (* SAssign: an invariant the write can affect is decided by its guard,
+       and any other is unaffected by the write *)
+    1:{ destruct (filter (inv_mentions x) ictx) as [ | i0 invs ] eqn:E_f.
+        1:{ invert_well_typed. econstructor; eauto.
+            intros store env _ H_h _ _. unfold holds_all in *.
+            rewrite Forall_forall in *. intros i H_i.
+            apply inv_holds_put_unmentioned; auto.
+            destruct (inv_mentions x i) eqn:E; [ | reflexivity ].
+            assert (H_in : In i (filter (inv_mentions x) ictx)) by (apply filter_In; auto).
+            rewrite E_f in H_in. contradiction. }
+        invert_well_typed.
+        lazymatch goal with H : well_typed _ _ (CAssign _ _) |- _ => inversion H; subst end.
+        lazymatch goal with
+        | H_x : map.get Gstore x = Some ?t, H_e : type_of Gstore Genv e ?t |- _ =>
+            rename H_x into H_get; rename H_e into H_te
+        end.
+        apply MICIf; [ assumption | | apply IHsc; assumption ].
+        econstructor; [ exact H_get | exact H_te | ].
+        intros store env [ _ H_g ] H_h H_store H_env. unfold holds_all in *.
+        rewrite Forall_forall in *. intros i H_i.
+        destruct (inv_mentions x i) eqn:E.
+        1:{ assert (H_in : In i (filter (inv_mentions x) ictx)) by (apply filter_In; auto).
+            rewrite E_f in H_in.
+            apply (proj1 (inv_guard_iff Gstore Genv x _ e i store env H_Gs H_Ge (H_ictx i H_i)
+                            H_get H_te H_store H_env)).
+            eapply guards_true; eassumption. }
+        1: apply inv_holds_put_unmentioned; auto. }
+    (* SIf *)
+    1: invert_well_typed; constructor; auto.
+    (* SForeach *)
+    1:{ invert_well_typed. econstructor; [ eassumption | ].
+        apply IHsc; auto.
+        apply tenv_wf_step; [ assumption | ].
+        lazymatch goal with H : type_of _ _ _ (TList _) |- _ =>
+          apply type_of__type_wf in H; [ inversion H; assumption | assumption | assumption ] end. }
+  Qed.
+
+  Corollary elab_prog_maintains_invs : forall sc (Gstore Genv : tenv),
+      tenv_wf Gstore -> tenv_wf Genv ->
+      well_typed Gstore Genv (elab nil sc) ->
+      maintains_invs Gstore Genv nil (fun _ _ => True) (elab nil sc).
+  Proof.
+    intros. apply elab_maintains_invs; auto.
+  Qed.
+End WithMap.
