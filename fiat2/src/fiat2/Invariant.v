@@ -254,4 +254,77 @@ Section WithMap.
         5: apply locals_wf_step. all: eauto with fiat2_hints.
         eapply maintains_invs__well_typed; eauto. }
   Qed.
+
+  Definition ictx_equiv (Gstore : tenv) (ictx ictx' : list invariant) : Prop :=
+    forall store, locals_wf Gstore store -> holds_all store ictx <-> holds_all store ictx'.
+
+  Lemma ictx_equiv_app : forall Gstore x t invs ictx ictx',
+      map.get Gstore x = None ->
+      ictx_equiv Gstore ictx ictx' ->
+      ictx_equiv (map.put Gstore x t) (invs ++ ictx) (invs ++ ictx').
+  Proof.
+    unfold ictx_equiv, holds_all; intros * H_x H_eq store H_store.
+    apply locals_wf_put_fresh in H_store; [ | assumption ].
+    rewrite !Forall_app, H_eq by assumption. reflexivity.
+  Qed.
+
+  Lemma maintains_invs_ictx_equiv : forall Gstore Genv ictx path_cond c,
+      maintains_invs Gstore Genv ictx path_cond c ->
+      tenv_wf Gstore -> tenv_wf Genv ->
+      forall ictx', ictx_equiv Gstore ictx ictx' ->
+      maintains_invs Gstore Genv ictx' path_cond c.
+  Proof.
+    induction 1; intros H_Gs H_Ge ictx' H_eq.
+    all: econstructor; eauto.
+    (* CLet *)
+    1: apply IHmaintains_invs; auto;
+    apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ].
+    (* CLetMut *)
+    1:{ apply IHmaintains_invs; [ | assumption | apply ictx_equiv_app; assumption ].
+        apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]. }
+    1:{ intros * H_pc H_h H_store H_env.
+        lazymatch goal with
+        | H_init : forall _ _, _ -> _ -> _ -> _ -> holds_all _ invs |- _ => apply H_init
+        end; auto.
+        apply H_eq; assumption. }
+    (* CAssign *)
+    1:{ intros * H_pc H_h H_store H_env. apply H_eq.
+        1:{ unfold locals_wf; intros y ty H_y. destruct (String.eqb y x) eqn:E.
+            1:{ apply String.eqb_eq in E; subst. rewrite map.get_put_same.
+                rewrite H in H_y; injection H_y as <-. eapply type_sound; eauto. }
+            1:{ apply String.eqb_neq in E. rewrite map.get_put_diff by assumption.
+                apply H_store; assumption. } }
+        lazymatch goal with
+        | H_obl : forall _ _, _ -> _ -> _ -> _ -> holds_all _ ictx |- _ => apply H_obl
+        end; auto.
+        apply H_eq; assumption. }
+    (* CForeach *)
+    1:{ apply IHmaintains_invs; auto.
+        apply tenv_wf_step; [ assumption | ].
+        apply type_of__type_wf in H; [ | assumption | assumption ].
+        inversion H; assumption. }
+  Qed.
+
+  (* A transformation is sound if it keeps the invariant context of the
+     command it is handed maintained, and computes the same stores wherever
+     that context holds. *)
+  Definition inv_transf_sound (f : tenv -> tenv -> command -> command) : Prop :=
+    forall (Gstore Genv : tenv) ictx c,
+      tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
+      maintains_invs Gstore Genv ictx (fun _ _ => True) c ->
+      maintains_invs Gstore Genv ictx (fun _ _ => True) (f Gstore Genv c) /\
+        forall (store env : locals),
+          locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
+          interp_command store env (f Gstore Genv c) = interp_command store env c.
+
+  Lemma inv_transf_sound_compose : forall f g,
+      inv_transf_sound f -> inv_transf_sound g ->
+      inv_transf_sound (fun Gstore Genv => Basics.compose (f Gstore Genv) (g Gstore Genv)).
+  Proof.
+    unfold inv_transf_sound; intros * H_f H_g * H_Gs H_Ge H_ictx H_c.
+    apply H_g in H_c as [ H_c H_sem_g ]; auto.
+    apply H_f in H_c as [ H_c H_sem_f ]; auto.
+    split; [ exact H_c | ].
+    intros. unfold Basics.compose. rewrite H_sem_f, H_sem_g; auto.
+  Qed.
 End WithMap.
