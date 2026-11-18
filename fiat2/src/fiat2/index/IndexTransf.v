@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.index.IndexInterface fiat2.index.FoldWithGlobalsSound
-  fiat2.Utils fiat2.TransfSound fiat2.Substitute fiat2.TransfUtils.
+  fiat2.Utils fiat2.TransfSound fiat2.Substitute fiat2.TransfUtils fiat2.Invariant.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Sorted Permutation.
 Import ListNotations.
@@ -1106,6 +1106,357 @@ Section WithMap.
           | intros; exact I
           | apply well_typed__aux_wf_nil; auto; apply value_wf_with_globals_True ].
       Qed.
+
+      Definition idx_inv : invariant := IndexInv tbl (id_tag :: nil) (aux_tag :: nil) hole to_idx.
+
+      Lemma idx_inv_holds : forall (store : locals),
+          inv_holds store idx_inv <->
+            match map.get store tbl with Some v => aux_wf v | None => False end.
+      Proof.
+        intros. unfold idx_inv, aux_wf; cbn [inv_holds].
+        destruct (map.get store tbl) as [ v | ]; [ | tauto ].
+        destruct v; cbn [value_at]; try tauto.
+        destruct (access_record l id_tag); destruct (access_record l aux_tag); cbn [value_at]; tauto.
+      Qed.
+
+      Lemma locals_wf_put_typed : forall Gstore (store : locals) x t v,
+          locals_wf Gstore store -> map.get Gstore x = Some t -> type_of_value v t ->
+          locals_wf Gstore (map.put store x v).
+      Proof.
+        unfold locals_wf; intros * H_wf H_x H_v y ty H_y.
+        destruct (String.eqb y x) eqn:E; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+        1: rewrite map.get_put_same; rewrite H_x in H_y; injection H_y as <-; assumption.
+        1: rewrite map.get_put_diff by assumption; apply H_wf; assumption.
+      Qed.
+
+      Lemma strip_aux_idx_inv : forall tbl_ty Gstore (store : locals),
+          map.get Gstore tbl = Some tbl_ty ->
+          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+          inv_holds store idx_inv ->
+          locals_wf Gstore (strip_aux store) /\ consistent_with_global (strip_aux store) store.
+      Proof.
+        intros * H_tbl H_store H_inv. apply idx_inv_holds in H_inv.
+        pose proof (H_store tbl (aux_ty tbl_ty)) as H_v.
+        rewrite map.get_put_same in H_v; specialize (H_v eq_refl).
+        destruct (map.get store tbl) as [ v | ] eqn:E_tbl; try contradiction.
+        unfold aux_wf in H_inv. destruct v; try contradiction.
+        destruct (access_record l id_tag) as [ v_id | ] eqn:E_id; try contradiction.
+        assert (E_strip : strip_aux store = map.put store tbl v_id)
+          by (unfold strip_aux; rewrite E_tbl, E_id; reflexivity).
+        rewrite E_strip. split.
+        1:{ unfold locals_wf; intros x t H_x.
+            destruct (String.eqb x tbl) eqn:E_x; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+            1:{ rewrite map.get_put_same. rewrite H_tbl in H_x; injection H_x as <-.
+                eapply type_of_value_at_id_tag; eassumption. }
+            1:{ rewrite map.get_put_diff by congruence.
+                specialize (H_store x t). rewrite map.get_put_diff in H_store by congruence.
+                apply H_store; exact H_x. } }
+        1:{ unfold consistent_with_global. rewrite map.get_put_same, E_tbl, E_id.
+            split; [ reflexivity | ]. intros; rewrite map.get_put_diff; auto. }
+      Qed.
+
+      Lemma Forall_iff_typed : forall (rows : list value) (P Q : value -> Prop) t,
+          Forall (fun r => type_of_value r t) rows ->
+          (forall r, type_of_value r t -> P r <-> Q r) ->
+          Forall P rows <-> Forall Q rows.
+      Proof.
+        intros * H_rows H_iff. rewrite !Forall_forall in *.
+        split; intros H r H_r; apply H_iff; auto.
+      Qed.
+
+      (* The rewritten invariant says about the augmented store what the
+         original says about the original one. *)
+      Lemma transf_inv_holds : forall tbl_ty Gstore i (store store' : locals),
+          tenv_wf Gstore -> map.get Gstore tbl = Some tbl_ty -> is_tbl_ty tbl_ty = true ->
+          inv_wf Gstore i -> locals_wf Gstore store -> consistent_with_global store store' ->
+          inv_holds store' (transf_inv i) <-> inv_holds store i.
+      Proof.
+        intros * H_Gs H_tbl H_is H_i H_store H_cons.
+        assert (E_get : forall x, x <> tbl -> map.get store' x = map.get store x)
+          by (intros; symmetry; eapply consistent_with_global__store_eq_except; eauto).
+        assert (E_tbl : exists rv v, map.get store tbl = Some v
+                                     /\ map.get store' tbl = Some (VRecord rv)
+                                     /\ access_record rv id_tag = Success v).
+        1:{ destruct H_cons as [ H_c _ ].
+            destruct (map.get store tbl) eqn:E1; try contradiction.
+            destruct (map.get store' tbl) as [ [] | ] eqn:E2; try contradiction.
+            destruct (access_record l id_tag) eqn:E3; try contradiction. subst. eauto. }
+        destruct E_tbl as [ rv [ v [ E_s [ E_s' E_id ] ] ] ].
+        destruct H_i as [ tbl' path row cond t row_ty H_get H_at H_cond
+                        | tbl' id_path aux_path h ti t t_id t_aux H_get H_id H_aux H_ti ];
+          cbn [transf_inv].
+        1:{ assert (H_row_ty : type_wf row_ty).
+            1:{ assert (H_t : type_wf t) by (eapply H_Gs; eassumption).
+                pose proof (type_at_wf _ _ _ H_t H_at) as H_wf.
+                inversion H_wf; assumption. }
+            assert (H_cond_eq : forall r, type_of_value r row_ty ->
+                       interp_expr store' (map.put map.empty row r) (fold_expr create_aux_read_head cond)
+                       = interp_expr store (map.put map.empty row r) cond).
+            1:{ intros r H_r.
+                eapply transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); eauto.
+                1: apply tenv_wf_step; [ apply tenv_wf_empty | assumption ].
+                1: apply locals_wf_step; [ apply locals_wf_empty | assumption ]. }
+            pose proof (H_store _ _ H_get) as H_v.
+            cbn [inv_holds].
+            destruct (String.eqb tbl' tbl) eqn:E.
+            1:{ apply String.eqb_eq in E; subst tbl'.
+                rewrite E_s, E_s' in *. cbn [value_at]. rewrite E_id.
+                destruct (value_at v path) as [ [] | ] eqn:E_p; try tauto.
+                eapply value_at_type_of_value in E_p; [ | eassumption | eassumption ].
+                inversion E_p; subst.
+                apply Forall_iff_typed with (t := row_ty); [ assumption | ].
+                intros. rewrite H_cond_eq; tauto. }
+            1:{ apply String.eqb_neq in E. rewrite E_get by assumption.
+                destruct (map.get store tbl') as [ v' | ]; try tauto.
+                destruct (value_at v' path) as [ [] | ] eqn:E_p; try tauto.
+                eapply value_at_type_of_value in E_p; [ | eassumption | eassumption ].
+                inversion E_p; subst.
+                apply Forall_iff_typed with (t := row_ty); [ assumption | ].
+                intros. rewrite H_cond_eq; tauto. } }
+        1:{ destruct (String.eqb tbl' tbl) eqn:E; cbn [inv_holds].
+            1:{ apply String.eqb_eq in E; subst tbl'.
+                rewrite E_s, E_s'. cbn [value_at]. rewrite E_id. tauto. }
+            1:{ apply String.eqb_neq in E. rewrite E_get by assumption. tauto. } }
+      Qed.
+
+      Lemma fold_read_head_unbound : forall Gstore Genv e t,
+          type_of Gstore Genv e t -> map.get Gstore tbl = None ->
+          fold_expr create_aux_read_head e = e.
+      Proof.
+        intros * H H_tbl. induction H using type_of_IH; cbn;
+          repeat lazymatch goal with
+            | IH : fold_expr create_aux_read_head ?e = ?e |- _ => rewrite IH; clear IH
+            end; try reflexivity.
+        1:{ destruct (String.eqb tbl x) eqn:E; [ | reflexivity ].
+            apply String.eqb_eq in E; subst. congruence. }
+        1:{ f_equal.
+            lazymatch goal with H : Forall2 (fun _ _ => _ = _) _ _ |- _ => revert H end.
+            clear. generalize (List.map snd tl). induction l as [ | [ s e ] l IHl ]; cbn; auto.
+            intros tl' H. inversion H; subst. f_equal; [ congruence | eauto ]. }
+      Qed.
+
+      Lemma transf_inv_unbound : forall Gstore i,
+          inv_wf Gstore i -> map.get Gstore tbl = None -> transf_inv i = i.
+      Proof.
+        intros * H_i H_tbl. destruct H_i; cbn [transf_inv].
+        all: destruct (String.eqb tbl0 tbl) eqn:E;
+          [ apply String.eqb_eq in E; subst; congruence | ].
+        1: erewrite fold_read_head_unbound; eauto.
+        1: reflexivity.
+      Qed.
+
+      Lemma strip_aux_ictx : forall tbl_ty Gstore ictx (store : locals),
+          tenv_wf Gstore -> map.get Gstore tbl = Some tbl_ty -> is_tbl_ty tbl_ty = true ->
+          Forall (inv_wf Gstore) ictx ->
+          locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+          holds_all store (List.map transf_inv ictx ++ idx_inv :: nil) ->
+          locals_wf Gstore (strip_aux store) /\ consistent_with_global (strip_aux store) store
+          /\ holds_all (strip_aux store) ictx /\ inv_holds store idx_inv.
+      Proof.
+        intros * H_Gs H_tbl H_is H_ictx H_store H_h.
+        unfold holds_all in H_h. apply Forall_app in H_h as [ H_h H_idx ].
+        inversion H_idx; subst.
+        destruct (strip_aux_idx_inv tbl_ty Gstore store) as [ H_wf H_cons ]; auto.
+        split; [ assumption | split; [ assumption | split; [ | assumption ] ] ].
+        rewrite Forall_map in H_h. unfold holds_all.
+        eapply Forall_impl; [ | apply Forall_and; [ exact H_ictx | exact H_h ] ].
+        intros i [ H_i H_hi ].
+        apply (transf_inv_holds tbl_ty Gstore i (strip_aux store) store); auto.
+      Qed.
+
+      Ltac use_strip_aux_ictx :=
+        lazymatch goal with
+        | H_h : holds_all ?store (List.map transf_inv ?ictx ++ idx_inv :: nil),
+          H_store : locals_wf (map.put ?G tbl (aux_ty ?ty)) ?store |- _ =>
+            destruct (strip_aux_ictx ty G ictx store ltac:(eassumption) ltac:(eassumption)
+                        ltac:(eassumption) ltac:(eassumption) H_store H_h)
+              as [ H_wf0 [ H_cons0 [ H_h0 H_idx0 ] ] ]
+        end.
+
+      Lemma transf_to_idx'_maintains_invs :
+        forall tbl_ty c free_vars Gstore Genv ictx path_cond path_cond',
+          map.get Gstore tbl = Some tbl_ty ->
+          is_tbl_ty tbl_ty = true ->
+          incl (get_free_vars Genv) free_vars ->
+          tenv_wf Gstore -> tenv_wf Genv ->
+          Forall (inv_wf Gstore) ictx ->
+          (forall (store env : locals),
+              locals_wf (map.put Gstore tbl (aux_ty tbl_ty)) store ->
+              locals_wf Genv env ->
+              holds_all store (List.map transf_inv ictx ++ idx_inv :: nil) ->
+              path_cond' store env -> path_cond (strip_aux store) env) ->
+          maintains_invs Gstore Genv ictx path_cond c ->
+          maintains_invs (map.put Gstore tbl (aux_ty tbl_ty)) Genv
+            (List.map transf_inv ictx ++ idx_inv :: nil) path_cond'
+            (transf_to_idx' free_vars c).
+      Proof.
+        induction c; simpl; intros * H_tbl H_is H_incl H_Gs H_Ge H_ictx H_sim H_m;
+          inversion H_m; subst.
+        (* CSkip *)
+        1: constructor.
+        (* CSeq *)
+        1:{ constructor.
+            1: eapply IHc1; eauto.
+            1: apply IHc2 with (path_cond := fun _ _ => True); auto. }
+        (* CLet *)
+        1:{ econstructor.
+            1: eapply transf_to_idx_preserve_ty''; eauto.
+            1:{ apply IHc with (path_cond := fun _ _ => True);
+                  [ exact H_tbl | exact H_is
+                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
+                  | exact H_Gs | eauto with fiat2_hints | exact H_ictx
+                  | intros; exact I | assumption ]. } }
+        (* CLetMut: no shadowing, so the binder is not the table *)
+        1:{ assert (H_ne : x <> tbl) by congruence.
+            rewrite (proj2 (String.eqb_neq _ _) H_ne).
+            assert (H_Gs' : tenv_wf (map.put Gstore x t)) by eauto with fiat2_hints.
+            econstructor.
+            1: eapply transf_to_idx_preserve_ty''; eauto.
+            1: eassumption.
+            1:{ rewrite Properties.map.put_put_diff by congruence.
+                replace (List.map transf_inv invs ++ (List.map transf_inv ictx ++ idx_inv :: nil))
+                  with (List.map transf_inv (invs ++ ictx) ++ idx_inv :: nil)
+                  by (rewrite map_app, app_assoc; reflexivity).
+                apply IHc with (path_cond := fun _ _ => True);
+                  [ rewrite map.get_put_diff by congruence; exact H_tbl
+                  | exact H_is | exact H_incl | exact H_Gs' | exact H_Ge
+                  | | intros; exact I | assumption ].
+                apply Forall_app; split; [ assumption | ].
+                eapply Forall_impl; [ | exact H_ictx ]; intros.
+                eapply inv_wf_weaken; [ | eassumption ].
+                apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
+            1:{ rewrite Properties.map.put_put_diff by congruence.
+                rewrite Forall_map. eapply Forall_impl; [ | eassumption ]; intros.
+                eapply transf_inv_wf; eauto.
+                rewrite map.get_put_diff by congruence; exact H_tbl. }
+            1: eapply get_put_other_None; eassumption.
+            1:{ intros store env H_pc H_h H_store H_env. use_strip_aux_ictx.
+                assert (E_sem : interp_expr store env (fold_expr create_aux_read_head e)
+                                = interp_expr (strip_aux store) env e)
+                  by (eapply transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); eauto).
+                rewrite E_sem.
+                lazymatch goal with
+                | H_init : forall _ _, _ -> _ -> _ -> _ -> holds_all _ invs |- _ =>
+                    specialize (H_init (strip_aux store) env (H_sim _ _ H_store H_env H_h H_pc)
+                                  H_h0 H_wf0 H_env)
+                end.
+                set (v := interp_expr (strip_aux store) env e).
+                assert (H_lw : locals_wf (map.put Gstore x t) (map.put (strip_aux store) x v))
+                  by (apply locals_wf_step; [ assumption | subst v; eapply type_sound; eauto ]).
+                assert (H_c : consistent_with_global (map.put (strip_aux store) x v) (map.put store x v))
+                  by (apply consistent_with_global_put_local; auto).
+                assert (H_tbl' : map.get (map.put Gstore x t) tbl = Some tbl_ty)
+                  by (rewrite map.get_put_diff by congruence; exact H_tbl).
+                unfold holds_all in *. rewrite Forall_map.
+                lazymatch goal with
+                | H_invs : Forall (inv_wf _) invs, H_init : Forall (inv_holds _) invs |- _ =>
+                    eapply Forall_impl; [ | apply Forall_and; [ exact H_invs | exact H_init ] ]
+                end.
+                intros i [ H_i H_hi ].
+                exact (proj2 (transf_inv_holds tbl_ty _ i _ _ H_Gs' H_tbl' H_is H_i H_lw H_c) H_hi). } }
+        (* CAssign *)
+        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
+            (* the table: both fields are written from the same value *)
+            1:{ lazymatch goal with
+                | H : map.get Gstore tbl = Some ?t |- _ =>
+                    rewrite H_tbl in H; injection H as <-
+                end.
+                assert (H_wf_t : type_wf tbl_ty) by (eapply H_Gs; eassumption).
+                econstructor.
+                1: apply map.get_put_same.
+                1:{ apply aux_record_ty; eauto using aux_ty_wf with fiat2_hints.
+                    eapply transf_to_idx_preserve_ty''; eauto. }
+                intros store env H_pc H_h H_store H_env. use_strip_aux_ictx.
+                assert (E_sem : interp_expr store env (fold_expr create_aux_read_head e)
+                                = interp_expr (strip_aux store) env e)
+                  by (eapply transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); eauto).
+                cbn [interp_expr List.map].
+                lazymatch goal with
+                | H_obl : forall _ _, _ -> _ -> _ -> _ -> holds_all _ ictx |- _ =>
+                    specialize (H_obl (strip_aux store) env (H_sim _ _ H_store H_env H_h H_pc)
+                                  H_h0 H_wf0 H_env)
+                end.
+                set (v := interp_expr (strip_aux store) env e) in *.
+                assert (H_lw : locals_wf Gstore (map.put (strip_aux store) tbl v)).
+                1:{ eapply locals_wf_put_typed; [ eassumption | eassumption | ].
+                    subst v; eapply type_sound; eauto. }
+                assert (H_c : consistent_with_global (map.put (strip_aux store) tbl v)
+                                (map.put store tbl (VRecord (record_sort
+                                   [(id_tag, interp_expr store env (fold_expr create_aux_read_head e));
+                                    (aux_tag, interp_expr store env
+                                                (substitute [(hole, fold_expr create_aux_read_head e)]
+                                                   free_vars to_idx))])))).
+                1:{ unfold consistent_with_global. rewrite !map.get_put_same.
+                    rewrite record_sort_access_id, E_sem. split; [ reflexivity | ].
+                    intros y H_y. rewrite !map.get_put_diff by assumption.
+                    eapply consistent_with_global__store_eq_except; eauto. }
+                unfold holds_all in *. apply Forall_app; split.
+                1:{ rewrite Forall_map.
+                    lazymatch goal with
+                    | H_obl : Forall (inv_holds (map.put (strip_aux store) tbl v)) ictx |- _ =>
+                        eapply Forall_impl; [ | apply Forall_and; [ exact H_ictx | exact H_obl ] ]
+                    end.
+                    intros i [ H_i H_hi ].
+                    exact (proj2 (transf_inv_holds tbl_ty Gstore i _ _ H_Gs H_tbl H_is H_i H_lw H_c) H_hi). }
+                1:{ constructor; [ | constructor ].
+                    apply idx_inv_holds. rewrite map.get_put_same.
+                    unfold aux_wf. rewrite record_sort_access_id, record_sort_access_aux.
+                    eapply to_idx_satisfy_idx_wf.
+                    3: apply transf_to_idx_preserve_ty''; [ | | eauto .. ]; auto.
+                    all: eauto using aux_ty_wf with fiat2_hints. } }
+            (* another variable *)
+            1:{ econstructor.
+                1: rewrite map.get_put_diff by congruence; eassumption.
+                1: eapply transf_to_idx_preserve_ty''; eauto.
+                intros store env H_pc H_h H_store H_env. use_strip_aux_ictx.
+                assert (E_sem : interp_expr store env (fold_expr create_aux_read_head e)
+                                = interp_expr (strip_aux store) env e)
+                  by (eapply transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); eauto).
+                rewrite E_sem.
+                lazymatch goal with
+                | H_obl : forall _ _, _ -> _ -> _ -> _ -> holds_all _ ictx |- _ =>
+                    specialize (H_obl (strip_aux store) env (H_sim _ _ H_store H_env H_h H_pc)
+                                  H_h0 H_wf0 H_env)
+                end.
+                set (v := interp_expr (strip_aux store) env e) in *.
+                assert (H_lw : locals_wf Gstore (map.put (strip_aux store) x v)).
+                1:{ eapply locals_wf_put_typed; [ eassumption | eassumption | ].
+                    subst v; eapply type_sound; eauto. }
+                assert (H_c : consistent_with_global (map.put (strip_aux store) x v) (map.put store x v))
+                  by (apply consistent_with_global_put_local; auto).
+                unfold holds_all in *. apply Forall_app; split.
+                1:{ rewrite Forall_map.
+                    lazymatch goal with
+                    | H_obl : Forall (inv_holds (map.put (strip_aux store) x v)) ictx |- _ =>
+                        eapply Forall_impl; [ | apply Forall_and; [ exact H_ictx | exact H_obl ] ]
+                    end.
+                    intros i [ H_i H_hi ].
+                    exact (proj2 (transf_inv_holds tbl_ty Gstore i _ _ H_Gs H_tbl H_is H_i H_lw H_c) H_hi). }
+                1:{ constructor; [ | constructor ].
+                    apply idx_inv_holds. rewrite map.get_put_diff by congruence.
+                    apply idx_inv_holds; assumption. } } }
+        (* CIf *)
+        1:{ econstructor.
+            1: eapply transf_to_idx_preserve_ty''; eauto.
+            1:{ eapply IHc1; [ exact H_tbl | exact H_is | exact H_incl | exact H_Gs | exact H_Ge
+                             | exact H_ictx | | eassumption ].
+                intros store env H_store H_env H_h [ H_pc H_g ]. use_strip_aux_ictx.
+                split; [ eapply H_sim; eauto | ].
+                erewrite <- transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); [ exact H_g | .. ]; eauto. }
+            1:{ eapply IHc2; [ exact H_tbl | exact H_is | exact H_incl | exact H_Gs | exact H_Ge
+                             | exact H_ictx | | eassumption ].
+                intros store env H_store H_env H_h [ H_pc H_g ]. use_strip_aux_ictx.
+                split; [ eapply H_sim; eauto | ].
+                erewrite <- transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); [ exact H_g | .. ]; eauto. } }
+        (* CForeach *)
+        1:{ econstructor.
+            1: eapply transf_to_idx_preserve_ty''; eauto.
+            1:{ apply IHc with (path_cond := fun _ _ => True);
+                  [ exact H_tbl | exact H_is
+                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
+                  | exact H_Gs | eauto with fiat2_hints | exact H_ictx
+                  | intros; exact I | assumption ]. } }
+      Qed.
       End WithGlobal.
 
       Definition transf_to_idx (free_vars : list string) (c : command) : command :=
@@ -1193,6 +1544,81 @@ Section WithMap.
         | cbn; repeat constructor; intuition idtac;
           destruct_In; auto ].
         eapply Permutation_in; [ eapply Permuted_record_sort | ]; constructor; auto.
+      Qed.
+
+      Definition install_idx (Gstore Genv : tenv) (c : command) : command :=
+        match c with
+        | CLetMut e x (Some t) _ _ =>
+            if is_tbl_ty t then transf_to_idx (get_free_vars Genv) c else c
+        | _ => c
+        end.
+
+      Theorem install_idx_sound : inv_transf_sound (locals := locals) install_idx.
+      Proof.
+        unfold inv_transf_sound, install_idx; intros * H_Gs H_Ge H_ictx H_m.
+        destruct c as [ | | | e x [ t | ] invs c0 | | | ];
+          try (split; [ exact H_m | reflexivity ]).
+        destruct (is_tbl_ty t) eqn:E_is; [ | split; [ exact H_m | reflexivity ] ].
+        inversion H_m; subst. subst_type_annot.
+        lazymatch goal with
+        | H_e : type_of Gstore Genv e t, H_c : maintains_invs _ _ _ _ c0,
+          H_i : Forall _ invs, H_f : map.get Gstore x = None,
+          H_o : forall _ _, _ -> _ -> _ -> _ -> holds_all _ invs |- _ =>
+            rename H_e into H_ty, H_c into H_body, H_i into H_invs_wf,
+              H_f into H_fresh, H_o into H_init
+        end.
+        assert (H_wf_t : type_wf t) by (eapply type_of__type_wf; [ | | exact H_ty ]; assumption).
+        assert (H_Gs' : tenv_wf (map.put Gstore x t)) by (apply tenv_wf_step; assumption).
+        split.
+        1:{ cbn [transf_to_idx]. apply MICLetMut with (t := aux_ty t).
+            1: apply aux_record_ty; auto using incl_refl.
+            1: exact eq_refl.
+            1:{ apply maintains_invs_ictx_equiv
+                  with (ictx := List.map (transf_inv x) (invs ++ ictx) ++ idx_inv x :: nil).
+                1:{ replace (map.put Gstore x (aux_ty t))
+                      with (map.put (map.put Gstore x t) x (aux_ty t))
+                      by apply Properties.map.put_put_same.
+                    eapply transf_to_idx'_maintains_invs with (path_cond := fun _ _ => True);
+                      [ apply map.get_put_same | exact E_is | apply incl_refl | exact H_Gs'
+                      | exact H_Ge | | intros; exact I | exact H_body ].
+                    apply Forall_app; split; [ exact H_invs_wf | ].
+                    eapply Forall_impl; [ | exact H_ictx ]; intros.
+                    eapply inv_wf_weaken; [ | eassumption ].
+                    apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
+                1: apply tenv_wf_step; [ assumption | apply aux_ty_wf; assumption ].
+                1: exact H_Ge.
+                1:{ unfold ictx_equiv, holds_all; intros store H_store.
+                    rewrite map_app.
+                    rewrite (map_ext_in (transf_inv x) (fun i => i) ictx).
+                    2:{ intros i H_in. rewrite Forall_forall in H_ictx.
+                        eapply transf_inv_unbound; eauto. }
+                    rewrite map_id. cbn [app].
+                    split; apply Permutation_Forall.
+                    1: apply Permutation_sym, Permutation_cons_append.
+                    1: apply Permutation_cons_append. } }
+            1: apply transf_to_idx_invs_wf; assumption.
+            1: exact H_fresh.
+            1:{ intros store env _ H_h H_store H_env.
+                specialize (H_init store env I H_h H_store H_env).
+                cbn [interp_expr List.map].
+                set (v := interp_expr store env e) in *.
+                unfold holds_all in *. constructor.
+                1:{ apply (proj2 (idx_inv_holds x _)). rewrite map.get_put_same.
+                    unfold aux_wf. rewrite record_sort_access_id, record_sort_access_aux.
+                    subst v; eapply to_idx_satisfy_idx_wf with (Gstore := Gstore) (Genv := Genv) (t := t);
+                      eauto using incl_refl. }
+                rewrite Forall_map.
+                eapply Forall_impl; [ | apply Forall_and; [ exact H_invs_wf | exact H_init ] ].
+                intros i [ H_i H_hi ].
+                apply (transf_inv_holds x t (map.put Gstore x t) i (map.put store x v)); auto.
+                1: apply map.get_put_same.
+                1: apply locals_wf_step; [ assumption | subst v; eapply type_sound; eauto ].
+                unfold consistent_with_global. rewrite !map.get_put_same.
+                rewrite record_sort_access_id. split; [ reflexivity | ].
+                intros y H_y. rewrite !map.get_put_diff by assumption. reflexivity. } }
+        1:{ intros store env H_store H_env H_h.
+            eapply transf_to_idx_preserve_sem; eauto using incl_refl.
+            eapply maintains_invs__well_typed; eassumption. }
       Qed.
 
       Definition apply_after_letmut f (c : command) :=
