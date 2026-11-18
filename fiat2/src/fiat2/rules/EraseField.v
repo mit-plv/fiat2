@@ -8,7 +8,7 @@ Open Scope string_scope.
 
 (* Erasing a field nothing reads.
 
-   After an index installation, a table variable holds a record pairing the
+   After index creation, a table variable holds a record pairing the
    table with its indexes, and every read of the table goes through one of
    the record's fields.  When the index rules have captured every read, the
    field holding the original collection is written on every assignment and
@@ -130,7 +130,7 @@ Section WithField.
   (* The table's type loses a field, so every write to the table must lose
      one too. A write that is not an erasable record literal would keep the
      field and no longer match the table's shortened type, so the pass
-     refuses it. Every write the index installation and its maintenance
+     refuses it. Every write index creation and the maintenance
      rules produce is such a literal, so nothing is lost in practice. *)
   Fixpoint writes_erasable (c : command) : bool :=
     match c with
