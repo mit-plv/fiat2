@@ -35,7 +35,8 @@ Definition compile (sc : scommand) : option command :=
       let c := at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) (map.empty : tenv) c in
       let c := fold_command_with_ictx (tenv := tenv)
                  (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) nil map.empty c in
-      Some (fold_command_with_ictx (tenv := tenv) dict_use_rule nil map.empty c)
+      let c := fold_command_with_ictx (tenv := tenv) dict_lookup_rule nil map.empty c in
+      Some (fold_command_with_ictx (tenv := tenv) dict_read_rule nil map.empty c)
   | Failure _ => None
   end.
 
@@ -43,30 +44,36 @@ Definition tbl := EAccess (ELoc "users") "tbl".
 
 Definition idx := EAccess (ELoc "users") "idx".
 
-Definition key_guard :=
-  ELet new_row "_pk_row"
+Definition key_guard (row : expr) :=
+  ELet row "_pk_row"
     (EBinop OEq
        (flatmap_filter_bag (EUnop OBagOfList tbl) "_pk_scan"
           (EBinop OEq (EAccess (EVar "_pk_scan") "id") (EAccess (EVar "_pk_row") "id"))
           "_pk_scan" None None)
        (EAtom (AEmptyBag None))).
 
+Definition users_init :=
+  ERecord [("tbl", EAtom (ANil (Some row_ty))); ("idx", dict_fold "id" (EAtom (ANil (Some row_ty))))].
+
+Definition users_ty := TRecord [("idx", dict_ty TInt [("age", TInt); ("id", TInt)]); ("tbl", TList row_ty)].
+
+Definition users_invs :=
+  [ IndexInv "users" ["tbl"] ["idx"] "_h" (dict_fold "id" (EVar "_h"));
+    ConstraintInv "users" ["tbl"] "_r"
+      (EBinop OEq
+         (EUnop OLength
+            (flatmap_filter_list tbl "_r2"
+               (EBinop OEq (EAccess (EVar "_r2") "id") (EAccess (EVar "_r") "id")) "_r2" None None))
+         (EAtom (AInt 1))) ].
+
 Example compiled :
   compile prog =
-    Some (CLetMut (ERecord [("tbl", EAtom (ANil (Some row_ty))); ("idx", dict_fold "id" (EAtom (ANil (Some row_ty))))])
-            "users" (Some (TRecord [("idx", dict_ty TInt [("age", TInt); ("id", TInt)]); ("tbl", TList row_ty)]))
-            [ IndexInv "users" ["tbl"] ["idx"] "_h" (dict_fold "id" (EVar "_h"));
-              ConstraintInv "users" ["tbl"] "_r"
-                (EBinop OEq
-                   (EUnop OLength
-                      (flatmap_filter_list tbl "_r2"
-                         (EBinop OEq (EAccess (EVar "_r2") "id") (EAccess (EVar "_r") "id")) "_r2" None None))
-                   (EAtom (AInt 1))) ]
+    Some (CLetMut users_init "users" (Some users_ty) users_invs
             (CSeq
-               (CIf (EBinop OAnd key_guard (EAtom (ABool true)))
+               (CIf (EBinop OAnd (key_guard new_row) (EAtom (ABool true)))
                   (CAssign "users"
                      (ERecord [("tbl", EBinop OCons new_row tbl);
-                               ("idx", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id")))]))
+                               ("idx", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id" "_tup" "_acc" "_b" None)))]))
                   CSkip)
                (CSeq
                   (CLet (EACFold AGCount
@@ -77,4 +84,24 @@ Example compiled :
                         (ERecord [("tbl", flatmap_filter_list tbl "x" (EUnop ONot id_is_7) "x" (Some row_ty) (Some row_ty));
                                   ("idx", EBinop ODelete idx (EAtom (AInt 7)))]))
                      CSkip)))).
+Proof. reflexivity. Qed.
+
+(* The new row reads a variable named like the index's accumulator, so
+   substituting it into the index renames the accumulator *)
+Definition age_row := ERecord [("age", EVar "_acc"); ("id", EAtom (AInt 7))].
+
+Definition prog_renamed : scommand :=
+  SLetConstrained "users" row_ty [("_r", key)]
+    (SLet (EAtom (AInt 30)) "_acc" (SAssign "users" (EBinop OCons age_row (ELoc "users")) SSkip)).
+
+Example compiled_renamed :
+  compile prog_renamed =
+    Some (CLetMut users_init "users" (Some users_ty) users_invs
+            (CLet (EAtom (AInt 30)) "_acc"
+               (CIf (EBinop OAnd (key_guard age_row) (EAtom (ABool true)))
+                  (CAssign "users"
+                     (ERecord [("tbl", EBinop OCons age_row tbl);
+                               ("idx", ELet idx "_acc'''''"
+                                         (ELet age_row "_tup" (dict_body "id" "_tup" "_acc'''''" "_b" None)))]))
+                  CSkip))).
 Proof. reflexivity. Qed.

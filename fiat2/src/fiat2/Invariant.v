@@ -763,6 +763,16 @@ Section WithMap.
       preserve_ty Gstore (f ictx Gstore) /\
         forall store : locals, holds_all store ictx -> preserve_sem Gstore store (f ictx Gstore).
 
+  Lemma gated_rule_sound : forall (p : list invariant -> tenv -> expr -> bool) f,
+      expr_transf_sound (locals := locals) f ->
+      ictx_rule_sound (fun ictx Gstore e => if p ictx Gstore e then f e else e).
+  Proof.
+    unfold expr_transf_sound, ictx_rule_sound, preserve_ty, preserve_sem; intros * H_f; intros.
+    split; intros; destruct (p ictx Gstore e); auto.
+    1: apply H_f; auto.
+    apply (H_f Gstore Genv e t); auto.
+  Qed.
+
   Lemma expr_transf__ictx_rule_sound : forall f,
       expr_transf_sound (locals := locals) f -> ictx_rule_sound (fun _ _ => f).
   Proof.
@@ -1094,17 +1104,5 @@ Section WithMap.
         destruct (interp_expr store env e1) as [ | | | [ v' | ] | | | | | | ]; try reflexivity.
         1: apply IHe3.
         1: apply IHe2. }
-  Qed.
-
-  Lemma erase_annot_ty : forall (Gstore Genv : tenv) e t,
-      type_of Gstore Genv e t -> type_of Gstore Genv (erase_annot e) t.
-  Proof.
-    intros Gstore Genv e t H. induction H using type_of_IH; cbn [erase_annot].
-    all: try (econstructor; eassumption).
-    1:{ constructor. inversion H; subst; constructor; assumption. }
-    1:{ econstructor; try eassumption.
-        1: rewrite map_map; cbn [fst]; assumption.
-        rewrite map_map; cbn [snd]. rewrite <- (map_map snd erase_annot).
-        clear H0 H. induction H1; constructor; assumption. }
   Qed.
 End WithMap.

@@ -7,18 +7,18 @@ Local Open Scope string_scope.
 Local Open Scope bool_scope.
 
 (* A dictionary index on one attribute, from each key to the bag of rows with
-   that key.  Only the use rule reads the invariant context; the maintenance
-   rules leave the index of the table before a write for it to replace. *)
+   that key.  Only the read rule replaces an index by the stored one; the
+   other rules rewrite the program into an index of the table for it. *)
 
-Definition dict_body (attr : string) : expr :=
-  ETernop OInsert (EVar "_acc") (EAccess (EVar "_tup") attr)
+Definition dict_body (attr tup acc b : string) (tb : option type) : expr :=
+  ETernop OInsert (EVar acc) (EAccess (EVar tup) attr)
     (EBinop OBagInsert
-       (EOptMatch (EBinop OLookup (EVar "_acc") (EAccess (EVar "_tup") attr))
-          (EAtom (AEmptyBag None)) "_b" (EVar "_b"))
-       (EVar "_tup")).
+       (EOptMatch (EBinop OLookup (EVar acc) (EAccess (EVar tup) attr))
+          (EAtom (AEmptyBag tb)) b (EVar b))
+       (EVar tup)).
 
 Definition dict_fold (attr : string) (l : expr) : expr :=
-  EFold l (EAtom (AEmptyDict Unranged None)) "_tup" "_acc" (dict_body attr).
+  EFold l (EAtom (AEmptyDict Unranged None)) "_tup" "_acc" (dict_body attr "_tup" "_acc" "_b" None).
 
 Definition dict_ty (kt : type) (rt : list (string * type)) : type :=
   TDict Unranged kt (TBag (TRecord rt)).
@@ -38,15 +38,18 @@ Definition dict_idx_ty (attr : string) (t : type) : type :=
 Definition dict_idx (attr : string) : IndexInterface.index :=
   IndexInterface.mk "_h" (dict_fold attr (EVar "_h")) (dict_idx_ty attr) (dict_is_tbl_ty attr).
 
-Definition dict_shape (attr : string) (d : expr) (x acc : string) (body : expr) : bool :=
-  expr_eqb (erase_annot d) (EAtom (AEmptyDict Unranged None)) && String.eqb x "_tup" && String.eqb acc "_acc"
-  && expr_eqb (erase_annot body) (dict_body attr).
-
-(* The attribute and the rows of an index built from scratch *)
+(* The attribute and the rows of an index built from scratch, with any binder names *)
 Definition dict_fold_of (e : expr) : option (string * expr) :=
   match e with
-  | EFold l d x acc (ETernop OInsert e1 (EAccess e2 attr) e3) =>
-      if dict_shape attr d x acc (ETernop OInsert e1 (EAccess e2 attr) e3) then Some (attr, l) else None
+  | EFold l (EAtom (AEmptyDict Unranged _)) tup acc
+      (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr)
+         (EBinop OBagInsert
+            (EOptMatch (EBinop OLookup (EVar acc2) (EAccess (EVar tup2) attr'))
+               (EAtom (AEmptyBag _)) b (EVar b'))
+            (EVar tup3))) =>
+      if negb (String.eqb tup acc) && forallb (String.eqb tup) [tup1; tup2; tup3]
+         && forallb (String.eqb acc) [acc1; acc2] && String.eqb b b' && String.eqb attr attr'
+      then Some (attr, l) else None
   | _ => None
   end.
 
@@ -59,17 +62,30 @@ Definition fold_cons_head (e : expr) : expr :=
   | _ => e
   end.
 
-Definition dict_delete_of (e : expr) : option (expr * expr * string * string * expr * expr) :=
-  match e with
-  | EFold (flatmap_filter_list l x (EUnop ONot (EBinop OEq (EAccess (EVar x1) attr) k)) x2 _ _) d y acc body =>
-      if dict_shape attr d y acc body && String.eqb x x1 && String.eqb x x2 && negb (free_immut_in x k)
-      then Some (l, d, y, acc, body, k) else None
+Definition dict_delete_of (e : expr) : option (string * expr * expr) :=
+  match dict_fold_of e with
+  | Some (attr, flatmap_filter_list l x (EUnop ONot (EBinop OEq (EAccess (EVar x1) attr') k)) x2 _ _) =>
+      if String.eqb attr attr' && String.eqb x x1 && String.eqb x x2 && negb (free_immut_in x k)
+      then Some (attr, l, k) else None
   | _ => None
   end.
 
 Definition dict_delete_head (e : expr) : expr :=
   match dict_delete_of e with
-  | Some (l, d, y, acc, body, k) => EBinop ODelete (EFold l d y acc body) k
+  | Some (attr, l, k) => EBinop ODelete (dict_fold attr l) k
+  | None => e
+  end.
+
+Definition dict_lookup_of (e : expr) : option (string * expr * expr) :=
+  match e with
+  | EUnop OBagOfList (flatmap_filter_list l x (EBinop OEq (EAccess (EVar x1) attr) k) x2 _ _) =>
+      if String.eqb x x1 && String.eqb x x2 && negb (free_immut_in x k) then Some (attr, l, k) else None
+  | _ => None
+  end.
+
+Definition eq_filter_to_lookup (e : expr) : expr :=
+  match dict_lookup_of e with
+  | Some (attr, l, k) => EOptMatch (EBinop OLookup (dict_fold attr l) k) (EAtom (AEmptyBag None)) "_b" (EVar "_b")
   | None => e
   end.
 
@@ -95,28 +111,22 @@ Fixpoint dict_aux (ictx : list invariant) (attr : string) (l : expr) : option ex
                  end
   end.
 
-Definition dict_lookup_of (e : expr) : option (string * expr * expr) :=
-  match e with
-  | EUnop OBagOfList (flatmap_filter_list l x (EBinop OEq (EAccess (EVar x1) attr) k) x2 _ _) =>
-      if String.eqb x x1 && String.eqb x x2 && negb (free_immut_in x k) then Some (attr, l, k) else None
-  | _ => None
+Definition dict_read_head (ictx : list invariant) (e : expr) : expr :=
+  match dict_fold_of e with
+  | Some (attr, l) => match dict_aux ictx attr l with
+                      | Some aux => aux
+                      | None => e
+                      end
+  | None => e
   end.
 
-Definition dict_use_head (ictx : list invariant) (e : expr) : expr :=
+Definition has_dict_for (ictx : list invariant) (e : expr) : bool :=
   match dict_lookup_of e with
-  | Some (attr, l, k) =>
-      match dict_aux ictx attr l with
-      | Some aux => EOptMatch (EBinop OLookup aux k) (EAtom (AEmptyBag None)) "_b" (EVar "_b")
-      | None => e
-      end
-  | None =>
-      match dict_fold_of e with
-      | Some (attr, l) => match dict_aux ictx attr l with
-                          | Some aux => aux
-                          | None => e
-                          end
-      | None => e
-      end
+  | Some (attr, l, _) => match dict_aux ictx attr l with
+                         | Some _ => true
+                         | None => false
+                         end
+  | None => false
   end.
 
 Definition row_key (attr : string) (v : value) : value :=
@@ -143,9 +153,6 @@ Definition dict_of (attr : string) (v : value) : value :=
   | _ => VUnit
   end.
 
-Ltac simpl_get_put :=
-  repeat (rewrite map.get_put_same in * || (rewrite map.get_put_diff in * by discriminate)).
-
 Ltac inv_tys :=
   repeat match goal with
     | H : type_of _ _ (EVar _) _ |- _ => inversion H; subst; clear H
@@ -161,40 +168,45 @@ Ltac inv_tys :=
     | H : type_of_binop _ _ _ _ |- _ => inversion H; subst; clear H
     | H : type_of_ternop _ _ _ _ _ |- _ => inversion H; subst; clear H
     | H : map.get (map.put _ ?x _) ?x = _ |- _ => rewrite map.get_put_same in H
-    | H : map.get (map.put _ _ _) _ = _ |- _ => rewrite map.get_put_diff in H by discriminate
+    | H : map.get (map.put _ _ _) _ = _ |- _ => rewrite map.get_put_diff in H by (discriminate || congruence)
     | H : Some _ = Some _ |- _ => inversion H; subst; clear H
     end.
 
-Lemma dict_shape_true : forall attr d x acc body,
-    dict_shape attr d x acc body = true ->
-    erase_annot d = EAtom (AEmptyDict Unranged None) /\ x = "_tup" /\ acc = "_acc" /\
-      erase_annot body = dict_body attr.
-Proof.
-  unfold dict_shape; intros * H. repeat rewrite Bool.andb_true_iff in H.
-  destruct H as [ [ [ H1 H2 ] H3 ] H4 ].
-  apply expr_eqb_true in H1, H4. apply String.eqb_eq in H2, H3. auto.
-Qed.
+Ltac split_conds :=
+  repeat match goal with
+    | H : _ && _ = true |- _ => apply Bool.andb_true_iff in H as [ ? ? ]
+    | H : negb _ = true |- _ => apply Bool.negb_true_iff in H
+    | H : (_ =? _) = true |- _ => apply String.eqb_eq in H; subst
+    | H : (_ =? _) = false |- _ => apply String.eqb_neq in H
+    | H : expr_eqb _ _ = true |- _ => apply expr_eqb_true in H; subst
+    end.
 
 Lemma dict_fold_of_spec : forall e attr l,
     dict_fold_of e = Some (attr, l) ->
-    exists d x acc body, e = EFold l d x acc body /\ dict_shape attr d x acc body = true.
+    exists a tup acc b tb,
+      e = EFold l (EAtom (AEmptyDict Unranged a)) tup acc (dict_body attr tup acc b tb) /\ tup <> acc.
 Proof.
   unfold dict_fold_of; intros * H.
   repeat (destruct_match_hyp; try discriminate).
-  injection H as <- <-. eauto 6.
+  injection H as <- <-. cbn [forallb] in *. rewrite !Bool.andb_true_r in *. split_conds.
+  do 5 eexists; split; [ reflexivity | assumption ].
 Qed.
 
-Lemma dict_delete_of_spec : forall e l d y acc body k,
-    dict_delete_of e = Some (l, d, y, acc, body, k) ->
-    exists x attr t1 t2,
-      e = EFold (flatmap_filter_list l x (EUnop ONot (EBinop OEq (EAccess (EVar x) attr) k)) x t1 t2) d y acc body /\
-        dict_shape attr d y acc body = true /\ free_immut_in x k = false.
+Lemma dict_fold_of_dict_fold : forall attr l, dict_fold_of (dict_fold attr l) = Some (attr, l).
+Proof.
+  intros. unfold dict_fold_of, dict_fold, dict_body. cbn [forallb negb].
+  rewrite !String.eqb_refl. reflexivity.
+Qed.
+
+Lemma dict_delete_of_spec : forall e attr l k,
+    dict_delete_of e = Some (attr, l, k) ->
+    exists x t1 t2,
+      dict_fold_of e = Some (attr, flatmap_filter_list l x (EUnop ONot (EBinop OEq (EAccess (EVar x) attr) k)) x t1 t2)
+      /\ free_immut_in x k = false.
 Proof.
   unfold dict_delete_of; intros * H.
   repeat (destruct_match_hyp; try discriminate).
-  injection H as <- <- <- <- <- <-.
-  repeat rewrite Bool.andb_true_iff in *. rewrite Bool.negb_true_iff in *.
-  intuition idtac. rewrite String.eqb_eq in *; subst. eauto 7.
+  injection H as <- <- <-. split_conds. eauto.
 Qed.
 
 Lemma dict_lookup_of_spec : forall e attr l k,
@@ -205,9 +217,7 @@ Lemma dict_lookup_of_spec : forall e attr l k,
 Proof.
   unfold dict_lookup_of; intros * H.
   repeat (destruct_match_hyp; try discriminate).
-  injection H as <- <- <-.
-  repeat rewrite Bool.andb_true_iff in *. rewrite Bool.negb_true_iff in *.
-  intuition idtac. rewrite String.eqb_eq in *; subst. eauto 6.
+  injection H as <- <- <-. split_conds. eauto.
 Qed.
 
 Lemma dict_aux_spec : forall ictx attr l aux,
@@ -220,11 +230,7 @@ Proof.
   destruct (dict_aux_of attr l i) eqn:E.
   1:{ injection H as <-. unfold dict_aux_of in E.
       repeat (destruct_match_hyp; try discriminate).
-      injection E as <-. repeat rewrite Bool.andb_true_iff in *.
-      repeat lazymatch goal with H : _ /\ _ |- _ => destruct H end.
-      rewrite String.eqb_eq in *.
-      repeat lazymatch goal with H : expr_eqb _ _ = true |- _ => apply expr_eqb_true in H end.
-      subst.
+      injection E as <-. split_conds.
       do 5 eexists; split; [ left; reflexivity | ]. eauto. }
   1:{ apply IH in H as (tbl & id & auxf & h & ti & H_in & H_rest).
       do 5 eexists; split; [ right; exact H_in | exact H_rest ]. }
@@ -233,20 +239,6 @@ Qed.
 Section WithMap.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
-
-  Lemma dict_body_ty : forall (Gstore Genv : tenv) attr rt kt,
-      type_wf (TRecord rt) -> access_record rt attr = Success kt ->
-      map.get Genv "_tup" = Some (TRecord rt) -> map.get Genv "_acc" = Some (dict_ty kt rt) ->
-      type_of Gstore Genv (dict_body attr) (dict_ty kt rt).
-  Proof.
-    unfold dict_body, dict_ty; intros * H_wf H_a H_tup H_acc.
-    econstructor; [ constructor | constructor; exact H_acc | econstructor; [ constructor; exact H_tup | exact H_a ] | ].
-    econstructor; [ constructor | | constructor; exact H_tup ].
-    econstructor.
-    1: econstructor; [ constructor | constructor; exact H_acc | econstructor; [ constructor; exact H_tup | exact H_a ] ].
-    1: constructor; constructor; exact H_wf.
-    1: constructor; apply map.get_put_same.
-  Qed.
 
   Lemma access_record_ty_wf : forall rt attr kt,
       type_wf (TRecord rt) -> access_record rt attr = Success kt -> type_wf kt.
@@ -261,12 +253,21 @@ Section WithMap.
       type_of Gstore Genv l (TList (TRecord rt)) ->
       type_of Gstore Genv (dict_fold attr l) (dict_ty kt rt).
   Proof.
-    intros * H_wf H_a H_l. unfold dict_fold.
-    econstructor; [ exact H_l | | ].
-    1: constructor; constructor; [ eapply access_record_ty_wf; eassumption | constructor; exact H_wf ].
-    apply dict_body_ty; auto.
-    1: rewrite map.get_put_diff by discriminate; apply map.get_put_same.
-    1: apply map.get_put_same.
+    unfold dict_fold, dict_body, dict_ty; intros * H_wf H_a H_l.
+    pose proof (access_record_ty_wf _ _ _ H_wf H_a) as H_kt.
+    econstructor; [ exact H_l | constructor; constructor; [ exact H_kt | constructor; exact H_wf ] | ].
+    assert (H_tup : map.get (map.put (map.put Genv "_tup" (TRecord rt)) "_acc" (TDict Unranged kt (TBag (TRecord rt)))) "_tup"
+                    = Some (TRecord rt))
+      by (rewrite map.get_put_diff by discriminate; apply map.get_put_same).
+    assert (H_acc : map.get (map.put (map.put Genv "_tup" (TRecord rt)) "_acc" (TDict Unranged kt (TBag (TRecord rt)))) "_acc"
+                    = Some (TDict Unranged kt (TBag (TRecord rt))))
+      by apply map.get_put_same.
+    econstructor; [ constructor | constructor; exact H_acc | econstructor; [ constructor; exact H_tup | exact H_a ] | ].
+    econstructor; [ constructor | | constructor; exact H_tup ].
+    econstructor.
+    1: econstructor; [ constructor | constructor; exact H_acc | econstructor; [ constructor; exact H_tup | exact H_a ] ].
+    1: constructor; constructor; exact H_wf.
+    1: constructor; apply map.get_put_same.
   Qed.
 
   #[global] Instance dict_idx_ok (attr : string) : ok (dict_idx attr).
@@ -281,50 +282,46 @@ Section WithMap.
     apply dict_fold_ty; auto. constructor. apply map.get_put_same.
   Qed.
 
-  Lemma dict_shape_parts_ty : forall (Gstore Genv : tenv) attr d x acc body t1 t,
-      dict_shape attr d x acc body = true ->
-      type_of Gstore Genv d t -> type_of Gstore (map.put (map.put Genv x t1) acc t) body t ->
-      exists rt kt, t1 = TRecord rt /\ access_record rt attr = Success kt /\ t = dict_ty kt rt.
-  Proof.
-    intros * H_s H_d H_b. apply dict_shape_true in H_s as (E_d & -> & -> & E_b).
-    apply erase_annot_ty in H_d, H_b. rewrite E_d in H_d. rewrite E_b in H_b.
-    unfold dict_body in H_b. inv_tys.
-    do 2 eexists; split; [ reflexivity | split; [ eassumption | reflexivity ] ].
-  Qed.
-
-  Lemma dict_shape_ty_inv : forall (Gstore Genv : tenv) attr l d x acc body t,
-      dict_shape attr d x acc body = true -> type_of Gstore Genv (EFold l d x acc body) t ->
+  Lemma dict_fold_of_ty : forall (Gstore Genv : tenv) e attr l t,
+      dict_fold_of e = Some (attr, l) -> type_of Gstore Genv e t ->
       exists rt kt, type_of Gstore Genv l (TList (TRecord rt)) /\ access_record rt attr = Success kt /\
                       t = dict_ty kt rt.
   Proof.
-    intros * H_s H_t. inversion H_t; subst.
-    lazymatch goal with
-    | Hd : type_of _ _ d _, Hb : type_of _ _ body _ |- _ =>
-        destruct (dict_shape_parts_ty _ _ _ _ _ _ _ _ _ H_s Hd Hb) as (rt & kt & -> & H_a & ->)
-    end.
-    eauto.
+    intros * H_e H_t. apply dict_fold_of_spec in H_e as (a & tup & acc & b & tb & -> & H_ne).
+    inversion H_t; subst. unfold dict_body in *. inv_tys.
+    all: do 2 eexists; split; [ eassumption | split; [ eassumption | reflexivity ] ].
   Qed.
 
-  Lemma interp_dict_body : forall attr (store env : locals) v acc,
-      map.get env "_tup" = Some v -> map.get env "_acc" = Some acc ->
-      interp_expr store env (dict_body attr) = dict_step attr v acc.
+  Lemma interp_EFold : forall (store env : locals) l d x y body,
+      interp_expr store env (EFold l d x y body) =
+        match interp_expr store env l with
+        | VList vs => fold_right (fun v a => interp_expr store (map.put (map.put env x v) y a) body)
+                        (interp_expr store env d) vs
+        | _ => VUnit
+        end.
+  Proof. reflexivity. Qed.
+
+  Lemma interp_dict_body : forall attr tup acc b tb (store env : locals) v a,
+      map.get env tup = Some v -> map.get env acc = Some a ->
+      interp_expr store env (dict_body attr tup acc b tb) = dict_step attr v a.
   Proof.
     intros * H_tup H_acc. unfold dict_body; cbn [interp_expr]. unfold get_local; rewrite H_tup, H_acc.
-    destruct acc; try reflexivity. cbn [interp_binop interp_ternop interp_atom].
+    destruct a; try reflexivity. cbn [interp_binop interp_ternop interp_atom].
     change (match v with VRecord l => record_proj attr l | _ => VUnit end) with (row_key attr v).
     unfold dict_step, bucket. destruct (dict_lookup (row_key attr v) l); [ | reflexivity ].
     rewrite map.get_put_same. reflexivity.
   Qed.
 
-  Lemma interp_dict_shape : forall attr l d x acc body (store env : locals),
-      dict_shape attr d x acc body = true ->
-      interp_expr store env (EFold l d x acc body) = dict_of attr (interp_expr store env l).
+  Lemma interp_dict_fold_of : forall e attr l (store env : locals),
+      dict_fold_of e = Some (attr, l) ->
+      interp_expr store env e = dict_of attr (interp_expr store env l).
   Proof.
-    intros * H_s. apply dict_shape_true in H_s as (E_d & -> & -> & E_b).
-    cbn [interp_expr]. destruct (interp_expr store env l); try reflexivity. cbn [dict_of].
-    rewrite <- (interp_erase_annot d), E_d. cbn [interp_expr interp_atom].
-    apply fold_right_ext; intros v acc.
-    rewrite <- interp_erase_annot, E_b. apply interp_dict_body; simpl_get_put; reflexivity.
+    intros * H. apply dict_fold_of_spec in H as (a & tup & acc & b & tb & -> & H_ne).
+    rewrite interp_EFold. destruct (interp_expr store env l); try reflexivity. cbn [dict_of].
+    change (interp_expr store env (EAtom (AEmptyDict Unranged a))) with (VDict nil).
+    apply fold_right_ext; intros v a'. apply interp_dict_body.
+    1: rewrite map.get_put_diff by congruence; apply map.get_put_same.
+    1: apply map.get_put_same.
   Qed.
 
   Lemma dict_lookup_insert_same : forall k (v : value) d,
@@ -352,7 +349,8 @@ Section WithMap.
   Qed.
 
   Lemma fold_dict_step_sorted : forall attr l,
-      exists d, fold_right (dict_step attr) (VDict nil) l = VDict d /\ StronglySorted (fun p p' => is_true (dict_entry_leb p p')) d.
+      exists d, fold_right (dict_step attr) (VDict nil) l = VDict d /\
+                  StronglySorted (fun p p' => is_true (dict_entry_leb p p')) d.
   Proof.
     induction l as [ | v l (d & E & H_s) ]; cbn [fold_right].
     1: exists nil; split; [ reflexivity | constructor ].
@@ -449,12 +447,11 @@ Section WithMap.
   Proof.
     intros * H_ictx H_aux H_l H_a.
     apply dict_aux_spec in H_aux as (tbl & id & auxf & h & ti & H_in & H_ti & -> & ->).
-    apply dict_fold_of_spec in H_ti as (d & x & acc & body & -> & H_s).
     split.
     1:{ rewrite Forall_forall in H_ictx. specialize (H_ictx _ H_in). inversion H_ictx; subst.
         lazymatch goal with
-        | Ht : type_of _ _ (EFold _ _ _ _ _) _ |- _ =>
-            destruct (dict_shape_ty_inv _ _ _ _ _ _ _ _ _ H_s Ht) as (rt' & kt' & H_h & H_a' & ->)
+        | Ht : type_of _ _ ti _ |- _ =>
+            destruct (dict_fold_of_ty _ _ _ _ _ _ H_ti Ht) as (rt' & kt' & H_h & H_a' & ->)
         end.
         inversion H_h; subst. rewrite map.get_put_same in *.
         lazymatch goal with H : Some _ = Some _ |- _ => inversion H; subst; clear H end.
@@ -486,7 +483,7 @@ Section WithMap.
         destruct (access_record l id) eqn:E_id; destruct (access_record l auxf) eqn:E_aux;
           cbn [value_at] in H_h; try contradiction.
         rewrite (access_record__record_proj _ _ _ E_id), (access_record__record_proj _ _ _ E_aux).
-        rewrite H_h, (interp_dict_shape attr) by exact H_s. cbn [interp_expr]. unfold get_local.
+        rewrite H_h, (interp_dict_fold_of _ _ _ _ _ H_ti). cbn [interp_expr]. unfold get_local.
         rewrite map.get_put_same. reflexivity. }
   Qed.
 
@@ -521,30 +518,24 @@ Section WithMap.
   Theorem dict_delete_head_sound : expr_transf_sound (locals := locals) dict_delete_head.
   Proof.
     unfold expr_transf_sound, dict_delete_head; intros Gstore Genv e t H_Gs H_Ge H_e.
-    destruct (dict_delete_of e) as [ [ [ [ [ [ l d ] y ] acc ] body ] k ] | ] eqn:E;
+    destruct (dict_delete_of e) as [ [ [ attr l ] k ] | ] eqn:E;
       [ | split; [ exact H_e | intros; reflexivity ] ].
-    apply dict_delete_of_spec in E as (x & attr & t1 & t2 & -> & H_s & H_free).
-    inversion H_e; subst.
-    lazymatch goal with
-    | Hd : type_of _ _ d _, Hb : type_of _ _ body _ |- _ =>
-        destruct (dict_shape_parts_ty _ _ _ _ _ _ _ _ _ H_s Hd Hb) as (rt & kt & -> & H_a & ->)
-    end.
-    lazymatch goal with
-    | H : type_of _ _ (flatmap_filter_list _ _ _ _ _ _) _ |- _ =>
-        apply filter_ty_inv in H as (tr & E_tr & H_l & H_p)
-    end.
+    apply dict_delete_of_spec in E as (x & t1 & t2 & E_f & H_free).
+    destruct (dict_fold_of_ty _ _ _ _ _ _ E_f H_e) as (rt & kt & H_F & H_a & ->).
+    apply filter_ty_inv in H_F as (tr & E_tr & H_l & H_p).
     inversion E_tr; subst. inv_tys.
     lazymatch goal with
     | H : access_record ?r attr = Success _, H' : access_record ?r attr = Success _ |- _ =>
         rewrite H in H'; inversion H'; subst
     end.
     split.
-    1:{ econstructor; [ constructor | econstructor; eassumption | ].
+    1:{ pose proof (type_of__type_wf _ _ _ _ H_Gs H_Ge H_l) as H_wf. inversion H_wf; subst.
+        econstructor; [ constructor | apply dict_fold_ty; eassumption | ].
         eapply not_free_immut_put_ty; eassumption. }
     1:{ intros store env _ _.
         change (interp_expr store env (EBinop ODelete ?a ?b))
           with (interp_binop ODelete (interp_expr store env a) (interp_expr store env b)).
-        rewrite !(interp_dict_shape attr) by exact H_s.
+        rewrite (interp_dict_fold_of _ _ _ _ _ (dict_fold_of_dict_fold attr l)), (interp_dict_fold_of _ _ _ _ _ E_f).
         rewrite interp_filter_list with (g := fun v => negb (value_eqb (row_key attr v) (interp_expr store env k))).
         2:{ intros v.
             transitivity (interp_unop ONot (interp_expr store (map.put env x v) (EBinop OEq (EAccess (EVar x) attr) k)));
@@ -554,59 +545,62 @@ Section WithMap.
         destruct (fold_dict_step_sorted attr l0) as (d0 & -> & _). reflexivity. }
   Qed.
 
-  Definition dict_use_rule (ictx : list invariant) (_ : tenv) : expr -> expr := dict_use_head ictx.
-
-  Theorem dict_use_sound : ictx_rule_sound (locals := locals) dict_use_rule.
+  Theorem eq_filter_to_lookup_sound : expr_transf_sound (locals := locals) eq_filter_to_lookup.
   Proof.
-    unfold ictx_rule_sound, preserve_ty, preserve_sem, dict_use_rule, dict_use_head.
+    unfold expr_transf_sound, eq_filter_to_lookup; intros Gstore Genv e t H_Gs H_Ge H_e.
+    destruct (dict_lookup_of e) as [ [ [ attr l ] k ] | ] eqn:E_lk;
+      [ | split; [ exact H_e | intros; reflexivity ] ].
+    apply dict_lookup_of_spec in E_lk as (x & t1 & t2 & -> & H_free).
+    inversion H_e; subst. inv_tys.
+    lazymatch goal with
+    | H : type_of _ _ (flatmap_filter_list _ _ _ _ _ _) _ |- _ =>
+        apply filter_key_ty_inv in H as (rt & kt & E_t & H_l & H_a & H_k); [ | exact H_free ]
+    end.
+    inversion E_t; subst.
+    pose proof (type_of__type_wf _ _ _ _ H_Gs H_Ge H_l) as H_wf. inversion H_wf; subst.
+    split.
+    1:{ pose proof (dict_fold_ty Gstore Genv attr l rt kt ltac:(assumption) H_a H_l) as H_d.
+        unfold dict_ty in H_d.
+        econstructor; [ econstructor; [ constructor | exact H_d | exact H_k ] | | ].
+        1: constructor; constructor; assumption.
+        1: constructor; apply map.get_put_same. }
+    1:{ intros store env _ _.
+        change (interp_expr store env (EUnop OBagOfList ?a))
+          with (interp_unop OBagOfList (interp_expr store env a)).
+        rewrite interp_filter_list with (g := fun v => value_eqb (row_key attr v) (interp_expr store env k)).
+        2:{ intros v. apply interp_eq_key; exact H_free. }
+        cbn [interp_expr]. rewrite (interp_dict_fold_of _ _ _ _ _ (dict_fold_of_dict_fold attr l)).
+        destruct (interp_expr store env l); try reflexivity. cbn [dict_of interp_unop].
+        destruct (fold_dict_step_sorted attr l0) as (d0 & E0 & _). rewrite E0. cbn [interp_binop].
+        rewrite <- (fold_dict_step_bucket _ _ _ _ E0). unfold bucket.
+        destruct (dict_lookup _ d0); [ | reflexivity ].
+        cbn [interp_expr]. unfold get_local. rewrite map.get_put_same. reflexivity. }
+  Qed.
+
+  Definition dict_lookup_rule (ictx : list invariant) (_ : tenv) (e : expr) : expr :=
+    if has_dict_for ictx e then eq_filter_to_lookup e else e.
+
+  Theorem dict_lookup_rule_sound : ictx_rule_sound (locals := locals) dict_lookup_rule.
+  Proof.
+    apply (gated_rule_sound (fun ictx _ e => has_dict_for ictx e)). exact eq_filter_to_lookup_sound.
+  Qed.
+
+  Definition dict_read_rule (ictx : list invariant) (_ : tenv) : expr -> expr := dict_read_head ictx.
+
+  Theorem dict_read_rule_sound : ictx_rule_sound (locals := locals) dict_read_rule.
+  Proof.
+    unfold ictx_rule_sound, preserve_ty, preserve_sem, dict_read_rule, dict_read_head.
     intros ictx Gstore H_Gs H_ictx. split.
     1:{ intros e t Genv _ H_Ge H_e.
-        destruct (dict_lookup_of e) as [ [ [ attr l ] k ] | ] eqn:E_lk.
-        1:{ destruct (dict_aux ictx attr l) as [ aux | ] eqn:E_aux; [ | exact H_e ].
-            apply dict_lookup_of_spec in E_lk as (x & t1 & t2 & -> & H_free).
-            inversion H_e; subst. inv_tys.
-            lazymatch goal with
-            | H : type_of _ _ (flatmap_filter_list _ _ _ _ _ _) _ |- _ =>
-                apply filter_key_ty_inv in H as (rt & kt & E_t & H_l & H_a & H_k); [ | exact H_free ]
-            end.
-            inversion E_t; subst.
-            pose proof (type_of__type_wf _ _ _ _ H_Gs H_Ge H_l) as H_wf. inversion H_wf; subst.
-            eapply dict_aux_correct in E_aux as [ H_aux _ ]; [ | eassumption .. ].
-            unfold dict_ty in H_aux.
-            econstructor; [ econstructor; [ constructor | exact H_aux | exact H_k ] | | ].
-            1: constructor; constructor; assumption.
-            1: constructor; apply map.get_put_same. }
         destruct (dict_fold_of e) as [ [ attr l ] | ] eqn:E_f; [ | exact H_e ].
         destruct (dict_aux ictx attr l) as [ aux | ] eqn:E_aux; [ | exact H_e ].
-        apply dict_fold_of_spec in E_f as (d & x & acc & body & -> & H_s).
-        eapply dict_shape_ty_inv in H_e as (rt & kt & H_l & H_a & ->); [ | exact H_s ].
+        destruct (dict_fold_of_ty _ _ _ _ _ _ E_f H_e) as (rt & kt & H_l & H_a & ->).
         eapply dict_aux_correct in E_aux as [ H_aux _ ]; eassumption. }
     1:{ intros store H_h e t Genv env _ H_Ge H_e H_str H_env.
-        destruct (dict_lookup_of e) as [ [ [ attr l ] k ] | ] eqn:E_lk.
-        1:{ destruct (dict_aux ictx attr l) as [ aux | ] eqn:E_aux; [ | reflexivity ].
-            apply dict_lookup_of_spec in E_lk as (x & t1 & t2 & -> & H_free).
-            inversion H_e; subst. inv_tys.
-            lazymatch goal with
-            | H : type_of _ _ (flatmap_filter_list _ _ _ _ _ _) _ |- _ =>
-                apply filter_key_ty_inv in H as (rt & kt & E_t & H_l & H_a & H_k); [ | exact H_free ]
-            end.
-            eapply dict_aux_correct in E_aux as [ _ H_aux ]; [ | eassumption .. ].
-            change (interp_expr store env (EUnop OBagOfList ?a))
-              with (interp_unop OBagOfList (interp_expr store env a)).
-            rewrite interp_filter_list with (g := fun v => value_eqb (row_key attr v) (interp_expr store env k)).
-            2:{ intros v. apply interp_eq_key; exact H_free. }
-            cbn [interp_expr]. rewrite H_aux by exact H_h.
-            destruct (interp_expr store env l); try reflexivity. cbn [dict_of interp_unop].
-            destruct (fold_dict_step_sorted attr l0) as (d0 & E0 & _). rewrite E0. cbn [interp_binop].
-            rewrite <- (fold_dict_step_bucket _ _ _ _ E0). unfold bucket.
-            destruct (dict_lookup _ d0); [ | reflexivity ].
-            cbn [interp_expr]. unfold get_local. rewrite map.get_put_same. reflexivity. }
         destruct (dict_fold_of e) as [ [ attr l ] | ] eqn:E_f; [ | reflexivity ].
         destruct (dict_aux ictx attr l) as [ aux | ] eqn:E_aux; [ | reflexivity ].
-        apply dict_fold_of_spec in E_f as (d & x & acc & body & -> & H_s).
-        pose proof H_e as H_e'.
-        eapply dict_shape_ty_inv in H_e' as (rt & kt & H_l & H_a & ->); [ | exact H_s ].
+        destruct (dict_fold_of_ty _ _ _ _ _ _ E_f H_e) as (rt & kt & H_l & H_a & ->).
         eapply dict_aux_correct in E_aux as [ _ H_aux ]; [ | eassumption .. ].
-        rewrite H_aux by exact H_h. symmetry. apply interp_dict_shape; exact H_s. }
+        rewrite H_aux by exact H_h. symmetry. apply interp_dict_fold_of; exact E_f. }
   Qed.
 End WithMap.
