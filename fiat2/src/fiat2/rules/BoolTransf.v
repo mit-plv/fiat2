@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.Utils fiat2.TransfSound.
+  fiat2.Utils fiat2.TransfSound fiat2.Invariant.
 Require Import coqutil.Map.Interface.
 From Stdlib Require Import String.
 
@@ -14,6 +14,12 @@ Definition and_true_head (e : expr) : expr :=
   match and_true_of e with
   | Some e' => e'
   | None => e
+  end.
+
+Definition if_const_head (c : command) : command :=
+  match c with
+  | CIf (EAtom (ABool b)) c1 c2 => if b then c1 else c2
+  | _ => c
   end.
 
 Lemma and_true_of_spec : forall e e',
@@ -42,5 +48,21 @@ Section WithMap.
       end;
       cbn [interp_expr interp_binop interp_atom]; inversion H_v;
       cbn; rewrite ?Bool.andb_true_r; reflexivity.
+  Qed.
+
+  Theorem if_const_head_sound : inv_transf_sound (locals := locals) (fun _ _ => if_const_head).
+  Proof.
+    unfold inv_transf_sound; intros * H_Gs H_Ge H_ictx H_m.
+    destruct c as [ | | | | | e c1 c2 | ]; try (split; [ exact H_m | intros; reflexivity ]).
+    destruct e; try (split; [ exact H_m | intros; reflexivity ]).
+    destruct a; try (split; [ exact H_m | intros; reflexivity ]).
+    inversion H_m; subst. cbn [if_const_head].
+    split; [ | intros; destruct b; reflexivity ].
+    destruct b;
+      lazymatch goal with
+      | H : maintains_invs _ _ _ _ ?c |- maintains_invs _ _ _ _ ?c =>
+          apply (maintains_invs_path_cond_impl _ _ _ _ _ H)
+      end;
+      intros; (split; [ assumption | reflexivity ]).
   Qed.
 End WithMap.
