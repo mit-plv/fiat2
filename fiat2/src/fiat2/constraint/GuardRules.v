@@ -55,6 +55,38 @@ Definition classify_write (tbl : string) (e : expr) : write_shape :=
       end
   end.
 
+Definition erase_atom (a : atom) : atom :=
+  match a with
+  | ANil _ => ANil None
+  | ANone _ => ANone None
+  | AEmptyDict dk _ => AEmptyDict dk None
+  | AEmptyBag _ => AEmptyBag None
+  | AEmptySet _ => AEmptySet None
+  | a => a
+  end.
+
+(* Recognition compares expressions with their type annotations erased, as
+   typecheck fills them in guards but not in invariants *)
+Fixpoint erase_annot (e : expr) : expr :=
+  match e with
+  | EVar x => EVar x
+  | ELoc x => ELoc x
+  | EAtom a => EAtom (erase_atom a)
+  | EUnop o e => EUnop o (erase_annot e)
+  | EBinop o e1 e2 => EBinop o (erase_annot e1) (erase_annot e2)
+  | ETernop o e1 e2 e3 => ETernop o (erase_annot e1) (erase_annot e2) (erase_annot e3)
+  | EIf e1 e2 e3 => EIf (erase_annot e1) (erase_annot e2) (erase_annot e3)
+  | ELet e1 x e2 => ELet (erase_annot e1) x (erase_annot e2)
+  | EFlatmap tag e1 x e2 => EFlatmap tag (erase_annot e1) x (erase_annot e2)
+  | EFold e1 e2 x y e3 => EFold (erase_annot e1) (erase_annot e2) x y (erase_annot e3)
+  | EACFold ag e => EACFold ag (erase_annot e)
+  | EACIFold ag e => EACIFold ag (erase_annot e)
+  | ERecord l => ERecord (List.map (fun p => (fst p, erase_annot (snd p))) l)
+  | EAccess e s => EAccess (erase_annot e) s
+  | EOptMatch e e_none x e_some => EOptMatch (erase_annot e) (erase_annot e_none) x (erase_annot e_some)
+  | ESort tag e => ESort tag (erase_annot e)
+  end.
+
 Fixpoint attrs_of_conj (e : expr) : list string :=
   match e with
   | EBinop OEq (EAccess _ a) _ => [a]
@@ -80,7 +112,7 @@ Definition key_of (row_ty : type) (tbl row : string) (cond : expr) : option (lis
   | TRecord rt =>
       match unique_candidate cond with
       | Some attrs =>
-          if String.eqb row "_r" && expr_eqb cond (unique_cond tbl attrs row_ty)
+          if String.eqb row "_r" && expr_eqb (erase_annot cond) (erase_annot (unique_cond tbl attrs row_ty))
              && nodupb attrs && forallb (fun a => existsb (String.eqb a) (List.map fst rt)) attrs
           then Some attrs else None
       | None => None
@@ -188,7 +220,7 @@ Qed.
 
 Lemma key_of_sound : forall row_ty tbl row cond attrs,
     key_of row_ty tbl row cond = Some attrs ->
-    exists rt, row_ty = TRecord rt /\ row = "_r" /\ cond = unique_cond tbl attrs row_ty
+    exists rt, row_ty = TRecord rt /\ row = "_r" /\ erase_annot cond = erase_annot (unique_cond tbl attrs row_ty)
                /\ NoDup attrs /\ Forall (fun a => In a (List.map fst rt)) attrs.
 Proof.
   unfold key_of; intros * H.
@@ -215,7 +247,7 @@ Section WithMap.
   Definition cheap_for (Gstore : tenv) (e g : expr) (i : invariant) : option expr :=
     match i with
     | ConstraintInv tbl nil row cond =>
-        if expr_eqb g (inv_guard tbl e i) then
+        if expr_eqb (erase_annot g) (erase_annot (inv_guard tbl e i)) then
           match map.get Gstore tbl with
           | Some (TList row_ty) => cheap_guard row_ty tbl row cond e
           | _ => None
@@ -257,21 +289,67 @@ Section WithMap.
   Lemma cheap_for_spec : forall Gstore e g i g',
       cheap_for Gstore e g i = Some g' ->
       exists tbl row cond row_ty,
-        i = ConstraintInv tbl nil row cond /\ g = inv_guard tbl e i /\
+        i = ConstraintInv tbl nil row cond /\ erase_annot g = erase_annot (inv_guard tbl e i) /\
           map.get Gstore tbl = Some (TList row_ty) /\ cheap_guard row_ty tbl row cond e = Some g'.
   Proof.
     unfold cheap_for; intros * H.
     destruct i as [ tbl [ | ] row cond | ]; try discriminate.
-    destruct (expr_eqb g _) eqn:E; try discriminate. apply expr_eqb_true in E.
+    destruct (expr_eqb (erase_annot g) _) eqn:E; try discriminate. apply expr_eqb_true in E.
     destruct (map.get Gstore tbl) as [ [] | ] eqn:E_t; try discriminate.
     do 4 eexists; split; [ reflexivity | split; [ exact E | split; eassumption ] ].
   Qed.
 
-  Lemma inv_guard_nil_ty : forall (Gstore Genv : tenv) tbl e row cond t,
-      type_of Gstore Genv (inv_guard tbl e (ConstraintInv tbl nil row cond)) t ->
+  Lemma interp_erase_annot : forall e (store env : locals),
+      interp_expr store env (erase_annot e) = interp_expr store env e.
+  Proof.
+    induction e using expr_IH; intros store env; cbn [erase_annot interp_expr].
+    all: try (rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3; reflexivity).
+    (* EAtom *)
+    1: destruct a; reflexivity.
+    (* EFlatmap *)
+    1:{ rewrite IHe1.
+        destruct tag; destruct (interp_expr store env e1); try reflexivity.
+        all: erewrite flat_map_ext; [ reflexivity | intros; cbn beta ].
+        all: rewrite IHe2; reflexivity. }
+    (* EFold *)
+    1:{ rewrite IHe1, IHe2.
+        destruct (interp_expr store env e1); try reflexivity.
+        apply fold_right_ext; intros. apply IHe3. }
+    (* ERecord *)
+    1:{ do 2 f_equal. rewrite map_map. apply map_ext_in.
+        intros [ s e ] H_in. cbn [fst snd]. f_equal.
+        rewrite Forall_forall in H. apply (H (s, e) H_in). }
+    (* EOptMatch *)
+    1:{ rewrite IHe1.
+        destruct (interp_expr store env e1) as [ | | | [ v' | ] | | | | | | ]; try reflexivity.
+        1: apply IHe3.
+        1: apply IHe2. }
+  Qed.
+
+  Lemma inv_holds_erase : forall tbl path row cond cond' (store : locals),
+      erase_annot cond = erase_annot cond' ->
+      inv_holds store (ConstraintInv tbl path row cond) <-> inv_holds store (ConstraintInv tbl path row cond').
+  Proof.
+    intros * E. cbn [inv_holds].
+    destruct (map.get store tbl) as [ v | ]; [ | reflexivity ].
+    destruct (value_at v path) as [ [] | ]; try reflexivity.
+    split; apply Forall_impl; intros r H_r.
+    all: rewrite <- interp_erase_annot in *; rewrite E in *; rewrite interp_erase_annot in *; exact H_r.
+  Qed.
+
+  Lemma guard_ty_bool : forall (Gstore Genv : tenv) tbl e x g2 row cond t,
+      type_of Gstore Genv (ELet e x g2) t ->
+      erase_annot (ELet e x g2) = erase_annot (inv_guard tbl e (ConstraintInv tbl nil row cond)) ->
       t = TBool /\ exists te, type_of Gstore Genv e te.
   Proof.
-    intros * H. cbn [inv_guard access_path] in H. rewrite eqb_refl in H.
+    intros * H H_er. cbn [inv_guard] in H_er. rewrite eqb_refl in H_er.
+    destruct g2; cbn [access_path erase_annot] in H_er; try discriminate H_er.
+    lazymatch type of H with
+    | type_of _ _ (ELet _ _ (EFold _ ?i _ _ _)) _ => destruct i; cbn [erase_annot] in H_er; try discriminate H_er
+    end.
+    lazymatch type of H with
+    | type_of _ _ (ELet _ _ (EFold _ (EAtom ?a) _ _ _)) _ => destruct a; cbn [erase_atom] in H_er; try discriminate H_er
+    end.
     inversion H; subst.
     lazymatch goal with H : type_of _ _ (EFold _ _ _ _ _) _ |- _ => inversion H; subst end.
     lazymatch goal with H : type_of _ _ (EAtom _) _ |- _ => inversion H; subst end.
@@ -452,7 +530,9 @@ Section WithMap.
     (* a key *)
     1:{ destruct (key_of row_ty tbl row cond) as [ attrs | ] eqn:E_k;
           [ | destruct (classify_write tbl e); cbn [option_map] in H_c; discriminate ].
-        apply key_of_sound in E_k as [ rt [ -> [ -> [ -> [ Hnd HF ] ] ] ] ].
+        apply key_of_sound in E_k as [ rt [ -> [ -> [ E_cond [ Hnd HF ] ] ] ] ].
+        rewrite (inv_holds_erase tbl nil "_r" _ _ _ E_cond) in H_inv.
+        rewrite (inv_holds_erase tbl nil "_r" _ _ _ E_cond).
         pose proof (typed_rows_are_records _ _ H_l) as H_rec.
         rewrite (unique_cond_holds_iff tbl attrs (TRecord rt) store l Hnd E_tbl H_rec) in H_inv.
         destruct (classify_write tbl e) as [ r | r | x p | ] eqn:E_w; cbn [option_map] in H_c;
@@ -510,17 +590,17 @@ Section WithMap.
     1: discriminate (proj2 H eq_refl).
   Qed.
 
-  Lemma find_cheap_correct : forall ictx (Gstore Genv : tenv) e g g' t,
+  Lemma find_cheap_correct : forall ictx (Gstore Genv : tenv) e x g2 g' t,
       tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
-      type_of Gstore Genv g t -> find_cheap Gstore e g ictx = Some g' ->
+      type_of Gstore Genv (ELet e x g2) t -> find_cheap Gstore e (ELet e x g2) ictx = Some g' ->
       type_of Gstore Genv g' t /\
         forall store env : locals,
           locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
-          interp_expr store env g' = interp_expr store env g.
+          interp_expr store env g' = interp_expr store env (ELet e x g2).
   Proof.
     intros * H_Gs H_Ge H_ictx H_g H_f.
     apply find_cheap_spec in H_f as [ i [ H_in H_i ] ].
-    apply cheap_for_spec in H_i as (tbl & row & cond & row_ty & -> & -> & H_tbl & H_c).
+    apply cheap_for_spec in H_i as (tbl & row & cond & row_ty & -> & E_g & H_tbl & H_c).
     pose proof (proj1 (Forall_forall _ _) H_ictx _ H_in) as H_wf.
     assert (H_cond : type_of Gstore (map.put map.empty row row_ty) cond TBool).
     1:{ inversion H_wf; subst. cbn [type_at] in *.
@@ -529,7 +609,7 @@ Section WithMap.
             rewrite H_tbl in H; injection H as <-; injection H' as <-
         end.
         assumption. }
-    destruct (inv_guard_nil_ty _ _ _ _ _ _ _ H_g) as [ -> [ te H_e ] ].
+    destruct (guard_ty_bool _ _ _ _ _ _ _ _ _ H_g E_g) as [ -> [ te H_e ] ].
     assert (te = TList row_ty)
       by (eapply classify_write_ty; [ exact H_tbl | eapply cheap_guard_not_other; eassumption | exact H_e ]).
     subst te.
@@ -542,6 +622,7 @@ Section WithMap.
     1: exact (type_sound Gstore Genv g' TBool H_g' H_Gs H_Ge store env H_store H_env).
     1: exact (type_sound Gstore Genv _ TBool H_g H_Gs H_Ge store env H_store H_env).
     rewrite (cheap_guard_iff Gstore Genv tbl row cond e g' row_ty store env); eauto.
+    rewrite <- (interp_erase_annot (ELet e x g2) store env), E_g, interp_erase_annot.
     rewrite (inv_guard_iff Gstore Genv tbl (TList row_ty) e _ store env); eauto.
     reflexivity.
   Qed.
@@ -554,14 +635,14 @@ Section WithMap.
         lazymatch goal with
         | |- context[find_cheap ?G ?e ?g ?ictx] => destruct (find_cheap G e g ictx) eqn:E
         end; [ | exact H_g ].
-        exact (proj1 (find_cheap_correct ictx Gstore Genv _ _ _ t H_Gs H_Ge H_ictx H_g E)). }
+        exact (proj1 (find_cheap_correct ictx Gstore Genv _ _ _ _ t H_Gs H_Ge H_ictx H_g E)). }
     1:{ intros store H_h. unfold preserve_sem; intros g t Genv env _ H_Ge H_g H_store H_env.
         unfold guard_rule.
         destruct g; try reflexivity.
         lazymatch goal with
         | |- context[find_cheap ?G ?e ?g ?ictx] => destruct (find_cheap G e g ictx) eqn:E
         end; [ | reflexivity ].
-        exact (proj2 (find_cheap_correct ictx Gstore Genv _ _ _ t H_Gs H_Ge H_ictx H_g E)
+        exact (proj2 (find_cheap_correct ictx Gstore Genv _ _ _ _ t H_Gs H_Ge H_ictx H_g E)
                  store env H_store H_env H_h). }
   Qed.
 
