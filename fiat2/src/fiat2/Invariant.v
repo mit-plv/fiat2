@@ -382,12 +382,12 @@ Section WithMap.
      command it is handed maintained, and computes the same stores wherever
      that context holds. *)
   Definition inv_transf_sound (f : tenv -> tenv -> command -> command) : Prop :=
-    forall (Gstore Genv : tenv) ictx c,
+    forall (Gstore Genv : tenv) ictx path_cond c,
       tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
-      maintains_invs Gstore Genv ictx (fun _ _ => True) c ->
-      maintains_invs Gstore Genv ictx (fun _ _ => True) (f Gstore Genv c) /\
+      maintains_invs Gstore Genv ictx path_cond c ->
+      maintains_invs Gstore Genv ictx path_cond (f Gstore Genv c) /\
         forall (store env : locals),
-          locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
+          path_cond store env -> locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
           interp_command store env (f Gstore Genv c) = interp_command store env c.
 
   Lemma inv_transf_sound_compose : forall f g,
@@ -883,5 +883,148 @@ Section WithMap.
     split.
     1: exact (fold_command_with_ictx_maintains f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx nil (incl_nil_l _)).
     intros. apply (fold_command_with_ictx_sem f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx nil (incl_nil_l _)); auto.
+  Qed.
+
+  (* Applies a pass to the binder of tbl, which is unique since mutable
+     variables are not shadowed *)
+  Fixpoint at_letmut (tbl : string) (f : tenv -> command -> command) (Gstore : tenv) (c : command) : command :=
+    match c with
+    | CSkip => CSkip
+    | CSeq c1 c2 => CSeq (at_letmut tbl f Gstore c1) (at_letmut tbl f Gstore c2)
+    | CLet e x c1 => CLet e x (at_letmut tbl f Gstore c1)
+    | CLetMut e x ot invs c1 =>
+        if String.eqb x tbl then f Gstore c
+        else match ot with
+             | Some t => CLetMut e x ot invs (at_letmut tbl f (map.put Gstore x t) c1)
+             | None => c
+             end
+    | CAssign x e => CAssign x e
+    | CIf e c1 c2 => CIf e (at_letmut tbl f Gstore c1) (at_letmut tbl f Gstore c2)
+    | CForeach e x c1 => CForeach e x (at_letmut tbl f Gstore c1)
+    end.
+
+  Section WithPass.
+    Context (tbl : string) (f : tenv -> command -> command).
+    Context (H_f : inv_transf_sound (fun Gstore _ c => f Gstore c)).
+
+    Lemma at_letmut_maintains : forall Gstore Genv ictx path_cond c,
+        maintains_invs Gstore Genv ictx path_cond c ->
+        tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
+        maintains_invs Gstore Genv ictx path_cond (at_letmut tbl f Gstore c).
+    Proof.
+      induction 1; intros H_Gs H_Ge H_ictx; cbn [at_letmut].
+      (* CSkip *)
+      1: constructor.
+      (* CSeq *)
+      1: constructor; auto.
+      (* CLet *)
+      1:{ econstructor; [ eassumption | ].
+          apply IHmaintains_invs; auto.
+          apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]. }
+      (* CLetMut *)
+      1:{ assert (H_m : maintains_invs Gstore Genv ictx path_cond (CLetMut e x ot invs c))
+            by (econstructor; eassumption).
+          destruct (String.eqb x tbl).
+          1: exact (proj1 (H_f Gstore Genv ictx path_cond _ H_Gs H_Ge H_ictx H_m)).
+          destruct ot as [ t' | ]; [ | exact H_m ].
+          cbn in *; subst t'.
+          econstructor; [ eassumption | reflexivity | | eassumption | eassumption | eassumption ].
+          apply IHmaintains_invs; auto.
+          1: apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ].
+          apply Forall_app; split; [ assumption | ].
+          eapply Forall_impl; [ | exact H_ictx ]. intros.
+          eapply inv_wf_weaken; [ | eassumption ].
+          apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
+      (* CAssign *)
+      1: econstructor; eassumption.
+      (* CIf *)
+      1: constructor; auto.
+      (* CForeach *)
+      1:{ econstructor; [ eassumption | ].
+          apply IHmaintains_invs; auto.
+          apply tenv_wf_step; [ assumption | ].
+          lazymatch goal with H : type_of _ _ _ (TList _) |- _ =>
+            apply type_of__type_wf in H as H_wf; [ inversion H_wf; assumption | assumption | assumption ] end. }
+    Qed.
+
+    Lemma at_letmut_sem : forall Gstore Genv ictx path_cond c,
+        maintains_invs Gstore Genv ictx path_cond c ->
+        tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
+        forall store env,
+          path_cond store env -> locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
+          interp_command store env (at_letmut tbl f Gstore c) = interp_command store env c.
+    Proof.
+      induction 1; intros H_Gs H_Ge H_ictx store env H_pc H_store H_env H_h; cbn [at_letmut].
+      (* CSkip *)
+      1: reflexivity.
+      (* CSeq *)
+      1:{ cbn [interp_command]. rewrite IHmaintains_invs1 by auto.
+          apply IHmaintains_invs2; auto.
+          1: eapply (command_type_sound Gstore Genv); eauto using maintains_invs__well_typed.
+          eapply (maintains_invs__holds_all Gstore Genv); eauto. }
+      (* CLet *)
+      1:{ cbn [interp_command]. apply IHmaintains_invs; auto.
+          1: apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ].
+          apply locals_wf_step; [ assumption | eapply type_sound; eauto ]. }
+      (* CLetMut *)
+      1:{ assert (H_m : maintains_invs Gstore Genv ictx path_cond (CLetMut e x ot invs c))
+            by (econstructor; eassumption).
+          destruct (String.eqb x tbl).
+          1: exact (proj2 (H_f Gstore Genv ictx path_cond _ H_Gs H_Ge H_ictx H_m) store env H_pc H_store H_env H_h).
+          destruct ot as [ t' | ]; [ | reflexivity ].
+          cbn in *; subst t'. cbn [interp_command].
+          assert (H_Gs' : tenv_wf (map.put Gstore x t))
+            by (apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]).
+          rewrite IHmaintains_invs; auto.
+          1:{ apply Forall_app; split; [ assumption | ].
+              eapply Forall_impl; [ | exact H_ictx ]. intros.
+              eapply inv_wf_weaken; [ | eassumption ].
+              apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
+          1: apply locals_wf_step; [ assumption | eapply type_sound; eauto ].
+          apply Forall_app; split.
+          1: lazymatch goal with
+             | H_init : forall _ _, _ -> _ -> _ -> _ -> holds_all _ invs |- _ => apply H_init; assumption
+             end.
+          apply (holds_all_put_fresh Gstore); assumption. }
+      (* CAssign *)
+      1: reflexivity.
+      (* CIf *)
+      1:{ cbn [interp_command].
+          apply_type_sound e. invert_type_of_value.
+          lazymatch goal with H: VBool _ = interp_expr _ _ e |- _ => symmetry in H end.
+          destruct b.
+          1: apply IHmaintains_invs1; auto.
+          1: apply IHmaintains_invs2; auto. }
+      (* CForeach *)
+      1:{ cbn [interp_command].
+          apply_type_sound e. invert_type_of_value.
+          lazymatch goal with H: VList _ = interp_expr _ _ e |- _ => symmetry in H end.
+          assert (H_Ge' : tenv_wf (map.put Genv x t)).
+          1:{ apply tenv_wf_step; [ assumption | ].
+              lazymatch goal with H : type_of _ _ _ (TList _) |- _ =>
+                apply type_of__type_wf in H as H_wf; [ inversion H_wf; assumption | assumption | assumption ] end. }
+          lazymatch goal with H: type_of_value (interp_expr _ _ e) _ |- _ => clear H end.
+          lazymatch goal with H: interp_expr _ _ e = VList _ |- _ => clear H end.
+          clear H_pc.
+          lazymatch goal with H : Forall _ ?l |- context[fold_left _ ?l _] =>
+            generalize dependent store; induction H; cbn [fold_left]; intros; auto end.
+          rewrite IHmaintains_invs; auto.
+          2: apply locals_wf_step; auto.
+          apply IHForall; auto.
+          1: eapply (command_type_sound Gstore (map.put Genv x t)); eauto using maintains_invs__well_typed;
+             apply locals_wf_step; auto.
+          eapply (maintains_invs__holds_all Gstore (map.put Genv x t)); eauto; try apply locals_wf_step; auto.
+          all: exact I. }
+    Qed.
+  End WithPass.
+
+  Theorem at_letmut_sound : forall tbl f,
+      inv_transf_sound (fun Gstore _ c => f Gstore c) ->
+      inv_transf_sound (fun Gstore _ c => at_letmut tbl f Gstore c).
+  Proof.
+    unfold inv_transf_sound at 2; intros * H_f * H_Gs H_Ge H_ictx H_c.
+    split.
+    1: exact (at_letmut_maintains tbl f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx).
+    intros. apply (at_letmut_sem tbl f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx); auto.
   Qed.
 End WithMap.

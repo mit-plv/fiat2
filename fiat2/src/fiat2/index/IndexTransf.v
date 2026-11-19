@@ -118,11 +118,11 @@ Section WithMap.
       Section WithGlobal.
         Context (tbl : string).
 
-      Definition create_aux_write_head (free_vars : list string) (c : command) :=
+      Definition create_aux_write_head (c : command) :=
         match c with
         | CAssign tbl' e =>
             if String.eqb tbl tbl'
-            then CAssign tbl (ERecord [(id_tag, e); (aux_tag, substitute ((hole, e) :: nil) free_vars to_idx)])
+            then CAssign tbl (ERecord [(id_tag, e); (aux_tag, no_cap_substitute ((hole, e) :: nil) to_idx)])
             else c
         | _ => c
         end.
@@ -146,8 +146,8 @@ Section WithMap.
             else i
         end.
 
-      Definition transf_to_idx' (free_vars : list string) (c : command) : command :=
-        fold_command_with_global tbl create_aux_write_head create_aux_read_head transf_inv free_vars c.
+      Definition transf_to_idx' (c : command) : command :=
+        fold_command_with_global tbl create_aux_write_head create_aux_read_head transf_inv c.
 
       Definition aux_ty (tbl_ty : type) :=
         TRecord
@@ -201,14 +201,13 @@ Section WithMap.
       Qed.
 
       (* The record that a write rewrite assigns is at the augmented table type. *)
-      Lemma aux_record_ty : forall tbl_ty e (Gstore Genv : tenv) free_vars,
+      Lemma aux_record_ty : forall tbl_ty e (Gstore Genv : tenv),
           tenv_wf Gstore -> tenv_wf Genv ->
           type_wf tbl_ty ->
           is_tbl_ty tbl_ty = true ->
           type_of Gstore Genv e tbl_ty ->
-          incl (get_free_vars Genv) free_vars ->
           type_of Gstore Genv
-            (ERecord [(id_tag, e); (aux_tag, substitute ((hole, e) :: nil) free_vars to_idx)])
+            (ERecord [(id_tag, e); (aux_tag, no_cap_substitute ((hole, e) :: nil) to_idx)])
             (aux_ty tbl_ty).
       Proof.
         unfold aux_ty; intros.
@@ -216,7 +215,7 @@ Section WithMap.
         3: apply Permuted_record_sort.
         1: reflexivity.
         1:{ repeat constructor; cbn [snd]; auto.
-            eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty);
+            eapply no_cap_substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty);
               eauto using idx_ty_wf with fiat2_hints.
             1:{ eapply type_of_strengthen; eauto using to_idx_ty, map_incl_refl.
                 apply map_incl_empty. }
@@ -313,24 +312,22 @@ Section WithMap.
 
       Ltac use_transf_to_idx_preserve_ty'_IH :=
         lazymatch goal with
-          IH: context[well_typed _ _ (transf_to_idx' _ ?c)] |- well_typed _ _ (transf_to_idx' _ ?c) =>
+          IH: context[well_typed _ _ (transf_to_idx' ?c)] |- well_typed _ _ (transf_to_idx' ?c) =>
             eapply IH; try reflexivity
         end.
 
-      Lemma transf_to_idx_preserve_ty' : forall tbl_ty c (Gstore Gstore' Genv :tenv) free_vars,
+      Lemma transf_to_idx_preserve_ty' : forall tbl_ty c (Gstore Gstore' Genv :tenv),
           tenv_wf Gstore -> tenv_wf Genv ->
           map.get Gstore tbl = Some tbl_ty ->
           is_tbl_ty tbl_ty = true ->
           well_typed Gstore Genv c ->
-          incl (get_free_vars Genv) free_vars ->
           Gstore' = map.put Gstore tbl (aux_ty tbl_ty) ->
-          well_typed Gstore' Genv (transf_to_idx' free_vars c).
+          well_typed Gstore' Genv (transf_to_idx' c).
       Proof.
         induction c; simpl; intros; try invert_well_typed; try now (constructor; auto).
         1: econstructor; eauto using transf_to_idx_preserve_ty''.
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
-            use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints.
-            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
+            use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints. }
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
             1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
                 [ rewrite Properties.map.put_put_same in *; auto
@@ -347,8 +344,7 @@ Section WithMap.
                 rewrite_map_get_put_goal; eauto. } }
         1: constructor; eauto using transf_to_idx_preserve_ty''.
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
-            use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints.
-            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
+            use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints. }
       Qed.
 
       Definition consistent_with_global (store store' : locals) :=
@@ -501,23 +497,21 @@ Section WithMap.
             eapply IH
         end.
 
-      Lemma transf_to_idx_preserve_sem' : forall tbl_ty c (Gstore Genv : tenv) free_vars,
+      Lemma transf_to_idx_preserve_sem' : forall tbl_ty c (Gstore Genv : tenv),
           well_typed Gstore Genv c ->
           map.get Gstore tbl = Some tbl_ty ->
           is_tbl_ty tbl_ty = true ->
-          incl (get_free_vars Genv) free_vars ->
           tenv_wf Gstore -> tenv_wf Genv ->
           forall (store store' env : locals),
             locals_wf Gstore store -> locals_wf Genv env ->
             consistent_with_global store store' ->
-            consistent_with_global (interp_command store env c) (interp_command store' env (transf_to_idx' free_vars c)).
+            consistent_with_global (interp_command store env c) (interp_command store' env (transf_to_idx' c)).
       Proof.
-        intros * H. revert free_vars. induction H; cbn; auto; intros.
+        intros * H. induction H; cbn; auto; intros.
         1:{ use_transf_to_idx_preserve_sem'_IH; auto.
             eapply command_type_sound; eauto. }
         1:{ erewrite transf_to_idx_preserve_sem''; eauto.
-            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
-            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
+            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
             1:{ unfold consistent_with_global.
                 rewrite !Properties.map.get_update_same.
@@ -555,8 +549,7 @@ Section WithMap.
             induction l; cbn; auto. invert_Forall; intros.
             apply IHl; auto.
             1: eapply command_type_sound; eauto with fiat2_hints.
-            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
-            eauto using incl_tran, incl_cons_step, get_free_vars_put. }
+            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints. }
       Qed.
 
       Definition aux_wf (v : value) :=
@@ -609,26 +602,28 @@ Section WithMap.
         apply aux_ty_access_id.
       Qed.
 
-      Lemma to_idx_satisfy_idx_wf : forall free_vars e Gstore Genv t store env,
+      Lemma to_idx_satisfy_idx_wf : forall e Gstore Genv t store env,
           tenv_wf Gstore -> tenv_wf Genv ->
           type_of Gstore Genv e t ->
           is_tbl_ty t = true ->
-          incl (get_free_vars Genv) free_vars ->
           locals_wf Gstore store -> locals_wf Genv env ->
-          interp_expr store env (substitute ((hole, e) :: nil) free_vars to_idx)
+          interp_expr store env (no_cap_substitute ((hole, e) :: nil) to_idx)
           = interp_expr map.empty (map.put map.empty hole (interp_expr store env e)) to_idx.
       Proof.
-      intros. erewrite substitute_preserve_sem with (Genv0:=map.put map.empty hole t).
-      5: eauto. 8,9: eauto. all: auto.
-      3: eapply type_of_strengthen; try apply to_idx_ty.
-      all: eauto with fiat2_hints.
-      3: apply map_incl_step; try apply string_dec.
-      2,3: apply map_incl_empty.
-      2:{ unfold sub_wf; intros. simpl.
-          case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
-            rewrite_map_get_put_hyp;
-            [ do_injection; auto
-            | rewrite map.get_empty in *; discriminate ]. }
+      intros * H_Gs H_Ge H_e H_is H_store H_env.
+      assert (H_t : type_wf t) by (eapply type_of__type_wf; [ | | exact H_e ]; assumption).
+      assert (H_G0 : tenv_wf (map.put map.empty hole t)).
+      1:{ apply tenv_wf_step; [ | exact H_t ].
+          intros ? ? H. rewrite map.get_empty in H. discriminate. }
+      assert (H_ti : type_of Gstore (map.put map.empty hole t) to_idx (idx_ty t))
+        by (eapply type_of_strengthen; [ apply to_idx_ty; eauto | apply map_incl_empty | apply map_incl_refl ]).
+      assert (H_sub : sub_wf (map.put map.empty hole t) Gstore Genv ((hole, e) :: nil)).
+      1:{ unfold sub_wf; intros x t' H. cbn.
+          destruct (String.eqb x hole) eqn:E; rewrite ?eqb_eq, ?eqb_neq in E; subst.
+          1: rewrite map.get_put_same in H; injection H as <-; exact H_e.
+          1: rewrite map.get_put_diff, map.get_empty in H by exact E; discriminate. }
+      rewrite (no_cap_substitute_preserve_sem to_idx Gstore (map.put map.empty hole t) Genv (idx_ty t) _ store env
+                 H_G0 H_Gs H_Ge H_ti H_sub H_store H_env).
       unfold make_sub_env.
       erewrite interp_expr_strengthen with (e:=to_idx); [ reflexivity | .. ].
       3: apply to_idx_ty.
@@ -802,10 +797,9 @@ Section WithMap.
         end.
 
       Lemma transf_to_idx'_maintains_invs :
-        forall tbl_ty c free_vars Gstore Genv ictx path_cond path_cond',
+        forall tbl_ty c Gstore Genv ictx path_cond path_cond',
           map.get Gstore tbl = Some tbl_ty ->
           is_tbl_ty tbl_ty = true ->
-          incl (get_free_vars Genv) free_vars ->
           tenv_wf Gstore -> tenv_wf Genv ->
           Forall (inv_wf Gstore) ictx ->
           (forall (store env : locals),
@@ -816,9 +810,9 @@ Section WithMap.
           maintains_invs Gstore Genv ictx path_cond c ->
           maintains_invs (map.put Gstore tbl (aux_ty tbl_ty)) Genv
             (List.map transf_inv ictx ++ idx_inv :: nil) path_cond'
-            (transf_to_idx' free_vars c).
+            (transf_to_idx' c).
       Proof.
-        induction c; simpl; intros * H_tbl H_is H_incl H_Gs H_Ge H_ictx H_sim H_m;
+        induction c; simpl; intros * H_tbl H_is H_Gs H_Ge H_ictx H_sim H_m;
           inversion H_m; subst.
         (* CSkip *)
         1: constructor.
@@ -831,7 +825,6 @@ Section WithMap.
             1: eapply transf_to_idx_preserve_ty''; eauto.
             1:{ apply IHc with (path_cond := fun _ _ => True);
                   [ exact H_tbl | exact H_is
-                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
                   | exact H_Gs | eauto with fiat2_hints | exact H_ictx
                   | intros; exact I | assumption ]. } }
         (* CLetMut: no shadowing, so the binder is not the table *)
@@ -847,7 +840,7 @@ Section WithMap.
                   by (rewrite map_app, app_assoc; reflexivity).
                 apply IHc with (path_cond := fun _ _ => True);
                   [ rewrite map.get_put_diff by congruence; exact H_tbl
-                  | exact H_is | exact H_incl | exact H_Gs' | exact H_Ge
+                  | exact H_is | exact H_Gs' | exact H_Ge
                   | | intros; exact I | assumption ].
                 apply Forall_app; split; [ assumption | ].
                 eapply Forall_impl; [ | exact H_ictx ]; intros.
@@ -912,8 +905,8 @@ Section WithMap.
                                 (map.put store tbl (VRecord (record_sort
                                    [(id_tag, interp_expr store env (fold_expr create_aux_read_head e));
                                     (aux_tag, interp_expr store env
-                                                (substitute [(hole, fold_expr create_aux_read_head e)]
-                                                   free_vars to_idx))])))).
+                                                (no_cap_substitute [(hole, fold_expr create_aux_read_head e)]
+                                                   to_idx))])))).
                 1:{ unfold consistent_with_global. rewrite !map.get_put_same.
                     rewrite record_sort_access_id, E_sem. split; [ reflexivity | ].
                     intros y H_y. rewrite !map.get_put_diff by assumption.
@@ -966,12 +959,12 @@ Section WithMap.
         (* CIf *)
         1:{ econstructor.
             1: eapply transf_to_idx_preserve_ty''; eauto.
-            1:{ eapply IHc1; [ exact H_tbl | exact H_is | exact H_incl | exact H_Gs | exact H_Ge
+            1:{ eapply IHc1; [ exact H_tbl | exact H_is | exact H_Gs | exact H_Ge
                              | exact H_ictx | | eassumption ].
                 intros store env H_store H_env H_h [ H_pc H_g ]. use_strip_aux_ictx.
                 split; [ eapply H_sim; eauto | ].
                 erewrite <- transf_to_idx_preserve_sem'' with (tbl := tbl) (tbl_ty := tbl_ty); [ exact H_g | .. ]; eauto. }
-            1:{ eapply IHc2; [ exact H_tbl | exact H_is | exact H_incl | exact H_Gs | exact H_Ge
+            1:{ eapply IHc2; [ exact H_tbl | exact H_is | exact H_Gs | exact H_Ge
                              | exact H_ictx | | eassumption ].
                 intros store env H_store H_env H_h [ H_pc H_g ]. use_strip_aux_ictx.
                 split; [ eapply H_sim; eauto | ].
@@ -981,19 +974,18 @@ Section WithMap.
             1: eapply transf_to_idx_preserve_ty''; eauto.
             1:{ apply IHc with (path_cond := fun _ _ => True);
                   [ exact H_tbl | exact H_is
-                  | eauto using incl_tran, incl_cons_step, get_free_vars_put
                   | exact H_Gs | eauto with fiat2_hints | exact H_ictx
                   | intros; exact I | assumption ]. } }
       Qed.
       End WithGlobal.
 
-      Definition transf_to_idx (free_vars : list string) (c : command) : command :=
+      Definition transf_to_idx (c : command) : command :=
         match c with
         | CLetMut e tbl ot invs c =>
-            CLetMut (ERecord [(id_tag, e); (aux_tag, substitute ((hole, e) :: nil) free_vars to_idx)]) tbl
+            CLetMut (ERecord [(id_tag, e); (aux_tag, no_cap_substitute ((hole, e) :: nil) to_idx)]) tbl
               (option_map aux_ty ot)
               (IndexInv tbl (id_tag :: nil) (aux_tag :: nil) hole to_idx :: List.map (transf_inv tbl) invs)
-              (transf_to_idx' tbl free_vars c)
+              (transf_to_idx' tbl c)
         | _ => c
         end.
 
@@ -1016,7 +1008,7 @@ Section WithMap.
         apply map.get_put_same.
       Qed.
 
-      Lemma transf_to_idx_preserve_ty : forall tbl tbl_ty e ot invs c free_vars Gstore Genv,
+      Lemma transf_to_idx_preserve_ty : forall tbl tbl_ty e ot invs c Gstore Genv,
           tenv_wf Gstore -> tenv_wf Genv ->
           type_of Gstore Genv e tbl_ty ->
           type_annot_ok ot tbl_ty ->
@@ -1024,14 +1016,13 @@ Section WithMap.
           Forall (inv_wf (map.put Gstore tbl tbl_ty)) invs ->
           map.get Gstore tbl = None ->
           is_tbl_ty tbl_ty = true ->
-          incl (get_free_vars Genv) free_vars ->
-          well_typed Gstore Genv (transf_to_idx free_vars (CLetMut e tbl ot invs c)).
+          well_typed Gstore Genv (transf_to_idx (CLetMut e tbl ot invs c)).
       Proof.
         simpl; intros. subst. econstructor.
         1:{ econstructor.
             1: instantiate (1:=[(id_tag, tbl_ty); (aux_tag, idx_ty tbl_ty)]); reflexivity.
             1:{ cbn; repeat constructor; auto.
-                eapply substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto using incl_refl with fiat2_hints.
+                eapply no_cap_substitute_preserve_ty with (Genv0:=map.put map.empty hole tbl_ty); eauto with fiat2_hints.
             1: eapply type_of_strengthen; [ apply to_idx_ty; eauto | apply map_incl_empty | apply map_incl_refl ].
             1: eapply type_of__type_wf; [ | | eauto ]; auto.
             1:{ unfold sub_wf. simpl; intros.
@@ -1044,21 +1035,20 @@ Section WithMap.
             1: apply StronglySorted_record_sort. }
         1: apply (type_annot_ok_map aux_ty); assumption.
         1:{ erewrite <- Properties.map.put_put_same.
-            eapply transf_to_idx_preserve_ty'; try reflexivity; eauto using incl_refl with fiat2_hints.
+            eapply transf_to_idx_preserve_ty'; try reflexivity; eauto with fiat2_hints.
             rewrite_map_get_put_goal; auto. }
         1: apply transf_to_idx_invs_wf; eauto with fiat2_hints.
         1: assumption.
       Qed.
 
-      Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e ot invs c (Gstore Genv : tenv) free_vars,
+      Lemma transf_to_idx_preserve_sem : forall tbl tbl_ty e ot invs c (Gstore Genv : tenv),
           is_tbl_ty tbl_ty = true ->
           type_of Gstore Genv e tbl_ty ->
           well_typed (map.put Gstore tbl tbl_ty) Genv c ->
-          incl (get_free_vars Genv) free_vars ->
           tenv_wf Gstore -> tenv_wf Genv ->
           forall (store env : locals),
             locals_wf Gstore store -> locals_wf Genv env ->
-            interp_command store env (transf_to_idx free_vars (CLetMut e tbl ot invs c)) = interp_command store env (CLetMut e tbl ot invs c).
+            interp_command store env (transf_to_idx (CLetMut e tbl ot invs c)) = interp_command store env (CLetMut e tbl ot invs c).
       Proof.
         simpl; intros.
         apply stores_eq_except__update_eq. symmetry.
@@ -1074,14 +1064,14 @@ Section WithMap.
         eapply Permutation_in; [ eapply Permuted_record_sort | ]; constructor; auto.
       Qed.
 
-      Definition create_idx (Gstore Genv : tenv) (c : command) : command :=
+      Definition create_idx (c : command) : command :=
         match c with
         | CLetMut e x (Some t) _ _ =>
-            if is_tbl_ty t then transf_to_idx (get_free_vars Genv) c else c
+            if is_tbl_ty t then transf_to_idx c else c
         | _ => c
         end.
 
-      Theorem create_idx_sound : inv_transf_sound (locals := locals) create_idx.
+      Theorem create_idx_sound : inv_transf_sound (locals := locals) (fun _ _ c => create_idx c).
       Proof.
         unfold inv_transf_sound, create_idx; intros * H_Gs H_Ge H_ictx H_m.
         destruct c as [ | | | e x [ t | ] invs c0 | | | ];
@@ -1099,7 +1089,7 @@ Section WithMap.
         assert (H_Gs' : tenv_wf (map.put Gstore x t)) by (apply tenv_wf_step; assumption).
         split.
         1:{ cbn [transf_to_idx]. apply MICLetMut with (t := aux_ty t).
-            1: apply aux_record_ty; auto using incl_refl.
+            1: apply aux_record_ty; auto.
             1: exact eq_refl.
             1:{ apply maintains_invs_ictx_equiv
                   with (ictx := List.map (transf_inv x) (invs ++ ictx) ++ idx_inv x :: nil).
@@ -1107,7 +1097,7 @@ Section WithMap.
                       with (map.put (map.put Gstore x t) x (aux_ty t))
                       by apply Properties.map.put_put_same.
                     eapply transf_to_idx'_maintains_invs with (path_cond := fun _ _ => True);
-                      [ apply map.get_put_same | exact E_is | apply incl_refl | exact H_Gs'
+                      [ apply map.get_put_same | exact E_is | exact H_Gs'
                       | exact H_Ge | | intros; exact I | exact H_body ].
                     apply Forall_app; split; [ exact H_invs_wf | ].
                     eapply Forall_impl; [ | exact H_ictx ]; intros.
@@ -1126,15 +1116,15 @@ Section WithMap.
                     1: apply Permutation_cons_append. } }
             1: apply transf_to_idx_invs_wf; assumption.
             1: exact H_fresh.
-            1:{ intros store env _ H_h H_store H_env.
-                specialize (H_init store env I H_h H_store H_env).
+            1:{ intros store env H_pc H_h H_store H_env.
+                specialize (H_init store env H_pc H_h H_store H_env).
                 cbn [interp_expr List.map].
                 set (v := interp_expr store env e) in *.
                 unfold holds_all in *. constructor.
                 1:{ apply (proj2 (idx_inv_holds x _)). rewrite map.get_put_same.
                     unfold aux_wf. rewrite record_sort_access_id, record_sort_access_aux.
                     subst v; eapply to_idx_satisfy_idx_wf with (Gstore := Gstore) (Genv := Genv) (t := t);
-                      eauto using incl_refl. }
+                      eauto. }
                 rewrite Forall_map.
                 eapply Forall_impl; [ | apply Forall_and; [ exact H_invs_wf | exact H_init ] ].
                 intros i [ H_i H_hi ].
@@ -1144,10 +1134,15 @@ Section WithMap.
                 unfold consistent_with_global. rewrite !map.get_put_same.
                 rewrite record_sort_access_id. split; [ reflexivity | ].
                 intros y H_y. rewrite !map.get_put_diff by assumption. reflexivity. } }
-        1:{ intros store env H_store H_env H_h.
-            eapply transf_to_idx_preserve_sem; eauto using incl_refl.
+        1:{ intros store env H_pc H_store H_env H_h.
+            eapply transf_to_idx_preserve_sem; eauto.
             eapply maintains_invs__well_typed; eassumption. }
       Qed.
 
+      Corollary create_idx_at_sound : forall tbl,
+          inv_transf_sound (locals := locals) (fun Gstore _ c => at_letmut tbl (fun _ c => create_idx c) Gstore c).
+      Proof.
+        intros. apply at_letmut_sound. exact create_idx_sound.
+      Qed.
     End WithIndex.
 End WithMap.
