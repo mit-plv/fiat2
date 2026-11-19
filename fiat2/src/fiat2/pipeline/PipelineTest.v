@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TransfSound fiat2.Invariant
   fiat2.constraint.Surface fiat2.constraint.GuardRules fiat2.index.IndexTransf fiat2.index.DictIndex
-  fiat2.rules.CollectionTransf fiat2.rules.FlatmapForms fiat2.rules.EraseField fiat2.pipeline.Pipeline.
+  fiat2.rules.CollectionTransf fiat2.rules.FlatmapForms fiat2.rules.EraseField fiat2.rules.BoolTransf fiat2.pipeline.Pipeline.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import String List ZArith.
 Import ListNotations.
@@ -17,6 +17,7 @@ Definition locals := SortedListString.map Value.value.
 
 Definition ipasses : list (tenv -> tenv -> command -> command) :=
   [ fun G _ c => fold_command_with_ictx guard_rule nil G c;
+    fun G _ c => fold_command_with_ictx (fun _ _ => and_true_head) nil G c;
     fun G _ c => at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) G c;
     fun G _ c => fold_command_with_ictx (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) nil G c;
     fun G _ c => fold_command_with_ictx dict_lookup_rule nil G c;
@@ -35,6 +36,7 @@ Proof.
   intros sc c H. eapply compile_sound; [ | | exact H ].
   1:{ repeat apply Forall_cons; try apply Forall_nil.
       1: apply guard_rules_sound.
+      1: apply fold_command_with_ictx_sound, expr_transf__ictx_rule_sound, and_true_head_sound.
       1: apply create_idx_at_sound; discriminate.
       1: apply fold_command_with_ictx_sound, expr_transf__ictx_rule_sound.
       1: exact (expr_transf_sound_compose _ _ annotate_collection_sound
@@ -70,7 +72,7 @@ Example compiled :
     Success (CLetMut (ERecord [("idx", dict_fold "id" (EAtom (ANil (Some row_ty))))]) "users"
                (Some (TRecord [("idx", dict_ty TInt [("age", TInt); ("id", TInt)])])) nil
                (CSeq
-                  (CIf (EBinop OAnd (ELet new_row "u" age_pos) (EAtom (ABool true)))
+                  (CIf (ELet new_row "u" age_pos)
                      (CAssign "users"
                         (ERecord [("idx", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id" "_tup" "_acc" "_b" None)))]))
                      CSkip)
@@ -78,7 +80,7 @@ Example compiled :
                      (CLet (EACFold AGCount
                               (EOptMatch (EBinop OLookup idx (EAtom (AInt 7))) (EAtom (AEmptyBag None)) "_b" (EVar "_b")))
                         "n" CSkip)
-                     (CIf (EBinop OAnd (EAtom (ABool true)) (EAtom (ABool true)))
+                     (CIf (EAtom (ABool true))
                         (CAssign "users" (ERecord [("idx", EBinop ODelete idx (EAtom (AInt 7)))]))
                         CSkip)))).
 Proof. reflexivity. Qed.
