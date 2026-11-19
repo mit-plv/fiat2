@@ -511,6 +511,171 @@ Section WithWord.
                   try invert_type_wf; auto; try econstructor; eauto).
     Qed.
 
+    Lemma synthesize_atom_out : forall a t a', synthesize_atom a = Success (t, a') -> a' = a.
+    Proof.
+      intros a t a' H. destruct a; cbn in H;
+        repeat (lazymatch type of H with context[match ?x with _ => _ end] => destruct x end);
+        congruence.
+    Qed.
+
+    Lemma atom_typechecker_out : forall a t a',
+        (synthesize_atom a = Success (t, a') -> type_of_atom a' t) /\
+          (analyze_atom t a = Success a' -> type_wf t -> type_of_atom a' t).
+    Proof.
+      intros a t a'. pose proof (atom_typechecker_sound a t a') as [ H_s H_a ]. split.
+      1: intro H; rewrite (synthesize_atom_out _ _ _ H); auto.
+      intros H H_wf. pose proof (H_a H H_wf) as H_ty.
+      destruct a; cbn in H; unfold compare_types in H;
+        repeat (lazymatch type of H with context[match ?x with _ => _ end] => destruct x eqn:? end);
+        try congruence; injection H as <-; try assumption.
+      all: inversion H_wf; subst.
+      all: repeat match goal with H : dict_kind_beq _ _ = true |- _ => apply dict_kind_beq_eq in H; subst end.
+      all: constructor; assumption.
+    Qed.
+
+
+    Lemma record_type_from'_out : forall l tl el (Gstore Genv : tenv),
+        Forall
+          (fun p : string * expr =>
+             forall (Gstore0 Genv0 : tenv) (t : type) (e' : expr),
+               tenv_wf Gstore0 ->
+               tenv_wf Genv0 ->
+               (synthesize_expr Gstore0 Genv0 (snd p) = Success (t, e') -> type_of Gstore0 Genv0 e' t) /\
+                 (analyze_expr Gstore0 Genv0 t (snd p) = Success e' -> type_wf t -> type_of Gstore0 Genv0 e' t)) l ->
+        tenv_wf Gstore ->
+        tenv_wf Genv ->
+        record_type_from' (map (fun '(s, e') => (s, synthesize_expr Gstore Genv e')) l) = Success (tl, el) ->
+        map fst l = map fst tl /\ map fst el = map fst tl /\
+          Forall2 (type_of Gstore Genv) (map snd el) (map snd tl) /\ NoDup (map fst tl).
+    Proof.
+      induction l as [ | [ s e ] l IHl ]; intros tl el Gstore Genv H H_Gs H_Ge H_rec.
+      - cbn in H_rec. injection H_rec as <- <-. cbn. intuition auto. apply NoDup_nil.
+      - cbn in H_rec.
+        destruct (synthesize_expr Gstore Genv e) as [ [ t e' ] | ] eqn:E_e; [ | discriminate ].
+        destruct (record_type_from' _) as [ [ tl0 el0 ] | ] eqn:E_l; [ | discriminate ].
+        destruct (inb _ _ _) eqn:E_in; [ discriminate | ].
+        injection H_rec as <- <-.
+        inversion H as [ | ? ? H_hd H_tl ]; subst.
+        destruct (IHl tl0 el0 Gstore Genv H_tl H_Gs H_Ge E_l) as (IH1 & IH2 & IH3 & IH4).
+        cbn. split; [ f_equal; exact IH1 | split; [ f_equal; exact IH2 | split ] ].
+        + constructor; [ | exact IH3 ]. exact (proj1 (H_hd Gstore Genv t e' H_Gs H_Ge) E_e).
+        + constructor; [ | exact IH4 ].
+          erewrite fst_map_fst in E_in. apply inb_false_iff in E_in. rewrite <- IH1. exact E_in.
+    Qed.
+
+    Lemma record_from'_out :
+      forall l tl' el Gstore Genv,
+        Forall
+          (fun p : string * expr =>
+             forall (Gstore Genv : tenv) (t : type) (e' : expr),
+               tenv_wf Gstore ->
+               tenv_wf Genv ->
+               (synthesize_expr Gstore Genv (snd p) = Success (t, e') -> type_of Gstore Genv e' t) /\
+                 (analyze_expr Gstore Genv t (snd p) = Success e' -> type_wf t -> type_of Gstore Genv e' t)) l ->
+        tenv_wf Gstore ->
+        tenv_wf Genv ->
+        type_wf (TRecord tl') ->
+        incl (List.map fst l) (List.map fst tl') ->
+        record_from' (List.map (fun '(s, e) => (s, analyze_expr Gstore Genv (get_attr_type tl' s) e)) l) = Success el ->
+        let tl := List.map (fun '(s, _) => (s, get_attr_type tl' s)) l in
+        List.map fst el = List.map fst tl /\ Forall2 (type_of Gstore Genv) (List.map snd el) (List.map snd tl) /\ NoDup (List.map fst l).
+    Proof.
+      induction l as [ | [ s e ] l IHl ]; intros tl' el Gstore Genv H H_Gs H_Ge H_wf H_incl H_rec.
+      - cbn in H_rec. injection H_rec as <-. cbn. intuition auto. apply NoDup_nil.
+      - cbn in H_rec.
+        destruct (analyze_expr Gstore Genv (get_attr_type tl' s) e) as [ e' | ] eqn:E_e; [ | discriminate ].
+        destruct (record_from' _) as [ el0 | ] eqn:E_l; [ | discriminate ].
+        destruct (inb _ _ _) eqn:E_in; [ discriminate | ].
+        injection H_rec as <-.
+        inversion H as [ | ? ? H_hd H_tl ]; subst.
+        assert (H_incl' : incl (List.map fst l) (List.map fst tl'))
+          by (intros ? ?; apply H_incl; right; assumption).
+        destruct (IHl tl' el0 Gstore Genv H_tl H_Gs H_Ge H_wf H_incl' E_l) as (IH1 & IH2 & IH3).
+        cbn. split; [ f_equal; exact IH1 | split ].
+        + constructor; [ | exact IH2 ].
+          apply (proj2 (H_hd Gstore Genv _ e' H_Gs H_Ge) E_e).
+          assert (H_s : In s (List.map fst tl')) by (apply H_incl; left; reflexivity).
+          apply In_fst in H_s as [ [ s' t' ] [ H_in E_s ] ]; cbn in E_s; subst s'.
+          inversion H_wf; subst.
+          lazymatch goal with
+          | H_nd : NoDup (List.map fst tl'), H_all : Forall type_wf (List.map snd tl') |- _ =>
+              rewrite (NoDup_In_get_attr_type tl' H_nd s t' H_in);
+              apply (proj1 (Forall_forall _ _) H_all); exact (in_map snd _ _ H_in)
+          end.
+        + constructor; [ | exact IH3 ].
+          rewrite fst_map_fst in E_in. apply inb_false_iff in E_in. exact E_in.
+    Qed.
+
+
+    Ltac saturate_wf :=
+      repeat match goal with
+        | H : type_of ?G1 ?G2 _ ?t |- _ =>
+            lazymatch goal with
+            | _ : type_wf t |- _ => fail
+            | _ => assert (type_wf t)
+                by (eapply type_of__type_wf; [ | | exact H ];
+                    repeat apply tenv_wf_step; assumption)
+            end
+        | H : type_wf (TList ?t) |- _ =>
+            lazymatch goal with _ : type_wf t |- _ => fail | _ => inversion H; subst end
+        | H : type_wf (TBag ?t) |- _ =>
+            lazymatch goal with _ : type_wf t |- _ => fail | _ => inversion H; subst end
+        | H : type_wf (TSet ?t) |- _ =>
+            lazymatch goal with _ : type_wf t |- _ => fail | _ => inversion H; subst end
+        | H : type_wf (TOption ?t) |- _ =>
+            lazymatch goal with _ : type_wf t |- _ => fail | _ => inversion H; subst end
+        | H : type_wf (TDict _ ?kt ?vt) |- _ =>
+            lazymatch goal with _ : type_wf kt, _ : type_wf vt |- _ => fail | _ => inversion H; subst end
+        end.
+
+    Ltac solve_wf := solve [ repeat first [ assumption | apply tenv_wf_step | constructor ] ].
+
+    Ltac tc_out_IH :=
+      match goal with
+      | IH: (forall _ _ _ _, _ -> _ -> (synthesize_expr _ _ ?e = _ -> _) /\ _),
+          H: synthesize_expr ?G1 ?G2 ?e = Success (?t, ?e') |- _ =>
+          let H' := fresh "H_ty" in
+          assert (H' : type_of G1 G2 e' t)
+            by (apply (proj1 (IH G1 G2 t e' ltac:(solve_wf) ltac:(solve_wf)) H));
+          clear H
+      | IH: (forall _ _ _ _, _ -> _ -> _ /\ (analyze_expr _ _ _ ?e = _ -> _)),
+          H: analyze_expr ?G1 ?G2 ?t ?e = Success ?e' |- _ =>
+          let H' := fresh "H_ty" in
+          assert (H' : type_of G1 G2 e' t)
+            by (apply (proj2 (IH G1 G2 t e' ltac:(solve_wf) ltac:(solve_wf)) H); solve_wf);
+          clear H
+      end.
+
+    Ltac tc_out := repeat (saturate_wf; tc_out_IH); saturate_wf.
+
+    Lemma typechecker_out_sound : forall e Gstore Genv t e',
+        tenv_wf Gstore -> tenv_wf Genv ->
+        (synthesize_expr Gstore Genv e = Success (t, e') -> type_of Gstore Genv e' t) /\
+          (analyze_expr Gstore Genv t e = Success e' -> type_wf t -> type_of Gstore Genv e' t).
+    Proof.
+      induction e using expr_IH; intros.
+      1,2: split; intros; unfold_fold_typechecker; repeat destruct_match; invert_result; constructor; easy.
+      1: split; intros; unfold_fold_typechecker; repeat destruct_match; invert_result; constructor;
+          apply atom_typechecker_out in E; auto.
+      all: try (split; intros; try destruct o; try destruct tag; try destruct ag; cbn in *;
+                unfold_fold_typechecker; repeat destruct_match; repeat invert_pair; repeat invert_result;
+                tc_out; solve [ repeat (econstructor; eauto) ]).
+      split; intros; unfold_fold_typechecker; repeat destruct_match.
+      + unfold record_type_from in *. repeat destruct_match. invert_result.
+        eapply record_type_from'_out with (Gstore := Gstore) (Genv := Genv) in H; eauto.
+        apply TyERecord with (tl := l0); intuition auto.
+        * apply Permuted_record_sort.
+        * apply StronglySorted_record_sort.
+      + unfold record_from in *. destruct_match. invert_result.
+        rewrite Bool.andb_true_iff in E1. intuition idtac.
+        eapply record_from'_out with (Gstore := Gstore) in H; eauto; [| apply inclb_correct; auto].
+        apply TyERecord with (tl := List.map (fun '(s, e) => (s, get_attr_type l0 s)) l); intuition idtac.
+        * apply double_incl_NoDup_Permuted; intuition idtac.
+          apply leb_complete. repeat rewrite length_map. auto.
+        * rewrite fst_map_fst; auto.
+        * inversion H3; auto.
+    Qed.
+
     Ltac apply_type_sound_IH :=
       lazymatch goal with
       | H : (tenv_wf ?Genv ->
