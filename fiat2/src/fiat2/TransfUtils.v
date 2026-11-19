@@ -199,87 +199,10 @@ Section WithMap.
   Qed.
 End WithMap.
 
-Section fold_command.
-  Context (f : command -> command).
-  Context (g : expr -> expr).
-
-  Fixpoint fold_command (c : command) : command :=
-    f
-      match c with
-      | CSkip => CSkip
-      | CSeq c1 c2 => CSeq (fold_command c1) (fold_command c2)
-      | CLet e x c => CLet (fold_expr g e) x (fold_command c)
-      | CLetMut e x ot invs c => CLetMut (fold_expr g e) x ot invs (fold_command c)
-      | CAssign x e => CAssign x (fold_expr g e)
-      | CIf e c1 c2 => CIf (fold_expr g e) (fold_command c1) (fold_command c2)
-      | CForeach e x c => CForeach (fold_expr g e) x (fold_command c)
-      end.
-End fold_command.
-
 Section WithMap.
   Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals : map.map string value} {locals_ok : map.ok locals}.
-
-  Lemma fold_command_id_preserve_ty : forall f,
-      (forall Gstore, preserve_ty Gstore f) ->
-      forall c Gstore Genv,
-      tenv_wf Gstore -> tenv_wf Genv ->
-      well_typed Gstore Genv c -> well_typed Gstore Genv (fold_command id f c).
-  Proof.
-    induction c; simpl; auto; intros.
-    all: invert_well_typed.
-    all: econstructor; eauto with fiat2_hints;
-      try apply fold_expr_preserve_ty; auto.
-  Qed.
-
-  Ltac use_fold_command_id_preserve_sem_IH Gstore' :=
-    lazymatch goal with
-      IH: context[interp_command _ _ (fold_command id _ ?c) = _] |-
-        context[interp_command _ _ (fold_command id _ ?c)] =>
-        erewrite IH with (Gstore:=Gstore')
-    end.
-
-  Lemma fold_command_id_preserve_sem : forall f,
-      (forall Gstore, preserve_ty Gstore f) ->
-      (forall Gstore (store : locals), preserve_sem Gstore store f) ->
-      forall c (Gstore Genv : tenv) (store env : locals),
-      tenv_wf Gstore -> tenv_wf Genv ->
-      well_typed Gstore Genv c ->
-      locals_wf Gstore store -> locals_wf Genv env ->
-      interp_command store env (fold_command id f c) = interp_command store env c.
-  Proof.
-    induction c; simpl; auto; intros.
-    all: invert_well_typed.
-    1:{ repeat use_fold_command_id_preserve_sem_IH Gstore; eauto.
-        eapply command_type_sound; eauto. }
-    1:{ use_fold_command_id_preserve_sem_IH Gstore.
-        4: eauto. all: eauto with fiat2_hints.
-        2:{ apply locals_wf_step; auto. eapply type_sound with (Gstore:=Gstore); eauto.
-            apply fold_expr_preserve_ty; auto. }
-        erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ use_fold_command_id_preserve_sem_IH (map.put Gstore x t).
-        all: eauto with fiat2_hints.
-        2:{ apply locals_wf_step; auto. eapply type_sound with (Gstore:=Gstore); eauto.
-            apply fold_expr_preserve_ty; auto. }
-        f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ f_equal. erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto. }
-    1:{ erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto.
-        repeat case_match; auto.
-        all: use_fold_command_id_preserve_sem_IH Gstore; eauto. }
-    1:{ erewrite fold_expr_preserve_sem with (Gstore:=Gstore); eauto.
-        repeat case_match; auto.
-        apply_type_sound e; rewrite_l_to_r.
-        invert_type_of_value.
-        repeat lazymatch goal with H: context[VList] |- _ => clear H end.
-        generalize dependent store.
-        induction l; simpl in *; auto; intros. invert_Forall.
-        rewrite IHl; auto.
-        2: eapply command_type_sound; resolve_locals_wf; eauto with fiat2_hints.
-        2: apply fold_command_id_preserve_ty; eauto with fiat2_hints.
-        f_equal. use_fold_command_id_preserve_sem_IH Gstore. 4: eauto.
-        all: eauto with fiat2_hints. }
-  Qed.
 
   Lemma fold_expr_sem_eq : forall f (Gstore Genv : tenv) e t (store env : locals),
       type_of Gstore Genv e t ->
@@ -292,24 +215,6 @@ Section WithMap.
     intros * H_t H_ty H_sem ? ? ? ?.
     eapply (fold_expr_preserve_sem Gstore store f (H_ty Gstore) (H_sem Gstore store));
       eassumption.
-  Qed.
-
-  Lemma fold_command_id_sound : forall f,
-      expr_transf_sound (locals:=locals) f ->
-      transf_sound (locals:=locals) (fun _ _ => fold_command id f).
-  Proof.
-    unfold expr_transf_sound, transf_sound; intros; split.
-    1:{ apply fold_command_id_preserve_ty; auto.
-        unfold preserve_ty; intros.
-        lazymatch goal with
-          H: context[_ -> _ /\ _], H': type_of _ _ _ _ |- _ =>
-            apply H in H' end; intuition idtac. }
-    1:{ intros. erewrite fold_command_id_preserve_sem;
-        resolve_locals_wf; eauto;
-        unfold preserve_ty, preserve_sem; intros;
-        lazymatch goal with
-              H: context[_ -> _ /\ _], H': type_of _ _ _ _ |- _ =>
-                apply H in H' end; intuition auto. }
   Qed.
 End WithMap.
 
@@ -332,8 +237,6 @@ Section fold_command_with_global.
           CForeach (fold_expr g e) x (fold_command_with_global c)
       end.
 End fold_command_with_global.
-
-#[export] Hint Resolve fold_command_id_sound : transf_hints.
 
 Section WithMap.
   Notation value := (value).
