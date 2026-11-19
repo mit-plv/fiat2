@@ -2075,6 +2075,32 @@ Section WithWord.
         eapply typechecker_sound; eauto. constructor.
     Qed.
 
+    Lemma command_typechecker_preserve_sem : forall c Gstore Genv c',
+        typecheck Gstore Genv c = Success c' ->
+        forall store env : locals, interp_command store env c' = interp_command store env c.
+    Proof.
+      induction c; cbn [typecheck]; intros Gstore Genv c' H store env.
+      all: repeat destruct_match; repeat invert_pair; repeat invert_result; cbn [interp_command].
+      all: repeat match goal with
+             | H : synthesize_expr ?G ?G' ?e = Success (?t, ?e') |- context[interp_expr ?s ?v ?e'] =>
+                 rewrite (proj1 (typechecker_preserve_sem e G G' s v t e') H)
+             | H : analyze_expr ?G ?G' ?t ?e = Success ?e' |- context[interp_expr ?s ?v ?e'] =>
+                 rewrite (proj2 (typechecker_preserve_sem e G G' s v t e') H)
+             end.
+      all: repeat match goal with
+             | IH : forall _ _ _, typecheck _ _ ?c = Success _ -> _,
+                 H : typecheck ?G ?G' ?c = Success ?c' |- context[interp_command ?s ?v ?c'] =>
+                 rewrite (IH G G' c' H s v)
+             end.
+      all: try reflexivity.
+      destruct (interp_expr store env e); try reflexivity.
+      generalize store as st. induction l as [ | v l IHl ]; cbn; intros st; [ reflexivity | ].
+      lazymatch goal with
+      | H : typecheck ?G ?G' c = Success ?c' |- _ => rewrite (IHc G G' c' H st (map.put env x v))
+      end.
+      apply IHl.
+    Qed.
+
     Lemma locals_wf_restored : forall Gstore store store' x t,
         locals_wf Gstore store ->
         locals_wf (map.put Gstore x t) store' ->
