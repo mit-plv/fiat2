@@ -20,6 +20,7 @@ Definition ipasses : list (tenv -> tenv -> command -> command) :=
     fun G _ c => fold_command_with_ictx (fun _ _ => and_true_head) (fun _ _ => if_const_head) nil G c;
     fun G _ c => at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) G c;
     fun G _ c => fold_command_with_ictx (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) (fun _ _ c => c) nil G c;
+    fun G _ c => fold_command_with_ictx (fun _ _ => push_down_collection) (fun _ _ c => c) nil G c;
     fun G _ c => fold_command_with_ictx dict_lookup_rule (fun _ _ c => c) nil G c;
     fun G _ c => fold_command_with_ictx dict_read_rule (fun _ _ c => c) nil G c ].
 
@@ -43,6 +44,8 @@ Proof.
       1:{ apply fold_command_with_ictx_sound; [ apply expr_transf__ictx_rule_sound | apply id_cmd_rule_sound ].
           exact (expr_transf_sound_compose _ _ annotate_collection_sound
                    (expr_transf_sound_compose _ _ dict_delete_head_sound fold_cons_head_sound)). }
+      1: apply fold_command_with_ictx_sound;
+           [ apply expr_transf__ictx_rule_sound, push_down_collection_sound | apply id_cmd_rule_sound ].
       1: apply fold_command_with_ictx_sound; [ apply dict_lookup_rule_sound | apply id_cmd_rule_sound ].
       1: apply fold_command_with_ictx_sound; [ apply dict_read_rule_sound | apply id_cmd_rule_sound ]. }
   1: apply Forall_cons; [ apply erase_dead_field_at_sound | apply Forall_nil ].

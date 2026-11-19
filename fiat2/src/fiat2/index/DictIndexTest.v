@@ -35,6 +35,7 @@ Definition compile (sc : scommand) : option command :=
       let c := at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) (map.empty : tenv) c in
       let c := fold_command_with_ictx (tenv := tenv)
                  (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) (fun _ _ c => c) nil map.empty c in
+      let c := fold_command_with_ictx (tenv := tenv) (fun _ _ => push_down_collection) (fun _ _ c => c) nil map.empty c in
       let c := fold_command_with_ictx (tenv := tenv) dict_lookup_rule (fun _ _ c => c) nil map.empty c in
       Some (fold_command_with_ictx (tenv := tenv) dict_read_rule (fun _ _ c => c) nil map.empty c)
   | Failure _ => None

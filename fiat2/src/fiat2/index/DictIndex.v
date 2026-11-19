@@ -78,7 +78,6 @@ Definition dict_delete_head (e : expr) : expr :=
 
 Definition dict_lookup_of (e : expr) : option (string * expr * expr) :=
   match e with
-  | EUnop OBagOfList (flatmap_filter_list l x (EBinop OEq (EAccess (EVar x1) attr) k) x2 _ _)
   | flatmap_filter_bag (EUnop OBagOfList l) x (EBinop OEq (EAccess (EVar x1) attr) k) x2 _ _ =>
       if String.eqb x x1 && String.eqb x x2 && negb (free_immut_in x k) then Some (attr, l, k) else None
   | _ => None
@@ -213,14 +212,12 @@ Qed.
 Lemma dict_lookup_of_spec : forall e attr l k,
     dict_lookup_of e = Some (attr, l, k) ->
     exists x t1 t2,
-      (e = EUnop OBagOfList (flatmap_filter_list l x (EBinop OEq (EAccess (EVar x) attr) k) x t1 t2) \/
-       e = flatmap_filter_bag (EUnop OBagOfList l) x (EBinop OEq (EAccess (EVar x) attr) k) x t1 t2) /\
+      e = flatmap_filter_bag (EUnop OBagOfList l) x (EBinop OEq (EAccess (EVar x) attr) k) x t1 t2 /\
         free_immut_in x k = false.
 Proof.
   unfold dict_lookup_of; intros * H.
   repeat (destruct_match_hyp; try discriminate).
-  all: injection H as <- <- <-; split_conds.
-  all: do 3 eexists; split; [ first [ left; reflexivity | right; reflexivity ] | assumption ].
+  injection H as <- <- <-. split_conds. eauto.
 Qed.
 
 Lemma dict_aux_spec : forall ictx attr l aux,
@@ -440,13 +437,8 @@ Section WithMap.
         | _ => VUnit
         end.
   Proof.
-    intros * H. apply dict_lookup_of_spec in H as (x & t1 & t2 & [ -> | -> ] & H_free).
-    1:{ change (interp_expr store env (EUnop OBagOfList ?a))
-          with (interp_unop OBagOfList (interp_expr store env a)).
-        rewrite interp_filter_list with (g := fun v => value_eqb (row_key attr v) (interp_expr store env k))
-          by (intros; apply interp_eq_key; exact H_free).
-        destruct (interp_expr store env l); reflexivity. }
-    1:{ apply interp_filter_bag. intros; apply interp_eq_key; exact H_free. }
+    intros * H. apply dict_lookup_of_spec in H as (x & t1 & t2 & -> & H_free).
+    apply interp_filter_bag. intros; apply interp_eq_key; exact H_free.
   Qed.
 
   Lemma filter_ty_inv : forall (Gstore Genv : tenv) l x p t1 t2 t,
@@ -489,25 +481,15 @@ Section WithMap.
     eapply not_free_immut_put_ty; eassumption.
   Qed.
 
-  (* Both shapes of a bag of the rows with a given key *)
   Lemma eq_filter_ty_inv : forall (Gstore Genv : tenv) e attr l k t,
       dict_lookup_of e = Some (attr, l, k) -> type_of Gstore Genv e t ->
       exists rt kt, t = TBag (TRecord rt) /\ type_of Gstore Genv l (TList (TRecord rt)) /\
                       access_record rt attr = Success kt /\ type_of Gstore Genv k kt.
   Proof.
-    intros * H H_e. apply dict_lookup_of_spec in H as (x & t1 & t2 & [ -> | -> ] & H_free).
-    1:{ inversion H_e; subst.
-        lazymatch goal with H : type_of_unop OBagOfList _ _ |- _ => inversion H; subst; clear H end.
-        lazymatch goal with
-        | H : type_of _ _ (flatmap_filter_list _ _ _ _ _ _) _ |- _ =>
-            apply filter_ty_inv in H as (tr & E_tr & H_l & H_p)
-        end.
-        inversion E_tr; subst.
-        destruct (key_cond_ty_inv _ _ _ _ _ _ H_p H_free) as (rt & kt & -> & H_a & H_k).
-        eauto 7. }
-    1:{ apply filter_bag_ty_inv in H_e as (tr & -> & H_l & H_p).
-        destruct (key_cond_ty_inv _ _ _ _ _ _ H_p H_free) as (rt & kt & -> & H_a & H_k).
-        eauto 7. }
+    intros * H H_e. apply dict_lookup_of_spec in H as (x & t1 & t2 & -> & H_free).
+    apply filter_bag_ty_inv in H_e as (tr & -> & H_l & H_p).
+    destruct (key_cond_ty_inv _ _ _ _ _ _ H_p H_free) as (rt & kt & -> & H_a & H_k).
+    eauto 7.
   Qed.
 
   Lemma dict_aux_correct : forall (Gstore Genv : tenv) ictx attr l aux rt kt,
