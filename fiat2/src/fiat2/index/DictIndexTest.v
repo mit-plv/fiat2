@@ -34,7 +34,7 @@ Definition compile (sc : scommand) : option command :=
       let c := fold_command_with_ictx (tenv := tenv) guard_rule (fun _ _ c => c) nil map.empty c in
       let c := at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) (map.empty : tenv) c in
       let c := fold_command_with_ictx (tenv := tenv)
-                 (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) (fun _ _ c => c) nil map.empty c in
+                 (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head (dict_snoc_head e)))) (fun _ _ c => c) nil map.empty c in
       let c := fold_command_with_ictx (tenv := tenv) (fun _ _ => push_down_collection) (fun _ _ c => c) nil map.empty c in
       let c := fold_command_with_ictx (tenv := tenv) dict_lookup_rule (fun _ _ c => c) nil map.empty c in
       Some (fold_command_with_ictx (tenv := tenv) dict_read_rule (fun _ _ c => c) nil map.empty c)
@@ -103,4 +103,16 @@ Example compiled_renamed :
                                ("idx", ELet idx "_acc'''''"
                                          (ELet age_row "_tup" (dict_body "id" "_tup" "_acc'''''" "_b" None)))]))
                   CSkip))).
+Proof. reflexivity. Qed.
+
+Definition prog_append : scommand :=
+  SLetConstrained "users" row_ty nil
+    (SAssign "users" (EBinop OConcat (ELoc "users") (EBinop OCons new_row (EAtom (ANil None)))) SSkip).
+
+Example compiled_append :
+  compile prog_append =
+    Some (CLetMut users_init "users" (Some users_ty) [ IndexInv "users" ["tbl"] ["idx"] "_h" (dict_fold "id" (EVar "_h")) ]
+            (CAssign "users"
+               (ERecord [("tbl", EBinop OConcat tbl (EBinop OCons new_row (EAtom (ANil (Some row_ty)))));
+                         ("idx", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id" "_tup" "_acc" "_b" None)))]))).
 Proof. reflexivity. Qed.

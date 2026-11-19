@@ -1,5 +1,6 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils
-  fiat2.TransfSound fiat2.TransfUtils fiat2.Invariant fiat2.index.IndexInterface fiat2.rules.FlatmapForms.
+  fiat2.TransfSound fiat2.TransfUtils fiat2.Invariant fiat2.index.IndexInterface fiat2.rules.FlatmapForms
+  fiat2.rules.FlatmapTransf.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String List Sorted.
 Import ListNotations.
@@ -38,18 +39,26 @@ Definition dict_idx_ty (attr : string) (t : type) : type :=
 Definition dict_idx (attr : string) : IndexInterface.index :=
   IndexInterface.mk "_h" (dict_fold attr (EVar "_h")) (dict_idx_ty attr) (dict_is_tbl_ty attr).
 
-(* The attribute and the rows of an index built from scratch, with any binder names *)
-Definition dict_fold_of (e : expr) : option (string * expr) :=
-  match e with
-  | EFold l (EAtom (AEmptyDict Unranged _)) tup acc
-      (ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr)
-         (EBinop OBagInsert
-            (EOptMatch (EBinop OLookup (EVar acc2) (EAccess (EVar tup2) attr'))
-               (EAtom (AEmptyBag _)) b (EVar b'))
-            (EVar tup3))) =>
+(* The attribute of an index built from scratch, from the start and step of
+   its fold, with any binder names *)
+Definition dict_body_attr (d : expr) (tup acc : string) (body : expr) : option string :=
+  match d, body with
+  | EAtom (AEmptyDict Unranged _),
+    ETernop OInsert (EVar acc1) (EAccess (EVar tup1) attr)
+      (EBinop OBagInsert
+         (EOptMatch (EBinop OLookup (EVar acc2) (EAccess (EVar tup2) attr'))
+            (EAtom (AEmptyBag _)) b (EVar b'))
+         (EVar tup3)) =>
       if negb (String.eqb tup acc) && forallb (String.eqb tup) [tup1; tup2; tup3]
          && forallb (String.eqb acc) [acc1; acc2] && String.eqb b b' && String.eqb attr attr'
-      then Some (attr, l) else None
+      then Some attr else None
+  | _, _ => None
+  end.
+
+(* The attribute and the rows of an index built from scratch *)
+Definition dict_fold_of (e : expr) : option (string * expr) :=
+  match e with
+  | EFold l d tup acc body => option_map (fun attr => (attr, l)) (dict_body_attr d tup acc body)
   | _ => None
   end.
 
@@ -60,6 +69,26 @@ Definition fold_cons_head (e : expr) : expr :=
       then ELet (EFold l d x acc body) acc (ELet r x body)
       else e
   | _ => e
+  end.
+
+Definition dict_snoc_of (e : expr) : option (expr * expr) :=
+  match e with
+  | EFold (EBinop OConcat l (EBinop OCons r (EAtom (ANil _)))) d x acc body =>
+      match dict_body_attr d x acc body with
+      | Some _ => Some (l, r)
+      | None => None
+      end
+  | _ => None
+  end.
+
+(* The index does not depend on the order of the rows *)
+Definition dict_snoc_head (e : expr) : expr :=
+  match dict_snoc_of e with
+  | Some (l, r) => match e with
+                   | EFold _ d x acc body => EFold (EBinop OCons r l) d x acc body
+                   | _ => e
+                   end
+  | None => e
   end.
 
 Definition dict_delete_of (e : expr) : option (string * expr * expr) :=
@@ -186,15 +215,34 @@ Lemma dict_fold_of_spec : forall e attr l,
     exists a tup acc b tb,
       e = EFold l (EAtom (AEmptyDict Unranged a)) tup acc (dict_body attr tup acc b tb) /\ tup <> acc.
 Proof.
-  unfold dict_fold_of; intros * H.
+  unfold dict_fold_of, dict_body_attr, option_map; intros * H.
   repeat (destruct_match_hyp; try discriminate).
-  injection H as <- <-. cbn [forallb] in *. rewrite !Bool.andb_true_r in *. split_conds.
+  injection H as <- <-.
+  repeat lazymatch goal with Hs : Some _ = Some _ |- _ => injection Hs as Hs; subst end.
+  cbn [forallb] in *. rewrite !Bool.andb_true_r in *. split_conds.
   do 5 eexists; split; [ reflexivity | assumption ].
+Qed.
+
+Lemma dict_fold_of_attr : forall l d x acc body attr,
+    dict_body_attr d x acc body = Some attr -> dict_fold_of (EFold l d x acc body) = Some (attr, l).
+Proof.
+  intros * H. cbn [dict_fold_of]. rewrite H. reflexivity.
+Qed.
+
+Lemma dict_snoc_of_spec : forall e l r,
+    dict_snoc_of e = Some (l, r) ->
+    exists t d x acc body attr,
+      e = EFold (EBinop OConcat l (EBinop OCons r (EAtom (ANil t)))) d x acc body /\
+        dict_body_attr d x acc body = Some attr.
+Proof.
+  unfold dict_snoc_of; intros * H.
+  repeat (destruct_match_hyp; try discriminate).
+  injection H as <- <-. eauto 8.
 Qed.
 
 Lemma dict_fold_of_dict_fold : forall attr l, dict_fold_of (dict_fold attr l) = Some (attr, l).
 Proof.
-  intros. unfold dict_fold_of, dict_fold, dict_body. cbn [forallb negb].
+  intros. unfold dict_fold_of, dict_body_attr, dict_fold, dict_body. cbn [forallb negb option_map].
   rewrite !String.eqb_refl. reflexivity.
 Qed.
 
@@ -390,6 +438,75 @@ Section WithMap.
         unfold bucket. rewrite dict_lookup_delete_diff by congruence. reflexivity. }
   Qed.
 
+  Lemma fold_dict_step_wf : forall attr l,
+      exists d, fold_right (dict_step attr) (VDict nil) l = VDict d /\ dict_wf d.
+  Proof.
+    induction l as [ | v l (d & E & H_wf) ]; cbn [fold_right].
+    1: exists nil; split; [ reflexivity | exact I ].
+    rewrite E. cbn [dict_step]. eexists; split; [ reflexivity | apply dict_insert_preserve_dict_wf; exact H_wf ].
+  Qed.
+
+  Lemma dict_insert_insert_same : forall (k v v' : value) d,
+      dict_wf d -> dict_insert k v (dict_insert k v' d) = dict_insert k v d.
+  Proof.
+    intros * H_wf. apply dict_wf_lookup_ext.
+    1: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+    1: apply dict_insert_preserve_dict_wf; exact H_wf.
+    intros q. destruct (value_eqb q k) eqn:E.
+    1:{ apply value_eqb_eq in E; subst. rewrite !dict_lookup_insert_same; reflexivity. }
+    1:{ assert (q <> k) by (intro; subst; rewrite value_eqb_refl in E; discriminate).
+        rewrite !dict_lookup_insert_diff by assumption; reflexivity. }
+  Qed.
+
+  Lemma dict_insert_comm : forall (k k' v v' : value) d,
+      k <> k' -> dict_wf d ->
+      dict_insert k v (dict_insert k' v' d) = dict_insert k' v' (dict_insert k v d).
+  Proof.
+    intros * H_ne H_wf. apply dict_wf_lookup_ext.
+    1,2: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+    intros q. destruct (value_eqb q k) eqn:E_k.
+    1:{ apply value_eqb_eq in E_k; subst.
+        rewrite dict_lookup_insert_same, dict_lookup_insert_diff, dict_lookup_insert_same by congruence.
+        reflexivity. }
+    assert (q <> k) by (intro; subst; rewrite value_eqb_refl in E_k; discriminate).
+    destruct (value_eqb q k') eqn:E_k'.
+    1:{ apply value_eqb_eq in E_k'; subst.
+        rewrite dict_lookup_insert_diff, !dict_lookup_insert_same by congruence. reflexivity. }
+    assert (q <> k') by (intro; subst; rewrite value_eqb_refl in E_k'; discriminate).
+    rewrite !dict_lookup_insert_diff by assumption; reflexivity.
+  Qed.
+
+  Lemma bag_insert_value_comm : forall (b v w : value),
+      interp_binop OBagInsert (interp_binop OBagInsert b w) v =
+        interp_binop OBagInsert (interp_binop OBagInsert b v) w.
+  Proof.
+    destruct b; intros; try reflexivity. cbn [interp_binop]. rewrite bag_insert_comm. reflexivity.
+  Qed.
+
+  Lemma dict_step_comm : forall attr v w d,
+      dict_wf d ->
+      dict_step attr v (dict_step attr w (VDict d)) = dict_step attr w (dict_step attr v (VDict d)).
+  Proof.
+    intros * H_wf. cbn [dict_step]. unfold bucket.
+    destruct (value_eqb (row_key attr v) (row_key attr w)) eqn:E.
+    1:{ apply value_eqb_eq in E. rewrite <- E.
+        rewrite !dict_lookup_insert_same, !dict_insert_insert_same by exact H_wf.
+        rewrite bag_insert_value_comm. reflexivity. }
+    assert (H_ne : row_key attr v <> row_key attr w)
+      by (intro H; rewrite H, value_eqb_refl in E; discriminate).
+    rewrite !dict_lookup_insert_diff by congruence.
+    rewrite dict_insert_comm by assumption. reflexivity.
+  Qed.
+
+  Lemma fold_dict_step_snoc : forall attr l v,
+      fold_right (dict_step attr) (VDict nil) (l ++ [v]) = dict_step attr v (fold_right (dict_step attr) (VDict nil) l).
+  Proof.
+    induction l as [ | w l IH ]; intros v; [ reflexivity | ].
+    cbn [app fold_right]. rewrite IH.
+    destruct (fold_dict_step_wf attr l) as (d & -> & H_wf).
+    apply dict_step_comm; exact H_wf.
+  Qed.
+
   Lemma interp_filter_list : forall (store env : locals) l x p t1 t2 g,
       (forall v, interp_expr store (map.put env x v) p = VBool (g v)) ->
       interp_expr store env (flatmap_filter_list l x p x t1 t2) =
@@ -567,6 +684,26 @@ Section WithMap.
         cbn [interp_binop fold_right].
         rewrite <- (not_free_immut_put_sem r acc store env _ H_free).
         rewrite Properties.map.put_put_diff by congruence. reflexivity. }
+  Qed.
+
+  Theorem dict_snoc_head_sound : expr_transf_sound (locals := locals) dict_snoc_head.
+  Proof.
+    unfold expr_transf_sound, dict_snoc_head; intros Gstore Genv e t H_Gs H_Ge H_e.
+    destruct (dict_snoc_of e) as [ [ l r ] | ] eqn:E; [ | split; [ exact H_e | intros; reflexivity ] ].
+    apply dict_snoc_of_spec in E as (t0 & d & x & acc & body & attr & -> & H_attr).
+    inversion H_e; subst.
+    lazymatch goal with H : type_of _ _ (EBinop OConcat _ _) _ |- _ => inversion H; subst; clear H end.
+    lazymatch goal with H : type_of_binop OConcat _ _ _ |- _ => inversion H; subst; clear H end.
+    lazymatch goal with H : type_of _ _ (EBinop OCons _ _) _ |- _ => inversion H; subst; clear H end.
+    lazymatch goal with H : type_of_binop OCons _ _ _ |- _ => inversion H; subst; clear H end.
+    split.
+    1: econstructor; [ econstructor; [ constructor | eassumption | eassumption ] | eassumption | eassumption ].
+    intros store env _ _.
+    rewrite (interp_dict_fold_of _ _ _ _ _ (dict_fold_of_attr (EBinop OCons r l) _ _ _ _ _ H_attr)).
+    rewrite (interp_dict_fold_of _ _ _ _ _ (dict_fold_of_attr _ _ _ _ _ _ H_attr)).
+    cbn [interp_expr interp_binop interp_atom].
+    destruct (interp_expr store env l); try reflexivity. cbn [dict_of fold_right].
+    symmetry. apply fold_dict_step_snoc.
   Qed.
 
   Theorem dict_delete_head_sound : expr_transf_sound (locals := locals) dict_delete_head.
