@@ -738,24 +738,26 @@ Section WithMap.
     rewrite map.get_put_diff; congruence.
   Qed.
 
-  Fixpoint fold_command_with_ictx (f : list invariant -> tenv -> expr -> expr)
+  Fixpoint fold_command_with_ictx (fe : list invariant -> tenv -> expr -> expr)
+    (fc : list invariant -> tenv -> command -> command)
     (ictx : list invariant) (Gstore : tenv) (c : command) : command :=
-    match c with
-    | CSkip => CSkip
-    | CSeq c1 c2 => CSeq (fold_command_with_ictx f ictx Gstore c1) (fold_command_with_ictx f ictx Gstore c2)
-    | CLet e x c => CLet (fold_expr (f ictx Gstore) e) x (fold_command_with_ictx f ictx Gstore c)
-    | CLetMut e x ot invs c =>
-        CLetMut (fold_expr (f ictx Gstore) e) x ot invs
-          match ot with
-          | Some t => fold_command_with_ictx f (invs ++ ictx) (map.put Gstore x t) c
-          | None => c
-          end
-    | CAssign x e => CAssign x (fold_expr (f ictx Gstore) e)
-    | CIf e c1 c2 =>
-        CIf (fold_expr (f ictx Gstore) e)
-          (fold_command_with_ictx f ictx Gstore c1) (fold_command_with_ictx f ictx Gstore c2)
-    | CForeach e x c => CForeach (fold_expr (f ictx Gstore) e) x (fold_command_with_ictx f ictx Gstore c)
-    end.
+    fc ictx Gstore
+      match c with
+      | CSkip => CSkip
+      | CSeq c1 c2 => CSeq (fold_command_with_ictx fe fc ictx Gstore c1) (fold_command_with_ictx fe fc ictx Gstore c2)
+      | CLet e x c => CLet (fold_expr (fe ictx Gstore) e) x (fold_command_with_ictx fe fc ictx Gstore c)
+      | CLetMut e x ot invs c =>
+          CLetMut (fold_expr (fe ictx Gstore) e) x ot invs
+            match ot with
+            | Some t => fold_command_with_ictx fe fc (invs ++ ictx) (map.put Gstore x t) c
+            | None => c
+            end
+      | CAssign x e => CAssign x (fold_expr (fe ictx Gstore) e)
+      | CIf e c1 c2 =>
+          CIf (fold_expr (fe ictx Gstore) e)
+            (fold_command_with_ictx fe fc ictx Gstore c1) (fold_command_with_ictx fe fc ictx Gstore c2)
+      | CForeach e x c => CForeach (fold_expr (fe ictx Gstore) e) x (fold_command_with_ictx fe fc ictx Gstore c)
+      end.
 
   (* A rule may assume the invariant context it is handed holds of the store. *)
   Definition ictx_rule_sound (f : list invariant -> tenv -> expr -> expr) : Prop :=
@@ -782,6 +784,33 @@ Section WithMap.
     apply (H_f Gstore Genv e t); auto.
   Qed.
 
+  Lemma id_rule_sound : ictx_rule_sound (fun _ _ e => e).
+  Proof.
+    unfold ictx_rule_sound, preserve_ty, preserve_sem; auto.
+  Qed.
+
+  (* A command rule is handed part of the context the command maintains, and
+     must be sound in the whole of it *)
+  Definition ictx_cmd_rule_sound (f : list invariant -> tenv -> command -> command) : Prop :=
+    forall ictx0 ictx (Gstore Genv : tenv) path_cond c,
+      incl ictx0 ictx -> tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
+      maintains_invs Gstore Genv ictx path_cond c ->
+      maintains_invs Gstore Genv ictx path_cond (f ictx0 Gstore c) /\
+        forall store env,
+          path_cond store env -> locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
+          interp_command store env (f ictx0 Gstore c) = interp_command store env c.
+
+  Lemma inv_transf__ictx_cmd_rule_sound : forall f,
+      inv_transf_sound (fun _ _ => f) -> ictx_cmd_rule_sound (fun _ _ => f).
+  Proof.
+    unfold inv_transf_sound, ictx_cmd_rule_sound; intros * H_f; intros. apply H_f; assumption.
+  Qed.
+
+  Lemma id_cmd_rule_sound : ictx_cmd_rule_sound (fun _ _ c => c).
+  Proof.
+    unfold ictx_cmd_rule_sound; intros. split; [ assumption | reflexivity ].
+  Qed.
+
   Section WithRule.
     Context (f : list invariant -> tenv -> expr -> expr) (H_f : ictx_rule_sound f).
 
@@ -804,119 +833,131 @@ Section WithMap.
       eapply fold_expr_preserve_sem; eauto.
     Qed.
 
-    Lemma fold_command_with_ictx_maintains : forall Gstore Genv ictx path_cond c,
+    Context (fc : list invariant -> tenv -> command -> command) (H_fc : ictx_cmd_rule_sound fc).
+
+    Ltac use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m :=
+      let H_m' := fresh "H_m'" in
+      let H_s := fresh "H_s" in
+      destruct (H_fc _ _ _ _ _ _ H_incl H_Gs H_Ge H_ictx H_m) as [ H_m' H_s ];
+      split; [ exact H_m' | intros store env H_pc H_store H_env H_h; rewrite H_s by assumption ];
+      lazymatch goal with
+      | H_i : incl ?i0 ?i, H_hi : holds_all ?st ?i |- _ =>
+          assert (H_h0 : holds_all st i0) by (eapply holds_all_incl; eassumption)
+      end.
+
+    Lemma fold_command_with_ictx_sound' : forall Gstore Genv ictx path_cond c,
         maintains_invs Gstore Genv ictx path_cond c ->
         tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
         forall ictx0, incl ictx0 ictx ->
-        maintains_invs Gstore Genv ictx path_cond (fold_command_with_ictx f ictx0 Gstore c).
+        maintains_invs Gstore Genv ictx path_cond (fold_command_with_ictx f fc ictx0 Gstore c) /\
+          forall store env,
+            path_cond store env -> locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
+            interp_command store env (fold_command_with_ictx f fc ictx0 Gstore c) = interp_command store env c.
     Proof.
       induction 1; intros H_Gs H_Ge H_ictx ictx0 H_incl; cbn [fold_command_with_ictx].
       all: assert (H_ictx0 : Forall (inv_wf Gstore) ictx0) by (eapply incl_Forall; eassumption).
       (* CSkip *)
-      1: constructor.
+      1:{ use_cmd_rule H_incl H_Gs H_Ge H_ictx (MICSkip Gstore Genv ictx path_cond). reflexivity. }
       (* CSeq *)
-      1: constructor; auto.
-      (* CLet *)
-      1:{ econstructor; [ eapply fold_expr_ictx_ty; eauto | ].
-          apply IHmaintains_invs; auto.
-          apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]. }
-      (* CLetMut *)
-      1:{ assert (H_Gs' : tenv_wf (map.put Gstore x t))
-            by (apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]).
-          econstructor; [ eapply fold_expr_ictx_ty; eauto | eassumption | | eassumption | eassumption | ].
-          1:{ destruct ot as [ t' | ]; [ | assumption ].
-              cbn in *; subst t'.
-              apply IHmaintains_invs; auto.
-              1:{ apply Forall_app; split; [ assumption | ].
-                  eapply Forall_impl; [ | exact H_ictx ]. intros.
-                  eapply inv_wf_weaken; [ | eassumption ].
-                  apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
-              apply incl_app; [ apply incl_appl, incl_refl | apply incl_appr; assumption ]. }
-          intros * H_pc H_h H_store H_env.
-          erewrite (fold_expr_ictx_sem _ Gstore Genv); eauto using holds_all_incl. }
-      (* CAssign *)
-      1:{ econstructor; [ eassumption | eapply fold_expr_ictx_ty; eauto | ].
-          intros * H_pc H_h H_store H_env.
-          erewrite (fold_expr_ictx_sem _ Gstore Genv); eauto using holds_all_incl. }
-      (* CIf: the rewritten test has the value of the original one *)
-      1:{ econstructor; [ eapply fold_expr_ictx_ty; eauto | | ].
-          1: eapply maintains_invs_path_cond_impl; [ apply IHmaintains_invs1; auto | ].
-          2: eapply maintains_invs_path_cond_impl; [ apply IHmaintains_invs2; auto | ].
-          all: intros * [ H_pc H_e ] H_h H_store H_env; split; [ assumption | ].
-          all: erewrite <- (fold_expr_ictx_sem _ Gstore Genv); eauto using holds_all_incl. }
-      (* CForeach *)
-      1:{ econstructor; [ eapply fold_expr_ictx_ty; eauto | ].
-          apply IHmaintains_invs; auto.
-          apply tenv_wf_step; [ assumption | ].
-          lazymatch goal with H : type_of _ _ _ (TList _) |- _ =>
-            apply type_of__type_wf in H as H_wf; [ inversion H_wf; assumption | assumption | assumption ] end. }
-    Qed.
-
-    Lemma fold_command_with_ictx_sem : forall Gstore Genv ictx path_cond c,
-        maintains_invs Gstore Genv ictx path_cond c ->
-        tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
-        forall ictx0, incl ictx0 ictx ->
-        forall store env,
-          path_cond store env -> locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
-          interp_command store env (fold_command_with_ictx f ictx0 Gstore c) = interp_command store env c.
-    Proof.
-      induction 1; intros H_Gs H_Ge H_ictx ictx0 H_incl store env H_pc H_store H_env H_h;
-        cbn [fold_command_with_ictx interp_command].
-      all: assert (H_ictx0 : Forall (inv_wf Gstore) ictx0) by (eapply incl_Forall; eassumption).
-      all: assert (H_h0 : holds_all store ictx0) by (eapply holds_all_incl; eassumption).
-      (* CSkip *)
-      1: reflexivity.
-      (* CSeq *)
-      1:{ rewrite IHmaintains_invs1 by auto.
-          apply IHmaintains_invs2; auto.
+      1:{ destruct (IHmaintains_invs1 H_Gs H_Ge H_ictx ictx0 H_incl) as [ H_m1 H_s1 ].
+          destruct (IHmaintains_invs2 H_Gs H_Ge H_ictx ictx0 H_incl) as [ H_m2 H_s2 ].
+          use_cmd_rule H_incl H_Gs H_Ge H_ictx (MICSeq Gstore Genv ictx path_cond _ _ H_m1 H_m2).
+          cbn [interp_command]. rewrite H_s1 by assumption.
+          apply H_s2; auto.
           1: eapply (command_type_sound Gstore Genv); eauto using maintains_invs__well_typed.
           eapply (maintains_invs__holds_all Gstore Genv); eauto. }
       (* CLet *)
-      1:{ erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
-          apply IHmaintains_invs; auto.
-          1: apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ].
+      1:{ assert (H_Ge' : tenv_wf (map.put Genv x t))
+            by (apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]).
+          destruct (IHmaintains_invs H_Gs H_Ge' H_ictx ictx0 H_incl) as [ H_m1 H_s1 ].
+          assert (H_m : maintains_invs Gstore Genv ictx path_cond
+                          (CLet (fold_expr (f ictx0 Gstore) e) x (fold_command_with_ictx f fc ictx0 Gstore c)))
+            by (econstructor; [ eapply fold_expr_ictx_ty; eauto | exact H_m1 ]).
+          use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m.
+          cbn [interp_command]. erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
+          apply H_s1; auto.
           apply locals_wf_step; [ assumption | eapply type_sound; eauto ]. }
       (* CLetMut *)
-      1:{ erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
-          destruct ot as [ t' | ]; [ | reflexivity ].
+      1:{ assert (H_init' : forall store env, path_cond store env -> holds_all store ictx ->
+                              locals_wf Gstore store -> locals_wf Genv env ->
+                              holds_all (map.put store x (interp_expr store env (fold_expr (f ictx0 Gstore) e))) invs).
+          1:{ intros * H_pc H_h H_store H_env.
+              erewrite (fold_expr_ictx_sem _ Gstore Genv); eauto using holds_all_incl. }
+          destruct ot as [ t' | ].
+          2:{ assert (H_m : maintains_invs Gstore Genv ictx path_cond
+                              (CLetMut (fold_expr (f ictx0 Gstore) e) x None invs c))
+                by (econstructor; [ eapply fold_expr_ictx_ty; eauto | exact I | eassumption .. ]).
+              use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m.
+              cbn [interp_command]. erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto. reflexivity. }
           cbn in *; subst t'.
           assert (H_Gs' : tenv_wf (map.put Gstore x t))
             by (apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]).
-          rewrite IHmaintains_invs; auto.
+          assert (H_ictx' : Forall (inv_wf (map.put Gstore x t)) (invs ++ ictx)).
           1:{ apply Forall_app; split; [ assumption | ].
               eapply Forall_impl; [ | exact H_ictx ]. intros.
               eapply inv_wf_weaken; [ | eassumption ].
               apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
-          1: apply incl_app; [ apply incl_appl, incl_refl | apply incl_appr; assumption ].
+          assert (H_incl' : incl (invs ++ ictx0) (invs ++ ictx))
+            by (apply incl_app; [ apply incl_appl, incl_refl | apply incl_appr; assumption ]).
+          destruct (IHmaintains_invs H_Gs' H_Ge H_ictx' _ H_incl') as [ H_m1 H_s1 ].
+          assert (H_m : maintains_invs Gstore Genv ictx path_cond
+                          (CLetMut (fold_expr (f ictx0 Gstore) e) x (Some t) invs
+                             (fold_command_with_ictx f fc (invs ++ ictx0) (map.put Gstore x t) c)))
+            by (econstructor; [ eapply fold_expr_ictx_ty; eauto | reflexivity | exact H_m1 | eassumption .. ]).
+          use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m.
+          cbn [interp_command]. erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
+          rewrite H_s1; auto.
           1: apply locals_wf_step; [ assumption | eapply type_sound; eauto ].
           apply Forall_app; split.
           1: lazymatch goal with
-             | H_init : forall _ _, _ -> _ -> _ -> _ -> holds_all _ invs |- _ => apply H_init; assumption
+             | H_init : forall _ _, _ -> _ -> _ -> _ -> holds_all (map.put _ _ (interp_expr _ _ e)) invs |- _ =>
+                 apply H_init; assumption
              end.
           apply (holds_all_put_fresh Gstore); assumption. }
       (* CAssign *)
-      1: erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto; reflexivity.
-      (* CIf *)
-      1:{ erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
+      1:{ assert (H_m : maintains_invs Gstore Genv ictx path_cond (CAssign x (fold_expr (f ictx0 Gstore) e))).
+          1:{ econstructor; [ eassumption | eapply fold_expr_ictx_ty; eauto | ].
+              intros * H_pc H_h H_store H_env.
+              erewrite (fold_expr_ictx_sem _ Gstore Genv); eauto using holds_all_incl. }
+          use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m.
+          cbn [interp_command]. erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto. reflexivity. }
+      (* CIf: the rewritten test has the value of the original one *)
+      1:{ destruct (IHmaintains_invs1 H_Gs H_Ge H_ictx ictx0 H_incl) as [ H_m1 H_s1 ].
+          destruct (IHmaintains_invs2 H_Gs H_Ge H_ictx ictx0 H_incl) as [ H_m2 H_s2 ].
+          assert (H_m : maintains_invs Gstore Genv ictx path_cond
+                          (CIf (fold_expr (f ictx0 Gstore) e) (fold_command_with_ictx f fc ictx0 Gstore c1)
+                             (fold_command_with_ictx f fc ictx0 Gstore c2))).
+          1:{ econstructor; [ eapply fold_expr_ictx_ty; eauto | | ].
+              1: eapply maintains_invs_path_cond_impl; [ exact H_m1 | ].
+              2: eapply maintains_invs_path_cond_impl; [ exact H_m2 | ].
+              all: intros * [ H_pc H_e ] H_h H_store H_env; split; [ assumption | ].
+              all: erewrite <- (fold_expr_ictx_sem _ Gstore Genv); eauto using holds_all_incl. }
+          use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m.
+          cbn [interp_command]. erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
           apply_type_sound e. invert_type_of_value.
           lazymatch goal with H: VBool _ = interp_expr _ _ e |- _ => symmetry in H end.
           destruct b.
-          1: apply IHmaintains_invs1; auto.
-          1: apply IHmaintains_invs2; auto. }
+          1: apply H_s1; auto.
+          1: apply H_s2; auto. }
       (* CForeach *)
-      1:{ erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
-          apply_type_sound e. invert_type_of_value.
-          lazymatch goal with H: VList _ = interp_expr _ _ e |- _ => symmetry in H end.
-          assert (H_Ge' : tenv_wf (map.put Genv x t)).
+      1:{ assert (H_Ge' : tenv_wf (map.put Genv x t)).
           1:{ apply tenv_wf_step; [ assumption | ].
               lazymatch goal with H : type_of _ _ _ (TList _) |- _ =>
                 apply type_of__type_wf in H as H_wf; [ inversion H_wf; assumption | assumption | assumption ] end. }
+          destruct (IHmaintains_invs H_Gs H_Ge' H_ictx ictx0 H_incl) as [ H_m1 H_s1 ].
+          assert (H_m : maintains_invs Gstore Genv ictx path_cond
+                          (CForeach (fold_expr (f ictx0 Gstore) e) x (fold_command_with_ictx f fc ictx0 Gstore c)))
+            by (econstructor; [ eapply fold_expr_ictx_ty; eauto | exact H_m1 ]).
+          use_cmd_rule H_incl H_Gs H_Ge H_ictx H_m.
+          cbn [interp_command]. erewrite (fold_expr_ictx_sem _ Gstore Genv) by eauto.
+          apply_type_sound e. invert_type_of_value.
+          lazymatch goal with H: VList _ = interp_expr _ _ e |- _ => symmetry in H end.
           lazymatch goal with H: type_of_value (interp_expr _ _ e) _ |- _ => clear H end.
           lazymatch goal with H: interp_expr _ _ e = VList _ |- _ => clear H end.
           clear H_pc H_h0.
           lazymatch goal with H : Forall _ ?l |- context[fold_left _ ?l _] =>
             generalize dependent store; induction H; cbn [fold_left]; intros; auto end.
-          rewrite IHmaintains_invs; auto.
+          rewrite H_s1; auto.
           2: apply locals_wf_step; auto.
           apply IHForall; auto.
           1: eapply (command_type_sound Gstore (map.put Genv x t)); eauto using maintains_invs__well_typed;
@@ -926,14 +967,12 @@ Section WithMap.
     Qed.
   End WithRule.
 
-  Theorem fold_command_with_ictx_sound : forall f,
-      ictx_rule_sound f ->
-      inv_transf_sound (fun Gstore _ c => fold_command_with_ictx f nil Gstore c).
+  Theorem fold_command_with_ictx_sound : forall fe fc,
+      ictx_rule_sound fe -> ictx_cmd_rule_sound fc ->
+      inv_transf_sound (fun Gstore _ c => fold_command_with_ictx fe fc nil Gstore c).
   Proof.
-    unfold inv_transf_sound; intros * H_f * H_Gs H_Ge H_ictx H_c.
-    split.
-    1: exact (fold_command_with_ictx_maintains f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx nil (incl_nil_l _)).
-    intros. apply (fold_command_with_ictx_sem f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx nil (incl_nil_l _)); auto.
+    unfold inv_transf_sound; intros * H_fe H_fc * H_Gs H_Ge H_ictx H_c.
+    exact (fold_command_with_ictx_sound' fe H_fe fc H_fc Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx nil (incl_nil_l _)).
   Qed.
 
   (* Applies a pass to the binder of tbl, which is unique since mutable
@@ -1179,106 +1218,6 @@ Section WithMap.
     split.
     1: exact (at_letmut_wt tbl f H_f Gstore Genv c H_c H_Gs H_Ge).
     intros. apply (at_letmut_wt_sem tbl f H_f Gstore Genv c H_c H_Gs H_Ge); auto.
-  Qed.
-
-  Section WithCmdRule.
-    Context (f : command -> command) (H_f : inv_transf_sound (fun _ _ => f)).
-
-    Ltac use_head H_Gs H_Ge H_ictx H_m :=
-      let H_m' := fresh "H_m'" in
-      let H_s := fresh "H_s" in
-      destruct (H_f _ _ _ _ _ H_Gs H_Ge H_ictx H_m) as [ H_m' H_s ];
-      split; [ exact H_m' | intros store env H_pc H_store H_env H_h; rewrite H_s by assumption ].
-
-    Lemma fold_command_sound' : forall Gstore Genv ictx path_cond c,
-        maintains_invs Gstore Genv ictx path_cond c ->
-        tenv_wf Gstore -> tenv_wf Genv -> Forall (inv_wf Gstore) ictx ->
-        maintains_invs Gstore Genv ictx path_cond (fold_command f id c) /\
-          forall store env,
-            path_cond store env -> locals_wf Gstore store -> locals_wf Genv env -> holds_all store ictx ->
-            interp_command store env (fold_command f id c) = interp_command store env c.
-    Proof.
-      induction 1; intros H_Gs H_Ge H_ictx; cbn [fold_command]; rewrite ?fold_expr_id.
-      (* CSkip *)
-      1:{ use_head H_Gs H_Ge H_ictx (MICSkip Gstore Genv ictx path_cond). reflexivity. }
-      (* CSeq *)
-      1:{ destruct IHmaintains_invs1 as [ H_m1 H_s1 ]; auto.
-          destruct IHmaintains_invs2 as [ H_m2 H_s2 ]; auto.
-          use_head H_Gs H_Ge H_ictx (MICSeq Gstore Genv ictx path_cond _ _ H_m1 H_m2).
-          cbn [interp_command]. rewrite H_s1 by assumption.
-          apply H_s2; auto.
-          1: eapply (command_type_sound Gstore Genv); eauto using maintains_invs__well_typed.
-          eapply (maintains_invs__holds_all Gstore Genv); eauto. }
-      (* CLet *)
-      1:{ assert (H_Ge' : tenv_wf (map.put Genv x t))
-            by (apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]).
-          destruct IHmaintains_invs as [ H_m1 H_s1 ]; auto.
-          use_head H_Gs H_Ge H_ictx (MICLet Gstore Genv ictx path_cond _ _ _ _ ltac:(eassumption) H_m1).
-          cbn [interp_command]. apply H_s1; auto.
-          apply locals_wf_step; [ assumption | eapply type_sound; eauto ]. }
-      (* CLetMut *)
-      1:{ cbn in *. assert (H_Gs' : tenv_wf (map.put Gstore x t))
-            by (apply tenv_wf_step; [ assumption | eapply type_of__type_wf; [ | | eassumption ]; assumption ]).
-          assert (H_ictx' : Forall (inv_wf (map.put Gstore x t)) (invs ++ ictx)).
-          1:{ apply Forall_app; split; [ assumption | ].
-              eapply Forall_impl; [ | exact H_ictx ]. intros.
-              eapply inv_wf_weaken; [ | eassumption ].
-              apply map_incl_step_r; [ apply map_incl_refl | assumption ]. }
-          destruct IHmaintains_invs as [ H_m1 H_s1 ]; auto.
-          assert (H_m : maintains_invs Gstore Genv ictx path_cond (CLetMut e x ot invs (fold_command f id c)))
-            by (econstructor; eassumption).
-          use_head H_Gs H_Ge H_ictx H_m.
-          cbn [interp_command]. rewrite H_s1; auto.
-          1: apply locals_wf_step; [ assumption | eapply type_sound; eauto ].
-          apply Forall_app; split.
-          1: lazymatch goal with
-             | H_init : forall _ _, _ -> _ -> _ -> _ -> holds_all _ invs |- _ => apply H_init; assumption
-             end.
-          apply (holds_all_put_fresh Gstore); assumption. }
-      (* CAssign *)
-      1:{ assert (H_m : maintains_invs Gstore Genv ictx path_cond (CAssign x e)) by (econstructor; eassumption).
-          use_head H_Gs H_Ge H_ictx H_m. reflexivity. }
-      (* CIf *)
-      1:{ destruct IHmaintains_invs1 as [ H_m1 H_s1 ]; auto.
-          destruct IHmaintains_invs2 as [ H_m2 H_s2 ]; auto.
-          use_head H_Gs H_Ge H_ictx (MICIf Gstore Genv ictx path_cond _ _ _ ltac:(eassumption) H_m1 H_m2).
-          cbn [interp_command].
-          apply_type_sound e. invert_type_of_value.
-          lazymatch goal with H: VBool _ = interp_expr _ _ e |- _ => symmetry in H end.
-          destruct b.
-          1: apply H_s1; auto.
-          1: apply H_s2; auto. }
-      (* CForeach *)
-      1:{ assert (H_Ge' : tenv_wf (map.put Genv x t)).
-          1:{ apply tenv_wf_step; [ assumption | ].
-              lazymatch goal with H : type_of _ _ _ (TList _) |- _ =>
-                apply type_of__type_wf in H as H_wf; [ inversion H_wf; assumption | assumption | assumption ] end. }
-          destruct IHmaintains_invs as [ H_m1 H_s1 ]; auto.
-          use_head H_Gs H_Ge H_ictx (MICForeach Gstore Genv ictx path_cond _ _ _ _ ltac:(eassumption) H_m1).
-          cbn [interp_command].
-          apply_type_sound e. invert_type_of_value.
-          lazymatch goal with H: VList _ = interp_expr _ _ e |- _ => symmetry in H end.
-          lazymatch goal with H: type_of_value (interp_expr _ _ e) _ |- _ => clear H end.
-          lazymatch goal with H: interp_expr _ _ e = VList _ |- _ => clear H end.
-          clear H_pc.
-          lazymatch goal with H : Forall _ ?l |- context[fold_left _ ?l _] =>
-            generalize dependent store; induction H; cbn [fold_left]; intros; auto end.
-          rewrite H_s1; auto.
-          2: apply locals_wf_step; auto.
-          apply IHForall; auto.
-          1: eapply (command_type_sound Gstore (map.put Genv x t)); eauto using maintains_invs__well_typed;
-             apply locals_wf_step; auto.
-          eapply (maintains_invs__holds_all Gstore (map.put Genv x t)); eauto; try apply locals_wf_step; auto.
-          all: exact I. }
-    Qed.
-  End WithCmdRule.
-
-  Theorem fold_command_sound : forall f,
-      inv_transf_sound (fun _ _ => f) ->
-      inv_transf_sound (fun _ _ => fold_command f id).
-  Proof.
-    unfold inv_transf_sound at 2; intros * H_f * H_Gs H_Ge H_ictx H_c.
-    exact (fold_command_sound' f H_f Gstore Genv ictx path_cond c H_c H_Gs H_Ge H_ictx).
   Qed.
 
   Lemma interp_erase_annot : forall e (store env : locals),

@@ -31,12 +31,12 @@ Definition prog : scommand :=
 Definition compile (sc : scommand) : option command :=
   match typecheck (tenv := tenv) map.empty map.empty (elab nil sc) with
   | Success c =>
-      let c := fold_command_with_ictx (tenv := tenv) guard_rule nil map.empty c in
+      let c := fold_command_with_ictx (tenv := tenv) guard_rule (fun _ _ c => c) nil map.empty c in
       let c := at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) (map.empty : tenv) c in
       let c := fold_command_with_ictx (tenv := tenv)
-                 (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) nil map.empty c in
-      let c := fold_command_with_ictx (tenv := tenv) dict_lookup_rule nil map.empty c in
-      Some (fold_command_with_ictx (tenv := tenv) dict_read_rule nil map.empty c)
+                 (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) (fun _ _ c => c) nil map.empty c in
+      let c := fold_command_with_ictx (tenv := tenv) dict_lookup_rule (fun _ _ c => c) nil map.empty c in
+      Some (fold_command_with_ictx (tenv := tenv) dict_read_rule (fun _ _ c => c) nil map.empty c)
   | Failure _ => None
   end.
 

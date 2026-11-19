@@ -30,7 +30,7 @@ Definition prog : scommand :=
     (SSeq (SAssign "users" insert SSkip) (SAssign "users" delete SSkip)).
 
 Definition rewritten : command :=
-  fold_command_with_ictx (tenv := tenv) guard_rule nil map.empty (elab nil prog).
+  fold_command_with_ictx (tenv := tenv) guard_rule (fun _ _ c => c) nil map.empty (elab nil prog).
 
 Example elab_prog :
   elab nil prog =
@@ -66,7 +66,7 @@ Definition delete_annotated :=
 
 Example rewritten_after_typecheck :
   match typecheck (tenv := tenv) map.empty map.empty (elab nil prog_unannotated) with
-  | Success c => Some (fold_command_with_ictx (tenv := tenv) guard_rule nil map.empty c)
+  | Success c => Some (fold_command_with_ictx (tenv := tenv) guard_rule (fun _ _ c => c) nil map.empty c)
   | Failure _ => None
   end =
     Some (CLetMut (EAtom (ANil (Some row_ty))) "users" (Some (TList row_ty))

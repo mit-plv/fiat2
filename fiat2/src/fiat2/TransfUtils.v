@@ -75,14 +75,6 @@ Section fold_expr.
       end.
 End fold_expr.
 
-Lemma fold_expr_id : forall e, fold_expr id e = e.
-Proof.
-  induction e using expr_IH; cbn [fold_expr]; rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3; try reflexivity.
-  change (id (ERecord ?l')) with (ERecord l'). f_equal.
-  induction l as [ | [ s e ] l IHl ]; [ reflexivity | ].
-  inversion H; subst. cbn in *. f_equal; [ congruence | auto ].
-Qed.
-
 Section WithMap.
   Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.

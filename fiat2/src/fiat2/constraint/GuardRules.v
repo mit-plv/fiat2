@@ -588,8 +588,8 @@ Section WithMap.
   Qed.
 
   Corollary guard_rules_sound :
-    inv_transf_sound (locals := locals) (fun Gstore _ c => fold_command_with_ictx guard_rule nil Gstore c).
+    inv_transf_sound (locals := locals) (fun Gstore _ c => fold_command_with_ictx guard_rule (fun _ _ c => c) nil Gstore c).
   Proof.
-    apply fold_command_with_ictx_sound, guard_rule_sound.
+    apply fold_command_with_ictx_sound; [ apply guard_rule_sound | apply id_cmd_rule_sound ].
   Qed.
 End WithMap.
