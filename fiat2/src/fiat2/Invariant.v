@@ -731,6 +731,15 @@ Section WithMap.
       preserve_ty Gstore (f ictx Gstore) /\
         forall store : locals, holds_all store ictx -> preserve_sem Gstore store (f ictx Gstore).
 
+  Lemma expr_transf__ictx_rule_sound : forall f,
+      expr_transf_sound (locals := locals) f -> ictx_rule_sound (fun _ _ => f).
+  Proof.
+    unfold expr_transf_sound, ictx_rule_sound, preserve_ty, preserve_sem; intros * H_f; intros.
+    split; intros.
+    1: apply H_f; auto.
+    apply (H_f Gstore Genv e t); auto.
+  Qed.
+
   Section WithRule.
     Context (f : list invariant -> tenv -> expr -> expr) (H_f : ictx_rule_sound f).
 
