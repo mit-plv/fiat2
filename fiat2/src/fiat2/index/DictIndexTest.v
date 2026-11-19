@@ -1,0 +1,80 @@
+Require Import fiat2.Language fiat2.TypeSystem fiat2.Invariant fiat2.constraint.Surface
+  fiat2.constraint.KeyCheck fiat2.constraint.GuardRules fiat2.index.IndexTransf fiat2.index.DictIndex
+  fiat2.rules.CollectionTransf fiat2.rules.FlatmapForms.
+Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
+From Stdlib Require Import String List ZArith.
+Import ListNotations.
+Open Scope string_scope.
+Open Scope Z_scope.
+
+Definition tenv := SortedListString.map type.
+
+Definition row_ty := TRecord [("age", TInt); ("id", TInt)].
+
+Definition key := erase_annot (unique_cond "users" ["id"] row_ty).
+
+Definition new_row := ERecord [("age", EAtom (AInt 30)); ("id", EAtom (AInt 7))].
+
+Definition insert := EBinop OCons new_row (ELoc "users").
+
+Definition id_is_7 := EBinop OEq (EAccess (EVar "x") "id") (EAtom (AInt 7)).
+
+Definition delete := flatmap_filter_list (ELoc "users") "x" (EUnop ONot id_is_7) "x" None None.
+
+Definition count := EUnop OLength (flatmap_filter_list (ELoc "users") "x" id_is_7 "x" None None).
+
+Definition prog : scommand :=
+  SLetConstrained "users" row_ty [("_r", key)]
+    (SSeq (SAssign "users" insert SSkip)
+       (SSeq (SLet count "n" SSkip) (SAssign "users" delete SSkip))).
+
+Definition compile (sc : scommand) : option command :=
+  match typecheck (tenv := tenv) map.empty map.empty (elab nil sc) with
+  | Success c =>
+      let c := fold_command_with_ictx (tenv := tenv) guard_rule nil map.empty c in
+      let c := at_letmut "users" (fun _ c => create_idx (idx := dict_idx "id") "tbl" "idx" c) (map.empty : tenv) c in
+      let c := fold_command_with_ictx (tenv := tenv)
+                 (fun _ _ e => annotate_collection (dict_delete_head (fold_cons_head e))) nil map.empty c in
+      Some (fold_command_with_ictx (tenv := tenv) dict_use_rule nil map.empty c)
+  | Failure _ => None
+  end.
+
+Definition tbl := EAccess (ELoc "users") "tbl".
+
+Definition idx := EAccess (ELoc "users") "idx".
+
+Definition key_guard :=
+  ELet new_row "_pk_row"
+    (EBinop OEq
+       (flatmap_filter_bag (EUnop OBagOfList tbl) "_pk_scan"
+          (EBinop OEq (EAccess (EVar "_pk_scan") "id") (EAccess (EVar "_pk_row") "id"))
+          "_pk_scan" None None)
+       (EAtom (AEmptyBag None))).
+
+Example compiled :
+  compile prog =
+    Some (CLetMut (ERecord [("tbl", EAtom (ANil (Some row_ty))); ("idx", dict_fold "id" (EAtom (ANil (Some row_ty))))])
+            "users" (Some (TRecord [("idx", dict_ty TInt [("age", TInt); ("id", TInt)]); ("tbl", TList row_ty)]))
+            [ IndexInv "users" ["tbl"] ["idx"] "_h" (dict_fold "id" (EVar "_h"));
+              ConstraintInv "users" ["tbl"] "_r"
+                (EBinop OEq
+                   (EUnop OLength
+                      (flatmap_filter_list tbl "_r2"
+                         (EBinop OEq (EAccess (EVar "_r2") "id") (EAccess (EVar "_r") "id")) "_r2" None None))
+                   (EAtom (AInt 1))) ]
+            (CSeq
+               (CIf (EBinop OAnd key_guard (EAtom (ABool true)))
+                  (CAssign "users"
+                     (ERecord [("tbl", EBinop OCons new_row tbl);
+                               ("idx", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id")))]))
+                  CSkip)
+               (CSeq
+                  (CLet (EACFold AGCount
+                           (EOptMatch (EBinop OLookup idx (EAtom (AInt 7))) (EAtom (AEmptyBag None)) "_b" (EVar "_b")))
+                     "n" CSkip)
+                  (CIf (EBinop OAnd (EAtom (ABool true)) (EAtom (ABool true)))
+                     (CAssign "users"
+                        (ERecord [("tbl", flatmap_filter_list tbl "x" (EUnop ONot id_is_7) "x" (Some row_ty) (Some row_ty));
+                                  ("idx", EBinop ODelete idx (EAtom (AInt 7)))]))
+                     CSkip)))).
+Proof. reflexivity. Qed.

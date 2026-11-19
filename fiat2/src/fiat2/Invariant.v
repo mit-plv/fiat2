@@ -88,6 +88,38 @@ Definition inv_guard (x : string) (e : expr) (i : invariant) : expr :=
       ELet e h (EBinop OEq (access_path src aux_path) (ELet (access_path src id_path) hole to_idx))
   end.
 
+Definition erase_atom (a : atom) : atom :=
+  match a with
+  | ANil _ => ANil None
+  | ANone _ => ANone None
+  | AEmptyDict dk _ => AEmptyDict dk None
+  | AEmptyBag _ => AEmptyBag None
+  | AEmptySet _ => AEmptySet None
+  | a => a
+  end.
+
+(* Recognition compares expressions with their type annotations erased, as
+   typecheck fills them in guards but not in invariants *)
+Fixpoint erase_annot (e : expr) : expr :=
+  match e with
+  | EVar x => EVar x
+  | ELoc x => ELoc x
+  | EAtom a => EAtom (erase_atom a)
+  | EUnop o e => EUnop o (erase_annot e)
+  | EBinop o e1 e2 => EBinop o (erase_annot e1) (erase_annot e2)
+  | ETernop o e1 e2 e3 => ETernop o (erase_annot e1) (erase_annot e2) (erase_annot e3)
+  | EIf e1 e2 e3 => EIf (erase_annot e1) (erase_annot e2) (erase_annot e3)
+  | ELet e1 x e2 => ELet (erase_annot e1) x (erase_annot e2)
+  | EFlatmap tag e1 x e2 => EFlatmap tag (erase_annot e1) x (erase_annot e2)
+  | EFold e1 e2 x y e3 => EFold (erase_annot e1) (erase_annot e2) x y (erase_annot e3)
+  | EACFold ag e => EACFold ag (erase_annot e)
+  | EACIFold ag e => EACIFold ag (erase_annot e)
+  | ERecord l => ERecord (List.map (fun p => (fst p, erase_annot (snd p))) l)
+  | EAccess e s => EAccess (erase_annot e) s
+  | EOptMatch e e_none x e_some => EOptMatch (erase_annot e) (erase_annot e_none) x (erase_annot e_some)
+  | ESort tag e => ESort tag (erase_annot e)
+  end.
+
 Section WithMap.
   Notation value := (value).
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
@@ -1035,5 +1067,44 @@ Section WithMap.
     split.
     1: exact (at_letmut_maintains tbl f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx).
     intros. apply (at_letmut_sem tbl f H_f Gstore Genv ictx _ c H_c H_Gs H_Ge H_ictx); auto.
+  Qed.
+
+  Lemma interp_erase_annot : forall e (store env : locals),
+      interp_expr store env (erase_annot e) = interp_expr store env e.
+  Proof.
+    induction e using expr_IH; intros store env; cbn [erase_annot interp_expr].
+    all: try (rewrite ?IHe, ?IHe1, ?IHe2, ?IHe3; reflexivity).
+    (* EAtom *)
+    1: destruct a; reflexivity.
+    (* EFlatmap *)
+    1:{ rewrite IHe1.
+        destruct tag; destruct (interp_expr store env e1); try reflexivity.
+        all: erewrite flat_map_ext; [ reflexivity | intros; cbn beta ].
+        all: rewrite IHe2; reflexivity. }
+    (* EFold *)
+    1:{ rewrite IHe1, IHe2.
+        destruct (interp_expr store env e1); try reflexivity.
+        apply fold_right_ext; intros. apply IHe3. }
+    (* ERecord *)
+    1:{ do 2 f_equal. rewrite map_map. apply map_ext_in.
+        intros [ s e ] H_in. cbn [fst snd]. f_equal.
+        rewrite Forall_forall in H. apply (H (s, e) H_in). }
+    (* EOptMatch *)
+    1:{ rewrite IHe1.
+        destruct (interp_expr store env e1) as [ | | | [ v' | ] | | | | | | ]; try reflexivity.
+        1: apply IHe3.
+        1: apply IHe2. }
+  Qed.
+
+  Lemma erase_annot_ty : forall (Gstore Genv : tenv) e t,
+      type_of Gstore Genv e t -> type_of Gstore Genv (erase_annot e) t.
+  Proof.
+    intros Gstore Genv e t H. induction H using type_of_IH; cbn [erase_annot].
+    all: try (econstructor; eassumption).
+    1:{ constructor. inversion H; subst; constructor; assumption. }
+    1:{ econstructor; try eassumption.
+        1: rewrite map_map; cbn [fst]; assumption.
+        rewrite map_map; cbn [snd]. rewrite <- (map_map snd erase_annot).
+        clear H0 H. induction H1; constructor; assumption. }
   Qed.
 End WithMap.
