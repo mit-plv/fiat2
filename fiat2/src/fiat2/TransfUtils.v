@@ -315,7 +315,6 @@ End WithMap.
 
 Section fold_command_with_global.
   (* Useful for whole-program to-index transformation *)
-  Context (tbl : string).
   Context (f : command -> command).
   Context (g : expr -> expr).
   Context (h : invariant -> invariant).
@@ -325,11 +324,7 @@ Section fold_command_with_global.
       | CSkip => CSkip
       | CSeq c1 c2 => CSeq (fold_command_with_global c1) (fold_command_with_global c2)
       | CLet e x c => CLet (fold_expr g e) x (fold_command_with_global c)
-      | CLetMut e x ot invs c =>
-          (* Avoid applying the transformation if the global variable is shadowed *)
-          CLetMut (fold_expr g e) x ot
-            (if String.eqb x tbl then invs else List.map h invs)
-            (if String.eqb x tbl then c else fold_command_with_global c)
+      | CLetMut e x ot invs c => CLetMut (fold_expr g e) x ot (List.map h invs) (fold_command_with_global c)
       | CAssign x e => CAssign x (fold_expr g e)
       | CIf e c1 c2 =>
           CIf (fold_expr g e) (fold_command_with_global c1) (fold_command_with_global c2)

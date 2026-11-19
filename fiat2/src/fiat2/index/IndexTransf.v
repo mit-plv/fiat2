@@ -147,7 +147,7 @@ Section WithMap.
         end.
 
       Definition transf_to_idx' (c : command) : command :=
-        fold_command_with_global tbl create_aux_write_head create_aux_read_head transf_inv c.
+        fold_command_with_global create_aux_write_head create_aux_read_head transf_inv c.
 
       Definition aux_ty (tbl_ty : type) :=
         TRecord
@@ -293,21 +293,16 @@ Section WithMap.
 
       Lemma transf_invs_wf_below : forall tbl_ty Gstore x t invs,
           tenv_wf (map.put Gstore x t) ->
-          map.get Gstore tbl = Some tbl_ty ->
+          map.get Gstore tbl = Some tbl_ty -> map.get Gstore x = None ->
           is_tbl_ty tbl_ty = true ->
           Forall (inv_wf (map.put Gstore x t)) invs ->
-          Forall (inv_wf (map.put (map.put Gstore tbl (aux_ty tbl_ty)) x t))
-            (if String.eqb x tbl then invs else List.map transf_inv invs).
+          Forall (inv_wf (map.put (map.put Gstore tbl (aux_ty tbl_ty)) x t)) (List.map transf_inv invs).
       Proof.
-        intros * H_Gs H_tbl H_is H_invs.
-        destruct (String.eqb x tbl) eqn:E.
-        - apply String.eqb_eq in E; subst.
-          rewrite Properties.map.put_put_same; assumption.
-        - apply String.eqb_neq in E.
-          rewrite Properties.map.put_put_diff by congruence.
-          rewrite Forall_map. eapply Forall_impl; [ | eassumption ].
-          intros; eapply transf_inv_wf; eauto.
-          rewrite map.get_put_diff by congruence; assumption.
+        intros * H_Gs H_tbl H_x H_is H_invs.
+        rewrite Properties.map.put_put_diff by congruence.
+        rewrite Forall_map. eapply Forall_impl; [ | eassumption ].
+        intros; eapply transf_inv_wf; eauto.
+        rewrite map.get_put_diff by congruence; assumption.
       Qed.
 
       Ltac use_transf_to_idx_preserve_ty'_IH :=
@@ -328,11 +323,10 @@ Section WithMap.
         1: econstructor; eauto using transf_to_idx_preserve_ty''.
         1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
             use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints. }
-        1:{ econstructor; eauto using transf_to_idx_preserve_ty''.
-            1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst;
-                [ rewrite Properties.map.put_put_same in *; auto
-                | rewrite Properties.map.put_put_diff in *; auto;
-                  use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints ].
+        1:{ assert (x <> tbl) by congruence.
+            econstructor; eauto using transf_to_idx_preserve_ty''.
+            1:{ rewrite Properties.map.put_put_diff in *; auto.
+                use_transf_to_idx_preserve_ty'_IH; eauto with fiat2_hints.
                 rewrite_map_get_put_goal. }
             1: eapply transf_invs_wf_below; eauto with fiat2_hints.
             1: eapply get_put_other_None; eassumption. }
@@ -512,20 +506,12 @@ Section WithMap.
             eapply command_type_sound; eauto. }
         1:{ erewrite transf_to_idx_preserve_sem''; eauto.
             use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints. }
-        1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst.
-            1:{ unfold consistent_with_global.
-                rewrite !Properties.map.get_update_same.
-                unfold consistent_with_global in *; intuition auto.
-                rewrite !Properties.map.get_update_diff; auto.
-                do 2 f_equal. apply map.map_ext. intros.
-                destruct_get_put_strings. f_equal.
-                erewrite transf_to_idx_preserve_sem''; eauto.
-                unfold consistent_with_global; auto. }
-            1:{ apply consistent_with_global_update; auto.
-                use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
-                1: rewrite_map_get_put_goal.
-                apply consistent_with_global_put_local; auto.
-                erewrite transf_to_idx_preserve_sem''; eauto. } }
+        1:{ assert (x <> tbl) by congruence.
+            apply consistent_with_global_update; auto.
+            use_transf_to_idx_preserve_sem'_IH; eauto with fiat2_hints.
+            1: rewrite_map_get_put_goal.
+            apply consistent_with_global_put_local; auto.
+            erewrite transf_to_idx_preserve_sem''; eauto. }
         1:{ case_match; rewrite ?eqb_eq, ?eqb_neq in *; subst; cbn [interp_command].
             1:{ unfold consistent_with_global in *; intuition idtac;
                 repeat rewrite_map_get_put_goal.
@@ -829,7 +815,6 @@ Section WithMap.
                   | intros; exact I | assumption ]. } }
         (* CLetMut: no shadowing, so the binder is not the table *)
         1:{ assert (H_ne : x <> tbl) by congruence.
-            rewrite (proj2 (String.eqb_neq _ _) H_ne).
             assert (H_Gs' : tenv_wf (map.put Gstore x t)) by eauto with fiat2_hints.
             econstructor.
             1: eapply transf_to_idx_preserve_ty''; eauto.

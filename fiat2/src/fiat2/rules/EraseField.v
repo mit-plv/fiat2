@@ -73,11 +73,7 @@ Section WithField.
     | CSkip => CSkip
     | CSeq c1 c2 => CSeq (erase_body c1) (erase_body c2)
     | CLet e x c => CLet e x (erase_body c)
-    (* stop where the table's name is shadowed: the inner binding is a
-       different variable and still has the field *)
-    | CLetMut e x ot invs c =>
-        CLetMut e x ot (if String.eqb x tbl then invs else nil)
-          (if String.eqb x tbl then c else erase_body c)
+    | CLetMut e x ot _ c => CLetMut e x ot nil (erase_body c)
     | CAssign x e =>
         CAssign x (if String.eqb x tbl then erase_record_field e else e)
     | CIf e c1 c2 => CIf e (erase_body c1) (erase_body c2)
@@ -115,8 +111,8 @@ Section WithField.
     | CSkip => true
     | CSeq c1 c2 => (command_reads_no_field c1 && command_reads_no_field c2)%bool
     | CLet e _ c => (expr_reads_no_field e && command_reads_no_field c)%bool
-    (* shadowing is refused outright: one proof case fewer, and the index
-       layer already declines to descend through such a binder *)
+    (* shadowing is refused outright: typing already rules it out, and
+       refusing it keeps the semantic proof free of typing *)
     | CLetMut e x _ _ c =>
         (negb (String.eqb x tbl) && expr_reads_no_field e
          && command_reads_no_field c)%bool
@@ -137,7 +133,7 @@ Section WithField.
     | CSkip => true
     | CSeq c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
     | CLet _ _ c => writes_erasable c
-    | CLetMut _ x _ _ c => if String.eqb x tbl then true else writes_erasable c
+    | CLetMut _ _ _ _ c => writes_erasable c
     | CAssign x e => if String.eqb x tbl then erasable_record e else true
     | CIf _ c1 c2 => (writes_erasable c1 && writes_erasable c2)%bool
     | CForeach _ _ c => writes_erasable c
@@ -565,11 +561,10 @@ Section WithMap.
         rw_expr.
         apply IHc; [ exact H2 | exact H_er ]. }
     (* CLetMut: the check refuses a binder that shadows the table, so the
-       body really was erased, and the restored value is the same *)
+       restored value is the same *)
     1:{ repeat rewrite Bool.andb_true_iff in H_rd.
         destruct H_rd as [ [ H_ne H1 ] H2 ].
         apply Bool.negb_true_iff, String.eqb_neq in H_ne.
-        rewrite (proj2 (String.eqb_neq _ _) H_ne) in H2 |- *.
         rw_expr.
         apply erased_at_update; [ exact H_er | ].
         apply IHc; [ exact H2 | apply erased_at_put; assumption ]. }
@@ -796,7 +791,6 @@ Section WithMap.
     1:{ repeat rewrite Bool.andb_true_iff in H_rd.
         destruct H_rd as [ [ H_ne R1 ] R2 ].
         apply Bool.negb_true_iff, String.eqb_neq in H_ne.
-        rewrite (proj2 (String.eqb_neq _ _) H_ne) in R2, H_we |- *.
         econstructor; [ apply erase_preserve_ty_expr; eassumption | eassumption | | constructor
                       | rewrite map.get_put_diff in * by congruence; assumption ].
         rewrite (Properties.map.put_comm tbl x
