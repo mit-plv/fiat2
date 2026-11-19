@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Value fiat2.Interpret fiat2.TypeSystem fiat2.TransfSound fiat2.Invariant
-  fiat2.constraint.Surface fiat2.constraint.GuardRules fiat2.index.IndexTransf fiat2.index.DictIndex
+  fiat2.constraint.Surface fiat2.constraint.KeyCheck fiat2.constraint.GuardRules fiat2.index.IndexTransf fiat2.index.DictIndex
   fiat2.rules.CollectionTransf fiat2.rules.FlatmapForms fiat2.rules.EraseField fiat2.rules.BoolTransf fiat2.pipeline.Pipeline.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import String List ZArith.
@@ -62,19 +62,27 @@ Definition delete := flatmap_filter_list (ELoc "users") "x" (EUnop ONot id_is_7)
 
 Definition count := EUnop OLength (flatmap_filter_list (ELoc "users") "x" id_is_7 "x" None None).
 
+Definition key := erase_annot (unique_cond "users" ["id"] row_ty).
+
 Definition prog : scommand :=
-  SLetConstrained "users" row_ty [("u", age_pos)]
+  SLetConstrained "users" row_ty [("_r", key); ("u", age_pos)]
     (SSeq (SAssign "users" insert SSkip)
        (SSeq (SLet count "n" SSkip) (SAssign "users" delete SSkip))).
 
 Definition idx := EAccess (ELoc "users") "idx".
+
+Definition key_guard :=
+  ELet new_row "_pk_row"
+    (EBinop OEq
+       (EOptMatch (EBinop OLookup idx (EAccess (EVar "_pk_row") "id")) (EAtom (AEmptyBag None)) "_b" (EVar "_b"))
+       (EAtom (AEmptyBag None))).
 
 Example compiled :
   compile_users prog =
     Success (CLetMut (ERecord [("idx", dict_fold "id" (EAtom (ANil (Some row_ty))))]) "users"
                (Some (TRecord [("idx", dict_ty TInt [("age", TInt); ("id", TInt)])])) nil
                (CSeq
-                  (CIf (ELet new_row "u" age_pos)
+                  (CIf (EBinop OAnd key_guard (ELet new_row "u" age_pos))
                      (CAssign "users"
                         (ERecord [("idx", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id" "_tup" "_acc" "_b" None)))]))
                      CSkip)

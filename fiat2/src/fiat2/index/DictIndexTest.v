@@ -47,9 +47,7 @@ Definition idx := EAccess (ELoc "users") "idx".
 Definition key_guard (row : expr) :=
   ELet row "_pk_row"
     (EBinop OEq
-       (flatmap_filter_bag (EUnop OBagOfList tbl) "_pk_scan"
-          (EBinop OEq (EAccess (EVar "_pk_scan") "id") (EAccess (EVar "_pk_row") "id"))
-          "_pk_scan" None None)
+       (EOptMatch (EBinop OLookup idx (EAccess (EVar "_pk_row") "id")) (EAtom (AEmptyBag None)) "_b" (EVar "_b"))
        (EAtom (AEmptyBag None))).
 
 Definition users_init :=
