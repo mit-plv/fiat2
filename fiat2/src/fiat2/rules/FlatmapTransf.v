@@ -555,52 +555,6 @@ Section WithMap.
   Context {tenv: map.map string type} {tenv_ok: map.ok tenv}.
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
 
-  Lemma bag_insert_comm : forall (x y : value) l,
-      bag_insert x (bag_insert y l) = bag_insert y (bag_insert x l).
-  Proof.
-    induction l; cbn; unfold value_ltb, value_eqb.
-    1:{ case_match.
-        all: try lazymatch goal with
-                 E: _ = Eq |- _ =>
-                   apply value_compare_Eq_eq in E;
-                   subst;
-                   rewrite value_compare_refl
-               end.
-        all: repeat (rewrite value_compare_antisym; rewrite_l_to_r); cbn; auto. }
-    1:{ repeat case_match; cbn.
-        all: repeat lazymatch goal with
-                 E: _ = Eq |- _ =>
-                   apply value_compare_Eq_eq in E;
-                   subst
-               end; trivial.
-        all: unfold value_ltb, value_eqb;
-          try rewrite value_compare_refl;
-          repeat rewrite_l_to_r; auto.
-        all: repeat (rewrite value_compare_antisym; rewrite_l_to_r); cbn; auto.
-        all: case_match;
-          try lazymatch goal with
-              E: _ = Eq |- _ =>
-                apply value_compare_Eq_eq in E;
-                subst
-            end;
-          try rewrite value_compare_refl; auto.
-        all: repeat (rewrite value_compare_antisym; rewrite_l_to_r); cbn; auto.
-        all: repeat rewrite_l_to_r; try discriminate.
-        all: lazymatch goal with
-            H1: value_compare ?a ?b = Lt,
-              H2: value_compare ?b ?c = Lt |- _ =>
-              eapply (value_compare_trans _ _ _ H1) in H2
-          end; rewrite_l_to_r; discriminate. }
-  Qed.
-
-  Lemma Permutation_list_to_bag_eq : forall (l l' : list value),
-      Permutation l l' ->
-      list_to_bag l = list_to_bag l'.
-  Proof.
-    induction 1; cbn; try congruence.
-    apply bag_insert_comm.
-  Qed.
-
   Lemma Permutation_flat_map_app : forall A B (f : A -> list B) g l,
       Permutation
         (flat_map (fun x => (f x ++ g x)%list) l)

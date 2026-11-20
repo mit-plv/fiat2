@@ -752,6 +752,18 @@ Proof.
 Qed.
 
 
+Ltac apply_value_compare_trans :=
+  lazymatch goal with
+    H: value_compare ?x ?y = Lt, H': value_compare ?y ?z = Lt |- _ =>
+      pose proof (value_compare_trans _ _ _ H H')
+  end.
+
+
+Ltac apply_value_compare_Eq_eq :=
+  lazymatch goal with
+    H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H; subst
+  end.
+
 Section WithWord.
 
   Lemma value_eqb_refl : forall (v : value), value_eqb v v = true.
@@ -1164,6 +1176,181 @@ Section WithWord.
     1:{ cbn [dict_lookup]; rewrite E. apply IH; exact H_wf. }
   Qed.
 
+  Lemma bag_to_list__bag_insert : forall (v : value) (b : list (value * nat)),
+    exists b1 b2,
+      b1 ++ b2 = b /\
+        bag_to_list (bag_insert v b) = bag_to_list b1 ++ v :: bag_to_list b2.
+  Proof.
+    induction b.
+    1:{ do 2 exists nil; auto. }
+    cbn. repeat case_match.
+    1:{ exists nil. exists ((v0, n) :: b). auto. }
+    1:{ lazymatch goal with
+        H: value_eqb _ _ = true |- _ =>
+          apply value_eqb_eq in H end. subst.
+        exists nil. exists ((v0, n) :: b). auto. }
+    1:{ repeat destruct_exists. exists ((v0, n) :: x). exists x0.
+        cbn; intuition idtac.
+        1: congruence.
+        rewrite_l_to_r. rewrite app_assoc. reflexivity. }
+  Qed.
+
+  Lemma bag_to_list_app : forall (b1 b2 : list (value * nat)),
+      bag_to_list b1 ++ bag_to_list b2 = bag_to_list (b1 ++ b2).
+  Proof.
+    induction b1; cbn; auto; intros.
+    rewrite <- app_assoc. congruence.
+  Qed.
+
+  Lemma bag_insert_bag_insert : forall (x y : value) b,
+      StronglySorted bag_entry_leb b ->
+      bag_insert x (bag_insert y b) = bag_insert y (bag_insert x b).
+  Proof.
+    induction b; cbn; intros.
+    1:{ unfold value_ltb, value_eqb. case_match;
+        repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn); auto.
+        apply value_compare_Eq_eq in E; congruence. }
+    1:{ unfold value_ltb, value_eqb. case_match.
+        case_match; repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn);
+          case_match;
+          repeat apply_value_compare_Eq_eq; auto.
+        all: try (cbn; unfold value_ltb, value_eqb; rewrite_l_to_r;
+                  repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn);
+                  rewrite value_compare_refl; auto).
+        all: try (cbn; unfold value_ltb, value_eqb;
+                  case_match; repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn);
+                  repeat apply_value_compare_Eq_eq; auto); try congruence.
+        1:{ apply_value_compare_trans; congruence. }
+        1:{ rewrite value_compare_antisym, CompOpp_iff in E0; cbn in *.
+            apply_value_compare_trans. clear_refl.
+            repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn); auto. }
+        1:{ clear_refl. rewrite_l_to_r. invert_SSorted. rewrite IHb; auto. } }
+  Qed.
+
+  Lemma list_to_bag_to_list_Permutation : forall (l : list value),
+      Permutation (bag_to_list (list_to_bag l)) l.
+  Proof.
+    induction l; cbn; auto.
+    pose proof (bag_to_list__bag_insert a (list_to_bag l)).
+    repeat destruct_exists; destruct_and.
+    rewrite_l_to_r.
+    eapply perm_trans.
+    1: eapply Permutation_sym, Permutation_middle.
+    rewrite bag_to_list_app. rewrite_l_to_r.
+    apply Permutation_cons; auto.
+  Qed.
+
+  Lemma Permutation_list_to_bag_eq : forall (l l' : list value),
+      Permutation l l' ->
+      list_to_bag l = list_to_bag l'.
+  Proof.
+    induction 1; cbn; auto; try congruence.
+    apply bag_insert_bag_insert, list_to_bag_SSorted.
+  Qed.
+
+  Lemma bag_insert_not_nil : forall (v : value) l, bag_insert v l <> nil.
+  Proof.
+    induction l; cbn; repeat case_match; discriminate.
+  Qed.
+
+  Lemma list_to_bag_nil : forall (l : list value), list_to_bag l = [] -> l = [].
+  Proof.
+    induction l; auto.
+    cbn. intros. apply bag_insert_not_nil in H.
+    intuition fail.
+  Qed.
+
+  Lemma bag_insert_comm : forall (x y : value) l,
+      bag_insert x (bag_insert y l) = bag_insert y (bag_insert x l).
+  Proof.
+    induction l; cbn; unfold value_ltb, value_eqb.
+    1:{ case_match.
+        all: try lazymatch goal with
+                 E: _ = Eq |- _ =>
+                   apply value_compare_Eq_eq in E;
+                   subst;
+                   rewrite value_compare_refl
+               end.
+        all: repeat (rewrite value_compare_antisym; rewrite_l_to_r); cbn; auto. }
+    1:{ repeat case_match; cbn.
+        all: repeat lazymatch goal with
+                 E: _ = Eq |- _ =>
+                   apply value_compare_Eq_eq in E;
+                   subst
+               end; trivial.
+        all: unfold value_ltb, value_eqb;
+          try rewrite value_compare_refl;
+          repeat rewrite_l_to_r; auto.
+        all: repeat (rewrite value_compare_antisym; rewrite_l_to_r); cbn; auto.
+        all: case_match;
+          try lazymatch goal with
+              E: _ = Eq |- _ =>
+                apply value_compare_Eq_eq in E;
+                subst
+            end;
+          try rewrite value_compare_refl; auto.
+        all: repeat (rewrite value_compare_antisym; rewrite_l_to_r); cbn; auto.
+        all: repeat rewrite_l_to_r; try discriminate.
+        all: lazymatch goal with
+            H1: value_compare ?a ?b = Lt,
+              H2: value_compare ?b ?c = Lt |- _ =>
+              eapply (value_compare_trans _ _ _ H1) in H2
+          end; rewrite_l_to_r; discriminate. }
+  Qed.
+
+  Lemma dict_lookup_insert_same : forall k (v : value) d,
+      dict_lookup k (dict_insert k v d) = Some v.
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_insert].
+    1: cbn; rewrite value_eqb_refl; reflexivity.
+    destruct (value_ltb k k0).
+    1: cbn; rewrite value_eqb_refl; reflexivity.
+    destruct (value_eqb k k0) eqn:E; cbn.
+    1: rewrite value_eqb_refl; reflexivity.
+    rewrite E. exact IH.
+  Qed.
+
+  Lemma dict_lookup_insert_diff : forall k k' (v : value) d,
+      k <> k' -> dict_lookup k (dict_insert k' v d) = dict_lookup k d.
+  Proof.
+    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_insert]; intros H_ne.
+    1: cbn; rewrite neq__value_eqb_false by assumption; reflexivity.
+    destruct (value_ltb k' k0).
+    1: cbn; rewrite neq__value_eqb_false by assumption; reflexivity.
+    destruct (value_eqb k' k0) eqn:E; cbn.
+    1:{ apply value_eqb_eq in E; subst. rewrite neq__value_eqb_false by assumption; reflexivity. }
+    destruct (value_eqb k k0); [ reflexivity | apply IH; exact H_ne ].
+  Qed.
+
+  Lemma dict_insert_insert_same : forall (k v v' : value) d,
+      dict_wf d -> dict_insert k v (dict_insert k v' d) = dict_insert k v d.
+  Proof.
+    intros * H_wf. apply dict_wf_lookup_ext.
+    1: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+    1: apply dict_insert_preserve_dict_wf; exact H_wf.
+    intros q. destruct (value_eqb q k) eqn:E.
+    1:{ apply value_eqb_eq in E; subst. rewrite !dict_lookup_insert_same; reflexivity. }
+    1:{ assert (q <> k) by (intro; subst; rewrite value_eqb_refl in E; discriminate).
+        rewrite !dict_lookup_insert_diff by assumption; reflexivity. }
+  Qed.
+
+  Lemma dict_insert_comm : forall (k k' v v' : value) d,
+      k <> k' -> dict_wf d ->
+      dict_insert k v (dict_insert k' v' d) = dict_insert k' v' (dict_insert k v d).
+  Proof.
+    intros * H_ne H_wf. apply dict_wf_lookup_ext.
+    1,2: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
+    intros q. destruct (value_eqb q k) eqn:E_k.
+    1:{ apply value_eqb_eq in E_k; subst.
+        rewrite dict_lookup_insert_same, dict_lookup_insert_diff, dict_lookup_insert_same by congruence.
+        reflexivity. }
+    assert (q <> k) by (intro; subst; rewrite value_eqb_refl in E_k; discriminate).
+    destruct (value_eqb q k') eqn:E_k'.
+    1:{ apply value_eqb_eq in E_k'; subst.
+        rewrite dict_lookup_insert_diff, !dict_lookup_insert_same by congruence. reflexivity. }
+    assert (q <> k') by (intro; subst; rewrite value_eqb_refl in E_k'; discriminate).
+    rewrite !dict_lookup_insert_diff by assumption; reflexivity.
+  Qed.
 End WithWord.
 
 

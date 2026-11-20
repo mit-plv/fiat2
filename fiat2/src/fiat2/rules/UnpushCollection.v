@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.Utils fiat2.rules.CollectionTransf fiat2.rules.FlatmapForms fiat2.TransfSound fiat2.TransfUtils.
+  fiat2.Utils fiat2.rules.CollectionTransf fiat2.FlatmapForms fiat2.TransfSound fiat2.TransfUtils.
 Require Import coqutil.Map.Interface.
 From Stdlib Require Import List String ZArith.
 Import ListNotations.

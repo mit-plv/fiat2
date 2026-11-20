@@ -1,4 +1,4 @@
-Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils fiat2.rules.CollectionTransf.
+Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String ZArith Permutation.
 Import ListNotations.

@@ -72,43 +72,6 @@ Section WithWord.
 
   Local Coercion is_true : bool >-> Sortclass.
 
-  Lemma bag_to_list__bag_insert : forall (v : value) (b : list (value * nat)),
-    exists b1 b2,
-      b1 ++ b2 = b /\
-        bag_to_list (bag_insert v b) = bag_to_list b1 ++ v :: bag_to_list b2.
-  Proof.
-    induction b.
-    1:{ do 2 exists nil; auto. }
-    cbn. repeat case_match.
-    1:{ exists nil. exists ((v0, n) :: b). auto. }
-    1:{ lazymatch goal with
-        H: value_eqb _ _ = true |- _ =>
-          apply value_eqb_eq in H end. subst.
-        exists nil. exists ((v0, n) :: b). auto. }
-    1:{ repeat destruct_exists. exists ((v0, n) :: x). exists x0.
-        cbn; intuition idtac.
-        1: congruence.
-        rewrite_l_to_r. rewrite app_assoc. reflexivity. }
-  Qed.
-
-  Lemma bag_to_list_app : forall (b1 b2 : list (value * nat)),
-      bag_to_list b1 ++ bag_to_list b2 = bag_to_list (b1 ++ b2).
-  Proof.
-    induction b1; cbn; auto; intros.
-    rewrite <- app_assoc. congruence.
-  Qed.
-
-  Ltac apply_value_compare_trans :=
-    lazymatch goal with
-      H: value_compare ?x ?y = Lt, H': value_compare ?y ?z = Lt |- _ =>
-        pose proof (value_compare_trans _ _ _ H H')
-    end.
-
-  Ltac apply_value_compare_Eq_eq :=
-    lazymatch goal with
-      H: value_compare _ _ = Eq |- _ => apply value_compare_Eq_eq in H; subst
-    end.
-
   Lemma set_insert_In : forall (l : list value) v p,
       In p (set_insert v l) <-> p = v \/ In p l.
   Proof.
@@ -141,52 +104,6 @@ Section WithWord.
     1: apply set_insert_preserve_NoDup; [ exact H_ndy | exact H_sy ].
     1: apply set_insert_preserve_NoDup; [ exact H_ndx | exact H_sx ].
     intros p. rewrite !set_insert_In. intuition idtac.
-  Qed.
-
-  Lemma bag_insert_bag_insert : forall (x y : value) b,
-      StronglySorted bag_entry_leb b ->
-      bag_insert x (bag_insert y b) = bag_insert y (bag_insert x b).
-  Proof.
-    induction b; cbn; intros.
-    1:{ unfold value_ltb, value_eqb. case_match;
-        repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn); auto.
-        apply value_compare_Eq_eq in E; congruence. }
-    1:{ unfold value_ltb, value_eqb. case_match.
-        case_match; repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn);
-          case_match;
-          repeat apply_value_compare_Eq_eq; auto.
-        all: try (cbn; unfold value_ltb, value_eqb; rewrite_l_to_r;
-                  repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn);
-                  rewrite value_compare_refl; auto).
-        all: try (cbn; unfold value_ltb, value_eqb;
-                  case_match; repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn);
-                  repeat apply_value_compare_Eq_eq; auto); try congruence.
-        1:{ apply_value_compare_trans; congruence. }
-        1:{ rewrite value_compare_antisym, CompOpp_iff in E0; cbn in *.
-            apply_value_compare_trans. clear_refl.
-            repeat (rewrite value_compare_antisym; rewrite_l_to_r; cbn); auto. }
-        1:{ clear_refl. rewrite_l_to_r. invert_SSorted. rewrite IHb; auto. } }
-  Qed.
-
-  Lemma list_to_bag_to_list_Permutation : forall (l : list value),
-      Permutation (bag_to_list (list_to_bag l)) l.
-  Proof.
-    induction l; cbn; auto.
-    pose proof (bag_to_list__bag_insert a (list_to_bag l)).
-    repeat destruct_exists; destruct_and.
-    rewrite_l_to_r.
-    eapply perm_trans.
-    1: eapply Permutation_sym, Permutation_middle.
-    rewrite bag_to_list_app. rewrite_l_to_r.
-    apply Permutation_cons; auto.
-  Qed.
-
-  Lemma Permutation_list_to_bag_eq : forall (l l' : list value),
-      Permutation l l' ->
-      list_to_bag l = list_to_bag l'.
-  Proof.
-    induction 1; cbn; auto; try congruence.
-    apply bag_insert_bag_insert, list_to_bag_SSorted.
   Qed.
 
   Lemma map_fst_bag_insert : forall (v : value) (b : list (value * nat)),
@@ -335,18 +252,6 @@ Section WithWord.
           repeat (repeat clear_refl; do_injection);
           repeat econstructor; eauto. }
       1:{ cbn. repeat econstructor; eauto. }
-    Qed.
-
-    Lemma bag_insert_not_nil : forall (v : value) l, bag_insert v l <> nil.
-    Proof.
-      induction l; cbn; repeat case_match; discriminate.
-    Qed.
-
-    Lemma list_to_bag_nil : forall (l : list value), list_to_bag l = [] -> l = [].
-    Proof.
-      induction l; auto.
-      cbn. intros. apply bag_insert_not_nil in H.
-      intuition fail.
     Qed.
 
     Lemma bag_to_list_preserve_SSorted : forall (b : list (value * nat)),

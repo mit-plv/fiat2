@@ -1,6 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils
-  fiat2.TransfSound fiat2.TransfUtils fiat2.Invariant fiat2.index.IndexInterface fiat2.rules.FlatmapForms
-  fiat2.rules.FlatmapTransf.
+  fiat2.TransfSound fiat2.TransfUtils fiat2.Invariant fiat2.index.IndexInterface fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String List Sorted.
 Import ListNotations.
@@ -372,30 +371,6 @@ Section WithMap.
     1: apply map.get_put_same.
   Qed.
 
-  Lemma dict_lookup_insert_same : forall k (v : value) d,
-      dict_lookup k (dict_insert k v d) = Some v.
-  Proof.
-    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_insert].
-    1: cbn; rewrite value_eqb_refl; reflexivity.
-    destruct (value_ltb k k0).
-    1: cbn; rewrite value_eqb_refl; reflexivity.
-    destruct (value_eqb k k0) eqn:E; cbn.
-    1: rewrite value_eqb_refl; reflexivity.
-    rewrite E. exact IH.
-  Qed.
-
-  Lemma dict_lookup_insert_diff : forall k k' (v : value) d,
-      k <> k' -> dict_lookup k (dict_insert k' v d) = dict_lookup k d.
-  Proof.
-    induction d as [ | [ k0 v0 ] d IH ]; cbn [dict_insert]; intros H_ne.
-    1: cbn; rewrite neq__value_eqb_false by assumption; reflexivity.
-    destruct (value_ltb k' k0).
-    1: cbn; rewrite neq__value_eqb_false by assumption; reflexivity.
-    destruct (value_eqb k' k0) eqn:E; cbn.
-    1:{ apply value_eqb_eq in E; subst. rewrite neq__value_eqb_false by assumption; reflexivity. }
-    destruct (value_eqb k k0); [ reflexivity | apply IH; exact H_ne ].
-  Qed.
-
   Lemma fold_dict_step_sorted : forall attr l,
       exists d, fold_right (dict_step attr) (VDict nil) l = VDict d /\
                   StronglySorted (fun p p' => is_true (dict_entry_leb p p')) d.
@@ -444,36 +419,6 @@ Section WithMap.
     induction l as [ | v l (d & E & H_wf) ]; cbn [fold_right].
     1: exists nil; split; [ reflexivity | exact I ].
     rewrite E. cbn [dict_step]. eexists; split; [ reflexivity | apply dict_insert_preserve_dict_wf; exact H_wf ].
-  Qed.
-
-  Lemma dict_insert_insert_same : forall (k v v' : value) d,
-      dict_wf d -> dict_insert k v (dict_insert k v' d) = dict_insert k v d.
-  Proof.
-    intros * H_wf. apply dict_wf_lookup_ext.
-    1: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
-    1: apply dict_insert_preserve_dict_wf; exact H_wf.
-    intros q. destruct (value_eqb q k) eqn:E.
-    1:{ apply value_eqb_eq in E; subst. rewrite !dict_lookup_insert_same; reflexivity. }
-    1:{ assert (q <> k) by (intro; subst; rewrite value_eqb_refl in E; discriminate).
-        rewrite !dict_lookup_insert_diff by assumption; reflexivity. }
-  Qed.
-
-  Lemma dict_insert_comm : forall (k k' v v' : value) d,
-      k <> k' -> dict_wf d ->
-      dict_insert k v (dict_insert k' v' d) = dict_insert k' v' (dict_insert k v d).
-  Proof.
-    intros * H_ne H_wf. apply dict_wf_lookup_ext.
-    1,2: apply dict_insert_preserve_dict_wf, dict_insert_preserve_dict_wf; exact H_wf.
-    intros q. destruct (value_eqb q k) eqn:E_k.
-    1:{ apply value_eqb_eq in E_k; subst.
-        rewrite dict_lookup_insert_same, dict_lookup_insert_diff, dict_lookup_insert_same by congruence.
-        reflexivity. }
-    assert (q <> k) by (intro; subst; rewrite value_eqb_refl in E_k; discriminate).
-    destruct (value_eqb q k') eqn:E_k'.
-    1:{ apply value_eqb_eq in E_k'; subst.
-        rewrite dict_lookup_insert_diff, !dict_lookup_insert_same by congruence. reflexivity. }
-    assert (q <> k') by (intro; subst; rewrite value_eqb_refl in E_k'; discriminate).
-    rewrite !dict_lookup_insert_diff by assumption; reflexivity.
   Qed.
 
   Lemma bag_insert_value_comm : forall (b v w : value),

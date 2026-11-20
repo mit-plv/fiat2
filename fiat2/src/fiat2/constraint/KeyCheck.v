@@ -1,5 +1,5 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
-  fiat2.Utils fiat2.Invariant fiat2.rules.FlatmapForms fiat2.rules.CollectionTransf.
+  fiat2.Utils fiat2.Invariant fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import String ZArith Lia List Permutation Sorted.
 Import ListNotations.

@@ -1,6 +1,6 @@
 Require Import fiat2.Language fiat2.TypeSystem fiat2.Invariant fiat2.constraint.Surface
   fiat2.constraint.KeyCheck fiat2.constraint.GuardRules fiat2.index.IndexTransf fiat2.index.DictIndex
-  fiat2.rules.CollectionTransf fiat2.rules.FlatmapForms.
+  fiat2.rules.CollectionTransf fiat2.FlatmapForms.
 Require Import coqutil.Map.Interface coqutil.Map.SortedListString coqutil.Datatypes.Result.
 From Stdlib Require Import String List ZArith.
 Import ListNotations.
