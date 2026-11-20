@@ -1,7 +1,7 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound
   fiat2.Utils fiat2.TransfSound fiat2.Invariant fiat2.FlatmapForms fiat2.constraint.KeyCheck.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
-From Stdlib Require Import String List Permutation.
+From Stdlib Require Import String List Permutation ZArith.
 Import ListNotations.
 Local Open Scope bool_scope.
 
@@ -68,24 +68,21 @@ Fixpoint nodupb (l : list string) : bool :=
   | a :: l => negb (existsb (String.eqb a) l) && nodupb l
   end.
 
-Definition unique_candidate (cond : expr) : option (list string) :=
-  match cond with
-  | EBinop OEq (EUnop OLength (EFlatmap _ _ _ (EIf c _ _))) _ => Some (attrs_of_conj c)
-  | _ => None
-  end.
-
-(* The key a constraint declares, if it is one *)
+(* The key a constraint declares, if it is one, with any binder names *)
 Definition key_of (row_ty : type) (tbl row : string) (cond : expr) : option (list string) :=
-  match row_ty with
-  | TRecord rt =>
-      match unique_candidate cond with
-      | Some attrs =>
-          if String.eqb row "_r" && expr_eqb (erase_annot cond) (erase_annot (unique_cond tbl attrs row_ty))
-             && nodupb attrs && forallb (fun a => existsb (String.eqb a) (List.map fst rt)) attrs
-          then Some attrs else None
-      | None => None
-      end
-  | _ => None
+  match row_ty, cond with
+  | TRecord rt,
+    EBinop OEq
+      (EUnop OLength
+         (EFlatmap LikeList (ELoc tbl') r2
+            (EIf p (EBinop OCons (EVar r2') (EAtom (ANil _))) (EAtom (ANil _)))))
+      (EAtom (AInt n)) =>
+      if String.eqb tbl tbl' && String.eqb r2 r2' && negb (String.eqb r2 row) && Z.eqb n 1
+         && expr_eqb p (eq_on_attrs (attrs_of_conj p) (EVar r2) (EVar row))
+         && nodupb (attrs_of_conj p)
+         && forallb (fun a => existsb (String.eqb a) (List.map fst rt)) (attrs_of_conj p)
+      then Some (attrs_of_conj p) else None
+  | _, _ => None
   end.
 
 Definition cheap_guard (row_ty : type) (tbl row : string) (cond e : expr) : option expr :=
@@ -188,21 +185,25 @@ Qed.
 
 Lemma key_of_sound : forall row_ty tbl row cond attrs,
     key_of row_ty tbl row cond = Some attrs ->
-    exists rt, row_ty = TRecord rt /\ row = "_r" /\ erase_annot cond = erase_annot (unique_cond tbl attrs row_ty)
-               /\ NoDup attrs /\ Forall (fun a => In a (List.map fst rt)) attrs.
+    exists rt r2 t1 t2, row_ty = TRecord rt /\ cond = unique_cond_at tbl attrs row r2 t1 t2 /\ row <> r2
+                        /\ NoDup attrs /\ Forall (fun a => In a (List.map fst rt)) attrs.
 Proof.
   unfold key_of; intros * H.
-  destruct row_ty; try discriminate.
-  destruct (unique_candidate cond) as [ al | ]; try discriminate.
-  lazymatch type of H with
-  | (if ?b then _ else _) = _ => destruct b eqn:E; try discriminate
-  end.
-  injection H as <-. rewrite !Bool.andb_true_iff in E.
-  destruct E as [ [ [ E1 E2 ] E3 ] E4 ].
-  apply String.eqb_eq in E1. apply expr_eqb_true in E2.
-  exists l; repeat split; auto using nodupb_NoDup.
+  repeat (destruct_match_hyp; try discriminate).
+  injection H as <-. rewrite !Bool.andb_true_iff in *.
+  repeat lazymatch goal with Hc : _ /\ _ |- _ => destruct Hc end.
+  rewrite Bool.negb_true_iff in *.
+  repeat lazymatch goal with
+         | Hc : (_ =? _)%string = true |- _ => apply String.eqb_eq in Hc; subst
+         | Hc : (_ =? _)%Z = true |- _ => apply Z.eqb_eq in Hc; subst
+         | Hc : expr_eqb _ _ = true |- _ => apply expr_eqb_true in Hc
+         end.
+  lazymatch goal with Hc : (_ =? _)%string = false |- _ => apply String.eqb_neq in Hc end.
+  do 4 eexists; split; [ reflexivity | split ].
+  1: unfold unique_cond_at; repeat f_equal; assumption.
+  split; [ congruence | split; [ apply nodupb_NoDup; assumption | ] ].
   apply Forall_forall; intros a H_in.
-  rewrite forallb_forall in E4. apply E4 in H_in.
+  lazymatch goal with Hc : forallb _ _ = true |- _ => rewrite forallb_forall in Hc; apply Hc in H_in end.
   apply existsb_exists in H_in as [ a' [ H_in E5 ] ].
   apply String.eqb_eq in E5; subst; exact H_in.
 Qed.
@@ -265,17 +266,6 @@ Section WithMap.
     destruct (expr_eqb (erase_annot g) _) eqn:E; try discriminate. apply expr_eqb_true in E.
     destruct (map.get Gstore tbl) as [ [] | ] eqn:E_t; try discriminate.
     do 4 eexists; split; [ reflexivity | split; [ exact E | split; eassumption ] ].
-  Qed.
-
-  Lemma inv_holds_erase : forall tbl path row cond cond' (store : locals),
-      erase_annot cond = erase_annot cond' ->
-      inv_holds store (ConstraintInv tbl path row cond) <-> inv_holds store (ConstraintInv tbl path row cond').
-  Proof.
-    intros * E. cbn [inv_holds].
-    destruct (map.get store tbl) as [ v | ]; [ | reflexivity ].
-    destruct (value_at v path) as [ [] | ]; try reflexivity.
-    split; apply Forall_impl; intros r H_r.
-    all: rewrite <- interp_erase_annot in *; rewrite E in *; rewrite interp_erase_annot in *; exact H_r.
   Qed.
 
   Lemma guard_ty_bool : forall (Gstore Genv : tenv) tbl e x g2 row cond t,
@@ -398,7 +388,7 @@ Section WithMap.
          apply (map_incl_step string_dec); apply map_incl_empty.
     all: destruct (key_of row_ty tbl row cond) as [ attrs | ] eqn:E_k; cbn [option_map] in H_c;
          try discriminate; injection H_c as <-;
-         apply key_of_sound in E_k as [ rt [ -> [ _ [ _ [ _ HF ] ] ] ] ];
+         apply key_of_sound in E_k as (rt & r2 & t1 & t2 & -> & _ & _ & _ & HF);
          eapply unique_guard_let_ty; eauto.
   Qed.
 
@@ -471,16 +461,14 @@ Section WithMap.
     (* a key *)
     1:{ destruct (key_of row_ty tbl row cond) as [ attrs | ] eqn:E_k;
           [ | destruct (classify_write tbl e); cbn [option_map] in H_c; discriminate ].
-        apply key_of_sound in E_k as [ rt [ -> [ -> [ E_cond [ Hnd HF ] ] ] ] ].
-        rewrite (inv_holds_erase tbl nil "_r" _ _ _ E_cond) in H_inv.
-        rewrite (inv_holds_erase tbl nil "_r" _ _ _ E_cond).
+        apply key_of_sound in E_k as (rt & r2 & t1 & t2 & -> & -> & H_ne & Hnd & HF).
         pose proof (typed_rows_are_records _ _ H_l) as H_rec.
-        rewrite (unique_cond_holds_iff tbl attrs (TRecord rt) store l Hnd E_tbl H_rec) in H_inv.
+        rewrite (unique_cond_holds_iff tbl attrs row r2 t1 t2 store l H_ne Hnd E_tbl H_rec) in H_inv.
         destruct (classify_write tbl e) as [ r | r | x p | ] eqn:E_w; cbn [option_map] in H_c;
           try discriminate; injection H_c as <-.
         1:{ rewrite (E_cons r eq_refl).
             destruct (type_of_value_record _ _ (H_rv r (or_introl eq_refl))) as [ rv E_rv ].
-            rewrite (unique_cond_holds_iff tbl attrs (TRecord rt) _ _ Hnd (map.get_put_same _ _ _)
+            rewrite (unique_cond_holds_iff tbl attrs row r2 t1 t2 _ _ H_ne Hnd (map.get_put_same _ _ _)
                        (Forall_cons _ (ex_intro _ rv E_rv) H_rec)).
             rewrite (unique_guard_let_iff tbl attrs r store env l rv Hnd E_tbl E_rv H_rec).
             rewrite E_rv. cbn [List.map]. rewrite NoDup_cons_iff. tauto. }
@@ -488,7 +476,7 @@ Section WithMap.
             destruct (type_of_value_record _ _ (H_rv r (or_intror eq_refl))) as [ rv E_rv ].
             assert (H_rec' : Forall (fun v => exists rc, v = VRecord rc) (l ++ [interp_expr store env r]))
               by (apply Forall_app; split; [ exact H_rec | constructor; eauto ]).
-            rewrite (unique_cond_holds_iff tbl attrs (TRecord rt) _ _ Hnd (map.get_put_same _ _ _) H_rec').
+            rewrite (unique_cond_holds_iff tbl attrs row r2 t1 t2 _ _ H_ne Hnd (map.get_put_same _ _ _) H_rec').
             rewrite (unique_guard_let_iff tbl attrs r store env l rv Hnd E_tbl E_rv H_rec).
             rewrite E_rv, map_app. cbn [List.map].
             split.
@@ -499,7 +487,7 @@ Section WithMap.
                   by (eapply Permutation_NoDup; [ apply Permutation_sym, Permutation_cons_append | exact H_nd ]).
                 inversion H_nd'; assumption. } }
         1:{ destruct (E_filter x p eq_refl) as [ gf E_f ]. rewrite E_f.
-            rewrite (unique_cond_holds_iff tbl attrs (TRecord rt) _ _ Hnd (map.get_put_same _ _ _)
+            rewrite (unique_cond_holds_iff tbl attrs row r2 t1 t2 _ _ H_ne Hnd (map.get_put_same _ _ _)
                        (Forall_filter _ _ gf l H_rec)).
             cbn [interp_expr interp_atom]. split; [ intros _ | reflexivity ].
             apply NoDup_map_filter; exact H_inv. } }

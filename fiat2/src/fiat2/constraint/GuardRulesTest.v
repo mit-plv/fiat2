@@ -79,3 +79,19 @@ Example rewritten_after_typecheck :
                        (EBinop OAnd (EAtom (ABool true)) (EAtom (ABool true))))
                   (CAssign "users" delete_annotated) CSkip))).
 Proof. reflexivity. Qed.
+
+(* A key written with other binder names is recognized too *)
+Definition prog_named : scommand :=
+  SLetConstrained "users" row_ty [ ("r", unique_cond_at "users" ["id"] "r" "s" None None) ]
+    (SAssign "users" insert SSkip).
+
+Example rewritten_named :
+  match typecheck (tenv := tenv) map.empty map.empty (elab nil prog_named) with
+  | Success c => Some (fold_command_with_ictx (tenv := tenv) guard_rule (fun _ _ c => c) nil map.empty c)
+  | Failure _ => None
+  end =
+    Some (CLetMut (EAtom (ANil (Some row_ty))) "users" (Some (TList row_ty))
+            [ ConstraintInv "users" nil "r" (unique_cond_at "users" ["id"] "r" "s" None None) ]
+            (CIf (EBinop OAnd (unique_guard_let "users" ["id"] new_row) (EAtom (ABool true)))
+               (CAssign "users" insert) CSkip)).
+Proof. reflexivity. Qed.

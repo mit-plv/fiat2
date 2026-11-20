@@ -20,15 +20,18 @@ Fixpoint eq_on_attrs (attrs : list string) (e1 e2 : expr) : expr :=
         (eq_on_attrs attrs' e1 e2)
   end.
 
-(* The row's key occurs exactly once in tbl *)
-Definition unique_cond (tbl : string) (attrs : list string) (row_ty : type) : expr :=
+(* The key of row r occurs exactly once in tbl, scanned with r2 *)
+Definition unique_cond_at (tbl : string) (attrs : list string) (r r2 : string) (t1 t2 : option type) : expr :=
   EBinop OEq
     (EUnop OLength
-       (EFlatmap LikeList (ELoc tbl) "_r2"
-          (EIf (eq_on_attrs attrs (EVar "_r2") (EVar "_r"))
-             (EBinop OCons (EVar "_r2") (EAtom (ANil (Some row_ty))))
-             (EAtom (ANil (Some row_ty))))))
+       (EFlatmap LikeList (ELoc tbl) r2
+          (EIf (eq_on_attrs attrs (EVar r2) (EVar r))
+             (EBinop OCons (EVar r2) (EAtom (ANil t1)))
+             (EAtom (ANil t2)))))
     (EAtom (AInt 1)).
+
+Definition unique_cond (tbl : string) (attrs : list string) (row_ty : type) : expr :=
+  unique_cond_at tbl attrs "_r" "_r2" (Some row_ty) (Some row_ty).
 
 Definition row_keys (attrs : list string) (v : value) : value :=
   match v with
@@ -312,24 +315,24 @@ Section WithMap.
         * exact IH.
   Qed.
 
-  Lemma unique_inner_interp : forall attrs row_ty (store env : locals) r v rc rv,
-      NoDup attrs -> r = VRecord rc -> v = VRecord rv -> map.get env "_r" = Some r ->
-      match interp_expr store (map.put env "_r2" v)
-              (EIf (eq_on_attrs attrs (EVar "_r2") (EVar "_r"))
-                 (EBinop OCons (EVar "_r2") (EAtom (ANil (Some row_ty))))
-                 (EAtom (ANil (Some row_ty)))) with
+  Lemma unique_inner_interp : forall attrs x x2 t1 t2 (store env : locals) r v rc rv,
+      x <> x2 -> NoDup attrs -> r = VRecord rc -> v = VRecord rv -> map.get env x = Some r ->
+      match interp_expr store (map.put env x2 v)
+              (EIf (eq_on_attrs attrs (EVar x2) (EVar x))
+                 (EBinop OCons (EVar x2) (EAtom (ANil t1)))
+                 (EAtom (ANil t2))) with
       | VList l2 => l2
       | _ => nil
       end
       = (if value_eqb (row_keys attrs v) (row_keys attrs r) then v :: nil else nil).
   Proof.
-    intros * Hnd Er Ev E_r; subst r v.
+    intros * H_ne Hnd Er Ev E_r; subst r v.
     rewrite interp_EIf_step.
-    rewrite (interp_eq_on_attrs_keys attrs _ _ (EVar "_r2") (EVar "_r") rv rc Hnd).
+    rewrite (interp_eq_on_attrs_keys attrs _ _ (EVar x2) (EVar x) rv rc Hnd).
     2:{ rewrite interp_EVar; unfold get_local; rewrite map.get_put_same;
         reflexivity. }
     2:{ rewrite interp_EVar; unfold get_local;
-        rewrite map.get_put_diff by discriminate;
+        rewrite map.get_put_diff by congruence;
         rewrite E_r; reflexivity. }
     destruct (value_eqb (row_keys attrs (VRecord rv)) (row_keys attrs (VRecord rc)));
       cbn [interp_expr interp_binop interp_atom]; unfold get_local.
@@ -337,39 +340,39 @@ Section WithMap.
     - reflexivity.
   Qed.
 
-  Lemma unique_flat_map : forall attrs row_ty (store env : locals) r rc l,
-      NoDup attrs -> r = VRecord rc -> map.get env "_r" = Some r ->
+  Lemma unique_flat_map : forall attrs x x2 t1 t2 (store env : locals) r rc l,
+      x <> x2 -> NoDup attrs -> r = VRecord rc -> map.get env x = Some r ->
       Forall (fun v => exists rv, v = VRecord rv) l ->
       flat_map
         (fun v =>
-           match interp_expr store (map.put env "_r2" v)
-                   (EIf (eq_on_attrs attrs (EVar "_r2") (EVar "_r"))
-                      (EBinop OCons (EVar "_r2") (EAtom (ANil (Some row_ty))))
-                      (EAtom (ANil (Some row_ty)))) with
+           match interp_expr store (map.put env x2 v)
+                   (EIf (eq_on_attrs attrs (EVar x2) (EVar x))
+                      (EBinop OCons (EVar x2) (EAtom (ANil t1)))
+                      (EAtom (ANil t2))) with
            | VList l2 => l2
            | _ => nil
            end) l
       = List.filter (fun r2 => value_eqb (row_keys attrs r2) (row_keys attrs r)) l.
   Proof.
-    intros * Hnd Er E_r HF.
+    intros * H_ne Hnd Er E_r HF.
     induction HF as [ | v l [ rv Ev ] HF' IH ];
       cbn [flat_map List.filter]; [ reflexivity | ].
-    rewrite (unique_inner_interp attrs row_ty store env r v rc rv Hnd Er Ev E_r), IH.
+    rewrite (unique_inner_interp attrs x x2 t1 t2 store env r v rc rv H_ne Hnd Er Ev E_r), IH.
     destruct (value_eqb (row_keys attrs v) (row_keys attrs r)); reflexivity.
   Qed.
 
-  Lemma unique_cond_row_iff : forall tbl attrs row_ty (store : locals) l r rc,
-      NoDup attrs -> map.get store tbl = Some (VList l) -> r = VRecord rc ->
+  Lemma unique_cond_row_iff : forall tbl attrs x x2 t1 t2 (store : locals) l r rc,
+      x <> x2 -> NoDup attrs -> map.get store tbl = Some (VList l) -> r = VRecord rc ->
       Forall (fun v => exists rv, v = VRecord rv) l ->
-      interp_expr store (map.put map.empty "_r" r) (unique_cond tbl attrs row_ty) = VBool true
+      interp_expr store (map.put map.empty x r) (unique_cond_at tbl attrs x x2 t1 t2) = VBool true
       <-> List.length
             (List.filter (fun r2 => value_eqb (row_keys attrs r2) (row_keys attrs r)) l)
           = 1.
   Proof.
-    intros * Hnd E_tbl Er H_rec. unfold unique_cond.
+    intros * H_ne Hnd E_tbl Er H_rec. unfold unique_cond_at.
     rewrite interp_EBinop, interp_EUnop, interp_EFlatmap_list, interp_ELoc.
     unfold get_local at 1. rewrite E_tbl. cbn beta iota.
-    rewrite (unique_flat_map attrs row_ty store (map.put map.empty "_r" r) r rc l Hnd Er
+    rewrite (unique_flat_map attrs x x2 t1 t2 store (map.put map.empty x r) r rc l H_ne Hnd Er
                (map.get_put_same _ _ _) H_rec).
     cbn [interp_unop interp_binop interp_atom].
     split.
@@ -378,22 +381,22 @@ Section WithMap.
     1:{ intro H. rewrite H. reflexivity. }
   Qed.
 
-  Theorem unique_cond_holds_iff : forall tbl attrs row_ty (store : locals) l,
-      NoDup attrs ->
+  Theorem unique_cond_holds_iff : forall tbl attrs x x2 t1 t2 (store : locals) l,
+      x <> x2 -> NoDup attrs ->
       map.get store tbl = Some (VList l) ->
       Forall (fun v => exists rv, v = VRecord rv) l ->
-      inv_holds store (ConstraintInv tbl nil "_r" (unique_cond tbl attrs row_ty))
+      inv_holds store (ConstraintInv tbl nil x (unique_cond_at tbl attrs x x2 t1 t2))
       <-> NoDup (List.map (row_keys attrs) l).
   Proof.
-    intros * Hnd E_tbl H_rec.
+    intros * H_ne Hnd E_tbl H_rec.
     cbn [inv_holds value_at]. rewrite E_tbl.
     rewrite <- (Forall_count_one_iff_NoDup value value value_eqb (row_keys attrs) l
                   value_eqb_true_iff).
     rewrite !Forall_forall.
     split; intros H_F r H_r; specialize (H_F r H_r);
       destruct (proj1 (Forall_forall _ l) H_rec r H_r) as [ rc Er ].
-    1: apply (unique_cond_row_iff tbl attrs row_ty store l r rc Hnd E_tbl Er H_rec); exact H_F.
-    1: apply (unique_cond_row_iff tbl attrs row_ty store l r rc Hnd E_tbl Er H_rec); exact H_F.
+    1: apply (unique_cond_row_iff tbl attrs x x2 t1 t2 store l r rc H_ne Hnd E_tbl Er H_rec); exact H_F.
+    1: apply (unique_cond_row_iff tbl attrs x x2 t1 t2 store l r rc H_ne Hnd E_tbl Er H_rec); exact H_F.
   Qed.
 
   Section WithTable.
