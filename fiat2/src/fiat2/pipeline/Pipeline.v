@@ -3,22 +3,49 @@ Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2
   fiat2.index.IndexInterface fiat2.index.CompoIndex fiat2.index.DictIndex
   fiat2.rules.CollectionTransf fiat2.rules.BoolTransf fiat2.rules.EraseField.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
-From Stdlib Require Import List String.
+From Stdlib Require Import List String DecimalString DecimalNat FinFun.
 
 (* The compiler: typecheck the elaborated program, run the passes that keep the
    invariant context, then the passes that only keep well-typedness. *)
 
 Variant index_choice := DictIdx (attr : string).
 
-Definition choice_idx (ic : index_choice) : string * IndexInterface.index :=
+Definition index_of (ic : index_choice) : IndexInterface.index :=
   match ic with
-  | DictIdx attr => (String.append "dict_" attr, dict_idx attr)
+  | DictIdx attr => dict_idx attr
+  end.
+
+Definition tag_of (n : nat) : string := String.append "idx" (NilEmpty.string_of_uint (Nat.to_uint n)).
+
+Fixpoint idxs_from (n : nat) (ics : list index_choice) : list (string * IndexInterface.index) :=
+  match ics with
+  | nil => nil
+  | ic :: ics => (tag_of n, index_of ic) :: idxs_from (S n) ics
   end.
 
 Variant rule :=
   | Guard | AndTrue | IfConst | AnnotateCollection | PushDownCollection
   | DictSnoc | FoldCons | DictDelete | DictLookup | DictRead
   | CreateIdxs (tbl : string) (ics : list index_choice).
+
+Record anno_program := { program : scommand; rules : list rule; erasures : list (string * string) }.
+
+Lemma tag_of_inj : Injective tag_of.
+Proof.
+  intros m n H. cbn in H. injection H as H.
+  apply (f_equal NilEmpty.uint_of_string) in H. rewrite !NilEmpty.usu in H. injection H as H.
+  rewrite <- (Unsigned.of_to m), <- (Unsigned.of_to n), H. reflexivity.
+Qed.
+
+Lemma map_fst_idxs_from : forall ics n, List.map fst (idxs_from n ics) = List.map tag_of (seq n (List.length ics)).
+Proof.
+  induction ics; intros; cbn; [ reflexivity | f_equal; apply IHics ].
+Qed.
+
+Lemma idxs_from_NoDup : forall ics, NoDup (List.map fst (idxs_from 0 ics)).
+Proof.
+  intros. rewrite map_fst_idxs_from. apply Injective_map_NoDup; [ exact tag_of_inj | apply seq_NoDup ].
+Qed.
 
 Section WithMap.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
@@ -94,12 +121,20 @@ Section WithMap.
     intros. apply at_letmut_wt_sound. exact (erase_dead_field_sound fld).
   Qed.
 
+  Lemma idxs_from_ok : forall ics n, Forall (fun '(_, idx) => IndexInterface.ok idx) (idxs_from n ics).
+  Proof.
+    induction ics as [ | [ attr ] ics IH ]; intros; constructor; [ apply dict_idx_ok | apply IH ].
+  Qed.
+
+  Lemma idxs_from_holes : forall ics n, Forall (fun '(_, idx) => @hole idx = "_h") (idxs_from n ics).
+  Proof.
+    induction ics as [ | [ attr ] ics IH ]; intros; constructor; [ reflexivity | apply IH ].
+  Qed.
+
   Definition create_at (tbl : string) (ics : list index_choice) (c : command) : command :=
     match c with
     | CLetMut _ x _ _ _ =>
-        if andb (String.eqb x tbl) (nodupb (List.map fst (List.map choice_idx ics)))
-        then create_idxs (List.map choice_idx ics) "_h" "tbl" "idx" c
-        else c
+        if String.eqb x tbl then create_idxs (idxs_from 0 ics) "_h" "tbl" "idx" c else c
     | _ => c
     end.
 
@@ -130,26 +165,15 @@ Section WithMap.
   Definition erase_pass (tf : string * string) : tenv -> tenv -> command -> command :=
     fun Gstore _ c => at_letmut (fst tf) (fun Gstore c => erase_dead_field (snd tf) Gstore Gstore c) Gstore c.
 
-  Definition compile_with (rs : list rule) (es : list (string * string)) : scommand -> result command :=
-    compile (List.map pass_of rs) (List.map erase_pass es).
-
-  Lemma choice_idxs_ok : forall ics, Forall (fun '(_, idx) => IndexInterface.ok idx) (List.map choice_idx ics).
-  Proof.
-    intros. apply Forall_map, Forall_forall. intros [ attr ] _. apply dict_idx_ok.
-  Qed.
-
-  Lemma choice_idxs_holes : forall ics, Forall (fun '(_, idx) => @hole idx = "_h") (List.map choice_idx ics).
-  Proof.
-    intros. apply Forall_map, Forall_forall. intros [ attr ] _. reflexivity.
-  Qed.
+  Definition compile_anno (ap : anno_program) : result command :=
+    compile (List.map pass_of (rules ap)) (List.map erase_pass (erasures ap)) (program ap).
 
   Lemma create_at_sound : forall tbl ics, inv_transf_sound (locals := locals) (fun _ _ => create_at tbl ics).
   Proof.
     unfold inv_transf_sound; intros * H_Gs H_Ge H_ictx H_m.
     destruct c; try (split; [ exact H_m | intros; reflexivity ]). cbn [create_at].
-    destruct (andb (String.eqb x tbl) (nodupb _)) eqn:E; [ | split; [ exact H_m | intros; reflexivity ] ].
-    apply andb_prop in E as [ _ E ].
-    exact (create_idxs_sound _ (idxs_ok := choice_idxs_ok ics) (nodupb_NoDup _ E) "_h" (choice_idxs_holes ics)
+    destruct (String.eqb x tbl); [ | split; [ exact H_m | intros; reflexivity ] ].
+    exact (create_idxs_sound _ (idxs_ok := idxs_from_ok ics 0) (idxs_from_NoDup ics) "_h" (idxs_from_holes ics 0)
              "tbl" "idx" ltac:(discriminate) Gstore Genv ictx path_cond _ H_Gs H_Ge H_ictx H_m).
   Qed.
 
@@ -178,10 +202,10 @@ Section WithMap.
     intros. apply fold_command_with_ictx_sound; [ apply expr_rule_of_sound | apply cmd_rule_of_sound ].
   Qed.
 
-  Theorem compile_with_sound : forall rs es sc c,
-      compile_with rs es sc = Success c ->
+  Theorem compile_anno_sound : forall ap c,
+      compile_anno ap = Success c ->
       well_typed map.empty map.empty c /\
-        forall store env : locals, interp_command store env c = interp_command store env (elab nil sc).
+        forall store env : locals, interp_command store env c = interp_command store env (elab nil (program ap)).
   Proof.
     intros * H. eapply compile_sound; [ | | exact H ]; apply Forall_map, Forall_forall; intros.
     1: apply pass_of_sound.

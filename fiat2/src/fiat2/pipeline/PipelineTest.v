@@ -8,11 +8,9 @@ Open Scope Z_scope.
 
 Definition tenv := SortedListString.map type.
 
-Definition rules (ics : list index_choice) : list rule :=
+Definition users_rules (ics : list index_choice) : list rule :=
   [ Guard; AndTrue; IfConst; CreateIdxs "users" ics;
     DictSnoc; FoldCons; DictDelete; AnnotateCollection; PushDownCollection; DictLookup; DictRead ].
-
-Definition erasures := [("users", "tbl")].
 
 Definition row_ty := TRecord [("age", TInt); ("id", TInt)].
 
@@ -35,7 +33,7 @@ Definition prog : scommand :=
     (SSeq (SAssign "users" insert SSkip)
        (SSeq (SLet count "n" SSkip) (SAssign "users" delete SSkip))).
 
-Definition idx := EAccess (EAccess (ELoc "users") "idx") "dict_id".
+Definition idx := EAccess (EAccess (ELoc "users") "idx") "idx0".
 
 Definition key_guard :=
   ELet new_row "_pk_row"
@@ -44,19 +42,19 @@ Definition key_guard :=
        (EAtom (AEmptyBag None))).
 
 Example compiled :
-  compile_with (tenv := tenv) (rules [DictIdx "id"]) erasures prog =
-    Success (CLetMut (ERecord [("idx", ERecord [("dict_id", dict_fold "id" (EAtom (ANil (Some row_ty))))])]) "users"
-               (Some (TRecord [("idx", TRecord [("dict_id", dict_ty TInt [("age", TInt); ("id", TInt)])])])) nil
+  compile_anno (tenv := tenv) {| program := prog; rules := users_rules [DictIdx "id"]; erasures := [("users", "tbl")] |} =
+    Success (CLetMut (ERecord [("idx", ERecord [("idx0", dict_fold "id" (EAtom (ANil (Some row_ty))))])]) "users"
+               (Some (TRecord [("idx", TRecord [("idx0", dict_ty TInt [("age", TInt); ("id", TInt)])])])) nil
                (CSeq
                   (CIf (EBinop OAnd key_guard (ELet new_row "u" age_pos))
                      (CAssign "users"
-                        (ERecord [("idx", ERecord [("dict_id", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id" "_tup" "_acc" "_b" None)))])]))
+                        (ERecord [("idx", ERecord [("idx0", ELet idx "_acc" (ELet new_row "_tup" (dict_body "id" "_tup" "_acc" "_b" None)))])]))
                      CSkip)
                   (CSeq
                      (CLet (EACFold AGCount
                               (EOptMatch (EBinop OLookup idx (EAtom (AInt 7))) (EAtom (AEmptyBag None)) "_b" (EVar "_b")))
                         "n" CSkip)
-                     (CAssign "users" (ERecord [("idx", ERecord [("dict_id", EBinop ODelete idx (EAtom (AInt 7)))])]))))).
+                     (CAssign "users" (ERecord [("idx", ERecord [("idx0", EBinop ODelete idx (EAtom (AInt 7)))])]))))).
 Proof. reflexivity. Qed.
 
 Definition count_age := EUnop OLength
@@ -78,24 +76,25 @@ Definition lookup (tag : string) (k : Z) :=
   EACFold AGCount (EOptMatch (EBinop OLookup (idx_at tag) (EAtom (AInt k))) (EAtom (AEmptyBag None)) "_b" (EVar "_b")).
 
 Example compiled2 :
-  compile_with (tenv := tenv) (rules [DictIdx "age"; DictIdx "id"]) erasures prog2 =
+  compile_anno (tenv := tenv)
+    {| program := prog2; rules := users_rules [DictIdx "age"; DictIdx "id"]; erasures := [("users", "tbl")] |} =
     Success (CLetMut
-               (ERecord [("idx", ERecord [("dict_age", dict_fold "age" (EAtom (ANil (Some row_ty))));
-                                          ("dict_id", dict_fold "id" (EAtom (ANil (Some row_ty))))])])
+               (ERecord [("idx", ERecord [("idx0", dict_fold "age" (EAtom (ANil (Some row_ty))));
+                                          ("idx1", dict_fold "id" (EAtom (ANil (Some row_ty))))])])
                "users"
-               (Some (TRecord [("idx", TRecord [("dict_age", dict_ty TInt row_tl); ("dict_id", dict_ty TInt row_tl)])]))
+               (Some (TRecord [("idx", TRecord [("idx0", dict_ty TInt row_tl); ("idx1", dict_ty TInt row_tl)])]))
                nil
                (CSeq
                   (CIf (EBinop OAnd
                           (ELet new_row "_pk_row"
                              (EBinop OEq
-                                (EOptMatch (EBinop OLookup (idx_at "dict_id") (EAccess (EVar "_pk_row") "id"))
+                                (EOptMatch (EBinop OLookup (idx_at "idx1") (EAccess (EVar "_pk_row") "id"))
                                    (EAtom (AEmptyBag None)) "_b" (EVar "_b"))
                                 (EAtom (AEmptyBag None))))
                           (ELet new_row "u" age_pos))
                      (CAssign "users"
-                        (ERecord [("idx", ERecord [("dict_age", insert_into "dict_age" "age");
-                                                   ("dict_id", insert_into "dict_id" "id")])]))
+                        (ERecord [("idx", ERecord [("idx0", insert_into "idx0" "age");
+                                                   ("idx1", insert_into "idx1" "id")])]))
                      CSkip)
-                  (CSeq (CLet (lookup "dict_id" 7) "n" CSkip) (CLet (lookup "dict_age" 30) "m" CSkip)))).
+                  (CSeq (CLet (lookup "idx1" 7) "n" CSkip) (CLet (lookup "idx0" 30) "m" CSkip)))).
 Proof. reflexivity. Qed.
