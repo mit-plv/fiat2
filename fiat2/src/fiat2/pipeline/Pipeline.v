@@ -1,10 +1,24 @@
 Require Import fiat2.Language fiat2.Interpret fiat2.Value fiat2.TypeSystem fiat2.TypeSound fiat2.Utils
-  fiat2.TransfSound fiat2.Invariant fiat2.constraint.Surface fiat2.rules.EraseField.
+  fiat2.TransfSound fiat2.Invariant fiat2.constraint.Surface fiat2.constraint.GuardRules
+  fiat2.index.IndexInterface fiat2.index.CompoIndex fiat2.index.DictIndex
+  fiat2.rules.CollectionTransf fiat2.rules.BoolTransf fiat2.rules.EraseField.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 From Stdlib Require Import List String.
 
 (* The compiler: typecheck the elaborated program, run the passes that keep the
    invariant context, then the passes that only keep well-typedness. *)
+
+Variant index_choice := DictIdx (attr : string).
+
+Definition choice_idx (ic : index_choice) : string * IndexInterface.index :=
+  match ic with
+  | DictIdx attr => (String.append "dict_" attr, dict_idx attr)
+  end.
+
+Variant rule :=
+  | Guard | AndTrue | IfConst | AnnotateCollection | PushDownCollection
+  | DictSnoc | FoldCons | DictDelete | DictLookup | DictRead
+  | CreateIdxs (tbl : string) (ics : list index_choice).
 
 Section WithMap.
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
@@ -78,5 +92,99 @@ Section WithMap.
         (fun Gstore _ c => at_letmut tbl (fun Gstore c => erase_dead_field fld Gstore Gstore c) Gstore c).
   Proof.
     intros. apply at_letmut_wt_sound. exact (erase_dead_field_sound fld).
+  Qed.
+
+  Definition create_at (tbl : string) (ics : list index_choice) (c : command) : command :=
+    match c with
+    | CLetMut _ x _ _ _ =>
+        if andb (String.eqb x tbl) (nodupb (List.map fst (List.map choice_idx ics)))
+        then create_idxs (List.map choice_idx ics) "_h" "tbl" "idx" c
+        else c
+    | _ => c
+    end.
+
+  Definition expr_rule_of (r : rule) : list invariant -> tenv -> expr -> expr :=
+    match r with
+    | Guard => guard_rule
+    | AndTrue => fun _ _ => and_true_head
+    | AnnotateCollection => fun _ _ => annotate_collection
+    | PushDownCollection => fun _ _ => push_down_collection
+    | DictSnoc => fun _ _ => dict_snoc_head
+    | FoldCons => fun _ _ => fold_cons_head
+    | DictDelete => fun _ _ => dict_delete_head
+    | DictLookup => dict_lookup_rule
+    | DictRead => dict_read_rule
+    | IfConst | CreateIdxs _ _ => fun _ _ e => e
+    end.
+
+  Definition cmd_rule_of (r : rule) : list invariant -> tenv -> command -> command :=
+    match r with
+    | IfConst => fun _ _ => if_const_head
+    | CreateIdxs tbl ics => fun _ _ => create_at tbl ics
+    | _ => fun _ _ c => c
+    end.
+
+  Definition pass_of (r : rule) : tenv -> tenv -> command -> command :=
+    fun Gstore _ c => fold_command_with_ictx (expr_rule_of r) (cmd_rule_of r) nil Gstore c.
+
+  Definition erase_pass (tf : string * string) : tenv -> tenv -> command -> command :=
+    fun Gstore _ c => at_letmut (fst tf) (fun Gstore c => erase_dead_field (snd tf) Gstore Gstore c) Gstore c.
+
+  Definition compile_with (rs : list rule) (es : list (string * string)) : scommand -> result command :=
+    compile (List.map pass_of rs) (List.map erase_pass es).
+
+  Lemma choice_idxs_ok : forall ics, Forall (fun '(_, idx) => IndexInterface.ok idx) (List.map choice_idx ics).
+  Proof.
+    intros. apply Forall_map, Forall_forall. intros [ attr ] _. apply dict_idx_ok.
+  Qed.
+
+  Lemma choice_idxs_holes : forall ics, Forall (fun '(_, idx) => @hole idx = "_h") (List.map choice_idx ics).
+  Proof.
+    intros. apply Forall_map, Forall_forall. intros [ attr ] _. reflexivity.
+  Qed.
+
+  Lemma create_at_sound : forall tbl ics, inv_transf_sound (locals := locals) (fun _ _ => create_at tbl ics).
+  Proof.
+    unfold inv_transf_sound; intros * H_Gs H_Ge H_ictx H_m.
+    destruct c; try (split; [ exact H_m | intros; reflexivity ]). cbn [create_at].
+    destruct (andb (String.eqb x tbl) (nodupb _)) eqn:E; [ | split; [ exact H_m | intros; reflexivity ] ].
+    apply andb_prop in E as [ _ E ].
+    exact (create_idxs_sound _ (idxs_ok := choice_idxs_ok ics) (nodupb_NoDup _ E) "_h" (choice_idxs_holes ics)
+             "tbl" "idx" ltac:(discriminate) Gstore Genv ictx path_cond _ H_Gs H_Ge H_ictx H_m).
+  Qed.
+
+  Lemma expr_rule_of_sound : forall r, ictx_rule_sound (locals := locals) (expr_rule_of r).
+  Proof.
+    destruct r; cbn [expr_rule_of];
+      try apply id_rule_sound; try apply guard_rule_sound; try apply dict_lookup_rule_sound;
+      try apply dict_read_rule_sound; apply expr_transf__ictx_rule_sound.
+    1: apply and_true_head_sound.
+    1: apply annotate_collection_sound.
+    1: apply push_down_collection_sound.
+    1: apply dict_snoc_head_sound.
+    1: apply fold_cons_head_sound.
+    1: apply dict_delete_head_sound.
+  Qed.
+
+  Lemma cmd_rule_of_sound : forall r, ictx_cmd_rule_sound (locals := locals) (cmd_rule_of r).
+  Proof.
+    destruct r; cbn [cmd_rule_of]; try apply id_cmd_rule_sound; apply inv_transf__ictx_cmd_rule_sound.
+    1: apply if_const_head_sound.
+    1: apply create_at_sound.
+  Qed.
+
+  Lemma pass_of_sound : forall r, inv_transf_sound (locals := locals) (pass_of r).
+  Proof.
+    intros. apply fold_command_with_ictx_sound; [ apply expr_rule_of_sound | apply cmd_rule_of_sound ].
+  Qed.
+
+  Theorem compile_with_sound : forall rs es sc c,
+      compile_with rs es sc = Success c ->
+      well_typed map.empty map.empty c /\
+        forall store env : locals, interp_command store env c = interp_command store env (elab nil sc).
+  Proof.
+    intros * H. eapply compile_sound; [ | | exact H ]; apply Forall_map, Forall_forall; intros.
+    1: apply pass_of_sound.
+    1: apply erase_dead_field_at_sound.
   Qed.
 End WithMap.

@@ -1034,11 +1034,5 @@ Section WithMap.
             eapply transf_to_idx_preserve_sem; eauto.
             eapply maintains_invs__well_typed; eassumption. }
       Qed.
-
-      Corollary create_idx_at_sound : forall tbl,
-          inv_transf_sound (locals := locals) (fun Gstore _ c => at_letmut tbl (fun _ c => create_idx c) Gstore c).
-      Proof.
-        intros. apply at_letmut_sound. exact create_idx_sound.
-      Qed.
     End WithIndex.
 End WithMap.

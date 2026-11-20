@@ -269,10 +269,4 @@ Section WithIdxs.
         apply H_hold; assumption. }
     intros store env H_pc H_store H_env H_h. rewrite <- H_s by assumption. reflexivity.
   Qed.
-
-  Corollary create_idxs_at_sound : forall tbl,
-      inv_transf_sound (locals := locals) (fun Gstore _ c => at_letmut tbl (fun _ c => create_idxs c) Gstore c).
-  Proof.
-    intros. apply at_letmut_sound. exact create_idxs_sound.
-  Qed.
 End WithIdxs.
