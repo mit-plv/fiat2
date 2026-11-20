@@ -536,6 +536,62 @@ Section WithMap.
     rewrite (access_record__record_proj _ _ _ E). assumption.
   Qed.
 
+  Lemma access_path_ty : forall p (Gstore Genv : tenv) e t t',
+      type_of Gstore Genv e t -> type_at t p = Some t' -> type_of Gstore Genv (access_path e p) t'.
+  Proof.
+    induction p as [ | f p IH ]; cbn; intros * H_e H_p.
+    1: injection H_p as <-; exact H_e.
+    destruct t; try discriminate.
+    destruct (access_record l f) eqn:E; try discriminate.
+    eapply IH; [ econstructor; eassumption | exact H_p ].
+  Qed.
+
+  Lemma access_path_ty_inv : forall p (Gstore Genv : tenv) e t',
+      type_of Gstore Genv (access_path e p) t' -> exists t, type_of Gstore Genv e t /\ type_at t p = Some t'.
+  Proof.
+    induction p as [ | f p IH ]; cbn; intros * H.
+    1: eauto.
+    apply IH in H as (t & H_e & H_p).
+    inversion H_e; subst. exists (TRecord tl); split; [ assumption | ].
+    cbn. lazymatch goal with H : access_record tl f = Success _ |- _ => rewrite H end. exact H_p.
+  Qed.
+
+  (* The stored index of an IndexInv has the type of its definition, applied
+     to the rows it is defined from *)
+  Lemma index_inv_ty : forall (Gstore Genv : tenv) tbl id_path aux_path h ti t_id,
+      inv_wf Gstore (IndexInv tbl id_path aux_path h ti) ->
+      type_of Gstore Genv (access_path (ELoc tbl) id_path) t_id ->
+      exists t_aux, type_of Gstore Genv (access_path (ELoc tbl) aux_path) t_aux /\
+                      type_of map.empty (map.put map.empty h t_id) ti t_aux.
+  Proof.
+    intros * H_wf H_id. inversion H_wf; subst.
+    apply access_path_ty_inv in H_id as (t' & H_loc & H_at).
+    inversion H_loc; subst.
+    lazymatch goal with
+    | H : map.get Gstore tbl = Some _, H' : map.get Gstore tbl = Some _ |- _ =>
+        rewrite H in H'; injection H' as <-
+    end.
+    lazymatch goal with
+    | H : type_at ?t id_path = Some _, H' : type_at ?t id_path = Some _ |- _ =>
+        rewrite H in H'; injection H' as <-
+    end.
+    eexists; split; [ eapply access_path_ty; [ constructor; eassumption | eassumption ] | eassumption ].
+  Qed.
+
+  Lemma index_inv_sem : forall tbl id_path aux_path h ti (store env : locals),
+      inv_holds store (IndexInv tbl id_path aux_path h ti) ->
+      interp_expr store env (access_path (ELoc tbl) aux_path) =
+        interp_expr map.empty (map.put map.empty h (interp_expr store env (access_path (ELoc tbl) id_path))) ti.
+  Proof.
+    intros * H. cbn [inv_holds] in H.
+    destruct (map.get store tbl) as [ v | ] eqn:E; [ | contradiction ].
+    destruct (value_at v id_path) as [ v_id | ] eqn:E_id; [ | contradiction ].
+    destruct (value_at v aux_path) as [ v_aux | ] eqn:E_aux; [ | contradiction ].
+    assert (E_loc : interp_expr store env (ELoc tbl) = v) by (cbn; unfold get_local; rewrite E; reflexivity).
+    rewrite (interp_access_path _ _ _ _ v_aux), (interp_access_path _ _ _ _ v_id) by (rewrite E_loc; assumption).
+    exact H.
+  Qed.
+
   Lemma Forall2_access_record_Success : forall A B (P : A -> B -> Prop) l tl s t,
       Forall2 (fun p tp => fst p = fst tp /\ P (snd p) (snd tp)) l tl ->
       access_record tl s = Success t ->

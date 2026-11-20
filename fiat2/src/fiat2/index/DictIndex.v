@@ -119,11 +119,11 @@ Definition eq_filter_to_lookup (e : expr) : expr :=
 
 Definition dict_aux_of (attr : string) (l : expr) (i : invariant) : option expr :=
   match i with
-  | IndexInv tbl [id] [aux] h ti =>
+  | IndexInv tbl id_path aux_path h ti =>
       match dict_fold_of ti with
       | Some (attr', EVar h') =>
-          if String.eqb attr attr' && String.eqb h h' && expr_eqb l (EAccess (ELoc tbl) id)
-          then Some (EAccess (ELoc tbl) aux) else None
+          if String.eqb attr attr' && String.eqb h h' && expr_eqb l (access_path (ELoc tbl) id_path)
+          then Some (access_path (ELoc tbl) aux_path) else None
       | _ => None
       end
   | _ => None
@@ -269,9 +269,9 @@ Qed.
 
 Lemma dict_aux_spec : forall ictx attr l aux,
     dict_aux ictx attr l = Some aux ->
-    exists tbl id auxf h ti,
-      In (IndexInv tbl [id] [auxf] h ti) ictx /\ dict_fold_of ti = Some (attr, EVar h) /\
-        l = EAccess (ELoc tbl) id /\ aux = EAccess (ELoc tbl) auxf.
+    exists tbl id_path aux_path h ti,
+      In (IndexInv tbl id_path aux_path h ti) ictx /\ dict_fold_of ti = Some (attr, EVar h) /\
+        l = access_path (ELoc tbl) id_path /\ aux = access_path (ELoc tbl) aux_path.
 Proof.
   induction ictx as [ | i ictx IH ]; cbn [dict_aux]; intros * H; [ discriminate | ].
   destruct (dict_aux_of attr l i) eqn:E.
@@ -279,7 +279,7 @@ Proof.
       repeat (destruct_match_hyp; try discriminate).
       injection E as <-. split_conds.
       do 5 eexists; split; [ left; reflexivity | ]. eauto. }
-  1:{ apply IH in H as (tbl & id & auxf & h & ti & H_in & H_rest).
+  1:{ apply IH in H as (tbl & id_path & aux_path & h & ti & H_in & H_rest).
       do 5 eexists; split; [ right; exact H_in | exact H_rest ]. }
 Qed.
 
@@ -562,45 +562,17 @@ Section WithMap.
                                      interp_expr store env aux = dict_of attr (interp_expr store env l).
   Proof.
     intros * H_ictx H_aux H_l H_a.
-    apply dict_aux_spec in H_aux as (tbl & id & auxf & h & ti & H_in & H_ti & -> & ->).
+    apply dict_aux_spec in H_aux as (tbl & id_path & aux_path & h & ti & H_in & H_ti & -> & ->).
     split.
-    1:{ rewrite Forall_forall in H_ictx. specialize (H_ictx _ H_in). inversion H_ictx; subst.
-        lazymatch goal with
-        | Ht : type_of _ _ ti _ |- _ =>
-            destruct (dict_fold_of_ty _ _ _ _ _ _ H_ti Ht) as (rt' & kt' & H_h & H_a' & ->)
-        end.
+    1:{ rewrite Forall_forall in H_ictx.
+        destruct (index_inv_ty _ _ _ _ _ _ _ _ (H_ictx _ H_in) H_l) as (t_aux & H_aux & H_t).
+        destruct (dict_fold_of_ty _ _ _ _ _ _ H_ti H_t) as (rt' & kt' & H_h & H_a' & ->).
         inversion H_h; subst. rewrite map.get_put_same in *.
         lazymatch goal with H : Some _ = Some _ |- _ => inversion H; subst; clear H end.
-        inversion H_l; subst.
-        lazymatch goal with H : type_of _ _ (ELoc _) _ |- _ => inversion H; subst; clear H end.
-        lazymatch goal with
-        | H : map.get Gstore tbl = Some _, H' : map.get Gstore tbl = Some _ |- _ =>
-            rewrite H in H'; inversion H'; subst; clear H'
-        end.
-        cbn [type_at] in *.
-        lazymatch goal with
-        | H : access_record ?tl id = Success _, H' : context[access_record ?tl id] |- _ =>
-            rewrite H in H'; inversion H'; subst; clear H'
-        end.
-        lazymatch goal with
-        | H : access_record ?r attr = Success _, H' : access_record ?r attr = Success _ |- _ =>
-            rewrite H in H'; inversion H'; subst; clear H'
-        end.
-        lazymatch goal with
-        | H : match access_record _ auxf with _ => _ end = Some _ |- _ =>
-            destruct (access_record _ auxf) eqn:E_aux; inversion H; subst; clear H
-        end.
-        econstructor; [ constructor; eassumption | exact E_aux ]. }
+        rewrite H_a in H_a'; inversion H_a'; subst. exact H_aux. }
     1:{ intros store env H_h. unfold holds_all in H_h. rewrite Forall_forall in H_h.
-        specialize (H_h _ H_in). cbn [inv_holds] in H_h.
-        destruct (map.get store tbl) as [ v | ] eqn:E_s; [ | contradiction ].
-        cbn [interp_expr]. unfold get_local at 1 2; rewrite E_s.
-        destruct v; cbn [value_at] in H_h; try contradiction.
-        destruct (access_record l id) eqn:E_id; destruct (access_record l auxf) eqn:E_aux;
-          cbn [value_at] in H_h; try contradiction.
-        rewrite (access_record__record_proj _ _ _ E_id), (access_record__record_proj _ _ _ E_aux).
-        rewrite H_h, (interp_dict_fold_of _ _ _ _ _ H_ti). cbn [interp_expr]. unfold get_local.
-        rewrite map.get_put_same. reflexivity. }
+        rewrite (index_inv_sem _ _ _ _ _ _ _ (H_h _ H_in)), (interp_dict_fold_of _ _ _ _ _ H_ti).
+        cbn [interp_expr]. unfold get_local. rewrite map.get_put_same. reflexivity. }
   Qed.
 
   Theorem fold_cons_head_sound : expr_transf_sound (locals := locals) fold_cons_head.
