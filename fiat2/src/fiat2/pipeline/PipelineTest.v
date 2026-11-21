@@ -42,7 +42,7 @@ Definition key_guard :=
        (EAtom (AEmptyBag None))).
 
 Example compiled :
-  compile_anno (tenv := tenv) {| program := prog; schedule := rules [DictIdx "id"]; erasures := [("users", "tbl")] |} =
+  compile_anno (tenv := tenv) {| program := prog; passes := rules [DictIdx "id"]; erasures := [("users", "tbl")] |} =
     Success (CLetMut (ERecord [("idx", ERecord [("idx0", dict_fold "id" (EAtom (ANil (Some row_ty))))])]) "users"
                (Some (TRecord [("idx", TRecord [("idx0", dict_ty TInt [("age", TInt); ("id", TInt)])])])) nil
                (CSeq
@@ -77,7 +77,7 @@ Definition lookup (tag : string) (k : Z) :=
 
 Example compiled2 :
   compile_anno (tenv := tenv)
-    {| program := prog2; schedule := rules [DictIdx "age"; DictIdx "id"]; erasures := [("users", "tbl")] |} =
+    {| program := prog2; passes := rules [DictIdx "age"; DictIdx "id"]; erasures := [("users", "tbl")] |} =
     Success (CLetMut
                (ERecord [("idx", ERecord [("idx0", dict_fold "age" (EAtom (ANil (Some row_ty))));
                                           ("idx1", dict_fold "id" (EAtom (ANil (Some row_ty))))])])
