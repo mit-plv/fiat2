@@ -28,7 +28,7 @@ Variant rule :=
   | DictSnoc | FoldCons | DictDelete | DictLookup | DictRead
   | CreateIdxs (tbl : string) (ics : list index_choice).
 
-Record anno_program := { program : scommand; rules : list rule; erasures : list (string * string) }.
+Record anno_program := { program : scommand; schedule : list rule; erasures : list (string * string) }.
 
 Lemma tag_of_inj : Injective tag_of.
 Proof.
@@ -166,7 +166,7 @@ Section WithMap.
     fun Gstore _ c => at_letmut (fst tf) (fun Gstore c => erase_dead_field (snd tf) Gstore Gstore c) Gstore c.
 
   Definition compile_anno (ap : anno_program) : result command :=
-    compile (List.map pass_of (rules ap)) (List.map erase_pass (erasures ap)) (program ap).
+    compile (List.map pass_of (schedule ap)) (List.map erase_pass (erasures ap)) (program ap).
 
   Lemma create_at_sound : forall tbl ics, inv_transf_sound (locals := locals) (fun _ _ => create_at tbl ics).
   Proof.

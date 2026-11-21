@@ -8,7 +8,7 @@ Open Scope Z_scope.
 
 Definition tenv := SortedListString.map type.
 
-Definition users_rules (ics : list index_choice) : list rule :=
+Definition rules (ics : list index_choice) : list rule :=
   [ Guard; AndTrue; IfConst; CreateIdxs "users" ics;
     DictSnoc; FoldCons; DictDelete; AnnotateCollection; PushDownCollection; DictLookup; DictRead ].
 
@@ -42,7 +42,7 @@ Definition key_guard :=
        (EAtom (AEmptyBag None))).
 
 Example compiled :
-  compile_anno (tenv := tenv) {| program := prog; rules := users_rules [DictIdx "id"]; erasures := [("users", "tbl")] |} =
+  compile_anno (tenv := tenv) {| program := prog; schedule := rules [DictIdx "id"]; erasures := [("users", "tbl")] |} =
     Success (CLetMut (ERecord [("idx", ERecord [("idx0", dict_fold "id" (EAtom (ANil (Some row_ty))))])]) "users"
                (Some (TRecord [("idx", TRecord [("idx0", dict_ty TInt [("age", TInt); ("id", TInt)])])])) nil
                (CSeq
@@ -77,7 +77,7 @@ Definition lookup (tag : string) (k : Z) :=
 
 Example compiled2 :
   compile_anno (tenv := tenv)
-    {| program := prog2; rules := users_rules [DictIdx "age"; DictIdx "id"]; erasures := [("users", "tbl")] |} =
+    {| program := prog2; schedule := rules [DictIdx "age"; DictIdx "id"]; erasures := [("users", "tbl")] |} =
     Success (CLetMut
                (ERecord [("idx", ERecord [("idx0", dict_fold "age" (EAtom (ANil (Some row_ty))));
                                           ("idx1", dict_fold "id" (EAtom (ANil (Some row_ty))))])])
